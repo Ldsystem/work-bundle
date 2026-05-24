@@ -9,6 +9,10 @@ description: 'Decompose design files into perspective-aligned durable knowledge 
 
 Decompose design files into perspective-aligned durable knowledge notes.
 
+## Role Context
+
+Before directive-specific work, call `wb-select-role-context` to resolve the compact role_context for the current task, lifecycle stage, and perspective. Work under the selected stable role context; do not invent an ad hoc role.
+
 ## Workflow Reference
 
 Use `references/ks-workflow.md` as the shared workflow authority.

@@ -48,17 +48,7 @@ For orchestration gateway use, run `scripts/ks.py query --target <retrieval-poli
 
 ## Project Registry
 
-The optional global registry lives at `~/.work-bundle/registry/projects.yaml` unless `KS_PROJECT_REGISTRY` or `--registry-file` overrides it.
-
-Use it only as local runtime state for project discovery. Do not copy it into skill resources, durable project knowledge, orchestration artifacts, or reusable templates.
-
-Resolution priority:
-
-1. explicit `--knowledge-root`
-2. explicit `--project-root`
-3. walk upward from `--cwd` or current directory to find `.work-bundle/knowledge`
-4. global project registry by slug, alias, work-bundle root, or source repository path
-5. explicit external legacy root for migration/read-only intake
+Use `references/bootstrap/agent-bootstrap.md` as the authority for global project registry location, override inputs, copy restrictions, and project resolution priority.
 
 ## Structural-Value Test
 

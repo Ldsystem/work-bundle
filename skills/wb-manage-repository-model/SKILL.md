@@ -11,5 +11,13 @@ Rules:
 - Keep project Git and `.work-bundle` Git separate.
 - Ensure project `.gitignore` ignores `.work-bundle/` and `AGENTS.md`.
 - Ensure `.work-bundle/.gitignore` owns work-bundle exclusions.
-- Write compact bootstrap artifacts only under `.work-bundle/orchestration/bootstrap/`.
+- Write compact bootstrap artifacts only under `references/bootstrap/`.
 - Do not commit automatically.
+
+## Scripts
+
+Use the unified work-bundle dispatcher:
+
+- Inspect repository model: `python3 scripts/wb.py inspect-repository-model <project-root>`
+- Apply repository model repair: `python3 scripts/wb.py repository-model <project-root>`
+- Validate repository model: `python3 scripts/wb.py validate-repository-model <project-root>`

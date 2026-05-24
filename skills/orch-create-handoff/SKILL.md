@@ -9,6 +9,10 @@ description: 'Create orchestration and executor-result handoffs for continuation
 
 Create orchestration and executor-result handoffs for continuation or evidence.
 
+## Role Context
+
+Before directive-specific work, call `wb-select-role-context` to resolve the compact role_context for the current task, lifecycle stage, and perspective. Work under the selected stable role context; do not invent an ad hoc role.
+
 ## Workflow Reference
 
 Use `references/orch-workflow.md` as the shared workflow authority.
