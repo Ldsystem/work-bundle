@@ -1,0 +1,12 @@
+id: rule-orch-orchestration-boundary
+status: current
+scope: work-bundle
+applies_to: {paths: [skills/orch-*/SKILL.md, references/orch-*], skills: [orch-*], artifacts: []}
+enable_when: [orchestration artifact work occurs]
+severity: must
+rule: orch-orchestration-boundary applies to directive-scoped migrated skills.
+required_behavior: [write generated artifacts only under .work-bundle/orchestration]
+prohibited_behavior: [write orchestration artifacts under .work-bundle/knowledge]
+validation: [required fields exist, generated skills cite applicable rule]
+source_authority: [orchestrator SKILL boundaries]
+deprecated_sources: []

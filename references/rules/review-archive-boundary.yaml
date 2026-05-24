@@ -1,0 +1,12 @@
+id: rule-work-bundle-review-archive-boundary
+status: current
+scope: work-bundle
+applies_to: {paths: [.work-bundle/**], skills: [], artifacts: []}
+enable_when: [v4 work-bundle operation requires review-archive-boundary]
+severity: must
+rule: review-archive-boundary rule applies to v4 work-bundle operations.
+required_behavior: [follow source authority, keep runtime files compact]
+prohibited_behavior: [do not generate .mdc files, do not include raw logs or secrets]
+validation: [required fields exist, scope is work-bundle]
+source_authority: [.work-bundle/orchestration/spec/active/spec-process-v4-project-local-agent-operating-system.md]
+deprecated_sources: []

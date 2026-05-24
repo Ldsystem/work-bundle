@@ -1,0 +1,12 @@
+id: rule-orch-knowledge-gateway
+status: current
+scope: work-bundle
+applies_to: {paths: [skills/orch-*/SKILL.md, references/orch-*], skills: [orch-*], artifacts: []}
+enable_when: [orchestration needs durable knowledge]
+severity: must
+rule: orch-knowledge-gateway applies to directive-scoped migrated skills.
+required_behavior: [retrieve through ks-what-is-helpful gateway before using knowledge context]
+prohibited_behavior: [browse .work-bundle/knowledge directly as shortcut]
+validation: [required fields exist, generated skills cite applicable rule]
+source_authority: [orchestrator SKILL knowledge gateway]
+deprecated_sources: []

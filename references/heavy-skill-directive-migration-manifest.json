@@ -1,0 +1,90 @@
+{
+  "collision_policy": "do not overwrite unrelated files; future script collisions use <ks|orch>-<script-name>",
+  "directive_skill_map": {
+    "keep-summarizing:breakdown-design": "ks-breakdown-design",
+    "keep-summarizing:build-context-pack": "ks-build-context-pack",
+    "keep-summarizing:detect-structural-update": "ks-detect-structural-update",
+    "keep-summarizing:extract-valuable-points": "ks-extract-valuable-points",
+    "keep-summarizing:guard-scope": "ks-guard-scope",
+    "keep-summarizing:help-with-directives": "ks-help-with-directives",
+    "keep-summarizing:maintain-indexes": "ks-maintain-indexes",
+    "keep-summarizing:manage-lifecycle": "ks-manage-lifecycle",
+    "keep-summarizing:resolve-conflicts": "ks-resolve-conflicts",
+    "keep-summarizing:resolve-open-question": "ks-resolve-open-question",
+    "keep-summarizing:track-open-questions": "ks-track-open-questions",
+    "keep-summarizing:what-is-helpful": "ks-what-is-helpful",
+    "keep-summarizing:write-knowledge": "ks-write-knowledge",
+    "orchestrator:create-document": "orch-create-document",
+    "orchestrator:create-handoff": "orch-create-handoff",
+    "orchestrator:create-implementation-plan": "orch-create-implementation-plan",
+    "orchestrator:create-specification": "orch-create-specification",
+    "orchestrator:doctor": "orch-doctor",
+    "orchestrator:execute-plan": "orch-execute-plan",
+    "orchestrator:review-plan": "orch-review-plan"
+  },
+  "excluded_files": [
+    ".git",
+    ".DS_Store",
+    "__pycache__",
+    "*.pyc",
+    ".idea",
+    ".vscode",
+    "cache",
+    "tmp"
+  ],
+  "generated_at": "2026-05-24",
+  "id": "heavy-skill-directive-migration-manifest",
+  "legacy_preserved": true,
+  "reference_map": {
+    "legacy:keep-summarizing/assets/templates/*": "references/ks-assets/templates/*",
+    "legacy:keep-summarizing/evals/evals.json": "references/ks-evals/evals.json",
+    "legacy:keep-summarizing/references/directives.md": "references/ks-directives.md",
+    "legacy:keep-summarizing/references/directives/*.md": "references/ks-directives/*.md",
+    "legacy:keep-summarizing/references/perspectives.md": "references/ks-perspectives.md",
+    "legacy:keep-summarizing/references/workflow.md": "references/ks-workflow.md",
+    "legacy:orchestrator/assets/templates/*": "references/orch-assets/templates/*",
+    "legacy:orchestrator/evals/evals.json": "references/orch-evals/evals.json",
+    "legacy:orchestrator/references/contracts/*.md": "references/orch-contracts/*.md",
+    "legacy:orchestrator/references/directives/*.md": "references/orch-directives/*.md",
+    "legacy:orchestrator/references/workflow.md": "references/orch-workflow.md"
+  },
+  "rule_map": {
+    "ks-context-pack-policy": "references/rules/ks-context-pack-policy.yaml",
+    "ks-directive-selection": "references/rules/ks-directive-selection.yaml",
+    "ks-git-authority": "references/rules/ks-git-authority.yaml",
+    "ks-index-maintenance": "references/rules/ks-index-maintenance.yaml",
+    "ks-knowledge-boundary": "references/rules/ks-knowledge-boundary.yaml",
+    "ks-off-switches": "references/rules/ks-off-switches.yaml",
+    "ks-open-question-policy": "references/rules/ks-open-question-policy.yaml",
+    "ks-persistence-gate": "references/rules/ks-persistence-gate.yaml",
+    "ks-perspective-routing": "references/rules/ks-perspective-routing.yaml",
+    "ks-sensitivity-filter": "references/rules/ks-sensitivity-filter.yaml",
+    "ks-structural-value": "references/rules/ks-structural-value.yaml",
+    "orch-artifact-role-separation": "references/rules/orch-artifact-role-separation.yaml",
+    "orch-contract-loading": "references/rules/orch-contract-loading.yaml",
+    "orch-directive-selection": "references/rules/orch-directive-selection.yaml",
+    "orch-doctor-readonly": "references/rules/orch-doctor-readonly.yaml",
+    "orch-execution-boundary": "references/rules/orch-execution-boundary.yaml",
+    "orch-handoff-required": "references/rules/orch-handoff-required.yaml",
+    "orch-knowledge-gateway": "references/rules/orch-knowledge-gateway.yaml",
+    "orch-orchestration-boundary": "references/rules/orch-orchestration-boundary.yaml",
+    "orch-plan-quality": "references/rules/orch-plan-quality.yaml",
+    "orch-review-archive": "references/rules/orch-review-archive.yaml"
+  },
+  "script_map": {
+    "legacy:keep-summarizing/scripts/ks.py": "scripts/ks.py",
+    "legacy:orchestrator/scripts/orch.py": "scripts/orch.py"
+  },
+  "source_roots": [
+    "legacy:keep-summarizing",
+    "legacy:orchestrator"
+  ],
+  "status": "current",
+  "target_root": "/Users/shenglong/Documents/Repository/work-bundle",
+  "validation_commands": [
+    "find skills -maxdepth 2 -name SKILL.md | rg '/(ks|orch)-'",
+    "rg -n '^name: (ks|orch)-' skills",
+    "python3 scripts/validate-rules.py references/rules",
+    "python3 -m py_compile scripts/ks.py scripts/orch.py"
+  ]
+}

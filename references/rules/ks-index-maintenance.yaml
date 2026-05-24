@@ -1,0 +1,12 @@
+id: rule-ks-index-maintenance
+status: current
+scope: work-bundle
+applies_to: {paths: [skills/ks-*/SKILL.md, references/ks-*], skills: [ks-*], artifacts: []}
+enable_when: [durable notes or open questions changed]
+severity: must
+rule: ks-index-maintenance applies to directive-scoped migrated skills.
+required_behavior: [rebuild derived document and open-question indexes before completion]
+prohibited_behavior: [hand-edit generated indexes or leave stale indexes]
+validation: [required fields exist, generated skills cite applicable rule]
+source_authority: [ks SKILL script helpers]
+deprecated_sources: []

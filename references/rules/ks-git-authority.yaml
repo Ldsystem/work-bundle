@@ -1,0 +1,12 @@
+id: rule-ks-git-authority
+status: current
+scope: work-bundle
+applies_to: {paths: [skills/ks-*/SKILL.md, references/ks-*], skills: [ks-*], artifacts: []}
+enable_when: [git operation is requested inside knowledge repo]
+severity: must
+rule: ks-git-authority applies to directive-scoped migrated skills.
+required_behavior: [allow scoped normal git operations only under selected knowledge repo]
+prohibited_behavior: [apply knowledge-repo git authority to source repos or destructive history]
+validation: [required fields exist, generated skills cite applicable rule]
+source_authority: [ks SKILL git authority]
+deprecated_sources: []

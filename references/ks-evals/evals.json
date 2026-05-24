@@ -1,0 +1,77 @@
+{
+  "skill_name": "keep-summarizing",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We discussed a temporary SQL quote bug, a stable cache read path, and a decision that Git Markdown is the source of truth while embeddings are disposable. Update project knowledge only where durable.",
+      "expected_output": "Filters out the SQL quote bug, saves durable cache or architecture/decision knowledge under lifecycle-aware leaf note paths, and rebuilds indexes.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Break down design.md into development-design/architecture/decisions, development-design/workflow/data-flow, development-design/workflow/process-flow, and development-design/architecture/patterns notes for project alpha. Keep traceability and do not apply changes yet.",
+      "expected_output": "Returns a plan-only breakdown table with every meaningful source point mapped to a lifecycle-aware leaf target note or update candidate, traceability, coverage report, conflicts, and suggested script commands.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Use keep-summarizing for project alpha. Create a human-readable English project feature overview for stakeholder briefing.",
+      "expected_output": "Redirects reader-facing document creation to orchestrator create-document, states that keep-summarizing owns durable knowledge only, and does not create reader-facing output files or files inside .work-bundle/knowledge.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "Use keep-summarizing for project alpha. Create a Chinese speech draft output from curated knowledge and save it to knowledge/alpha/speech.md.",
+      "expected_output": "Refuses to create a reader-facing document inside a durable knowledge repo and redirects the request to orchestrator create-document under .work-bundle/orchestration/docs/.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Run git status for project alpha knowledge, then try to run git status in the source repository.",
+      "expected_output": "Allows scoped Git status inside the selected project knowledge root and refuses to apply scoped Git authority to the source repository.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Export embedding chunks for notes where one note is confidential and another is superseded.",
+      "expected_output": "Excludes confidential and superseded notes from embedding export while keeping Markdown as source of truth.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "The recipe constraint model is unresolved and we will resolve it later. Track it as a development-design/architecture/decisions open question for project alpha with triggers recipe constraints and step constraints.",
+      "expected_output": "Creates a standalone open-question watchpoint under open-questions/development-design/architecture/decisions/, records trigger terms, rebuilds open-question-registry.jsonl, and does not mix it into normal durable notes.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "Current work discusses recipe constraints and answers the tracked step constraints model question. Ask what to do with the matching open question.",
+      "expected_output": "Uses trigger-term matching to surface the matching open-question watchpoint and asks whether to mark resolved, keep open, split, or ignore.",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "Index v3 notes containing confirmed, proposed, rejected, and implemented cache knowledge, then query for implementation_plan context.",
+      "expected_output": "Builds a derived SQLite FTS index from Markdown, retrieves across statuses, labels results as authority, candidate, background, or blocked, and treats only confirmed, implemented, and current as default authority.",
+      "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "Doctor a v3 note with lifecycle_stage development_design stored under notes/development-design and an implemented note without front matter evidence.",
+      "expected_output": "Accepts deterministic underscore-to-hyphen lifecycle path normalization and reports missing front matter evidence for the implemented note.",
+      "files": []
+    },
+    {
+      "id": 11,
+      "prompt": "Run a v3 migration dry run over legacy perspective-only notes.",
+      "expected_output": "Writes migration/v3-inventory.jsonl with candidate lifecycle stage, candidate perspective, candidate status, confidence, reason, and action, and marks ambiguous or mixed notes for manual review instead of silently promoting them.",
+      "files": []
+    }
+  ],
+  "v4_evals": [
+    {
+      "id": "v4-boundary-regression",
+      "description": "Validate v4 compact runtime and boundary behavior."
+    }
+  ]
+}

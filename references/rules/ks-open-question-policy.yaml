@@ -1,0 +1,12 @@
+id: rule-ks-open-question-policy
+status: current
+scope: work-bundle
+applies_to: {paths: [skills/ks-*/SKILL.md, references/ks-*], skills: [ks-*], artifacts: []}
+enable_when: [future work or unresolved question is handled]
+severity: must
+rule: ks-open-question-policy applies to directive-scoped migrated skills.
+required_behavior: [persist only user-provided or user-confirmed open-question watchpoints]
+prohibited_behavior: [treat open questions as settled facts]
+validation: [required fields exist, generated skills cite applicable rule]
+source_authority: [ks workflow open-question policy]
+deprecated_sources: []

@@ -1,0 +1,7 @@
+checks:
+  repository: [project_gitignore, agents_md, work_bundle, work_bundle_gitignore, repository_binding]
+  bootstrap: [agent_bootstrap, project_domain_profile]
+  runtime: [roles_root, rules_root, compact_runtime_files]
+  rules: [required_fields, scope_work_bundle, no_mdc]
+  registry: [global_registry_or_missing_reported, project_override_optional]
+  directive_wiring: [execute_plan_no_knowledge_retrieval, review_plan_archives_only]

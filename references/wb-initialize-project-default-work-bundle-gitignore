@@ -1,0 +1,17 @@
+*.secret
+*.key
+*.pem
+.env
+.env.*
+cache/
+tmp/
+temp
+.DS_Store
+*.zip
+*.tar
+*.gz
+*.7z
+*.log
+.cursor/
+.idea/
+.vscode/

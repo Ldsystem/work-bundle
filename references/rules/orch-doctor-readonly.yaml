@@ -1,0 +1,12 @@
+id: rule-orch-doctor-readonly
+status: current
+scope: work-bundle
+applies_to: {paths: [skills/orch-*/SKILL.md, references/orch-*], skills: [orch-*], artifacts: []}
+enable_when: [doctor directive runs]
+severity: must
+rule: orch-doctor-readonly applies to directive-scoped migrated skills.
+required_behavior: [run diagnostics read-only and report repair actions]
+prohibited_behavior: [edit files during doctor]
+validation: [required fields exist, generated skills cite applicable rule]
+source_authority: [orchestrator doctor rule]
+deprecated_sources: []

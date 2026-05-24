@@ -1,0 +1,18 @@
+stage_role_mapping:
+  tender: {primary: domain-analyst, supporting: [project-manager]}
+  investigation: {primary: domain-analyst, supporting: [solution-architect, project-manager]}
+  customer-design: {primary: domain-analyst, supporting: [ui-designer, project-manager, solution-architect]}
+  bidding: {primary: project-manager, supporting: [domain-analyst, solution-architect]}
+  development-design: {primary: solution-architect, supporting: [backend-developer, frontend-developer, database-engineer, qa-reviewer, ui-designer]}
+  implementation: {primary: backend-developer, supporting: [frontend-developer, database-engineer, qa-reviewer, solution-architect]}
+  deployment: {primary: devops-engineer, supporting: [database-engineer, qa-reviewer]}
+  go-live-delivery: {primary: project-manager, supporting: [qa-reviewer, devops-engineer, domain-analyst]}
+  operation: {primary: devops-engineer, supporting: [database-engineer, qa-reviewer, solution-architect]}
+  repository-management: {primary: devops-engineer, supporting: [solution-architect]}
+leaf_refinements:
+  development-design/data/schema: {primary: solution-architect, supporting: [database-engineer]}
+  development-design/implementation/backend: {primary: solution-architect, supporting: [backend-developer, qa-reviewer]}
+  development-design/implementation/frontend: {primary: solution-architect, supporting: [frontend-developer, ui-designer, qa-reviewer]}
+  customer-design/ui-prototype: {primary: domain-analyst, supporting: [ui-designer]}
+  implementation/tests: {primary: backend-developer, supporting: [qa-reviewer]}
+  repository-management/gitignore-repair: {primary: devops-engineer, supporting: [solution-architect]}

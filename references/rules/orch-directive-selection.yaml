@@ -1,0 +1,12 @@
+id: rule-orch-directive-selection
+status: current
+scope: work-bundle
+applies_to: {paths: [skills/orch-*/SKILL.md, references/orch-*], skills: [orch-*], artifacts: []}
+enable_when: [orchestration request starts]
+severity: must
+rule: orch-directive-selection applies to directive-scoped migrated skills.
+required_behavior: [select one primary directive or declare a multi-step sequence]
+prohibited_behavior: [blend modes without a selected directive]
+validation: [required fields exist, generated skills cite applicable rule]
+source_authority: [orchestrator SKILL directives]
+deprecated_sources: []

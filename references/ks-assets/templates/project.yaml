@@ -1,0 +1,73 @@
+project:
+  slug: example-project
+  name: Example Project
+  aliases: []
+  source_repositories:
+    - path: ""
+      remote: ""
+  domain: engineering
+  primary_languages:
+    - en
+
+knowledge_repo:
+  root: .work-bundle/knowledge
+  git:
+    auto_commit: false
+    default_branch: main
+    allowed_commands:
+      - status
+      - diff
+      - log
+      - add
+      - commit
+      - branch
+      - tag
+      - restore
+    protected_operations:
+      - reset-hard
+      - force-push
+      - delete-branch
+      - delete-durable-note
+
+mcp:
+  allowed_roots:
+    - .work-bundle/knowledge
+  deny_non_knowledge_paths: true
+  require_dry_run_for_overwrite: true
+
+curation:
+  default_visibility: private
+  default_sensitivity: normal
+  statuses:
+    - draft
+    - proposed
+    - confirmed
+    - implemented
+    - current
+    - superseded
+    - deprecated
+    - rejected
+  stale_after_days:
+    context_pack: 30
+    derived_document: 14
+
+embedding:
+  enabled: true
+  exclude_sensitivity:
+    - confidential
+    - secret
+  exclude_status:
+    - draft
+    - proposed
+    - superseded
+    - deprecated
+    - rejected
+
+open_questions:
+  root: open-questions
+  registry: indexes/open-question-registry.jsonl
+  watch_context: true
+  statuses:
+    - open
+    - resolved
+    - superseded

@@ -1,0 +1,4 @@
+id: project-domain-profile-contract
+status: current
+required: [id, status, version, generated_by, updated_at, industry, business_context, core_domain_objects, core_lifecycles, domain_constraints, common_misunderstandings, current_lifecycle_stage, stage_specific_authority, role_positioning, source_knowledge, warnings]
+compact: true

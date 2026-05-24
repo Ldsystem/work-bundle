@@ -1,0 +1,12 @@
+id: rule-ks-sensitivity-filter
+status: current
+scope: work-bundle
+applies_to: {paths: [skills/ks-*/SKILL.md, references/ks-*], skills: [ks-*], artifacts: []}
+enable_when: [source content is inspected or written]
+severity: must
+rule: ks-sensitivity-filter applies to directive-scoped migrated skills.
+required_behavior: [exclude secrets, credentials, personal data, raw chat logs, and temporary command output]
+prohibited_behavior: [persist sensitive or raw transcript material]
+validation: [required fields exist, generated skills cite applicable rule]
+source_authority: [ks SKILL mandatory gates]
+deprecated_sources: []

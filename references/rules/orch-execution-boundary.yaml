@@ -1,0 +1,12 @@
+id: rule-orch-execution-boundary
+status: current
+scope: work-bundle
+applies_to: {paths: [skills/orch-*/SKILL.md, references/orch-*], skills: [orch-*], artifacts: []}
+enable_when: [execute-plan runs]
+severity: must
+rule: orch-execution-boundary applies to directive-scoped migrated skills.
+required_behavior: [read only allowed spec, plan, phase, task, handoffs, and task-scoped files]
+prohibited_behavior: [retrieve durable knowledge or archive during execution]
+validation: [required fields exist, generated skills cite applicable rule]
+source_authority: [orchestrator execution rule]
+deprecated_sources: []

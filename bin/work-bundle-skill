@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9-]+", "-", name.strip().lower()).strip("-")
+
+
+def read_metadata(skill_dir: Path) -> dict[str, str]:
+    skill_file = skill_dir / "SKILL.md"
+    if not skill_file.is_file():
+        raise FileNotFoundError(f"Missing SKILL.md: {skill_file}")
+    lines = skill_file.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise ValueError(f"Missing SKILL.md front matter: {skill_file}")
+    metadata: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if ":" in line:
+            key, value = line.split(":", 1)
+            metadata[key.strip()] = value.strip().strip("'\"")
+    if not metadata.get("name"):
+        raise ValueError(f"Missing front matter field `name`: {skill_file}")
+    if not metadata.get("description"):
+        raise ValueError(f"Missing front matter field `description`: {skill_file}")
+    return metadata
+
+
+def skill_root() -> Path:
+    return repo_root() / "skills"
+
+
+def shared_root(home: str | None = None) -> Path:
+    base = Path(home).expanduser() if home else Path.home()
+    return base / ".agents" / "skills"
+
+
+def all_skill_dirs() -> list[Path]:
+    root = skill_root()
+    if not root.exists():
+        return []
+    return sorted(path for path in root.iterdir() if (path / "SKILL.md").is_file())
+
+
+def skill_dir(name: str) -> Path:
+    slug = slugify(name)
+    path = skill_root() / slug
+    if not (path / "SKILL.md").is_file():
+        raise FileNotFoundError(f"Skill not found: {slug}")
+    return path
+
+
+def validate_one(name_or_dir: str | Path) -> dict[str, Any]:
+    path = Path(name_or_dir)
+    if not path.is_absolute():
+        path = skill_dir(str(name_or_dir))
+    metadata = read_metadata(path)
+    expected = path.name
+    issues: list[str] = []
+    if slugify(metadata["name"]) != expected:
+        issues.append(f"front matter name `{metadata['name']}` does not match folder `{expected}`")
+    return {
+        "ok": not issues,
+        "name": expected,
+        "path": str(path),
+        "metadata": metadata,
+        "issues": issues,
+    }
+
+
+def link_path(name: str, home: str | None = None) -> Path:
+    return shared_root(home) / slugify(name)
+
+
+def enable_one(name: str, *, home: str | None, dry_run: bool, force: bool) -> dict[str, Any]:
+    source = skill_dir(name).resolve()
+    validation = validate_one(source)
+    if not validation["ok"]:
+        raise ValueError(f"Invalid skill `{name}`: {validation['issues']}")
+    dest = link_path(source.name, home)
+    action: str
+    if dest.is_symlink():
+        current = dest.resolve()
+        if current == source:
+            action = f"symlink already exists {dest} -> {source}"
+        elif force:
+            action = f"replace symlink {dest} -> {source}"
+            if not dry_run:
+                dest.unlink()
+                dest.symlink_to(source, target_is_directory=True)
+        else:
+            raise FileExistsError(f"Refusing to replace unmanaged symlink: {dest} -> {current}")
+    elif dest.exists():
+        raise FileExistsError(f"Refusing to replace non-symlink path: {dest}")
+    else:
+        action = f"create symlink {dest} -> {source}"
+        if not dry_run:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.symlink_to(source, target_is_directory=True)
+    return {"ok": True, "name": source.name, "source": str(source), "link": str(dest), "action": action}
+
+
+def disable_one(name: str, *, home: str | None, dry_run: bool) -> dict[str, Any]:
+    source = skill_dir(name).resolve()
+    dest = link_path(source.name, home)
+    if not dest.exists() and not dest.is_symlink():
+        return {"ok": True, "name": source.name, "link": str(dest), "action": f"symlink absent {dest}"}
+    if not dest.is_symlink():
+        raise FileExistsError(f"Refusing to remove non-symlink path: {dest}")
+    current = dest.resolve()
+    if current != source:
+        raise FileExistsError(f"Refusing to remove unmanaged symlink: {dest} -> {current}")
+    if not dry_run:
+        dest.unlink()
+    return {"ok": True, "name": source.name, "link": str(dest), "action": f"remove symlink {dest}"}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="work-bundle-skill")
+    parser.add_argument("--home", help="Override home directory for ~/.agents/skills")
+    parser.add_argument("--dry-run", action="store_true")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("list")
+    validate = sub.add_parser("validate")
+    validate.add_argument("--name")
+    enable = sub.add_parser("enable")
+    enable.add_argument("--name", required=True)
+    enable.add_argument("--force", action="store_true")
+    enable.add_argument("--dry-run", action="store_true")
+    disable = sub.add_parser("disable")
+    disable.add_argument("--name", required=True)
+    disable.add_argument("--dry-run", action="store_true")
+    enable_all = sub.add_parser("enable-all")
+    enable_all.add_argument("--force", action="store_true")
+    enable_all.add_argument("--dry-run", action="store_true")
+    disable_all = sub.add_parser("disable-all")
+    disable_all.add_argument("--dry-run", action="store_true")
+    return parser
+
+
+def dispatch(args: argparse.Namespace) -> dict[str, Any]:
+    if args.command == "list":
+        return {"skills": [path.name for path in all_skill_dirs()]}
+    if args.command == "validate":
+        if args.name:
+            return validate_one(args.name)
+        results = [validate_one(path) for path in all_skill_dirs()]
+        return {"ok": all(item["ok"] for item in results), "skills": results}
+    if args.command == "enable":
+        return enable_one(args.name, home=args.home, dry_run=args.dry_run, force=args.force)
+    if args.command == "disable":
+        return disable_one(args.name, home=args.home, dry_run=args.dry_run)
+    if args.command == "enable-all":
+        results = [
+            enable_one(path.name, home=args.home, dry_run=args.dry_run, force=args.force)
+            for path in all_skill_dirs()
+        ]
+        return {"ok": True, "count": len(results), "actions": results}
+    if args.command == "disable-all":
+        results = [disable_one(path.name, home=args.home, dry_run=args.dry_run) for path in all_skill_dirs()]
+        return {"ok": True, "count": len(results), "actions": results}
+    raise ValueError(f"Unsupported command: {args.command}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        result = dispatch(args)
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

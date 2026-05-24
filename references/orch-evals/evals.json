@@ -1,0 +1,95 @@
+{
+  "skill_name": "orchestrator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Create a stakeholder overview document from accepted project knowledge.",
+      "expected_output": "Selects create-document, uses the customer_spec retrieval policy when durable knowledge is needed, writes under .work-bundle/orchestration/docs/, omits unsupported facts, and does not write durable knowledge.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Create an implementation specification for the work-bundle migration.",
+      "expected_output": "Selects create-specification, writes a Markdown spec under .work-bundle/orchestration/spec/active/, updates spec index, and includes execution context.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Create an implementation plan from an active specification.",
+      "expected_output": "Selects create-implementation-plan, creates root plan, phase files, task files, and plan index under .work-bundle/orchestration/plan/active/.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Execute the next task in an existing plan.",
+      "expected_output": "Selects execute-plan, checks sub-agent support, uses the single-agent fallback when sub-agents are unavailable, executes one task, updates task and phase task status, reports concise execution result, and requires an executor handoff.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Create an executor-result handoff after implementation.",
+      "expected_output": "Selects create-handoff, writes executor-result handoffs under .work-bundle/orchestration/handoff/executor/active/, updates handoff index, and does not retrieve or write durable knowledge during execution completion.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Execute a phase whose next two tasks are independent and have disjoint write scopes, in an environment with sub-agents.",
+      "expected_output": "Selects execute-plan, uses the sub-agent scheduler path, delegates the independent tasks to multiple sub-agents, waits for completion, validates executor handoffs against task/phase/plan/spec, updates task statuses, and continues scheduling.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "A sub-agent reports completion but its executor handoff omits validation evidence.",
+      "expected_output": "Rejects the handoff as invalid, does not mark the task complete, records the blocker, and requires a corrected executor handoff before advancing.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "Finish the last task in a phase and then the last phase in a plan.",
+      "expected_output": "Creates phase-scoped and plan-scoped executor-result handoffs, updates phase and plan statuses to Completed, reports review-plan as the next action, and does not archive artifacts.",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "Review an implemented plan where the project files do not satisfy the source specification.",
+      "expected_output": "Selects review-plan, validates spec/plan/handoffs/project files, creates a new active repair specification with discrepancies and fix instructions, and does not archive artifacts.",
+      "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "Review an implemented plan where all specification, plan, handoff, and project file checks pass.",
+      "expected_output": "Selects review-plan, archives the related specification, plan tree, and handoffs, refreshes indexes, and reports review-complete without deleting files.",
+      "files": []
+    },
+    {
+      "id": 11,
+      "prompt": "Doctor the orchestrator skill for installation health, malformed directives, and workflow bias.",
+      "expected_output": "Selects doctor, uses dev-rules-doctor first, runs the develop-rules doctor command, audits SKILL.md, directives, README, workflow, evals, helper commands, and cross-skill v3 gateway wiring read-only, checks that execute-plan preserves both sub-agent scheduler and single-agent fallback paths, verifies archival belongs to review-plan, and reports concrete repairs without changing files.",
+      "files": []
+    },
+    {
+      "id": 12,
+      "prompt": "Create an implementation plan from v3 retrieved context containing authority, candidate, background, and blocked notes.",
+      "expected_output": "Selects create-implementation-plan, maps the workflow to the implementation_plan retrieval policy, carries authority context into executable tasks, labels candidate/background/blocked context separately, and does not create tasks from non-authority notes.",
+      "files": []
+    },
+    {
+      "id": 13,
+      "prompt": "Create an implementation specification from v3 project knowledge where customer-design notes match the query.",
+      "expected_output": "Selects create-specification, maps the workflow to the implementation_spec policy, treats development-design and implementation notes as authority, labels customer-design notes as supporting background or constraints, and cites source paths without treating background as implementation authority.",
+      "files": []
+    },
+    {
+      "id": 14,
+      "prompt": "Review a completed plan that should promote a confirmed note to implemented.",
+      "expected_output": "Selects review-plan, requires validation evidence suitable for front matter evidence before recommending implemented status, and does not silently write durable knowledge.",
+      "files": []
+    }
+  ],
+  "v4_evals": [
+    {
+      "id": "v4-role-context-regression",
+      "description": "Validate v4 compact runtime and boundary behavior."
+    }
+  ]
+}
