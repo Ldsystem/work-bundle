@@ -16,6 +16,17 @@ ORCHESTRATION_DIRS = ['orchestration/principles', 'orchestration/templates', 'or
 KNOWLEDGE_DIRS = ['knowledge/notes', 'knowledge/open-questions', 'knowledge/context-packs', 'knowledge/indexes']
 ROLE_NAMES = ['project-manager', 'solution-architect', 'domain-analyst', 'ui-designer', 'frontend-developer', 'backend-developer', 'database-engineer', 'qa-reviewer', 'devops-engineer']
 STACK_TERMS = ['Spring', 'React', 'Vue', 'Angular', 'Svelte', 'MySQL', 'PostgreSQL', 'AWS', 'Azure', 'GCP']
+ROLE_KEYWORDS = {
+    'project-manager': ['project', 'plan', 'timeline', 'delivery', 'coordination', 'stakeholder', 'scope'],
+    'solution-architect': ['architecture', 'design', 'boundary', 'tradeoff', 'integration', 'system'],
+    'domain-analyst': ['domain', 'business', 'customer', 'intent', 'process', 'requirement', 'semantics'],
+    'ui-designer': ['ui', 'ux', 'prototype', 'wireframe', 'visual', 'interaction', 'figma', 'journey'],
+    'frontend-developer': ['frontend', 'front-end', 'web', 'component', 'view', 'css', 'vue', 'react'],
+    'backend-developer': ['backend', 'back-end', 'api', 'service', 'server', 'endpoint', 'java', 'python'],
+    'database-engineer': ['data', 'database', 'schema', 'sql', 'etl', 'warehouse', 'migration'],
+    'qa-reviewer': ['qa', 'test', 'testing', 'quality', 'verification', 'validation', 'acceptance'],
+    'devops-engineer': ['devops', 'deployment', 'release', 'pipeline', 'ci', 'cd', 'operation', 'infra'],
+}
 RULES = ['repository-boundary', 'knowledge-boundary', 'orchestration-boundary', 'lifecycle-authority', 'retrieval-gateway', 'role-context', 'skill-registry', 'domain-profile', 'execution-boundary', 'handoff-boundary', 'review-archive-boundary', 'doctor-readonly', 'runtime-artifact-format', 'security-exclusion']
 STAGE_MAP = {
     'tender': ('domain-analyst', ['project-manager']),
@@ -206,6 +217,63 @@ def has_ignore(lines: list[str], wanted: str) -> bool:
 def first_match(pattern: str, text: str) -> str | None:
     match = re.search(pattern, text, re.MULTILINE)
     return match.group(1).strip() if match else None
+
+
+def duty_items(text: str, key: str) -> list[str]:
+    lines = text.splitlines()
+    header = f'  {key}:'
+    collecting = False
+    values: list[str] = []
+    for line in lines:
+        if not collecting and line == header:
+            collecting = True
+            continue
+        if collecting:
+            if line.startswith('  ') and not line.startswith('    '):
+                break
+            if line.startswith('    - '):
+                values.append(line[6:].strip())
+    return values
+
+
+def role_duty_profile(project_root: Path, role: str) -> dict:
+    path = project_root / 'references' / 'roles' / f'{role}.yaml'
+    text = read(path)
+    if not text:
+        return {'role': role, 'profile_found': False, 'profile_path': str(path), 'stance': None, 'capabilities': [], 'duties': [], 'must_resolve_from_context': []}
+    return {
+        'role': role,
+        'profile_found': True,
+        'profile_path': str(path),
+        'stance': first_match(r'^\s{2}stance:\s*(.+)$', text),
+        'capabilities': duty_items(text, 'skilled_at'),
+        'duties': duty_items(text, 'quality_focus'),
+        'must_resolve_from_context': duty_items(text, 'must_resolve_from_context'),
+    }
+
+
+def suggest_draft_role(stage: str, perspective: str) -> str:
+    scores = {role: 0 for role in ROLE_NAMES}
+    signals = f'{stage} {perspective}'.lower()
+    for role, keywords in ROLE_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in signals:
+                scores[role] += 1
+    if stage in STAGE_MAP:
+        primary, supporting = STAGE_MAP[stage]
+        scores[primary] += 2
+        for role in supporting:
+            scores[role] += 1
+    if perspective in LEAF_MAP:
+        primary, supporting = LEAF_MAP[perspective]
+        scores[primary] += 3
+        for role in supporting:
+            scores[role] += 2
+    ranked = sorted(scores.items(), key=lambda item: (-item[1], ROLE_NAMES.index(item[0])))
+    for role, score in ranked:
+        if score > 0:
+            return role
+    return 'solution-architect'
 
 
 def role_duty_failures(roles_root: Path) -> list[str]:
@@ -586,13 +654,24 @@ def cmd_role_context(args: list[str], validate: bool = False) -> int:
     perspective = parsed.perspective or (stage if stage != 'unknown' else 'unknown')
     blocked = parsed.directive == 'execute-plan' and source is None
     blocker = 'execute-plan requires carried source artifact role context' if blocked else None
+    matched_perspective = perspective in LEAF_MAP
+    matched_stage = stage in STAGE_MAP
     primary, supporting = LEAF_MAP.get(perspective, STAGE_MAP.get(stage, ('solution-architect', ['qa-reviewer'])))
+    resolution = 'perspective-match' if matched_perspective else ('stage-match' if matched_stage else 'fallback-draft-role')
+    draft_role: dict | None = None
+    if resolution == 'fallback-draft-role':
+        primary = suggest_draft_role(stage, perspective)
+        supporting = []
+        draft_role = role_duty_profile(project_root, primary)
     role_paths = [f'references/roles/{role}.yaml' for role in [primary] + supporting]
     missing_roles = [path for path in role_paths if not (project_root / path).exists()]
     if missing_roles:
         blocked = True
         blocker = 'missing role profiles: ' + ', '.join(missing_roles)
-    data = {'role_context': {'source': 'wb-select-role-context', 'version': 1, 'target_directive': parsed.directive, 'source_artifact': str(source) if source else None, 'lifecycle_stage': stage, 'perspective': perspective, 'authority_stage': stage, 'primary_role': primary, 'supporting_roles': supporting, 'domain_profile': 'references/bootstrap/project-domain-profile.yaml', 'role_profiles': role_paths, 'skill_registry': GLOBAL_SKILL_REGISTRY, 'project_skill_override': '.work-bundle/orchestration/skill-registry.override.yaml' if (project_root / '.work-bundle/orchestration/skill-registry.override.yaml').exists() else None, 'suggested_skills': skill_hints(project_root, parsed.directive), 'source_basis': [item for item in ['references/bootstrap/repository-binding.md', 'references/bootstrap/agent-bootstrap.md', str(source) if source else None] if item], 'warnings': [] if stage != 'unknown' else ['lifecycle stage unresolved'], 'blocked': blocked, 'blocker': blocker}}
+    warnings = [] if stage != 'unknown' else ['lifecycle stage unresolved']
+    if resolution == 'fallback-draft-role':
+        warnings.append('role resolution used one draft role')
+    data = {'role_context': {'source': 'wb-select-role-context', 'version': 1, 'target_directive': parsed.directive, 'source_artifact': str(source) if source else None, 'lifecycle_stage': stage, 'perspective': perspective, 'authority_stage': stage, 'primary_role': primary, 'supporting_roles': supporting, 'resolution': resolution, 'draft_role': draft_role, 'domain_profile': 'references/bootstrap/project-domain-profile.yaml', 'role_profiles': role_paths, 'skill_registry': GLOBAL_SKILL_REGISTRY, 'project_skill_override': '.work-bundle/orchestration/skill-registry.override.yaml' if (project_root / '.work-bundle/orchestration/skill-registry.override.yaml').exists() else None, 'suggested_skills': skill_hints(project_root, parsed.directive), 'source_basis': [item for item in ['references/bootstrap/repository-binding.md', 'references/bootstrap/agent-bootstrap.md', str(source) if source else None] if item], 'warnings': warnings, 'blocked': blocked, 'blocker': blocker}}
     text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
     if parsed.output:
         write(Path(parsed.output), text + '\n')

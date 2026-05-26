@@ -14,6 +14,14 @@ You should find a proper role according to the current task, current lifecycle s
 
 Resolve the role from stable role profiles and project/domain context rather than inventing a new one. Return only the compact role_context JSON/YAML needed by the caller.
 
+If no stable role can be matched from current stage/perspective, return one draft role instead of multiple candidates:
+
+- include `resolution: fallback-draft-role`
+- set `primary_role` to the draft role and continue working as this role directly
+- keep `supporting_roles` empty by default in fallback mode
+- include `draft_role` with role profile `stance`, `capabilities` (`skilled_at`), `duties` (`quality_focus`), and `must_resolve_from_context`
+- keep output machine-usable while making fallback rationale explicit for later user confirmation
+
 ## Scripts
 
 Use the unified work-bundle dispatcher:
