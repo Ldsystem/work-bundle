@@ -1,3 +1,4 @@
 id: work-bundle-rule-index
 status: current
-rules: []
+rules:
+  - rules/integrity-check/index.yaml

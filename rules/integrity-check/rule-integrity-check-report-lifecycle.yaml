@@ -1,0 +1,27 @@
+id: rule-integrity-check-report-lifecycle
+status: current
+scope: work-bundle
+applies_to:
+  paths:
+    - references/integrity-check/integrity-check-template.md
+    - scripts/integrity_check_report.py
+  skills:
+    - wb-integrity-check
+  artifacts:
+    - integrity-report
+enable_when:
+  - integrity report is created or updated
+severity: must
+required_behavior:
+  - report status uses only: draft, active, partially_fixed, closed, superseded
+  - issue status uses only: open, fixed, dismissed, converted, superseded
+  - report may close only when all issues are non-open
+  - each issue transition records timestamp, actor, from, to, reason, and evidence
+prohibited_behavior:
+  - overwrite previous generated report by default
+  - close report with open issues
+validation:
+  - report structure contains metadata, status history, issue summary, and closure checklist
+  - status sidecar and issue sidecar remain synchronized with report status values
+source_authority:
+  - rules/integrity-check/index.yaml

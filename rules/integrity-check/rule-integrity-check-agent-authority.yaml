@@ -1,0 +1,27 @@
+id: rule-integrity-check-agent-authority
+status: current
+scope: work-bundle
+applies_to:
+  paths:
+    - skills/wb-integrity-check/SKILL.md
+    - scripts/integrity_check_report.py
+  skills:
+    - wb-integrity-check
+  artifacts:
+    - integrity-report
+enable_when:
+  - wb-integrity-check runs
+severity: must
+required_behavior:
+  - agent owns integrity judgment, severity assignment, ownership classification, and fix recommendations
+  - script outputs may include risk signals and evidence only
+  - final accept/reject/escalation decisions are human-owned
+prohibited_behavior:
+  - script-level policy authority
+  - script-level integrity correctness authority
+  - script auto-close of issues without agent or user evidence
+validation:
+  - report recommendations include agent-authored rationale
+  - script output marks final decision owner as human
+source_authority:
+  - rules/integrity-check/index.yaml

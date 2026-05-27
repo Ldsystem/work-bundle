@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import subprocess
@@ -684,6 +685,20 @@ def cmd_merge_skill_hints(args: list[str]) -> int:
     return 0
 
 
+def cmd_integrity_report(args: list[str]) -> int:
+    script = Path(__file__).with_name('integrity_check_report.py')
+    if not script.exists():
+        out({'status': 'issues-found', 'failures': ['missing_integrity_report_cli'], 'expected': str(script)})
+        return 1
+    spec = importlib.util.spec_from_file_location('integrity_check_report', script)
+    if spec is None or spec.loader is None:
+        out({'status': 'issues-found', 'failures': ['load_integrity_report_cli_failed'], 'expected': str(script)})
+        return 1
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return int(module.main(args))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog='wb.py', description='Canonical work-bundle helper CLI.')
     parser.add_argument('command')
@@ -699,6 +714,7 @@ def main() -> int:
         'validate-runtime-artifacts': 'doctor',
         'validate-repository-health': 'repository-health',
         'validate-workflow-branches': 'workflow-branches',
+        'integrity-report': 'integrity-check-report',
     }
     command = aliases.get(command, command)
     if command in {'initialize-project', 'repository-model'}:
@@ -735,6 +751,8 @@ def main() -> int:
         return cmd_role_context(parsed.args, validate=True)
     if command == 'merge-skill-hints':
         return cmd_merge_skill_hints(parsed.args)
+    if command == 'integrity-check-report':
+        return cmd_integrity_report(parsed.args)
     parser.error(f'unknown command: {parsed.command}')
     return 2
 
