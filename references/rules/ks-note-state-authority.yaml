@@ -1,0 +1,12 @@
+id: rule-ks-note-state-authority
+status: current
+scope: work-bundle
+applies_to: {paths: [.work-bundle/knowledge/**, skills/ks-*/SKILL.md, references/ks-*], skills: [ks-*], artifacts: [knowledge-note, open-question]}
+enable_when: [knowledge note state affects retrieval or persistence authority]
+severity: must
+rule: note lifecycle state controls whether knowledge may be used as execution authority.
+required_behavior: [treat current notes as authority, treat proposed notes as candidate uncertainty, treat draft notes as discovery context only, ignore superseded deprecated rejected notes except historical analysis]
+prohibited_behavior: [promote non-current notes to stable facts silently, hide note-state uncertainty inside assumptions]
+validation: [retrieval output separates authority candidate background blocked context, uncertain helpful notes are surfaced as uncertainty]
+source_authority: [/Users/shenglong/Documents/Repository/Designs/keep-summarizing/cursor_knowledge_orchestrator_files/docs/v4.1-/restriction-on-openquestions.md]
+deprecated_sources: []

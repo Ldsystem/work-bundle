@@ -29,6 +29,8 @@ Load `references/orch-directives/create-implementation-plan.md` for directive-sp
 - `orch-artifact-role-separation`: `references/rules/orch-artifact-role-separation.yaml`
 - `orch-contract-loading`: `references/rules/orch-contract-loading.yaml`
 - `orch-plan-quality`: `references/rules/orch-plan-quality.yaml`
+- `orch-plan-open-question-gate`: `references/rules/orch-plan-open-question-gate.yaml`
+- `orch-spec-open-question-boundary`: `references/rules/orch-spec-open-question-boundary.yaml`
 
 ## Scripts
 

@@ -26,6 +26,7 @@ Load `references/ks-directives/write-knowledge.md` for directive-specific behavi
 - `ks-sensitivity-filter`: `references/rules/ks-sensitivity-filter.yaml`
 - `ks-index-maintenance`: `references/rules/ks-index-maintenance.yaml`
 - `ks-git-authority`: `references/rules/ks-git-authority.yaml`
+- `ks-note-state-authority`: `references/rules/ks-note-state-authority.yaml`
 - `ks-off-switches`: `references/rules/ks-off-switches.yaml`
 
 ## Scripts

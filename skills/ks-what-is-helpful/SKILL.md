@@ -23,6 +23,7 @@ Load `references/ks-directives/what-is-helpful.md` for directive-specific behavi
 - `ks-knowledge-boundary`: `references/rules/ks-knowledge-boundary.yaml`
 - `ks-context-pack-policy`: `references/rules/ks-context-pack-policy.yaml`
 - `ks-open-question-policy`: `references/rules/ks-open-question-policy.yaml`
+- `ks-note-state-authority`: `references/rules/ks-note-state-authority.yaml`
 - `ks-sensitivity-filter`: `references/rules/ks-sensitivity-filter.yaml`
 
 ## Scripts

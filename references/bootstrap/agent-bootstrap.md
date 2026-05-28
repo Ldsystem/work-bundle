@@ -32,6 +32,7 @@ Deterministic diagnostics:
 ## Transition Notes
 - Do not treat project-local bootstrap markdown as authority.
 - Do not encode project identity in global bootstrap authority.
-- Do not use split metadata files as runtime authority; use `.work-bundle/project.yaml`.
-- For legacy structures, use `/wb-initialize-project doctor` and `/wb-initialize-project migrate`.
+- Do not use split metadata files as runtime authority.
+- Use `/wb-initialize-project doctor` for stale legacy metadata diagnostics.
+- Use `/wb-initialize-project migrate` to converge legacy metadata to `.work-bundle/project.yaml`.
 - Keep runtime artifacts compact and machine-readable.

@@ -26,6 +26,7 @@ Load `references/ks-directives/track-open-questions.md` for directive-specific b
 - `ks-knowledge-boundary`: `references/rules/ks-knowledge-boundary.yaml`
 - `ks-persistence-gate`: `references/rules/ks-persistence-gate.yaml`
 - `ks-open-question-policy`: `references/rules/ks-open-question-policy.yaml`
+- `ks-note-state-authority`: `references/rules/ks-note-state-authority.yaml`
 - `ks-index-maintenance`: `references/rules/ks-index-maintenance.yaml`
 - `ks-sensitivity-filter`: `references/rules/ks-sensitivity-filter.yaml`
 

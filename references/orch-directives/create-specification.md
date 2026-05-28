@@ -25,6 +25,9 @@ It must carry enough accepted context for planning and execution without future 
 
 - Use precise, explicit, unambiguous language.
 - Distinguish requirements, constraints, assumptions, alternatives, and open questions.
+- Inspect relevant note states and open-question watchpoints through the approved knowledge gateway when durable knowledge affects the scope.
+- Surface relevant draft, proposed, conflicting, stale, or missing-evidence context as uncertainty; do not convert it into requirements.
+- Include an `Open Questions` section. If relevant uncertainty exists, list ID, question or uncertainty, related scope, source, blocking yes/no, and required resolution. If none exists, state `None for this specification scope.`
 - Define domain terms and acronyms.
 - Include affected modules, files, APIs, schemas, data flows, workflows, compatibility, migration, deployment, testing, and operational constraints when relevant.
 - Include examples, edge cases, fallback decisions, and validation expectations when useful.
@@ -39,6 +42,7 @@ It must carry enough accepted context for planning and execution without future 
 - If the user also asks for implementation, finish the specification artifact first, then stop and require an explicit `execute-plan` request.
 - Do not defer required execution context to future `.work-bundle/knowledge/` lookup.
 - Do not mix implementation plan tasks into the spec; record planning needs as constraints or open questions.
+- Do not hide unresolved architecture, data model, API contract, persistence, execution-flow, or authority decisions inside assumptions.
 - Do not write raw chat logs, unsupported facts, or hidden reasoning.
 
 ## Output

@@ -11,6 +11,8 @@ Create an executable implementation plan for `${input:PlanPurpose}`.
 
 Load the related specification from `.work-bundle/orchestration/spec/` and treat it as the primary execution source. The spec must already carry accepted project knowledge.
 
+Before creating any plan, inspect the source specification's `Open Questions` section. If it contains any unresolved open questions, refuse to create the implementation plan and return an actionable table with ID, question or uncertainty, blocking status, and required resolution. Planning may resume only after explicit user resolution and a revised specification.
+
 Use `keep-summarizing` with `what-is-helpful` gateway mode only when no sufficient spec exists or when repairing a spec before planning. Do not directly browse `.work-bundle/knowledge/`.
 
 For v3 knowledge, map implementation planning to the `implementation_plan` retrieval policy. If source context includes retrieved notes, the plan must label them as `authority`, `candidate`, `background`, or `blocked`. Candidate, background, and blocked notes must not create executable tasks unless the related knowledge has been promoted into authority in the source specification.
@@ -27,7 +29,7 @@ Downstream executors may read only the related spec, root plan, relevant phase, 
 
 - Convert the spec into deterministic phases, tasks, dependencies, affected files/modules, validation, completion criteria, and handoff requirements.
 - Carry required execution context from spec into the root plan, each phase, and each task by referencing stable spec IDs and adding only task-specific execution detail.
-- Add leading clarification or spec-repair tasks before dependent work when context is missing, stale, contradictory, or uncertain.
+- Add leading clarification or spec-repair tasks only when the source specification has no unresolved open questions but still lacks stable IDs, paths, validation details, or file-level execution context.
 - Use explicit IDs, paths, statuses, dependencies, commands, validation rules, and completion criteria.
 - Do not create handoff files directly; require `create-handoff`.
 - Do not store plans under `.work-bundle/knowledge/`.
@@ -58,10 +60,12 @@ These rules are mandatory:
 ## Hard Rules
 
 - Stop if no related spec exists and the user did not ask for spec repair.
+- Stop if the related spec contains unresolved open questions, even when the answer appears obvious.
 - Do not implement source changes, edit application/test files, run migrations, apply patches, or execute any planned task while creating the plan.
 - If the user also asks for implementation, finish the plan artifact first, then stop and require an explicit `execute-plan` request.
 - Do not make executor tasks depend on future knowledge retrieval.
 - Do not hide uncertainty inside task instructions; create clarification/spec-repair tasks first.
+- Do not infer answers silently, pick an unresolved alternative, downgrade blocking questions, or create a partial plan for unresolved scope.
 - Do not create tasks without dependencies, validation, completion criteria, and handoff requirement.
 - Do not create tasks that duplicate specification prose instead of citing spec IDs.
 - Do not create phases or tasks without exact source files, target files, target symbols, validation instructions, and relevant spec-ID references.
