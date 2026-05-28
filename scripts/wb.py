@@ -1,16 +1,47 @@
 from __future__ import annotations
 
 import argparse
+import os
 import importlib.util
 import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
 CUSTOMIZED_SKILL_ROOT = Path('/Users/shenglong/Documents/Repository/work-bundle/skills')
 GLOBAL_SKILL_REGISTRY = '~/.work-bundle/skills/skill-registry.yaml'
+WORK_BUNDLE_CONFIG_ROOT_ENV = 'WB_CONFIG_ROOT'
+GLOBAL_BOOTSTRAP_FILE_NAME = 'bootstrap.yaml'
+WORK_BUNDLE_ROOT_POINTER_FILE_NAME = 'work-bundle-root.yaml'
+WORK_BUNDLE_ROOT_POINTER_VERSION = 1
+DIAG_POINTER_MISSING = 'WB_POINTER_MISSING'
+DIAG_POINTER_STALE = 'WB_POINTER_STALE'
+DIAG_PROJECT_METADATA_MISSING = 'WB_PROJECT_METADATA_MISSING'
+DIAG_PROJECT_METADATA_INVALID = 'WB_PROJECT_METADATA_INVALID'
+DIAG_LEGACY_METADATA_STALE = 'WB_PROJECT_METADATA_LEGACY_STALE'
+DIAG_LEGACY_COMMAND_REMOVED = 'WB_LEGACY_COMMAND_REMOVED'
+LEGACY_COMMAND_MIGRATIONS = {
+    'inspect-repository-model': 'inspect-project-initialization',
+    'repository-model': 'initialize-project',
+    'validate-repository-model': 'validate-project',
+    'generate-domain-profile': 'generate-project-metadata-profile',
+    'merge-domain-profile': 'merge-project-metadata-profile',
+    'validate-domain-profile': 'validate-project-metadata-profile',
+}
+PROJECT_METADATA_REQUIRED_FIELDS = [
+    'project_root',
+    'work_bundle_config_root',
+    'work_bundle_root',
+    'project_git',
+    'work_bundle_git',
+    'rules_root',
+    'skills_root',
+    'scripts_root',
+    'metadata_version',
+]
 REQUIRED_PROJECT_GITIGNORE = ['.work-bundle/', 'AGENTS.md']
 WORK_BUNDLE_IGNORES = ['*.secret', '*.key', '*.pem', '.env', '.env.*', 'cache/', 'tmp/', 'temp', '.DS_Store', '*.zip', '*.tar', '*.gz', '*.7z', '*.log', '.cursor/', '.idea/', '.vscode/']
 ORCHESTRATION_DIRS = ['orchestration/principles', 'orchestration/templates', 'orchestration/spec/active', 'orchestration/spec/archived', 'orchestration/plan/active', 'orchestration/plan/archived', 'orchestration/handoff/executor/active', 'orchestration/handoff/orchestration/active', 'orchestration/docs', 'orchestration/reviews', 'orchestration/execution-state']
@@ -50,7 +81,7 @@ LEAF_MAP = {
     'repository-management/gitignore-repair': ('devops-engineer', ['solution-architect']),
 }
 DIRECTIVE_ALLOWED_SKILLS = {
-    'create-specification': ['create-specification', 'wb-generate-domain-profile', 'wb-select-role-context'],
+    'create-specification': ['create-specification', 'wb-initialize-project', 'wb-select-role-context'],
     'create-implementation-plan': ['orchestrator', 'wb-select-role-context'],
     'execute-plan': [],
     'create-handoff': ['orchestrator', 'wb-select-role-context'],
@@ -59,96 +90,51 @@ DIRECTIVE_ALLOWED_SKILLS = {
     'wb-doctor': ['wb-doctor'],
 }
 
-AGENTS = '# Agent Entry\n\nThis project uses a local work bundle for agent knowledge and orchestration.\n\nRead:\n\n```text\nreferences/bootstrap/agent-bootstrap.md\nreferences/bootstrap/repository-binding.md\n```\n\nDo not commit this file to the project repository by default.\n'
-BOOTSTRAP = '''# Agent Bootstrap
+AGENTS = '# Agent Entry\n\nThis project uses a local work bundle for agent knowledge and orchestration.\n\nRead:\n\n```text\nreferences/bootstrap/agent-bootstrap.md\n.work-bundle/project.yaml\n```\n\nDo not commit this file to the project repository by default.\n'
+BOOTSTRAP = '''# Agent Bootstrap (Compatibility Bridge)
 
-## Project Identity
-project: keep-summarizing
+## Authority
+Canonical bootstrap authority is global: `~/.work-bundle/bootstrap.yaml`.
+This repository file is compatibility guidance, not the primary bootstrap authority.
 
-## Repository Layout
-work_bundle: .work-bundle
-source_code_root: .
+## Canonical Root Model
+- `work-bundle-root`: installed work-bundle source root resolved from `~/.work-bundle/work-bundle-root.yaml`.
+- `project-root`: current workspace root.
+- `work-bundle-config-root`: `~/.work-bundle/`.
 
-## Git Boundary
-Project Git and work-bundle Git are separate. Do not mix commit scopes by default.
+## Root Pointer Contract
+Pointer file: `~/.work-bundle/work-bundle-root.yaml`
+Required fields:
+- `pointer_version` (integer, current `1`)
+- `work_bundle_root` (string path)
+- `updated_at` (RFC3339 UTC timestamp)
 
-## Project Gitignore
-.gitignore must ignore .work-bundle/ and AGENTS.md.
-
-## Work Bundle Git Repository
-.work-bundle/.git
-
-## Knowledge Source of Truth
-.work-bundle/knowledge/
-
-## Orchestration Artifact Root
-.work-bundle/orchestration/
-
-## Work Bundle Rules Root
-references/rules/
-
-## Project Agents Entry
-AGENTS.md
+Deterministic diagnostics:
+- missing pointer: `WB_POINTER_MISSING`
+- stale pointer: `WB_POINTER_STALE`
 
 ## Required Loading Order
-1. repository-binding.md
-2. verify project Git boundary
-3. verify work-bundle Git boundary
-4. agent-bootstrap.md
-5. load work-bundle rules contract and rule index
+1. load global bootstrap from `~/.work-bundle/bootstrap.yaml`
+2. resolve `work-bundle-root` via `~/.work-bundle/work-bundle-root.yaml`
+3. load canonical project metadata from `<project-root>/.work-bundle/project.yaml`
+4. verify project Git boundary
+5. verify work-bundle Git boundary
 6. resolve enabled work-bundle rules for current task
-7. project.yaml
-8. project-domain-profile.yaml
-9. identify current lifecycle stage
-10. load relevant stage-first notes only through allowed gateway/directive rules
-11. classify retrieved notes by status and retrieval role
-12. load relevant open-question records when allowed
-13. select primary role profile by lifecycle stage
-14. select supporting role profiles by leaf perspective
-15. locate customized skill root
-16. load global skill registry
-17. load optional project skill registry override if present
-18. load task-specific spec or plan
+7. load task-specific spec or plan
 
-## Available Role Profiles
-references/roles/
-
-## Available Skill Registry
-~/.work-bundle/skills/skill-registry.yaml
-
-## Customized Skill Root
-/Users/shenglong/Documents/Repository/work-bundle/skills
-
-## Project Skill Override
-optional: .work-bundle/orchestration/skill-registry.override.yaml
-
-## Project Registry
-The optional global project registry lives at `~/.work-bundle/registry/projects.yaml` unless `KS_PROJECT_REGISTRY` or `--registry-file` overrides it.
-
-Use it only as local runtime state for project discovery. Do not copy it into skill resources, durable project knowledge, orchestration artifacts, or reusable templates.
-
-Resolution priority:
-
-1. explicit `--knowledge-root`
-2. explicit `--project-root`
-3. walk upward from `--cwd` or current directory to find `.work-bundle/knowledge`
-4. global project registry by slug, alias, work-bundle root, or source repository path
-5. explicit external legacy root for migration/read-only intake
-
-## Enabled Work Bundle Rules
-Resolve from references/rules/index.yaml before directive-specific behavior.
-
-## Output Rules
-Keep runtime artifacts compact and machine-readable. Prefer compact YAML for runtime rules, role profiles, domain profile, and role context.
-
-## Handoff Rules
-Use .work-bundle/orchestration/handoff/. Executor handoffs carry role_context_used when available.
-
-## Forbidden Behavior
-Do not write durable knowledge from orchestration directives. Do not generate .mdc rules. Do not treat deprecated .mdc files as current authority.
+## Transition Notes
+- Do not treat project-local bootstrap markdown as authority.
+- Do not encode project identity in global bootstrap authority.
+- Do not use split metadata files as runtime authority.
+- Keep runtime artifacts compact and machine-readable.
 '''
 PROFILE = '''id: project-domain-profile
-status: current
+status: deprecated
+authority: compatibility-reference
+canonical_metadata: .work-bundle/project.yaml
+migration_owner: /wb-initialize-project
+doctor_flow: /wb-initialize-project doctor
+migrate_flow: /wb-initialize-project migrate
 version: 1
 generated_by: wb-initialize-project
 updated_at: 2026-05-25
@@ -178,6 +164,22 @@ source_knowledge:
 warnings: []
 '''
 RULE_CONTRACT = 'id: work-bundle-rule-contract\nstatus: current\nrule_format: yaml\nscope: work-bundle\nrequired_fields: [id, status, scope, applies_to, enable_when, severity, rule, required_behavior, prohibited_behavior, validation, source_authority]\ndeprecated_formats: [mdc]\ndeprecated_sources_policy: deprecated_mdc_reference_only\n'
+CLI_HELP_EPILOG = '''Canonical consolidated command surface:
+  inspect-project-initialization <project-root>
+  initialize-project <project-root>
+  validate-project <project-root> --dry-run
+  generate-project-metadata-profile --input <authority-context> --output references/bootstrap/project-domain-profile.yaml
+  merge-project-metadata-profile --current references/bootstrap/project-domain-profile.yaml --incoming <incoming-profile> --output references/bootstrap/project-domain-profile.yaml
+  validate-project-metadata-profile references/bootstrap/project-domain-profile.yaml
+
+Legacy commands are hard-removed and return WB_LEGACY_COMMAND_REMOVED:
+  inspect-repository-model            => inspect-project-initialization
+  repository-model                    => initialize-project
+  validate-repository-model           => validate-project
+  generate-domain-profile             => generate-project-metadata-profile
+  merge-domain-profile                => merge-project-metadata-profile
+  validate-domain-profile             => validate-project-metadata-profile
+'''
 
 
 def out(data: object) -> None:
@@ -235,6 +237,89 @@ def duty_items(text: str, key: str) -> list[str]:
             if line.startswith('    - '):
                 values.append(line[6:].strip())
     return values
+
+
+def work_bundle_config_root() -> Path:
+    override = os.environ.get(WORK_BUNDLE_CONFIG_ROOT_ENV, '').strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path.home() / '.work-bundle'
+
+
+def compact_yaml_map(text: str) -> dict[str, str]:
+    data: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#') or ':' not in line:
+            continue
+        key, value = line.split(':', 1)
+        data[key.strip()] = value.strip().strip('"').strip("'")
+    return data
+
+
+def utc_now_rfc3339() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+
+
+def resolve_bootstrap_runtime() -> dict[str, object]:
+    config_root = work_bundle_config_root()
+    bootstrap_path = config_root / GLOBAL_BOOTSTRAP_FILE_NAME
+    pointer_path = config_root / WORK_BUNDLE_ROOT_POINTER_FILE_NAME
+    result: dict[str, object] = {
+        'work_bundle_config_root': str(config_root),
+        'global_bootstrap_path': str(bootstrap_path),
+        'global_bootstrap_exists': bootstrap_path.exists(),
+        'work_bundle_root_pointer_path': str(pointer_path),
+        'work_bundle_root_pointer_exists': pointer_path.exists(),
+        'work_bundle_root_pointer_state': 'missing',
+        'work_bundle_root_pointer_diagnostic': DIAG_POINTER_MISSING,
+        'work_bundle_root_pointer_reason': 'pointer file not found',
+        'resolved_work_bundle_root': None,
+    }
+    if not pointer_path.exists():
+        return result
+    pointer = compact_yaml_map(read(pointer_path))
+    reasons: list[str] = []
+    version_raw = pointer.get('pointer_version')
+    try:
+        version = int(version_raw) if version_raw is not None else None
+    except ValueError:
+        version = None
+    if version != WORK_BUNDLE_ROOT_POINTER_VERSION:
+        reasons.append('unsupported pointer_version')
+    root_raw = pointer.get('work_bundle_root', '').strip()
+    resolved_root: Path | None = None
+    if not root_raw:
+        reasons.append('missing work_bundle_root')
+    else:
+        resolved_root = Path(root_raw).expanduser()
+        if not resolved_root.exists():
+            reasons.append('work_bundle_root path does not exist')
+    updated_at = pointer.get('updated_at', '').strip()
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', updated_at):
+        reasons.append('invalid updated_at')
+    if reasons:
+        result['work_bundle_root_pointer_state'] = 'stale'
+        result['work_bundle_root_pointer_diagnostic'] = DIAG_POINTER_STALE
+        result['work_bundle_root_pointer_reason'] = '; '.join(reasons)
+        return result
+    result['work_bundle_root_pointer_state'] = 'present'
+    result['work_bundle_root_pointer_diagnostic'] = None
+    result['work_bundle_root_pointer_reason'] = None
+    result['resolved_work_bundle_root'] = str(resolved_root) if resolved_root else None
+    return result
+
+
+def ensure_work_bundle_root_pointer(work_bundle_root: Path) -> str | None:
+    config_root = work_bundle_config_root()
+    pointer_path = config_root / WORK_BUNDLE_ROOT_POINTER_FILE_NAME
+    text = '\n'.join([
+        f'pointer_version: {WORK_BUNDLE_ROOT_POINTER_VERSION}',
+        f'work_bundle_root: {work_bundle_root.resolve()}',
+        f'updated_at: {utc_now_rfc3339()}',
+    ]) + '\n'
+    changed = write(pointer_path, text)
+    return str(pointer_path) if changed else None
 
 
 def role_duty_profile(project_root: Path, role: str) -> dict:
@@ -307,41 +392,32 @@ def binding(project_root: Path) -> str:
     pgi = read(project_root / '.gitignore').splitlines()
     wb = project_root / '.work-bundle'
     override = wb / 'orchestration' / 'skill-registry.override.yaml'
-    return f"""# Repository Binding
+    return f"""# Repository Binding (Deprecated Authority)
 
+This file is retained only as a compatibility reference.
+Canonical project metadata authority is `<project-root>/.work-bundle/project.yaml`.
+
+## Migration owner
+- `/wb-initialize-project`
+
+## Deterministic migration guidance
+- Doctor legacy structure: `/wb-initialize-project doctor`
+- Migrate to canonical metadata: `/wb-initialize-project migrate`
+
+## Last observed repository state (non-authoritative)
 ```yaml
 project_root: {project_root}
-project_git:
-  exists: {str((project_root / '.git').exists()).lower()}
-  gitignore: {project_root / '.gitignore'}
-  ignores_work_bundle: {str(has_ignore(pgi, '.work-bundle/')).lower()}
-  ignores_agent_entry: {str(has_ignore(pgi, 'AGENTS.md')).lower()}
-source_code_root: {project_root}
-skills_root: {project_root / 'skills'}
-scripts_root: {project_root / 'scripts'}
-references_root: {project_root / 'references'}
-roles_root: {project_root / 'references/roles'}
-rules_root: {project_root / 'references/rules'}
-rule_contract: {project_root / 'references/rules/contract.yaml'}
-rule_index: {project_root / 'references/rules/index.yaml'}
-knowledge_root: {wb / 'knowledge'}
-orchestration_root: {wb / 'orchestration'}
-work_bundle:
-  root: {wb}
-  git_repo: {str((wb / '.git').exists()).lower()}
-  gitignore: {wb / '.gitignore'}
-agent_entry:
-  path: {project_root / 'AGENTS.md'}
-  ignored_by_project_git: {str(has_ignore(pgi, 'AGENTS.md')).lower()}
-customized_skill_root: {CUSTOMIZED_SKILL_ROOT}
-global_skill_registry: {GLOBAL_SKILL_REGISTRY}
+project_git_exists: {str((project_root / '.git').exists()).lower()}
+project_gitignore: {project_root / '.gitignore'}
+project_ignores_work_bundle: {str(has_ignore(pgi, '.work-bundle/')).lower()}
+project_ignores_agent_entry: {str(has_ignore(pgi, 'AGENTS.md')).lower()}
+work_bundle_root: {wb}
+work_bundle_git_repo: {str((wb / '.git').exists()).lower()}
+work_bundle_gitignore: {wb / '.gitignore'}
+agent_entry_path: {project_root / 'AGENTS.md'}
 project_skill_override: {override if override.exists() else 'not configured'}
-optional_git_remote: not configured
-branch_defaults:
-  project: current
-  work_bundle: current
-private_repository_notes: no secrets or credentials are recorded here
-deprecated_rule_format: mdc
+global_skill_registry: {GLOBAL_SKILL_REGISTRY}
+customized_skill_root: {CUSTOMIZED_SKILL_ROOT}
 ```
 """
 
@@ -353,7 +429,22 @@ def inspect_project(project_root: Path) -> dict:
     pgi = read(project_root / '.gitignore').splitlines()
     wbi = read(wb / '.gitignore').splitlines()
     rb = read(project_root / 'references/bootstrap/repository-binding.md')
+    pdp = read(project_root / 'references/bootstrap/project-domain-profile.yaml')
     ab = read(project_root / 'references/bootstrap/agent-bootstrap.md')
+    pm = read(project_root / '.work-bundle/project.yaml')
+    runtime = resolve_bootstrap_runtime()
+    project_metadata_path = project_root / '.work-bundle/project.yaml'
+    project_metadata_missing = [field for field in PROJECT_METADATA_REQUIRED_FIELDS if f'{field}:' not in pm]
+    legacy_reference_paths = [
+        'references/bootstrap/repository-binding.md',
+        'references/bootstrap/project-domain-profile.yaml',
+    ]
+    legacy_guidance_tokens = ['/wb-initialize-project doctor', '/wb-initialize-project migrate', '.work-bundle/project.yaml']
+    legacy_guidance_missing = []
+    for rel in legacy_reference_paths:
+        text = read(project_root / rel)
+        if text and not all(token in text for token in legacy_guidance_tokens):
+            legacy_guidance_missing.append(rel)
     return {
         'project_root': str(project_root),
         'project_git': (project_root / '.git').exists(),
@@ -370,11 +461,19 @@ def inspect_project(project_root: Path) -> dict:
         'orchestration_tree': all((wb / d).exists() for d in ORCHESTRATION_DIRS),
         'bootstrap_root': (project_root / 'references/bootstrap').exists(),
         'repository_binding': (project_root / 'references/bootstrap/repository-binding.md').exists(),
-        'repository_binding_records_state': all(k in rb for k in ['project_git:', 'ignores_work_bundle:', 'ignores_agent_entry:', 'work_bundle:', 'git_repo:', 'agent_entry:']),
+        'repository_binding_migration_guidance': all(token in rb for token in legacy_guidance_tokens),
         'agent_bootstrap': (project_root / 'references/bootstrap/agent-bootstrap.md').exists(),
-        'agent_bootstrap_loading_order': all(s in ab for s in ['verify project Git boundary', 'verify work-bundle Git boundary', 'load global skill registry', 'load optional project skill registry override']),
+        'agent_bootstrap_loading_order': all(s in ab for s in ['load global bootstrap', 'resolve `work-bundle-root`', 'load canonical project metadata', 'verify project Git boundary', 'verify work-bundle Git boundary']),
+        'agent_bootstrap_migration_guidance': '/wb-initialize-project' in ab,
         'project_domain_profile': (project_root / 'references/bootstrap/project-domain-profile.yaml').exists(),
         'domain_profile': (project_root / 'references/bootstrap/project-domain-profile.yaml').exists(),
+        'project_domain_profile_migration_guidance': all(token in pdp for token in legacy_guidance_tokens),
+        'project_metadata_path': str(project_metadata_path),
+        'project_metadata_exists': project_metadata_path.exists(),
+        'project_metadata_required_fields_missing': project_metadata_missing,
+        'project_metadata_valid': not project_metadata_missing,
+        'project_metadata_authority': '.work-bundle/project.yaml',
+        'legacy_metadata_references_with_missing_guidance': legacy_guidance_missing,
         'rules_root': rules.exists(),
         'rule_files': len(list(rules.glob('*.yaml'))) if rules.exists() else 0,
         'rule_contract': (rules / 'contract.yaml').exists(),
@@ -387,20 +486,42 @@ def inspect_project(project_root: Path) -> dict:
         'mdc_rules': [str(p) for p in rules.glob('**/*.mdc')] if rules.exists() else [],
         'global_registry_copied': (wb / 'skills/skill-registry.yaml').exists(),
         'project_skill_override': (wb / 'orchestration/skill-registry.override.yaml').exists(),
+        'path_model': {
+            'project_root': str(project_root),
+            'work_bundle_root': runtime.get('resolved_work_bundle_root'),
+            'work_bundle_config_root': runtime.get('work_bundle_config_root'),
+        },
+        'global_bootstrap_path': runtime.get('global_bootstrap_path'),
+        'global_bootstrap_exists': runtime.get('global_bootstrap_exists'),
+        'work_bundle_root_pointer_path': runtime.get('work_bundle_root_pointer_path'),
+        'work_bundle_root_pointer_exists': runtime.get('work_bundle_root_pointer_exists'),
+        'work_bundle_root_pointer_state': runtime.get('work_bundle_root_pointer_state'),
+        'work_bundle_root_pointer_diagnostic': runtime.get('work_bundle_root_pointer_diagnostic'),
+        'work_bundle_root_pointer_reason': runtime.get('work_bundle_root_pointer_reason'),
+        'resolved_work_bundle_root': runtime.get('resolved_work_bundle_root'),
     }
 
 
 def project_failures(data: dict, strict: bool = True, include_roles: bool = False) -> list[str]:
-    required = ['project_gitignore', 'project_ignores_work_bundle', 'project_ignores_agents', 'agents_md', 'work_bundle', 'work_bundle_gitignore', 'knowledge_root', 'orchestration_root', 'bootstrap_root', 'repository_binding', 'agent_bootstrap', 'project_domain_profile', 'rules_root']
+    required = ['project_gitignore', 'project_ignores_work_bundle', 'project_ignores_agents', 'agents_md', 'work_bundle', 'work_bundle_gitignore', 'knowledge_root', 'orchestration_root', 'bootstrap_root', 'repository_binding', 'agent_bootstrap', 'project_domain_profile', 'rules_root', 'project_metadata_exists']
     if strict:
-        required.extend(['work_bundle_gitignore_required_entries', 'orchestration_tree', 'repository_binding_records_state', 'rule_contract', 'rule_contract_requires_enable_when', 'rule_index', 'roles_root', 'role_profiles'])
+        required.extend(['work_bundle_gitignore_required_entries', 'orchestration_tree', 'repository_binding_migration_guidance', 'project_domain_profile_migration_guidance', 'agent_bootstrap_loading_order', 'agent_bootstrap_migration_guidance', 'rule_contract', 'rule_contract_requires_enable_when', 'rule_index', 'roles_root', 'role_profiles'])
     failures = [k for k in required if not data.get(k)]
+    if not data.get('project_metadata_exists'):
+        failures.append(DIAG_PROJECT_METADATA_MISSING)
+    if data.get('project_metadata_exists') and data.get('project_metadata_required_fields_missing'):
+        failures.append(DIAG_PROJECT_METADATA_INVALID)
+    if data.get('legacy_metadata_references_with_missing_guidance'):
+        failures.append(DIAG_LEGACY_METADATA_STALE)
     if include_roles:
         failures.extend(data.get('role_duty_failures') or [])
     if data.get('mdc_rules'):
         failures.append('mdc_rules_present')
     if data.get('global_registry_copied'):
         failures.append('global_registry_not_copied')
+    pointer_diagnostic = data.get('work_bundle_root_pointer_diagnostic')
+    if pointer_diagnostic:
+        failures.append(pointer_diagnostic)
     return failures
 
 
@@ -438,10 +559,38 @@ def apply_project(project_root: Path, init_git: bool = True, create_override: bo
         changed.append(str(project_root / 'references/rules/contract.yaml'))
     if write(project_root / 'references/rules/index.yaml', 'rules_root: references/rules\ngenerated_by: wb-initialize-project\nstatus: initialized\nrule_files: []\n', overwrite=False):
         changed.append(str(project_root / 'references/rules/index.yaml'))
+    if write(project_root / '.work-bundle/project.yaml', '\n'.join([
+        'metadata_version: 1',
+        'authority: canonical',
+        f'project_root: {project_root}',
+        'work_bundle_config_root: ~/.work-bundle',
+        f'work_bundle_root: {project_root / ".work-bundle"}',
+        'project_git:',
+        f'  exists: {str((project_root / ".git").exists()).lower()}',
+        f'  gitignore: {project_root / ".gitignore"}',
+        f'  ignores_work_bundle: {str(has_ignore(read(project_root / ".gitignore").splitlines(), ".work-bundle/")).lower()}',
+        f'  ignores_agent_entry: {str(has_ignore(read(project_root / ".gitignore").splitlines(), "AGENTS.md")).lower()}',
+        'work_bundle_git:',
+        f'  exists: {str((project_root / ".work-bundle/.git").exists()).lower()}',
+        f'  gitignore: {project_root / ".work-bundle/.gitignore"}',
+        f'rules_root: {project_root / "references/rules"}',
+        f'skills_root: {project_root / "skills"}',
+        f'scripts_root: {project_root / "scripts"}',
+        'migration:',
+        '  authority_owner: /wb-initialize-project',
+        '  compatibility_window: none',
+        '  doctor_flow: "Use /wb-initialize-project doctor for stale legacy project metadata structures."',
+        '  migrate_flow: "Use /wb-initialize-project migrate to converge old metadata paths to .work-bundle/project.yaml."',
+        '',
+    ]), overwrite=False):
+        changed.append(str(project_root / '.work-bundle/project.yaml'))
     if create_override:
         path = wb / 'orchestration/skill-registry.override.yaml'
         if write(path, 'id: project-skill-registry-override\nstatus: current\noverrides: {}\n', overwrite=False):
             changed.append(str(path))
+    pointer_path = ensure_work_bundle_root_pointer(project_root)
+    if pointer_path:
+        changed.append(pointer_path)
     return sorted(set(changed))
 
 
@@ -508,6 +657,12 @@ def cmd_project(args: list[str], apply: bool = False, inspect_only: bool = False
         changed = apply_project(project_root, init_git=not parsed.disable_work_bundle_git, create_override=parsed.create_project_skill_override)
     data = inspect_project(project_root)
     failures = project_failures(data, strict=not inspect_only, include_roles=False)
+    data['canonical_metadata_authority'] = '.work-bundle/project.yaml'
+    data['migration_guidance'] = {
+        'owner': '/wb-initialize-project',
+        'doctor': '/wb-initialize-project doctor',
+        'migrate': '/wb-initialize-project migrate',
+    }
     data['status'] = 'passed' if not failures else 'issues-found'
     data['failures'] = failures
     if parsed.dry_run:
@@ -672,7 +827,7 @@ def cmd_role_context(args: list[str], validate: bool = False) -> int:
     warnings = [] if stage != 'unknown' else ['lifecycle stage unresolved']
     if resolution == 'fallback-draft-role':
         warnings.append('role resolution used one draft role')
-    data = {'role_context': {'source': 'wb-select-role-context', 'version': 1, 'target_directive': parsed.directive, 'source_artifact': str(source) if source else None, 'lifecycle_stage': stage, 'perspective': perspective, 'authority_stage': stage, 'primary_role': primary, 'supporting_roles': supporting, 'resolution': resolution, 'draft_role': draft_role, 'domain_profile': 'references/bootstrap/project-domain-profile.yaml', 'role_profiles': role_paths, 'skill_registry': GLOBAL_SKILL_REGISTRY, 'project_skill_override': '.work-bundle/orchestration/skill-registry.override.yaml' if (project_root / '.work-bundle/orchestration/skill-registry.override.yaml').exists() else None, 'suggested_skills': skill_hints(project_root, parsed.directive), 'source_basis': [item for item in ['references/bootstrap/repository-binding.md', 'references/bootstrap/agent-bootstrap.md', str(source) if source else None] if item], 'warnings': warnings, 'blocked': blocked, 'blocker': blocker}}
+    data = {'role_context': {'source': 'wb-select-role-context', 'version': 1, 'target_directive': parsed.directive, 'source_artifact': str(source) if source else None, 'lifecycle_stage': stage, 'perspective': perspective, 'authority_stage': stage, 'primary_role': primary, 'supporting_roles': supporting, 'resolution': resolution, 'draft_role': draft_role, 'domain_profile': 'references/bootstrap/project-domain-profile.yaml', 'role_profiles': role_paths, 'skill_registry': GLOBAL_SKILL_REGISTRY, 'project_skill_override': '.work-bundle/orchestration/skill-registry.override.yaml' if (project_root / '.work-bundle/orchestration/skill-registry.override.yaml').exists() else None, 'suggested_skills': skill_hints(project_root, parsed.directive), 'source_basis': [item for item in ['.work-bundle/project.yaml', 'references/bootstrap/agent-bootstrap.md', str(source) if source else None] if item], 'warnings': warnings, 'blocked': blocked, 'blocker': blocker}}
     text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
     if parsed.output:
         write(Path(parsed.output), text + '\n')
@@ -699,16 +854,39 @@ def cmd_integrity_report(args: list[str]) -> int:
     return int(module.main(args))
 
 
+def cmd_legacy_command_removed(command: str, replacement: str) -> int:
+    out({
+        'status': 'issues-found',
+        'diagnostic': DIAG_LEGACY_COMMAND_REMOVED,
+        'legacy_command': command,
+        'replacement_command': replacement,
+        'migration_owner': '/wb-initialize-project',
+        'guidance': [
+            f'Use `python3 scripts/wb.py {replacement}` instead.',
+            'Use `/wb-initialize-project doctor` for legacy structure diagnostics.',
+            'Use `/wb-initialize-project migrate` to converge stale metadata and command usage.',
+        ],
+    })
+    return 2
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(prog='wb.py', description='Canonical work-bundle helper CLI.')
-    parser.add_argument('command')
+    parser = argparse.ArgumentParser(
+        prog='wb.py',
+        description='Canonical work-bundle helper CLI.',
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=CLI_HELP_EPILOG,
+    )
+    parser.add_argument('command', help='Canonical command (retired legacy commands error with migration guidance).')
     parser.add_argument('args', nargs=argparse.REMAINDER)
     parsed = parser.parse_args()
     command = parsed.command
+    if command in LEGACY_COMMAND_MIGRATIONS:
+        return cmd_legacy_command_removed(command, LEGACY_COMMAND_MIGRATIONS[command])
     aliases = {
         'apply-project-initialization': 'initialize-project',
-        'apply-repository-model': 'repository-model',
-        'extract-domain-profile': 'generate-domain-profile',
+        'apply-repository-model': 'initialize-project',
+        'extract-domain-profile': 'generate-project-metadata-profile',
         'merge-registry-entry': 'register-skill',
         'validate-project-initialization': 'validate-project',
         'validate-runtime-artifacts': 'doctor',
@@ -717,12 +895,12 @@ def main() -> int:
         'integrity-report': 'integrity-check-report',
     }
     command = aliases.get(command, command)
-    if command in {'initialize-project', 'repository-model'}:
-        return cmd_project(parsed.args, apply=True, repo_model=command == 'repository-model')
-    if command in {'inspect-project-initialization', 'inspect-repository-model'}:
-        return cmd_project(parsed.args, inspect_only=True, repo_model=command == 'inspect-repository-model')
-    if command in {'validate-project', 'validate-repository-model'}:
-        return cmd_project(parsed.args, apply=False, repo_model=command == 'validate-repository-model')
+    if command == 'initialize-project':
+        return cmd_project(parsed.args, apply=True, repo_model=True)
+    if command == 'inspect-project-initialization':
+        return cmd_project(parsed.args, inspect_only=True, repo_model=True)
+    if command == 'validate-project':
+        return cmd_project(parsed.args, apply=False, repo_model=True)
     if command == 'create-rules':
         return cmd_create_rules(parsed.args)
     if command == 'validate-rules':
@@ -733,11 +911,11 @@ def main() -> int:
         return cmd_doctor(parsed.args, report=True)
     if command == 'workflow-branches':
         return cmd_doctor(parsed.args, workflow=True)
-    if command == 'generate-domain-profile':
+    if command == 'generate-project-metadata-profile':
         return cmd_domain_profile(parsed.args)
-    if command == 'merge-domain-profile':
+    if command == 'merge-project-metadata-profile':
         return cmd_domain_profile(parsed.args, merge=True)
-    if command == 'validate-domain-profile':
+    if command == 'validate-project-metadata-profile':
         return cmd_domain_profile(parsed.args, validate=True)
     if command == 'inspect-skill':
         return cmd_registry(parsed.args, inspect=True)

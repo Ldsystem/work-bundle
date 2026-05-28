@@ -1,5 +1,10 @@
 id: project-domain-profile
-status: current
+status: deprecated
+authority: compatibility-reference
+canonical_metadata: .work-bundle/project.yaml
+migration_owner: /wb-initialize-project
+doctor_flow: /wb-initialize-project doctor
+migrate_flow: /wb-initialize-project migrate
 version: 1
 generated_by: initialize-project
 updated_at: 2026-05-24

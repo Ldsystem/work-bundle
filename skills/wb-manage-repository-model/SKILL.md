@@ -1,23 +1,16 @@
 ---
 name: wb-manage-repository-model
-description: 'Manage v4 project/work-bundle repository boundaries, AGENTS.md, .gitignore, repository binding, and rules root idempotently. Canonical work-bundle skill name: wb-manage-repository-model.'
+description: 'Retired legacy skill. Command surface is hard-removed; migrate to wb-initialize-project.'
 ---
 
 # wb-manage-repository-model
 
-Use for repository boundary inspection, repair, and validation.
+This skill is retired and no longer an active entry point.
 
-Rules:
-- Keep project Git and `.work-bundle` Git separate.
-- Ensure project `.gitignore` ignores `.work-bundle/` and `AGENTS.md`.
-- Ensure `.work-bundle/.gitignore` owns work-bundle exclusions.
-- Write compact bootstrap artifacts only under `references/bootstrap/`.
-- Do not commit automatically.
+Deterministic migration guidance:
 
-## Scripts
-
-Use the unified work-bundle dispatcher:
-
-- Inspect repository model: `python3 scripts/wb.py inspect-repository-model <project-root>`
-- Apply repository model repair: `python3 scripts/wb.py repository-model <project-root>`
-- Validate repository model: `python3 scripts/wb.py validate-repository-model <project-root>`
+- Use `/wb-initialize-project` as the canonical skill.
+- Use `python3 scripts/wb.py inspect-project-initialization <project-root>` instead of `inspect-repository-model`.
+- Use `python3 scripts/wb.py initialize-project <project-root>` instead of `repository-model`.
+- Use `python3 scripts/wb.py validate-project <project-root> --dry-run` instead of `validate-repository-model`.
+- Legacy command invocations fail deterministically with `WB_LEGACY_COMMAND_REMOVED`.
