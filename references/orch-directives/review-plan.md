@@ -9,6 +9,8 @@ Review `${input:ReviewTarget}` after execution. Use this directive for final ver
 
 For v3 knowledge, validation-backed promotion requires front matter evidence in durable notes when a note is promoted to `implemented` or when `current` is promoted from `implemented`. When review needs durable knowledge, use the `implementation_plan` retrieval policy through `keep-summarizing` gateway mode. Review may recommend durable knowledge extraction through `keep-summarizing`, but it must not silently write durable knowledge or treat candidate/background retrieval as implemented authority.
 
+Review output must include a final line in this exact form: `Knowledge update disposition: completed|not-needed|blocked|required`.
+
 ## Context Boundary
 
 Allowed:
@@ -50,7 +52,9 @@ Validate:
 5. project files reflect the implementation claimed by the handoffs;
 6. validation evidence satisfies the task, phase, plan, and specification criteria;
 7. statuses are coherent across task files, phase task indexes, root plan phase indexes, handoff statuses, and indexes;
-8. no required artifact is missing, stale, contradictory, or under `.work-bundle/knowledge/`.
+8. no required artifact is missing, stale, contradictory, or under `.work-bundle/knowledge/`;
+9. the source specification `Knowledge Base Update` section is reflected in the final review state, including expected durable conclusions, evidence, and follow-up path;
+10. the final knowledge-update disposition is one of `completed`, `not-needed`, `blocked`, or `required`, with evidence for that outcome.
 
 ## Failure Path
 
@@ -61,12 +65,14 @@ If any review check fails:
 - include discrepancies, evidence, affected spec/plan/handoff/project files, severity, required fixes, and acceptance criteria;
 - link the repair specification to the reviewed plan and related handoffs;
 - report the repair specification path and the next `create-implementation-plan` or `execute-plan` action.
+- if the knowledge update disposition remains `required`, report that archival is blocked and instruct the agent to use `ks-extract-valuable-points` for mixed implementation/review evidence or `ks-breakdown-design` when the evidence source is a design file.
+- if the knowledge update disposition is `blocked` without an actionable blocker path, treat the review as failed and require repair rather than archive.
 
 The repair specification must be actionable without raw chat history.
 
 ## Success Path
 
-If all review checks pass:
+If all review checks pass and the knowledge update disposition is `completed` or `not-needed`:
 
 - mark related executor and orchestration handoffs `reviewed`, then archive them;
 - archive the related source specification;
@@ -75,6 +81,8 @@ If all review checks pass:
 - report archived paths and state that the plan is review-complete.
 
 Archival means moving files from `active/` to the corresponding `archived/` directory. Do not delete files.
+
+Do not archive when the knowledge update disposition is `required` or when it is `blocked` without an actionable blocker path. Those outcomes are blocked or failed review states, not success states.
 
 ## Helper Commands
 
@@ -98,6 +106,7 @@ Review blocked.
 Target: <plan id/path>
 Blocker: <specific blocker>
 Required action: <specific action>
+Knowledge update disposition: blocked|required
 No files archived.
 ```
 
@@ -110,6 +119,7 @@ Repair specification: <path>
 Findings:
 - <finding with evidence>
 Next action: <create-implementation-plan|execute-plan target>
+Knowledge update disposition: blocked|required
 No files archived.
 ```
 
@@ -127,8 +137,9 @@ Indexes refreshed:
 - .work-bundle/orchestration/plan/index.jsonl
 - .work-bundle/orchestration/handoff/index.jsonl
 Next action: none
+Knowledge update disposition: completed|not-needed
 ```
 
 ## Validation
 
-Confirm reviewed artifacts match the requested plan, durable knowledge was accessed only through `keep-summarizing` if needed, project file checks are limited to referenced files, failures create a repair specification instead of modifying implementation files, successes archive the specification, plan tree, and handoffs, indexes are refreshed, no files are deleted, and no artifact is written under `.work-bundle/knowledge/`.
+Confirm reviewed artifacts match the requested plan, durable knowledge was accessed only through `keep-summarizing` if needed, project file checks are limited to referenced files, failures create a repair specification instead of modifying implementation files, success/archive is allowed only for `Knowledge update disposition: completed` or `Knowledge update disposition: not-needed`, unresolved `required` dispositions route to `ks-extract-valuable-points` for mixed evidence or `ks-breakdown-design` for design files, review may recommend keep-summarizing follow-up but must not write durable knowledge directly, indexes are refreshed, no files are deleted, and no artifact is written under `.work-bundle/knowledge/`.

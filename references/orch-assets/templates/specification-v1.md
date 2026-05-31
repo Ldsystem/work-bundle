@@ -86,17 +86,30 @@ tags: [Optional: List of relevant tags or categories, e.g., `infrastructure`, `p
 
 **Note**: This section should focus on architectural and business dependencies, not specific package implementations. For example, specify "OAuth 2.0 authentication library" rather than "Microsoft.AspNetCore.Authentication.JwtBearer v6.0.1".
 
-## 9. Examples & Edge Cases
+## 9. Knowledge Base Update
+
+[Record whether this specification is expected to produce durable project knowledge without instructing agents to write durable notes directly.]
+
+- **Disposition**: required|not-needed|blocked
+- **Expected durable conclusions**:
+  - [List candidate durable conclusions or `None for this specification scope.`]
+- **Evidence sources**:
+  - [List expected implementation, validation, handoff, or source evidence.]
+- **Responsible follow-up**: [Record the approved follow-up path or `none`.]
+- **Blocks review/archive**: yes|no
+- **Rationale**: [Explain why the disposition applies.]
+
+## 10. Examples & Edge Cases
 
     ```code
     // Code snippet or data example demonstrating the correct application of the guidelines, including edge cases
     ```
 
-## 10. Validation Criteria
+## 11. Validation Criteria
 
 [List the criteria or tests that must be satisfied for compliance with this specification.]
 
-## 11. Related Specifications / Further Reading
+## 12. Related Specifications / Further Reading
 
 [Link to related spec 1]
 [Link to relevant external documentation]

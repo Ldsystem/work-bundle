@@ -30,6 +30,7 @@ Load `references/orch-directives/review-plan.md` for directive-specific behavior
 - `orch-plan-quality`: `references/rules/orch-plan-quality.yaml`
 - `orch-execution-boundary`: `references/rules/orch-execution-boundary.yaml`
 - `orch-handoff-required`: `references/rules/orch-handoff-required.yaml`
+- `orch-knowledge-update-disposition`: `references/rules/orch-knowledge-update-disposition.yaml`
 - `orch-review-archive`: `references/rules/orch-review-archive.yaml`
 
 ## Scripts

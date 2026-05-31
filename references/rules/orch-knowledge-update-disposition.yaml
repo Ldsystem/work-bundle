@@ -1,0 +1,45 @@
+id: rule-orch-knowledge-update-disposition
+status: current
+scope: work-bundle
+applies_to:
+  paths:
+    - skills/orch-create-specification/SKILL.md
+    - skills/orch-create-implementation-plan/SKILL.md
+    - skills/orch-review-plan/SKILL.md
+    - references/orch-directives/create-specification.md
+    - references/orch-directives/create-implementation-plan.md
+    - references/orch-directives/review-plan.md
+  skills:
+    - orch-create-specification
+    - orch-create-implementation-plan
+    - orch-review-plan
+  artifacts:
+    - specification
+    - plan
+    - task
+    - executor-handoff
+    - review
+enable_when:
+  - orchestration artifact may create or change durable implementation knowledge
+severity: must
+rule: orchestration completion requires explicit Knowledge Base Update disposition before archive
+required_behavior:
+  - include Knowledge Base Update disposition in implementation specifications
+  - carry disposition into implementation plan tasks and handoff criteria
+  - collect suggested durable conclusions or explicit none in executor-result handoffs
+  - when disposition remains required, delegate durable knowledge update to ks-extract-valuable-points or ks-breakdown-design according to source material
+  - gate review archive on completed or not-needed disposition
+prohibited_behavior:
+  - archive completed plans while knowledge update disposition remains required or blocked
+  - directly write durable knowledge from orchestration skills
+  - create orchestration plan phases or tasks that write .work-bundle/knowledge directly
+  - make execution agents browse .work-bundle/knowledge directly
+validation:
+  - rule is listed by corresponding orch skill Runtime Rules
+  - directives require the section, plan criteria, and review gate
+  - review directive names the ks skill follow-up for required durable updates
+  - wb rule validation passes
+source_authority:
+  - user-requested default update knowledge base enforcement
+  - .work-bundle/orchestration/spec/active/spec-process-rule-enforced-knowledge-update-disposition-20260528.md
+deprecated_sources: []

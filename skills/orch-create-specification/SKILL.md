@@ -28,6 +28,7 @@ Load `references/orch-directives/create-specification.md` for directive-specific
 - `orch-knowledge-gateway`: `references/rules/orch-knowledge-gateway.yaml`
 - `orch-artifact-role-separation`: `references/rules/orch-artifact-role-separation.yaml`
 - `orch-contract-loading`: `references/rules/orch-contract-loading.yaml`
+- `orch-knowledge-update-disposition`: `references/rules/orch-knowledge-update-disposition.yaml`
 - `orch-spec-open-question-boundary`: `references/rules/orch-spec-open-question-boundary.yaml`
 - `ks-note-state-authority`: `references/rules/ks-note-state-authority.yaml`
 

@@ -191,6 +191,8 @@ Report evidence for completion criteria from the related plan, phase, and task f
 
 List only conclusions that may be worth extracting into `.work-bundle/knowledge/` by `keep-summarizing`. Do not write durable knowledge directly from this handoff.
 
+This section is mandatory. Provide suggested durable conclusions with evidence, or state explicit `none` and cite the evidence that supports no durable conclusion for this handoff.
+
 - **DURABLE-001**: [Potential durable conclusion.]
   - **Suggested Perspective**: architecture|process-flow|data-flow|data-model|domain-model|api-contract|integration|code-structure|coding-rules|testing-quality|deployment-ops|decisions|patterns|glossary
   - **Evidence**: [Changed file, test, decision, or implementation result.]
@@ -199,6 +201,8 @@ List only conclusions that may be worth extracting into `.work-bundle/knowledge/
   - **Suggested Perspective**: architecture|process-flow|data-flow|data-model|domain-model|api-contract|integration|code-structure|coding-rules|testing-quality|deployment-ops|decisions|patterns|glossary
   - **Evidence**: [Changed file, test, decision, or implementation result.]
   - **Confidence**: high|medium|low
+- **DURABLE-000**: explicit `none`
+  - **Evidence**: [Why no durable conclusion is suggested.]
 
 ## 19. Recommended Orchestration Review
 
@@ -224,5 +228,5 @@ List deterministic next actions.
 - **HANDOFF-DONE-002**: All tests run or skipped are reported with results.
 - **HANDOFF-DONE-003**: All deviations from spec, plan, phase, or task files are listed.
 - **HANDOFF-DONE-004**: All unresolved issues and open questions are listed.
-- **HANDOFF-DONE-005**: Suggested durable conclusions are listed or explicitly marked `none`.
+- **HANDOFF-DONE-005**: Suggested durable conclusions are listed with evidence, or explicit `none` is recorded with evidence.
 - **HANDOFF-DONE-006**: Recommended orchestration review and next actions are provided.
