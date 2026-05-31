@@ -67,7 +67,7 @@ Use valid Markdown with YAML front matter.
 
 Load only when creating or validating:
 
-- [specification-v1.md](../contracts/specification-v1.md)
+- [specification-v1.md](../../assets/orchestration/contract/specification-v1.md)
 
 If the contract lacks explicit sections for source context, execution context, assumptions, alternatives, open questions, or fallback decisions, include those sections anyway.
 

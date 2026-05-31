@@ -25,9 +25,9 @@ After `dev-rules-doctor` completes, perform a read-only orchestrator-specific au
 
 - `SKILL.md`;
 - `README.md`;
-- `references/orch-workflow.md`;
-- `references/orch-directives/*.md`;
-- `evals/evals.json`;
+- `references/assets/orchestration/workflow.md`;
+- `references/directives/orchestration/*.md`;
+- `references/evals/orchestration/evals.json`;
 - helper commands in `scripts/orch.py`.
 
 Do not inspect `.work-bundle/knowledge/`. Do not inspect unrelated project files unless the user explicitly expands the diagnosis scope.
@@ -36,7 +36,7 @@ Do not inspect `.work-bundle/knowledge/`. Do not inspect unrelated project files
 
 Verify:
 
-1. every directive listed in `SKILL.md` has a matching file under `references/orch-directives/`;
+1. every directive listed in `SKILL.md` has a matching file under `references/directives/orchestration/`;
 2. every directive file has front matter with `name` and `description`;
 3. directive front matter `name` matches the directive filename;
 4. README, workflow reference, and evals describe the same directive set;

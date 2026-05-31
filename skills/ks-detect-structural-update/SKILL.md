@@ -11,17 +11,17 @@ Decide whether material passes the structural-value gate for durable knowledge.
 
 ## Workflow Reference
 
-Use `references/ks-workflow.md` as the shared workflow authority.
+Use `references/assets/keep-summarizing/workflow.md` as the shared workflow authority.
 
 ## Directive Reference
 
-Load `references/ks-directives/detect-structural-update.md` for directive-specific behavior.
+Load `references/directives/keep-summarizing/detect-structural-update.md` for directive-specific behavior.
 
 ## Runtime Rules
 
-- `ks-directive-selection`: `references/rules/ks-directive-selection.yaml`
-- `ks-structural-value`: `references/rules/ks-structural-value.yaml`
-- `ks-sensitivity-filter`: `references/rules/ks-sensitivity-filter.yaml`
+- `ks-directive-selection`: `rules/ks-directive-selection.yaml`
+- `ks-structural-value`: `rules/ks-structural-value.yaml`
+- `ks-sensitivity-filter`: `rules/ks-sensitivity-filter.yaml`
 
 ## Scripts
 
@@ -29,7 +29,7 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Additional References
 
-- `references/ks-directives.md`
+- `references/directives/keep-summarizing/index.md`
 
 ## Boundary
 

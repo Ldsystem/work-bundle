@@ -15,20 +15,20 @@ Before directive-specific work, call `wb-select-role-context` to resolve the com
 
 ## Workflow Reference
 
-Use `references/ks-workflow.md` as the shared workflow authority.
+Use `references/assets/keep-summarizing/workflow.md` as the shared workflow authority.
 
 ## Directive Reference
 
-Load `references/ks-directives/track-open-questions.md` for directive-specific behavior.
+Load `references/directives/keep-summarizing/track-open-questions.md` for directive-specific behavior.
 
 ## Runtime Rules
 
-- `ks-knowledge-boundary`: `references/rules/ks-knowledge-boundary.yaml`
-- `ks-persistence-gate`: `references/rules/ks-persistence-gate.yaml`
-- `ks-open-question-policy`: `references/rules/ks-open-question-policy.yaml`
-- `ks-note-state-authority`: `references/rules/ks-note-state-authority.yaml`
-- `ks-index-maintenance`: `references/rules/ks-index-maintenance.yaml`
-- `ks-sensitivity-filter`: `references/rules/ks-sensitivity-filter.yaml`
+- `ks-knowledge-boundary`: `rules/ks-knowledge-boundary.yaml`
+- `ks-persistence-gate`: `rules/ks-persistence-gate.yaml`
+- `ks-open-question-policy`: `rules/ks-open-question-policy.yaml`
+- `ks-note-state-authority`: `rules/ks-note-state-authority.yaml`
+- `ks-index-maintenance`: `rules/ks-index-maintenance.yaml`
+- `ks-sensitivity-filter`: `rules/ks-sensitivity-filter.yaml`
 
 ## Scripts
 
@@ -36,7 +36,7 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Additional References
 
-- `references/ks-directives.md`
+- `references/directives/keep-summarizing/index.md`
 
 ## Boundary
 

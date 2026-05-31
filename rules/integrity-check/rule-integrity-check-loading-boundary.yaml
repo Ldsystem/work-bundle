@@ -5,7 +5,7 @@ applies_to:
   paths:
     - references/bootstrap/agent-bootstrap.md
     - references/bootstrap/repository-binding.md
-    - references/rules/*.yaml
+    - rules/*.yaml
   skills:
     - wb-integrity-check
   artifacts:

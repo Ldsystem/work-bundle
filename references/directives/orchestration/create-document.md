@@ -52,7 +52,7 @@ Hard rules:
 
 Load only when creating or validating:
 
-- [document-v1.md](../contracts/document-v1.md)
+- [document-v1.md](../../assets/orchestration/contract/document-v1.md)
 
 ## Validation
 

@@ -144,9 +144,9 @@ If the source spec `Knowledge Base Update` section says no durable update is exp
 
 Load only when creating or validating:
 
-- [plan-v1.md](../contracts/plan-v1.md)
-- [phase-v1.md](../contracts/phase-v1.md)
-- [task-v1.md](../contracts/task-v1.md)
+- [plan-v1.md](../../assets/orchestration/contract/plan-v1.md)
+- [phase-v1.md](../../assets/orchestration/contract/phase-v1.md)
+- [task-v1.md](../../assets/orchestration/contract/task-v1.md)
 
 ## Validation
 

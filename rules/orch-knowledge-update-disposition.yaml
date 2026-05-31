@@ -6,9 +6,9 @@ applies_to:
     - skills/orch-create-specification/SKILL.md
     - skills/orch-create-implementation-plan/SKILL.md
     - skills/orch-review-plan/SKILL.md
-    - references/orch-directives/create-specification.md
-    - references/orch-directives/create-implementation-plan.md
-    - references/orch-directives/review-plan.md
+    - references/directives/orchestration/create-specification.md
+    - references/directives/orchestration/create-implementation-plan.md
+    - references/directives/orchestration/review-plan.md
   skills:
     - orch-create-specification
     - orch-create-implementation-plan

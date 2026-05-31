@@ -77,8 +77,8 @@ Update `.work-bundle/orchestration/handoff/index.jsonl` with `id`, `type`, `stat
 
 Load only when creating or validating:
 
-- [handoff-orchestration-v1.md](../contracts/handoff-orchestration-v1.md)
-- [handoff-executor-result-v1.md](../contracts/handoff-executor-result-v1.md)
+- [handoff-orchestration-v1.md](../../assets/orchestration/contract/handoff-orchestration-v1.md)
+- [handoff-executor-result-v1.md](../../assets/orchestration/contract/handoff-executor-result-v1.md)
 
 ## Validation
 

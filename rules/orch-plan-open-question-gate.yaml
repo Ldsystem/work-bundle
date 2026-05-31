@@ -1,7 +1,7 @@
 id: rule-orch-plan-open-question-gate
 status: current
 scope: work-bundle
-applies_to: {paths: [.work-bundle/orchestration/plan/**, skills/orch-create-implementation-plan/SKILL.md, references/orch-directives/create-implementation-plan.md], skills: [orch-create-implementation-plan], artifacts: [implementation-plan, phase, task]}
+applies_to: {paths: [.work-bundle/orchestration/plan/**, skills/orch-create-implementation-plan/SKILL.md, references/directives/orchestration/create-implementation-plan.md], skills: [orch-create-implementation-plan], artifacts: [implementation-plan, phase, task]}
 enable_when: [implementation plan is created from a specification]
 severity: must
 rule: implementation planning must not start from a specification with unresolved open questions.

@@ -11,16 +11,16 @@ Run read-only develop-rules and orchestrator workflow diagnostics.
 
 ## Workflow Reference
 
-Use `references/orch-workflow.md` as the shared workflow authority.
+Use `references/assets/orchestration/workflow.md` as the shared workflow authority.
 
 ## Directive Reference
 
-Load `references/orch-directives/doctor.md` for directive-specific behavior.
+Load `references/directives/orchestration/doctor.md` for directive-specific behavior.
 
 ## Runtime Rules
 
-- `orch-directive-selection`: `references/rules/orch-directive-selection.yaml`
-- `orch-doctor-readonly`: `references/rules/orch-doctor-readonly.yaml`
+- `orch-directive-selection`: `rules/orch-directive-selection.yaml`
+- `orch-doctor-readonly`: `rules/orch-doctor-readonly.yaml`
 
 ## Scripts
 

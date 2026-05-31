@@ -1,7 +1,7 @@
 id: rule-orch-spec-open-question-boundary
 status: current
 scope: work-bundle
-applies_to: {paths: [.work-bundle/orchestration/spec/**, skills/orch-create-specification/SKILL.md, references/orch-directives/create-specification.md], skills: [orch-create-specification], artifacts: [specification]}
+applies_to: {paths: [.work-bundle/orchestration/spec/**, skills/orch-create-specification/SKILL.md, references/directives/orchestration/create-specification.md], skills: [orch-create-specification], artifacts: [specification]}
 enable_when: [specification is created or repaired from knowledge or source artifacts]
 severity: must
 rule: specifications may expose uncertainty but must not convert unresolved uncertainty into requirements.

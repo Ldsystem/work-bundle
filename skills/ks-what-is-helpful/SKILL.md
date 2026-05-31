@@ -11,20 +11,20 @@ Retrieve useful durable project knowledge for a concrete task without writing kn
 
 ## Workflow Reference
 
-Use `references/ks-workflow.md` as the shared workflow authority.
+Use `references/assets/keep-summarizing/workflow.md` as the shared workflow authority.
 
 ## Directive Reference
 
-Load `references/ks-directives/what-is-helpful.md` for directive-specific behavior.
+Load `references/directives/keep-summarizing/what-is-helpful.md` for directive-specific behavior.
 
 ## Runtime Rules
 
-- `ks-directive-selection`: `references/rules/ks-directive-selection.yaml`
-- `ks-knowledge-boundary`: `references/rules/ks-knowledge-boundary.yaml`
-- `ks-context-pack-policy`: `references/rules/ks-context-pack-policy.yaml`
-- `ks-open-question-policy`: `references/rules/ks-open-question-policy.yaml`
-- `ks-note-state-authority`: `references/rules/ks-note-state-authority.yaml`
-- `ks-sensitivity-filter`: `references/rules/ks-sensitivity-filter.yaml`
+- `ks-directive-selection`: `rules/ks-directive-selection.yaml`
+- `ks-knowledge-boundary`: `rules/ks-knowledge-boundary.yaml`
+- `ks-context-pack-policy`: `rules/ks-context-pack-policy.yaml`
+- `ks-open-question-policy`: `rules/ks-open-question-policy.yaml`
+- `ks-note-state-authority`: `rules/ks-note-state-authority.yaml`
+- `ks-sensitivity-filter`: `rules/ks-sensitivity-filter.yaml`
 
 ## Scripts
 
@@ -32,7 +32,7 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Additional References
 
-- `references/ks-directives.md`
+- `references/directives/keep-summarizing/index.md`
 
 ## Boundary
 

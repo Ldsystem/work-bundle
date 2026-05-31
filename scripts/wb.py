@@ -323,7 +323,7 @@ def ensure_work_bundle_root_pointer(work_bundle_root: Path) -> str | None:
 
 
 def role_duty_profile(project_root: Path, role: str) -> dict:
-    path = project_root / 'references' / 'roles' / f'{role}.yaml'
+    path = project_root / 'roles' / f'{role}.yaml'
     text = read(path)
     if not text:
         return {'role': role, 'profile_found': False, 'profile_path': str(path), 'stance': None, 'capabilities': [], 'duties': [], 'must_resolve_from_context': []}
@@ -424,8 +424,8 @@ customized_skill_root: {CUSTOMIZED_SKILL_ROOT}
 
 def inspect_project(project_root: Path) -> dict:
     wb = project_root / '.work-bundle'
-    rules = project_root / 'references/rules'
-    roles = project_root / 'references/roles'
+    rules = project_root / 'rules'
+    roles = project_root / 'roles'
     pgi = read(project_root / '.gitignore').splitlines()
     wbi = read(wb / '.gitignore').splitlines()
     rb = read(project_root / 'references/bootstrap/repository-binding.md')
@@ -537,7 +537,7 @@ def apply_project(project_root: Path, init_git: bool = True, create_override: bo
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
             changed.append(str(path))
-    for directory in ['references/bootstrap', 'references/roles', 'references/rules']:
+    for directory in ['references/bootstrap', 'roles', 'rules']:
         path = project_root / directory
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
@@ -555,10 +555,10 @@ def apply_project(project_root: Path, init_git: bool = True, create_override: bo
         changed.append(str(project_root / 'references/bootstrap/agent-bootstrap.md'))
     if write(project_root / 'references/bootstrap/project-domain-profile.yaml', PROFILE, overwrite=False):
         changed.append(str(project_root / 'references/bootstrap/project-domain-profile.yaml'))
-    if write(project_root / 'references/rules/contract.yaml', RULE_CONTRACT, overwrite=False):
-        changed.append(str(project_root / 'references/rules/contract.yaml'))
-    if write(project_root / 'references/rules/index.yaml', 'rules_root: references/rules\ngenerated_by: wb-initialize-project\nstatus: initialized\nrule_files: []\n', overwrite=False):
-        changed.append(str(project_root / 'references/rules/index.yaml'))
+    if write(project_root / 'rules/contract.yaml', RULE_CONTRACT, overwrite=False):
+        changed.append(str(project_root / 'rules/contract.yaml'))
+    if write(project_root / 'rules/index.yaml', 'rules_root: rules\ngenerated_by: wb-initialize-project\nstatus: initialized\nrule_files: []\n', overwrite=False):
+        changed.append(str(project_root / 'rules/index.yaml'))
     if write(project_root / '.work-bundle/project.yaml', '\n'.join([
         'metadata_version: 1',
         'authority: canonical',
@@ -573,7 +573,7 @@ def apply_project(project_root: Path, init_git: bool = True, create_override: bo
         'work_bundle_git:',
         f'  exists: {str((project_root / ".work-bundle/.git").exists()).lower()}',
         f'  gitignore: {project_root / ".work-bundle/.gitignore"}',
-        f'rules_root: {project_root / "references/rules"}',
+        f'rules_root: {project_root / "rules"}',
         f'skills_root: {project_root / "skills"}',
         f'scripts_root: {project_root / "scripts"}',
         'migration:',
@@ -819,7 +819,7 @@ def cmd_role_context(args: list[str], validate: bool = False) -> int:
         primary = suggest_draft_role(stage, perspective)
         supporting = []
         draft_role = role_duty_profile(project_root, primary)
-    role_paths = [f'references/roles/{role}.yaml' for role in [primary] + supporting]
+    role_paths = [f'roles/{role}.yaml' for role in [primary] + supporting]
     missing_roles = [path for path in role_paths if not (project_root / path).exists()]
     if missing_roles:
         blocked = True

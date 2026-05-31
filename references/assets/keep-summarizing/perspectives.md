@@ -199,7 +199,7 @@ Earlier lifecycle notes may be retrieved as candidate/background context, but th
 
 
 ## Note Format
-[note-contract](../assets/templates/note-contract-v1.md)
+[note-contract](contract/note-contract-v1.md)
 
 ## Orchestrator Rule
 

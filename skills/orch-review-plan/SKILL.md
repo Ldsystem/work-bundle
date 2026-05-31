@@ -15,23 +15,23 @@ Before directive-specific work, call `wb-select-role-context` to resolve the com
 
 ## Workflow Reference
 
-Use `references/orch-workflow.md` as the shared workflow authority.
+Use `references/assets/orchestration/workflow.md` as the shared workflow authority.
 
 ## Directive Reference
 
-Load `references/orch-directives/review-plan.md` for directive-specific behavior.
+Load `references/directives/orchestration/review-plan.md` for directive-specific behavior.
 
 ## Runtime Rules
 
-- `orch-directive-selection`: `references/rules/orch-directive-selection.yaml`
-- `orch-orchestration-boundary`: `references/rules/orch-orchestration-boundary.yaml`
-- `orch-knowledge-gateway`: `references/rules/orch-knowledge-gateway.yaml`
-- `orch-artifact-role-separation`: `references/rules/orch-artifact-role-separation.yaml`
-- `orch-plan-quality`: `references/rules/orch-plan-quality.yaml`
-- `orch-execution-boundary`: `references/rules/orch-execution-boundary.yaml`
-- `orch-handoff-required`: `references/rules/orch-handoff-required.yaml`
-- `orch-knowledge-update-disposition`: `references/rules/orch-knowledge-update-disposition.yaml`
-- `orch-review-archive`: `references/rules/orch-review-archive.yaml`
+- `orch-directive-selection`: `rules/orch-directive-selection.yaml`
+- `orch-orchestration-boundary`: `rules/orch-orchestration-boundary.yaml`
+- `orch-knowledge-gateway`: `rules/orch-knowledge-gateway.yaml`
+- `orch-artifact-role-separation`: `rules/orch-artifact-role-separation.yaml`
+- `orch-plan-quality`: `rules/orch-plan-quality.yaml`
+- `orch-execution-boundary`: `rules/orch-execution-boundary.yaml`
+- `orch-handoff-required`: `rules/orch-handoff-required.yaml`
+- `orch-knowledge-update-disposition`: `rules/orch-knowledge-update-disposition.yaml`
+- `orch-review-archive`: `rules/orch-review-archive.yaml`
 
 ## Scripts
 

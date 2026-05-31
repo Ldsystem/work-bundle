@@ -1,6 +1,6 @@
 # keep-summarizing Directives
 
-Use this file to **select** a directive. Load only the chosen directive file from `references/ks-directives/<name>.md` unless the user needs a comparison across directives.
+Use this file to **select** a directive. Load only the chosen directive file from `references/directives/keep-summarizing/<name>.md` unless the user needs a comparison across directives.
 
 Modular directives are internal behavior modules, not separate skills.
 
@@ -8,19 +8,19 @@ Modular directives are internal behavior modules, not separate skills.
 
 | User intent | Directive | File |
 | --- | --- | --- |
-| Which directive should I use? | `help-with-directives` | [help-with-directives.md](ks-directives/help-with-directives.md) |
-| I want to do X — what knowledge helps? | `what-is-helpful` | [what-is-helpful.md](ks-directives/what-is-helpful.md) |
-| Extract + perspective-breakdown from chat/session | `extract-valuable-points` | [extract-valuable-points.md](ks-directives/extract-valuable-points.md) |
-| Should this be saved? | `detect-structural-update` | [detect-structural-update.md](ks-directives/detect-structural-update.md) |
-| Write or update notes | `write-knowledge` | [write-knowledge.md](ks-directives/write-knowledge.md) |
-| Rebuild indexes | `maintain-indexes` | [maintain-indexes.md](ks-directives/maintain-indexes.md) |
-| Merge or resolve note conflicts | `resolve-conflicts` | [resolve-conflicts.md](ks-directives/resolve-conflicts.md) |
-| Build agent context pack | `build-context-pack` | [build-context-pack.md](ks-directives/build-context-pack.md) |
-| Break down a design file | `breakdown-design` | [breakdown-design.md](ks-directives/breakdown-design.md) |
-| Track accepted future question | `track-open-questions` | [track-open-questions.md](ks-directives/track-open-questions.md) |
-| Resolve or update open question | `resolve-open-question` | [resolve-open-question.md](ks-directives/resolve-open-question.md) |
-| Change note lifecycle status | `manage-lifecycle` | [manage-lifecycle.md](ks-directives/manage-lifecycle.md) |
-| Enforce scope and sensitivity | `guard-scope` | [guard-scope.md](ks-directives/guard-scope.md) |
+| Which directive should I use? | `help-with-directives` | [help-with-directives.md](help-with-directives.md) |
+| I want to do X — what knowledge helps? | `what-is-helpful` | [what-is-helpful.md](what-is-helpful.md) |
+| Extract + perspective-breakdown from chat/session | `extract-valuable-points` | [extract-valuable-points.md](extract-valuable-points.md) |
+| Should this be saved? | `detect-structural-update` | [detect-structural-update.md](detect-structural-update.md) |
+| Write or update notes | `write-knowledge` | [write-knowledge.md](write-knowledge.md) |
+| Rebuild indexes | `maintain-indexes` | [maintain-indexes.md](maintain-indexes.md) |
+| Merge or resolve note conflicts | `resolve-conflicts` | [resolve-conflicts.md](resolve-conflicts.md) |
+| Build agent context pack | `build-context-pack` | [build-context-pack.md](build-context-pack.md) |
+| Break down a design file | `breakdown-design` | [breakdown-design.md](breakdown-design.md) |
+| Track accepted future question | `track-open-questions` | [track-open-questions.md](track-open-questions.md) |
+| Resolve or update open question | `resolve-open-question` | [resolve-open-question.md](resolve-open-question.md) |
+| Change note lifecycle status | `manage-lifecycle` | [manage-lifecycle.md](manage-lifecycle.md) |
+| Enforce scope and sensitivity | `guard-scope` | [guard-scope.md](guard-scope.md) |
 | Reader-facing doc from knowledge | `orchestrator create-document` | redirect from keep-summarizing |
 | Handoff artifact | `orchestrator create-handoff` | redirect from keep-summarizing |
 
@@ -74,16 +74,16 @@ User wants a handoff for another agent/session?
 
 ## All directive files
 
-- [help-with-directives.md](ks-directives/help-with-directives.md)
-- [what-is-helpful.md](ks-directives/what-is-helpful.md)
-- [extract-valuable-points.md](ks-directives/extract-valuable-points.md)
-- [detect-structural-update.md](ks-directives/detect-structural-update.md)
-- [build-context-pack.md](ks-directives/build-context-pack.md)
-- [write-knowledge.md](ks-directives/write-knowledge.md)
-- [maintain-indexes.md](ks-directives/maintain-indexes.md)
-- [resolve-conflicts.md](ks-directives/resolve-conflicts.md)
-- [breakdown-design.md](ks-directives/breakdown-design.md)
-- [track-open-questions.md](ks-directives/track-open-questions.md)
-- [resolve-open-question.md](ks-directives/resolve-open-question.md)
-- [manage-lifecycle.md](ks-directives/manage-lifecycle.md)
-- [guard-scope.md](ks-directives/guard-scope.md)
+- [help-with-directives.md](help-with-directives.md)
+- [what-is-helpful.md](what-is-helpful.md)
+- [extract-valuable-points.md](extract-valuable-points.md)
+- [detect-structural-update.md](detect-structural-update.md)
+- [build-context-pack.md](build-context-pack.md)
+- [write-knowledge.md](write-knowledge.md)
+- [maintain-indexes.md](maintain-indexes.md)
+- [resolve-conflicts.md](resolve-conflicts.md)
+- [breakdown-design.md](breakdown-design.md)
+- [track-open-questions.md](track-open-questions.md)
+- [resolve-open-question.md](resolve-open-question.md)
+- [manage-lifecycle.md](manage-lifecycle.md)
+- [guard-scope.md](guard-scope.md)
