@@ -1,3 +1,13 @@
 id: default-work-bundle-tree
 status: current
-roots: [roles, rules, .work-bundle/knowledge/notes, .work-bundle/knowledge/open-questions, .work-bundle/knowledge/context-packs, .work-bundle/knowledge/indexes, references/bootstrap, .work-bundle/orchestration/principles, .work-bundle/orchestration/templates, .work-bundle/orchestration/spec/active, .work-bundle/orchestration/plan/active, .work-bundle/orchestration/handoff/executor/active, .work-bundle/orchestration/reviews]
+roots:
+  - roles
+  - rules
+  - .work-bundle/knowledge/notes
+  - .work-bundle/knowledge/open-questions
+  - .work-bundle/knowledge/context-packs
+  - .work-bundle/knowledge/indexes
+  - .work-bundle/orchestration/spec/active
+  - .work-bundle/orchestration/plan/active
+  - .work-bundle/orchestration/handoff/executor/active
+  - .work-bundle/orchestration/reviews

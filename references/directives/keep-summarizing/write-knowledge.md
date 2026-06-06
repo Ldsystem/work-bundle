@@ -26,13 +26,13 @@ The user explicitly requests persistence or gave a strong persist signal.
 - Target perspective path and title.
 - Note content or source to extract from.
 - Lifecycle status when not `current`.
-- `references/ks-perspectives.md` for leaf perspective validation.
+- `references/assets/keep-summarizing/perspectives.md` for leaf perspective validation.
 
 ## Workflow
 
 1. Run `guard-scope` checks. Stop on any failure.
-2. Read `references/ks-workflow.md` and apply the Mandatory Persistence Gate.
-3. Read `references/ks-perspectives.md` for leaf path.
+2. Read `references/assets/keep-summarizing/workflow.md` and apply the Mandatory Persistence Gate.
+3. Read `references/assets/keep-summarizing/perspectives.md` for leaf path.
 4. Validate the target path is a specific leaf perspective path, not a broad container.
 5. Validate granularity: one durable question per note.
 6. Check existing registry/index entries and note bodies for duplicates or conflicts.
@@ -51,7 +51,7 @@ The user explicitly requests persistence or gave a strong persist signal.
 - prefer updating existing notes over creating duplicates
 - do not create full duplicate notes across perspectives; use one canonical note plus a short linked stub when needed
 - add relative links to related notes
-- require a leaf perspective path justified by `references/ks-perspectives.md`
+- require a leaf perspective path justified by `references/assets/keep-summarizing/perspectives.md`
 - cite source paths or note IDs when source material exists
 - exclude raw chat logs, temporary command output, credentials, tokens, personal data, and one-off debugging details
 - do not let implementation or interface notes become the only source for stable domain rules

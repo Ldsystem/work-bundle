@@ -1,4 +1,0 @@
-id: doctor-report-contract
-status: current
-required_sections: [Status, Target, Summary, Errors, Warnings, Recommended Fixes, Suggested Repair Skills, Files Checked, Files Changed]
-files_changed: none

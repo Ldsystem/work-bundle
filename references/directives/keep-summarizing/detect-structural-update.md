@@ -22,12 +22,12 @@ The user already gave a strong persist signal and details are clear (`write-know
 
 - Candidate knowledge or change description.
 - Source context.
-- Candidate target perspective path from `references/ks-perspectives.md`.
+- Candidate target perspective path from `references/assets/keep-summarizing/perspectives.md`.
 
 ## Workflow
 
-1. Run the structural-value test from `references/ks-workflow.md`.
-2. Read `references/ks-perspectives.md` and verify perspective fit before deciding.
+1. Run the structural-value test from `references/assets/keep-summarizing/workflow.md`.
+2. Read `references/assets/keep-summarizing/perspectives.md` and verify perspective fit before deciding.
 3. Reject container-only perspective targets; require a leaf perspective path.
 4. Check granularity fit: one durable question per note candidate.
 5. Check for duplicate durable facts already stored in another perspective.

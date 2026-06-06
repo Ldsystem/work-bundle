@@ -3,6 +3,7 @@
 *.pem
 .env
 .env.*
+!.env.example
 cache/
 tmp/
 temp

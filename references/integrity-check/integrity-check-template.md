@@ -1,8 +1,4 @@
-# Work-Bundle Integrity Check: <check-title>
-
-## Metadata
-
-```yaml
+---
 report_id: wbi-<YYYYMMDD-HHmm>
 checker_skill: work-bundle-integrity-check
 report_status: draft # draft | active | partially_fixed | closed | superseded
@@ -17,7 +13,9 @@ scope:
   - <work-bundle-root>/
 out_of_scope:
   - <project-root>/.work-bundle/ unless explicitly requested
-```
+---
+
+# Work-Bundle Integrity Check: <check-title>
 
 ## Executive Summary
 
@@ -48,7 +46,6 @@ Summary:
 
 | Timestamp | Actor | From | To | Reason | Evidence |
 |---|---|---|---|---|---|
-| <timestamp> | agent | - | draft | Initial report generated. | <report path> |
 
 ## Issue Status Summary
 
@@ -64,13 +61,11 @@ superseded: <n>
 
 | Issue ID | Issue Status | Severity | Type | Affected File / Area | Risk | Recommended Fix |
 |---|---|---|---|---|---|---|
-| WBI-001 | open | critical | <type> | <path or area> | <risk> | <fix> |
 
 ## Orphan File Findings
 
 | Issue ID | File | Root | Issue Status | Classification | Useful | Correct Owner | Recommended Action |
 |---|---|---|---|---|---:|---|---|
-| WBI-<number> | <path> | user_bundle \| source_bundle | open | useful_unreferenced \| obsolete \| duplicate \| generated_artifact \| historical_source \| unknown | yes \| no \| unknown | <owner> | <action> |
 
 ### WBI-<number>: <file-path>
 
@@ -111,13 +106,11 @@ Verification evidence after fix:
 
 | Issue ID | Issue Status | Referring File | Missing Target | Severity | Recommended Fix |
 |---|---|---|---|---|---|
-| WBI-<number> | open | <path> | <missing path> | critical \| high \| medium \| low | <fix> |
 
 ## Rule Branch Consistency
 
 | Issue ID | Issue Status | Rule File | Rule Status | Problems | Severity | Recommended Fix |
 |---|---|---|---|---|---|---|
-| WBI-<number> | open | <path> | active \| draft \| deprecated \| unknown | <problem summary> | high | <fix> |
 
 Check dimensions:
 
@@ -138,7 +131,6 @@ Check dimensions:
 
 | Issue ID | Issue Status | Skill | Skill Status | Problems | Severity | Recommended Fix |
 |---|---|---|---|---|---|---|
-| WBI-<number> | open | <skill-name or path> | active \| draft \| deprecated \| unknown | <problem summary> | high | <fix> |
 
 Check dimensions:
 
@@ -159,13 +151,11 @@ Check dimensions:
 
 | Issue ID | Issue Status | Script | Referenced By | Script Status | Severity | Recommended Fix |
 |---|---|---|---|---|---|---|
-| WBI-<number> | open | <script path> | <referring file> | exists \| missing \| wrong_path \| undocumented | high | <fix> |
 
 ## Script Responsibility Boundaries
 
 | Issue ID | Issue Status | Script | Responsibility Issue | Severity | Recommended Action | Recommended Fix |
 |---|---|---|---|---|---|---|
-| WBI-<number> | open | <script path> | owns_policy \| validates_integrity_as_authority \| classifies_orphans \| generates_recommendations \| auto_repairs_without_request \| closes_without_evidence \| executes_project_code \| crawls_project_roots \| mutates_without_explicit_mode \| missing_report_status_support \| missing_issue_status_support | critical \| high \| medium \| low | restrict_to_report_helper \| remove_validator_authority \| require_agent_authored_findings \| add_explicit_repair_mode \| add_evidence_requirement \| remove_execution_path \| add_scope_guard \| update_script_design_reference | <fix> |
 
 Responsibility contract:
 
@@ -185,7 +175,6 @@ rules/integrity-check/index.yaml
 
 | Issue ID | Issue Status | File / Rule | Compression Issue | Runtime Loading Risk | Recommended Action | Recommended Fix |
 |---|---|---|---|---|---|---|
-| WBI-<number> | open | <path> | eager_global_load \| missing_enable_condition \| global_rule_should_be_skill_scoped \| heavy_file_loaded_at_startup \| roadmap_loaded_too_early \| profile_loaded_too_early \| repository_binding_loaded_too_early \| metadata_missing \| split_recommended \| compact_reference_needed | none \| low \| medium \| high | isolate_rule \| add_enable_condition \| move_to_skill_scope \| add_lazy_load_boundary \| replace_with_metadata_stub \| split_file \| create_compact_reference \| archive_verbose_source | <fix> |
 
 Check required targets:
 
@@ -229,7 +218,6 @@ Compression principles checked:
 
 | Issue ID | Issue Status | Registry | Registry Status | Problems | Severity | Recommended Fix |
 |---|---|---|---|---|---|---|
-| WBI-<number> | open | <registry path> | valid \| malformed \| stale \| missing | <problem summary> | high | <fix> |
 
 Registry loading check:
 
@@ -250,7 +238,6 @@ Project Registry path:
 
 | Issue ID | Issue Status | Issue Type | Severity | Project | Recommended Fix |
 |---|---|---|---|---|---|
-| WBI-<number> | open | missing_registry \| invalid_yaml \| missing_project_id \| duplicate_project_id \| missing_project_root \| broken_project_root \| invalid_status \| stale_latest_working_on \| archived_selected \| workspace_boundary_violation \| project_bundle_path_mismatch \| initiative_scope_violation | critical \| high \| medium \| low | <project slug or -> | <fix> |
 
 Latest-working-on validation:
 
@@ -267,19 +254,16 @@ problem: <none or summary>
 
 | Issue ID | Issue Status | File | Drift Type | Severity | Recommended Fix |
 |---|---|---|---|---|---|
-| WBI-<number> | open | <path> | missing_install \| stale_install \| runtime_only \| source_only_unregistered \| shadowed_definition \| deprecated_active \| path_mismatch | high | <fix> |
 
 ## Authority / Precedence Conflicts
 
 | Issue ID | Issue Status | Higher Authority | Lower Authority | Conflict | Severity | Recommended Fix |
 |---|---|---|---|---|---|---|
-| WBI-<number> | open | <path> | <path> | <conflict summary> | critical \| high | <fix> |
 
 ## Knowledge Base Updates Required After Fix
 
 | Issue ID | Fixed By | Knowledge / Rule / Skill / Registry Updates Required | Verification Evidence |
 |---|---|---|---|
-| WBI-<number> | <fix summary or artifact> | <source-of-truth updates required> | <evidence after fix> |
 
 Use this section to prevent stale instruction drift. If a fix changes durable behavior, update the corresponding source of truth, not only the broken file.
 
@@ -319,13 +303,11 @@ Apply fixes in this order:
 
 | Target File | Change Type | Related Issue IDs | Patch Summary |
 |---|---|---|---|
-| <path> | edit \| move \| archive \| remove \| create \| split \| compact \| add_lazy_load_boundary \| add_enable_condition | WBI-<number> | <summary> |
 
 ## Open Questions
 
 | Question ID | Related Issue IDs | Question | Blocking | Recommended Decision Owner |
 |---|---|---|---:|---|
-| OQ-WBI-<number> | WBI-<number> | <question> | yes \| no | user \| maintainer \| agent |
 
 ## Closure Checklist
 

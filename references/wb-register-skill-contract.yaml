@@ -1,4 +1,22 @@
 id: skill-registry-entry-contract
 status: current
-required: [type, source, mode, priority, used_by, stages, allowed_outputs, validation, fallback]
-stable_roles: [project-manager, solution-architect, domain-analyst, ui-designer, frontend-developer, backend-developer, database-engineer, qa-reviewer, devops-engineer]
+required:
+  - type
+  - source
+  - mode
+  - priority
+  - used_by
+  - stages
+  - allowed_outputs
+  - validation
+  - fallback
+stable_roles:
+  - project-manager
+  - solution-architect
+  - domain-analyst
+  - ui-designer
+  - frontend-developer
+  - backend-developer
+  - database-engineer
+  - qa-reviewer
+  - devops-engineer

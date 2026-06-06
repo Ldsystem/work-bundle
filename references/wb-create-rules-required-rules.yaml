@@ -1,1 +1,15 @@
-required_rules: [repository-boundary, knowledge-boundary, orchestration-boundary, lifecycle-authority, retrieval-gateway, role-context, skill-registry, domain-profile, execution-boundary, handoff-boundary, review-archive-boundary, doctor-readonly, runtime-artifact-format, security-exclusion]
+required_rules:
+  - repository-boundary
+  - knowledge-boundary
+  - orchestration-boundary
+  - lifecycle-authority
+  - retrieval-gateway
+  - role-context
+  - skill-registry
+  - domain-profile
+  - execution-boundary
+  - handoff-boundary
+  - review-archive-boundary
+  - doctor-readonly
+  - runtime-artifact-format
+  - security-exclusion

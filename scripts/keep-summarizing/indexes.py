@@ -1,0 +1,240 @@
+from core import *
+
+def markdown_files(root: Path) -> list[Path]:
+    candidates = list((root / "notes").glob("**/*.md")) + list((root / "context-packs").glob("*.md"))
+    return sorted(path for path in candidates if path.is_file())
+
+
+def open_question_files(root: Path) -> list[Path]:
+    base = root / "open-questions"
+    if not base.exists():
+        return []
+    return sorted(path for path in base.glob("**/*.md") if path.is_file() and path.name != "index.md")
+
+
+def v3_note_issues(root: Path, path: Path, fm: dict[str, object]) -> list[str]:
+    rel = path.relative_to(root).as_posix()
+    issues: list[str] = []
+    for key in ["id", "title", "lifecycle_stage", "perspective", "status", "source_type"]:
+        if key not in fm:
+            issues.append(f"missing {key}: {rel}")
+    lifecycle_stage = str(fm.get("lifecycle_stage", ""))
+    perspective = str(fm.get("perspective", ""))
+    status = str(fm.get("status", ""))
+    source_type = str(fm.get("source_type", ""))
+    if lifecycle_stage and lifecycle_stage not in LIFECYCLE_PATH_SEGMENTS:
+        issues.append(f"invalid lifecycle_stage {lifecycle_stage}: {rel}")
+    if perspective and perspective not in V3_LEAF_PERSPECTIVES and perspective not in LEAF_PERSPECTIVES:
+        issues.append(f"invalid perspective {perspective}: {rel}")
+    if lifecycle_stage and perspective and perspective in V3_LEAF_PERSPECTIVES:
+        expected_segment = lifecycle_to_path_segment(lifecycle_stage)
+        if not perspective.startswith(f"{expected_segment}/"):
+            issues.append(f"lifecycle/perspective mismatch: {rel}")
+        if rel.startswith("notes/") and f"notes/{perspective}/" not in rel:
+            issues.append(f"perspective/path mismatch: {rel}")
+    if status and status not in DEFAULT_STATUSES:
+        issues.append(f"invalid status {status}: {rel}")
+    if source_type and source_type not in SOURCE_TYPES:
+        issues.append(f"invalid source_type {source_type}: {rel}")
+    if "truth_level" in fm:
+        issues.append(f"forbidden truth_level: {rel}")
+    if status == "implemented" and not has_frontmatter_list(fm, "evidence"):
+        issues.append(f"missing evidence for implemented note: {rel}")
+    return issues
+
+
+def strip_non_retrieval_sections(body: str) -> str:
+    lines = body.splitlines()
+    kept: list[str] = []
+    skip = False
+    for line in lines:
+        if re.match(r"^##\s+(Version History|Accepted Open Questions|Open Questions|Superseded Theory)\s*$", line, flags=re.IGNORECASE):
+            skip = True
+            continue
+        if skip and line.startswith("## "):
+            skip = False
+        if not skip:
+            kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def build_sqlite_index(root: Path, docs: list[dict[str, object]]) -> None:
+    db_path = root / "indexes" / "knowledge.sqlite"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            DROP TABLE IF EXISTS knowledge_note_fts;
+            DROP TABLE IF EXISTS knowledge_note_relation;
+            DROP TABLE IF EXISTS knowledge_note;
+            CREATE TABLE knowledge_note (
+              rowid INTEGER PRIMARY KEY,
+              id TEXT NOT NULL UNIQUE,
+              path TEXT NOT NULL UNIQUE,
+              title TEXT NOT NULL,
+              lifecycle_stage TEXT NOT NULL,
+              perspective TEXT NOT NULL,
+              status TEXT NOT NULL,
+              source_type TEXT NOT NULL,
+              updated_at TEXT,
+              summary TEXT,
+              tags TEXT,
+              body TEXT NOT NULL
+            );
+            CREATE TABLE knowledge_note_relation (
+              note_id TEXT NOT NULL,
+              related_note_id TEXT NOT NULL,
+              relation_type TEXT NOT NULL,
+              PRIMARY KEY (note_id, related_note_id, relation_type),
+              FOREIGN KEY (note_id) REFERENCES knowledge_note(id) ON DELETE CASCADE
+            );
+            CREATE VIRTUAL TABLE knowledge_note_fts USING fts5(
+              title,
+              summary,
+              body,
+              tags,
+              content='knowledge_note',
+              content_rowid='rowid'
+            );
+            """
+        )
+        for doc in docs:
+            if not doc.get("sqlite_include"):
+                continue
+            cursor = conn.execute(
+                """
+                INSERT INTO knowledge_note(id, path, title, lifecycle_stage, perspective, status, source_type, updated_at, summary, tags, body)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    doc["id"],
+                    doc["path"],
+                    doc["title"],
+                    doc.get("lifecycle_stage", ""),
+                    doc.get("perspective", ""),
+                    doc.get("status", ""),
+                    doc.get("source_type", ""),
+                    doc.get("updated_at", ""),
+                    doc.get("summary", ""),
+                    json.dumps(doc.get("tags", []), ensure_ascii=False),
+                    doc.get("body", ""),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO knowledge_note_fts(rowid, title, summary, body, tags) VALUES (?, ?, ?, ?, ?)",
+                (cursor.lastrowid, doc["title"], doc.get("summary", ""), doc.get("body", ""), json.dumps(doc.get("tags", []), ensure_ascii=False)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def cmd_index(args: argparse.Namespace) -> None:
+    root = project_dir(args.project, args)
+    config = project_config(root)
+    indexes = root / "indexes"
+    indexes.mkdir(parents=True, exist_ok=True)
+    docs = []
+    chunks = []
+    manifest = {
+        "generated_at": now_ts(),
+        "project": args.project,
+        "documents": [],
+    }
+    for path in markdown_files(root):
+        rel = path.relative_to(root).as_posix()
+        fm, body = read_front_matter(path)
+        if not fm:
+            continue
+        status = str(fm.get("status", "draft"))
+        sensitivity = str(fm.get("sensitivity", "normal"))
+        include = status not in config["exclude_status"] and sensitivity not in config["exclude_sensitivity"]
+        doc = {
+            "id": fm.get("id", rel),
+            "path": rel,
+            "title": fm.get("title", path.stem),
+            "lifecycle_stage": fm.get("lifecycle_stage", ""),
+            "perspective": fm.get("perspective", ""),
+            "status": status,
+            "source_type": fm.get("source_type", ""),
+            "summary": fm.get("summary", ""),
+            "sensitivity": sensitivity,
+            "include": include,
+            "updated_at": fm.get("updated_at", ""),
+            "tags": fm.get("tags", []),
+            "body": strip_non_retrieval_sections(body),
+            "sqlite_include": rel.startswith("notes/"),
+        }
+        docs.append(doc)
+        if include:
+            text_hash = "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
+            chunks.append(
+                {
+                    "chunk_id": f"{doc['id']}#body",
+                    "document_id": doc["id"],
+                    "path": rel,
+                    "heading": "Body",
+                    "text_hash": text_hash,
+                    "tags": fm.get("tags", []),
+                }
+            )
+            manifest["documents"].append({"id": doc["id"], "path": rel, "text_hash": text_hash})
+    (indexes / "document-registry.jsonl").write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in docs) + ("\n" if docs else ""), encoding="utf-8")
+    (indexes / "chunk-registry.jsonl").write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in chunks) + ("\n" if chunks else ""), encoding="utf-8")
+    (indexes / "embedding-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (indexes / "backlink-map.json").write_text("{}\n", encoding="utf-8")
+    build_sqlite_index(root, docs)
+    build_open_question_index(root, args.project)
+    print(f"indexed {len(docs)} documents")
+
+
+def build_open_question_index(root: Path, project: str) -> list[dict[str, object]]:
+    indexes = root / "indexes"
+    indexes.mkdir(parents=True, exist_ok=True)
+    open_questions = root / "open-questions"
+    open_questions.mkdir(parents=True, exist_ok=True)
+    rows: list[dict[str, object]] = []
+    by_perspective: dict[str, list[dict[str, object]]] = {}
+    for path in open_question_files(root):
+        fm, _ = read_front_matter(path)
+        if not fm:
+            continue
+        rel = path.relative_to(root).as_posix()
+        status = str(fm.get("status", "open"))
+        row = {
+            "id": fm.get("id", rel),
+            "title": fm.get("title", path.stem),
+            "path": rel,
+            "perspective": fm.get("perspective", ""),
+            "status": status,
+            "trigger_terms": fm.get("trigger_terms", []),
+            "updated_at": fm.get("updated_at", ""),
+            "resolved_by_note_id": fm.get("resolved_by_note_id", ""),
+        }
+        rows.append(row)
+        by_perspective.setdefault(str(row["perspective"]), []).append(row)
+    (indexes / "open-question-registry.jsonl").write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in rows) + ("\n" if rows else ""),
+        encoding="utf-8",
+    )
+    index_lines = ["# Open Questions", "", "Generated from standalone open-question notes.", ""]
+    for row in rows:
+        index_lines.append(f"- [{row['status']}] {row['id']} - {row['title']} ({row['path']})")
+    (open_questions / "index.md").write_text("\n".join(index_lines).rstrip() + "\n", encoding="utf-8")
+    for perspective, items in by_perspective.items():
+        if not perspective:
+            continue
+        perspective_dir = open_questions / perspective
+        perspective_dir.mkdir(parents=True, exist_ok=True)
+        lines = [f"# {perspective} Open Questions", "", "Generated from standalone open-question notes.", ""]
+        for row in items:
+            lines.append(f"- [{row['status']}] {row['id']} - {row['title']} ({row['path']})")
+        (perspective_dir / "index.md").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return rows
+
+
+def cmd_index_open_questions(args: argparse.Namespace) -> None:
+    root = project_dir(args.project, args)
+    rows = build_open_question_index(root, args.project)
+    print(f"indexed {len(rows)} open questions")
+

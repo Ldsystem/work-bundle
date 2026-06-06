@@ -18,7 +18,7 @@ The user has a design file (messy or structured) to map into durable knowledge n
 
 ## Do not use when
 
-The user only wants to find existing knowledge (`what-is-helpful`) or generate a reader-facing doc (use `orchestrator` `create-document`).
+The user only wants to find existing knowledge (`what-is-helpful`) or generate a reader-facing doc (use `orch-create-document`).
 
 ## Key parameters
 

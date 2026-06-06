@@ -24,7 +24,7 @@ Verify:
 - Git command is allowlisted
 - note has `visibility` and `sensitivity`
 - embedding export excludes blocked statuses and sensitivities
-- reader-facing documents are redirected to `orchestrator` and inherit source sensitivity there
+- reader-facing documents are redirected to `orch-create-document` and inherit source sensitivity there
 
 Fail if:
 

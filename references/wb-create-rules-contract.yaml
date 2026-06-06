@@ -1,3 +1,12 @@
 id: runtime-rule-contract
 status: current
-required_fields: [id, status, scope, enable_when, severity, required_behavior, prohibited_behavior, validation, source_authority]
+required_fields:
+  - id
+  - status
+  - scope
+  - enable_when
+  - severity
+  - required_behavior
+  - prohibited_behavior
+  - validation
+  - source_authority

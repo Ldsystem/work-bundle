@@ -1,5 +1,0 @@
-id: manage-repository-model-contract
-status: current
-scope: work-bundle
-inputs: [project_root, initialize_git, create_agents_entry, update_gitignore, create_binding, dry_run]
-outputs: [repository_state, changed_files, warnings, failures]

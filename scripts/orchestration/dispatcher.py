@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+
+from core import HANDOFF_TYPES
+from doctor import cmd_doctor
+from documents import cmd_git_status, cmd_next_action_candidates, cmd_related, cmd_state, cmd_write_doc
+from handoffs import cmd_index_handoffs, cmd_list_handoffs, cmd_set_handoff_status, cmd_write_handoff
+from init import cmd_init
+from plans import cmd_archive_plan, cmd_index_plans, cmd_list_plans, cmd_set_plan_status, cmd_write_phase, cmd_write_plan, cmd_write_task
+from specs import cmd_index_specs, cmd_list_specs, cmd_set_spec_status, cmd_write_spec
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--project-root")
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument("--project-root")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("init", parents=[parent]).set_defaults(func=cmd_init)
+    sub.add_parser("doctor", parents=[parent]).set_defaults(func=cmd_doctor)
+    sub.add_parser("state", parents=[parent]).set_defaults(func=cmd_state)
+    sub.add_parser("next-action-candidates", parents=[parent]).set_defaults(func=cmd_next_action_candidates)
+    sub.add_parser("git-status", parents=[parent]).set_defaults(func=cmd_git_status)
+    related = sub.add_parser("related", parents=[parent])
+    related.add_argument("--id", required=True)
+    related.set_defaults(func=cmd_related)
+    write_doc = sub.add_parser("write-doc", parents=[parent])
+    write_doc.add_argument("--title", required=True)
+    write_doc.add_argument("--content-file", required=True)
+    write_doc.set_defaults(func=cmd_write_doc)
+    write_spec = sub.add_parser("write-spec", parents=[parent])
+    write_spec.add_argument("--title", required=True)
+    write_spec.add_argument("--purpose", required=True)
+    write_spec.add_argument("--component", required=True)
+    write_spec.add_argument("--version", default="1")
+    write_spec.add_argument("--content-file", required=True)
+    write_spec.add_argument("--status", default="draft")
+    write_spec.add_argument("--id")
+    write_spec.add_argument("--filename")
+    write_spec.set_defaults(func=cmd_write_spec)
+    list_specs = sub.add_parser("list-specs", parents=[parent])
+    list_specs.add_argument("--status")
+    list_specs.set_defaults(func=cmd_list_specs)
+    set_spec = sub.add_parser("set-spec-status", parents=[parent])
+    set_spec.add_argument("--id", required=True)
+    set_spec.add_argument("--status", required=True)
+    set_spec.set_defaults(func=cmd_set_spec_status)
+    sub.add_parser("index-specs", parents=[parent]).set_defaults(func=cmd_index_specs)
+    write_plan = sub.add_parser("write-plan", parents=[parent])
+    write_plan.add_argument("--title", required=True)
+    write_plan.add_argument("--purpose", required=True)
+    write_plan.add_argument("--component", required=True)
+    write_plan.add_argument("--version", default="1")
+    write_plan.add_argument("--content-file", required=True)
+    write_plan.add_argument("--status", default="Planned")
+    write_plan.add_argument("--id")
+    write_plan.add_argument("--filename")
+    write_plan.set_defaults(func=cmd_write_plan)
+    list_plans = sub.add_parser("list-plans", parents=[parent])
+    list_plans.add_argument("--status")
+    list_plans.add_argument("--kind", choices=["plan", "phase", "task"])
+    list_plans.set_defaults(func=cmd_list_plans)
+    set_plan = sub.add_parser("set-plan-status", parents=[parent])
+    set_plan.add_argument("--id", required=True)
+    set_plan.add_argument("--status", required=True)
+    set_plan.add_argument("--kind", choices=["plan", "phase", "task"])
+    set_plan.set_defaults(func=cmd_set_plan_status)
+    archive_plan = sub.add_parser("archive-plan", parents=[parent])
+    archive_plan.add_argument("--id", required=True)
+    archive_plan.set_defaults(func=cmd_archive_plan)
+    sub.add_parser("index-plans", parents=[parent]).set_defaults(func=cmd_index_plans)
+    write_phase = sub.add_parser("write-phase", parents=[parent])
+    write_phase.add_argument("--plan-id", required=True)
+    write_phase.add_argument("--phase-id", required=True)
+    write_phase.add_argument("--title", required=True)
+    write_phase.add_argument("--content-file", required=True)
+    write_phase.add_argument("--status", default="Planned")
+    write_phase.set_defaults(func=cmd_write_phase)
+    write_task = sub.add_parser("write-task", parents=[parent])
+    write_task.add_argument("--plan-id", required=True)
+    write_task.add_argument("--phase-id", required=True)
+    write_task.add_argument("--task-id", required=True)
+    write_task.add_argument("--title", required=True)
+    write_task.add_argument("--content-file", required=True)
+    write_task.add_argument("--status", default="Planned")
+    write_task.set_defaults(func=cmd_write_task)
+    write_handoff = sub.add_parser("write-handoff", parents=[parent])
+    write_handoff.add_argument("--type", required=True)
+    write_handoff.add_argument("--title", required=True)
+    write_handoff.add_argument("--content-file", required=True)
+    write_handoff.add_argument("--related-spec")
+    write_handoff.add_argument("--related-plan")
+    write_handoff.add_argument("--related-phase")
+    write_handoff.add_argument("--related-task")
+    write_handoff.add_argument("--status", default="active")
+    write_handoff.add_argument("--id")
+    write_handoff.set_defaults(func=cmd_write_handoff)
+    list_handoffs = sub.add_parser("list-handoffs", parents=[parent])
+    list_handoffs.add_argument("--type", choices=sorted(HANDOFF_TYPES))
+    list_handoffs.add_argument("--status")
+    list_handoffs.set_defaults(func=cmd_list_handoffs)
+    set_handoff = sub.add_parser("set-handoff-status", parents=[parent])
+    set_handoff.add_argument("--id", required=True)
+    set_handoff.add_argument("--status", required=True)
+    set_handoff.set_defaults(func=cmd_set_handoff_status)
+    sub.add_parser("index-handoffs", parents=[parent]).set_defaults(func=cmd_index_handoffs)
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    args.func(args)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

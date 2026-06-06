@@ -6,10 +6,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REQUIRED_HEADINGS = [
-    "## Metadata",
     "## Status History",
     "## Issue Status Summary",
 ]
+
+REQUIRED_FRONTMATTER_KEYS = (
+    "report_id",
+    "checker_skill",
+    "report_status",
+    "checked_at",
+    "updated_at",
+    "actor",
+)
 
 DEFAULT_REPORT_STATUSES = {"draft", "active", "partially_fixed", "closed", "superseded"}
 
@@ -82,9 +90,32 @@ def fill_template(template_text: str, *, title: str, report_id: str, checked_at:
     return text
 
 
+def has_frontmatter(report_text: str) -> bool:
+    return report_text.lstrip().startswith("---\n")
+
+
+def ensure_frontmatter(report_text: str) -> list[str]:
+    failures: list[str] = []
+    if not has_frontmatter(report_text):
+        return ["missing_frontmatter"]
+    match = re.match(r"^---\n(.*?)\n---", report_text.lstrip(), re.DOTALL)
+    if not match:
+        failures.append("invalid_frontmatter_delimiters")
+        return failures
+    block = match.group(1)
+    for key in REQUIRED_FRONTMATTER_KEYS:
+        if not re.search(rf"^{re.escape(key)}:\s*\S", block, re.MULTILINE):
+            failures.append(f"missing_frontmatter_key:{key}")
+    return failures
+
+
 def ensure_required_headings(report_text: str) -> list[str]:
     missing = [heading for heading in REQUIRED_HEADINGS if heading not in report_text]
     return missing
+
+
+def ensure_report_structure(report_text: str) -> list[str]:
+    return ensure_frontmatter(report_text) + ensure_required_headings(report_text)
 
 
 def parse_report_status(report_text: str) -> str | None:

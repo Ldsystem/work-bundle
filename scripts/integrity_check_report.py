@@ -13,7 +13,7 @@ if str(COMMON_PATH) not in sys.path:
 
 from report_io import (  # type: ignore
     DEFAULT_REPORT_STATUSES,
-    ensure_required_headings,
+    ensure_report_structure,
     fill_template,
     insert_under_section,
     issue_sidecar_path,
@@ -319,9 +319,12 @@ def _validate_report(args: argparse.Namespace) -> int:
 
     failures: list[str] = []
     warnings: list[str] = []
-    missing_headings = ensure_required_headings(report_text)
-    if missing_headings:
-        failures.extend([f"missing_heading:{item}" for item in missing_headings])
+    structure_failures = ensure_report_structure(report_text)
+    for item in structure_failures:
+        if item.startswith("##"):
+            failures.append(f"missing_heading:{item}")
+        else:
+            failures.append(f"report_structure:{item}")
 
     report_status = parse_report_status(report_text)
     if report_status and report_status not in DEFAULT_REPORT_STATUSES:

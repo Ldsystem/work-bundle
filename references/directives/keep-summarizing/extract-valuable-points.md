@@ -25,12 +25,12 @@ The user only wants to find existing knowledge (`what-is-helpful`) or already ga
 
 - Source material (conversation, PR, design excerpt).
 - Optional: project slug and scope.
-- `references/ks-perspectives.md` for granularity and target leaf perspective mapping.
+- `references/assets/keep-summarizing/perspectives.md` for granularity and target leaf perspective mapping.
 
 ## Workflow
 
 1. Apply the structural-value test from `references/ks-workflow.md`.
-2. Read `references/ks-perspectives.md` before proposing targets.
+2. Read `references/assets/keep-summarizing/perspectives.md` before proposing targets.
 3. Separate durable from temporary material.
 4. Split durable findings into atomic units: one durable question per note candidate.
 5. Assign each point to the most specific leaf perspective path (not broad container nodes).

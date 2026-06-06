@@ -1,4 +1,0 @@
-id: branch-validation-contract
-status: current
-required_branches: [success, blocked, invalid, missing-context, repair-needed, no-op-idempotent, read-only-diagnosis]
-evidence_fields: [branch, target, expected_status, actual_status, evidence, raw_log_excluded]

@@ -50,20 +50,8 @@ Describe the exact assignment received by the executor.
 | PHASE-001 | phase | `.work-bundle/orchestration/plan/active/<plan-id>/phase-xxx-<slug>.md` | Planned|In progress | Completed|On Hold |
 | TASK-001 | task | `.work-bundle/orchestration/plan/active/<plan-id>/<phase-dir>/task-xxx-<slug>.md` | Planned|In progress | Completed|On Hold |
 
-## 3. Source Context Used
 
-List all project knowledge, specs, plans, phase files, task files, and source files used during execution.
-
-| ID | Type | Path | How It Was Used |
-|---|---|---|---|
-| KNOW-001 | knowledge | `.work-bundle/knowledge/notes/...` | [Accepted knowledge applied during implementation.] |
-| SPEC-001 | specification | `.work-bundle/orchestration/spec/active/...` | [Specification section followed.] |
-| PLAN-001 | plan | `.work-bundle/orchestration/plan/active/...` | [Plan section followed.] |
-| PHASE-001 | phase | `.work-bundle/orchestration/plan/active/...` | [Phase section followed.] |
-| TASK-001 | task | `.work-bundle/orchestration/plan/active/...` | [Task section followed.] |
-| SRC-001 | source-file | `[exact source file path]` | [Source file read or modified.] |
-
-## 4. Implementation Summary
+## 3. Implementation Summary
 
 Summarize what was implemented in deterministic terms.
 
@@ -71,7 +59,7 @@ Summarize what was implemented in deterministic terms.
 - **IMPL-002**: [Concrete implemented behavior or change.]
 - **IMPL-003**: [Concrete implemented behavior or change.]
 
-## 5. Requirements & Constraints Validation
+## 4. Requirements & Constraints Validation
 
 Report how the implementation satisfies or fails each relevant requirement and constraint from the related spec, plan, phase, and task files.
 
@@ -81,7 +69,7 @@ Report how the implementation satisfies or fails each relevant requirement and c
 | CON-001 | spec|plan|phase|task | [Constraint.] | satisfied|not-satisfied|not-applicable | [Evidence path, test, or explanation.] |
 | PAT-001 | knowledge|plan|phase|task | [Pattern/rule.] | satisfied|not-satisfied|not-applicable | [Evidence path, test, or explanation.] |
 
-## 6. Files Changed
+## 5. Files Changed
 
 List every changed file. Use exact project-relative paths.
 
@@ -90,7 +78,7 @@ List every changed file. Use exact project-relative paths.
 | FILE-001 | `[exact file path]` | created|updated|deleted|renamed | [Concrete change summary.] | task-001 |
 | FILE-002 | `[exact file path]` | created|updated|deleted|renamed | [Concrete change summary.] | task-002 |
 
-## 7. Symbols Changed
+## 6. Symbols Changed
 
 List changed classes, functions, modules, interfaces, schemas, configuration keys, commands, endpoints, events, or data structures.
 
@@ -99,7 +87,7 @@ List changed classes, functions, modules, interfaces, schemas, configuration key
 | SYM-001 | `[exact file path]` | class|function|module|interface|schema|config|endpoint|event|command | `[symbol name]` | [Concrete change.] |
 | SYM-002 | `[exact file path]` | class|function|module|interface|schema|config|endpoint|event|command | `[symbol name]` | [Concrete change.] |
 
-## 8. Data Model / Domain Model Impact
+## 7. Data Model / Domain Model Impact
 
 Use this section when the implementation affects data structures, schemas, entities, state, identifiers, domain concepts, or lifecycle behavior.
 
@@ -108,7 +96,7 @@ Use this section when the implementation affects data structures, schemas, entit
 | DATA-001 | data-model | `[entity/table/schema/state]` | [Concrete change.] | none|backward-compatible|breaking|unknown |
 | DOMAIN-001 | domain-model | `[domain concept]` | [Concrete change.] | none|backward-compatible|breaking|unknown |
 
-## 9. API / Interface / Integration Impact
+## 8. API / Interface / Integration Impact
 
 Use this section when the implementation affects APIs, DTOs, events, commands, external systems, or integration behavior.
 
@@ -117,14 +105,14 @@ Use this section when the implementation affects APIs, DTOs, events, commands, e
 | API-001 | api|dto|event|command|integration | `[endpoint/interface/event/system]` | [Concrete change.] | none|backward-compatible|breaking|unknown |
 | INT-001 | api|dto|event|command|integration | `[endpoint/interface/event/system]` | [Concrete change.] | none|backward-compatible|breaking|unknown |
 
-## 10. Behavior Changed
+## 9. Behavior Changed
 
 Describe observable behavior changes.
 
 - **BEHAVIOR-001**: [Before behavior.] → [After behavior.]
 - **BEHAVIOR-002**: [Before behavior.] → [After behavior.]
 
-## 11. Tests Run
+## 10. Tests Run
 
 List every test, command, manual verification, or inspection performed.
 
@@ -133,16 +121,8 @@ List every test, command, manual verification, or inspection performed.
 | TEST-001 | unit|integration|e2e|manual|inspection|build | `[target]` | `[command or method]` | passed|failed|skipped|not-run | [Output, path, or summary.] |
 | TEST-002 | unit|integration|e2e|manual|inspection|build | `[target]` | `[command or method]` | passed|failed|skipped|not-run | [Output, path, or summary.] |
 
-## 12. Test Results Summary
 
-- **TEST-STATUS**: not_run|passed|failed|partial
-- **Passed**: [number]
-- **Failed**: [number]
-- **Skipped**: [number]
-- **Not Run**: [number]
-- **Failure Summary**: [Concrete failure summary or `none`.]
-
-## 13. Deviations From Spec / Plan / Phase / Task
+## 11. Deviations From Spec / Plan / Phase / Task
 
 List every deviation from the related orchestration artifacts.
 
@@ -151,7 +131,7 @@ List every deviation from the related orchestration artifacts.
 | DEV-001 | spec|plan|phase|task | [Expected instruction.] | [Actual implementation.] | [Reason.] | true|false |
 | DEV-002 | spec|plan|phase|task | [Expected instruction.] | [Actual implementation.] | [Reason.] | true|false |
 
-## 14. Problems Encountered
+## 12. Problems Encountered
 
 List execution problems encountered during implementation.
 
@@ -160,7 +140,7 @@ List execution problems encountered during implementation.
   - **Action Taken**: [Action taken.]
   - **Remaining Work**: [Remaining work or `none`.]
 
-## 15. Unresolved Issues
+## 13. Unresolved Issues
 
 List unresolved issues that block completion, review, testing, or durable knowledge extraction.
 
@@ -169,7 +149,7 @@ List unresolved issues that block completion, review, testing, or durable knowle
   - **Required Action**: [Concrete required action.]
   - **Owner**: orchestration-agent|executor|human|unknown
 
-## 16. Open Questions
+## 14. Open Questions
 
 List open questions discovered during execution.
 
@@ -178,7 +158,7 @@ List open questions discovered during execution.
   - **Blocks**: [spec|plan|phase|task|test|review|knowledge-update]
   - **Suggested Default**: [Default if safe, otherwise `none`.]
 
-## 17. Completion Criteria Evidence
+## 15. Completion Criteria Evidence
 
 Report evidence for completion criteria from the related plan, phase, and task files.
 
@@ -187,7 +167,7 @@ Report evidence for completion criteria from the related plan, phase, and task f
 | DONE-001 | plan|phase|task | [Criterion.] | achieved|not-achieved|not-applicable | [Evidence.] |
 | DONE-002 | plan|phase|task | [Criterion.] | achieved|not-achieved|not-applicable | [Evidence.] |
 
-## 18. Suggested Durable Conclusions
+## 16. Suggested Durable Conclusions
 
 List only conclusions that may be worth extracting into `.work-bundle/knowledge/` by `keep-summarizing`. Do not write durable knowledge directly from this handoff.
 
@@ -204,7 +184,7 @@ This section is mandatory. Provide suggested durable conclusions with evidence, 
 - **DURABLE-000**: explicit `none`
   - **Evidence**: [Why no durable conclusion is suggested.]
 
-## 19. Recommended Orchestration Review
+## 17. Recommended Orchestration Review
 
 Specify what the orchestration agent should do next.
 
@@ -213,7 +193,7 @@ Specify what the orchestration agent should do next.
 - **REVIEW-003**: [Resolve listed deviations, issues, or open questions.]
 - **REVIEW-004**: [Decide whether to call `keep-summarizing` for durable conclusion extraction.]
 
-## 20. Recommended Next Actions
+## 18. Recommended Next Actions
 
 List deterministic next actions.
 
@@ -222,7 +202,7 @@ List deterministic next actions.
 | NEXT-001 | [Concrete next action.] | orchestration-agent|executor|human | [dependency id or `none`] | [Expected output.] |
 | NEXT-002 | [Concrete next action.] | orchestration-agent|executor|human | [dependency id or `none`] | [Expected output.] |
 
-## 21. Handoff Completion Criteria
+## 19. Handoff Completion Criteria
 
 - **HANDOFF-DONE-001**: All changed files are listed with exact paths.
 - **HANDOFF-DONE-002**: All tests run or skipped are reported with results.

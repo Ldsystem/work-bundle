@@ -1,7 +1,7 @@
 # Work-bundle (required)
 .work-bundle/
 AGENTS.md
-
+design/
 # OS
 .DS_Store
 
