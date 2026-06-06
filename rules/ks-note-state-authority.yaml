@@ -4,9 +4,9 @@ scope: work-bundle
 applies_to: {paths: [.work-bundle/knowledge/**, skills/ks-*/SKILL.md, references/ks-*], skills: [ks-*], artifacts: [knowledge-note, open-question]}
 enable_when: [knowledge note state affects retrieval or persistence authority]
 severity: must
-rule: note lifecycle state controls whether knowledge may be used as execution authority.
-required_behavior: [treat current notes as authority, treat proposed notes as candidate uncertainty, treat draft notes as discovery context only, ignore superseded deprecated rejected notes except historical analysis]
-prohibited_behavior: [promote non-current notes to stable facts silently, hide note-state uncertainty inside assumptions]
-validation: [retrieval output separates authority candidate background blocked context, uncertain helpful notes are surfaced as uncertainty]
+rule: lifecycle stage and note status classify authority after discovery; they do not pre-exclude relevant discovery candidates.
+required_behavior: [discover relevant candidates across allowed lifecycle partitions before authority classification, classify validated candidates as authority candidate background or blocked for the work target, use only authority to shape requirements tasks decisions or review conclusions, surface relevant non-authority results with uncertainty or incompatibility, preserve lifecycle-aware durable write ownership]
+prohibited_behavior: [prefilter relevant discovery candidates by authority lifecycle or note status, promote non-authority notes to stable facts silently, let FTS rank recency or lifecycle proximity override authority, hide note-state uncertainty inside assumptions]
+validation: [retrieval discovers relevant cross-lifecycle candidates, retrieval output separates authority candidate background blocked context, only authority shapes downstream work, uncertain helpful notes are surfaced as uncertainty]
 source_authority: [/Users/shenglong/Documents/Repository/Designs/keep-summarizing/cursor_knowledge_orchestrator_files/docs/v4.1-/restriction-on-openquestions.md]
 deprecated_sources: []

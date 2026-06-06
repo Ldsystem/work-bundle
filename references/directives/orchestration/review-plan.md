@@ -54,7 +54,28 @@ Validate:
 7. statuses are coherent across task files, phase task indexes, root plan phase indexes, handoff statuses, and indexes;
 8. no required artifact is missing, stale, contradictory, or under `.work-bundle/knowledge/`;
 9. the source specification `Knowledge Base Update` section is reflected in the final review state, including expected durable conclusions, evidence, and follow-up path;
-10. the final knowledge-update disposition is one of `completed`, `not-needed`, `blocked`, or `required`, with evidence for that outcome.
+10. validated implementation and review evidence is assessed for structural updates;
+11. the final knowledge-update disposition is one of `completed`, `not-needed`, `blocked`, or `required`, with evidence for that outcome.
+
+## Delegate-Return-Resume Protocol
+
+When review identifies a structural update:
+
+1. set or retain `Knowledge update disposition: required`;
+2. delegate mixed implementation, validation, handoff, and review evidence to `ks-extract-valuable-points`; use `ks-breakdown-design` only when the structural evidence is design-file-only;
+3. provide the target project identity, reviewed specification, plan, relevant handoffs, validation evidence, changed project files or symbols, expected durable conclusions, structural-update summary, and current disposition;
+4. leave structural-value assessment, persistence routing, `ks-write-knowledge` follow-up, and index rebuilds exclusively to the delegated `ks-*` workflow;
+5. require the delegated workflow to return its structural-value result, written or updated durable knowledge paths, evidence-backed no-write rationale when applicable, index rebuild status, blockers, and completion state;
+6. validate the returned evidence and then resume knowledge-update disposition evaluation.
+
+After review resumes:
+
+- set disposition to `completed` only when the delegated return identifies written or updated durable paths and reports successful index rebuild status;
+- set disposition to `not-needed` only when the delegated structural-value assessment safely concludes that no durable write is warranted, includes an evidence-backed no-write rationale, and reports index status;
+- keep disposition `required` or `blocked` when delegation is unavailable, incomplete, contradictory, blocked, or lacks required return evidence;
+- do not archive until all other review checks pass and disposition is `completed` or `not-needed`.
+
+Review may invoke, schedule, or hand off to the approved `ks-*` owner and consume its result. Review must not directly create, edit, promote, delete, or index `.work-bundle/knowledge/**`.
 
 ## Failure Path
 
@@ -65,7 +86,8 @@ If any review check fails:
 - include discrepancies, evidence, affected spec/plan/handoff/project files, severity, required fixes, and acceptance criteria;
 - link the repair specification to the reviewed plan and related handoffs;
 - report the repair specification path and the next `create-implementation-plan` or `execute-plan` action.
-- if the knowledge update disposition remains `required`, report that archival is blocked and instruct the agent to use `ks-extract-valuable-points` for mixed implementation/review evidence or `ks-breakdown-design` when the evidence source is a design file.
+- if the knowledge update disposition remains `required`, report that archival is blocked and provide an actionable `ks-extract-valuable-points` delegation input for mixed implementation/review evidence or `ks-breakdown-design` input when the evidence source is design-file-only;
+- if delegation cannot run in the active environment or returned evidence is incomplete, keep review blocked, report the missing delegation action or evidence, and do not archive;
 - if the knowledge update disposition is `blocked` without an actionable blocker path, treat the review as failed and require repair rather than archive.
 
 The repair specification must be actionable without raw chat history.
@@ -142,4 +164,4 @@ Knowledge update disposition: completed|not-needed
 
 ## Validation
 
-Confirm reviewed artifacts match the requested plan, durable knowledge was accessed only through `keep-summarizing` if needed, project file checks are limited to referenced files, failures create a repair specification instead of modifying implementation files, success/archive is allowed only for `Knowledge update disposition: completed` or `Knowledge update disposition: not-needed`, unresolved `required` dispositions route to `ks-extract-valuable-points` for mixed evidence or `ks-breakdown-design` for design files, review may recommend keep-summarizing follow-up but must not write durable knowledge directly, indexes are refreshed, no files are deleted, and no artifact is written under `.work-bundle/knowledge/`.
+Confirm reviewed artifacts match the requested plan, durable knowledge was accessed only through `keep-summarizing` if needed, project file checks are limited to referenced files, failures create a repair specification instead of modifying implementation files, structural updates invoke the delegate-return-resume protocol, delegation returns written or updated paths or an evidence-backed no-write rationale plus index rebuild status, success/archive is allowed only for `Knowledge update disposition: completed` or `Knowledge update disposition: not-needed`, unavailable or incomplete delegation blocks archive with an actionable `ks-extract-valuable-points` next action, review may invoke an approved `ks-*` owner but must not write durable knowledge directly, indexes are refreshed, no files are deleted, and no artifact is written under `.work-bundle/knowledge/`.

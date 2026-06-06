@@ -34,6 +34,13 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 - `references/directives/keep-summarizing/index.md`
 
+## Retrieval Contract
+
+- Discover relevant candidates across all allowed lifecycle partitions before lifecycle/status authority classification. Lifecycle does not pre-exclude discovery candidates.
+- Apply visibility, sensitivity, and scope filters, then load full note bodies only for candidates that may materially affect the task.
+- Classify validated candidates as `authority`, `candidate`, `background`, or `blocked`; only `authority` may directly shape downstream requirements, tasks, decisions, or review conclusions.
+- Return the smallest useful classified result set rather than bulk-loading or dumping the knowledge base.
+
 ## Boundary
 
 Write only under .work-bundle/knowledge allowed paths; redirect orchestration artifacts to orch-* skills.

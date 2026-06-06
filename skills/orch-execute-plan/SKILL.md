@@ -27,6 +27,7 @@ Load `references/directives/orchestration/execute-plan.md` for directive-specifi
 - `orch-orchestration-boundary`: `rules/orch-orchestration-boundary.yaml`
 - `orch-artifact-role-separation`: `rules/orch-artifact-role-separation.yaml`
 - `orch-execution-boundary`: `rules/orch-execution-boundary.yaml`
+- `orch-repository-clean-preflight`: `rules/orch-repository-clean-preflight.yaml`
 - `orch-handoff-required`: `rules/orch-handoff-required.yaml`
 
 ## Scripts

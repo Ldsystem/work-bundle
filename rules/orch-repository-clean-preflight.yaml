@@ -1,0 +1,12 @@
+id: rule-orch-repository-clean-preflight
+status: current
+scope: work-bundle
+applies_to: {paths: [skills/orch-execute-plan/SKILL.md, references/directives/orchestration/execute-plan.md], skills: [orch-execute-plan], artifacts: []}
+enable_when: [execute-plan resolves or begins an executable task or scheduler wave]
+severity: must
+rule: Target source repositories must pass read-only clean-worktree preflight before execute-plan selects, delegates, or modifies implementation work.
+required_behavior: [resolve and record every target source repository, require initial clean status, recheck before each wave or fallback task, accept only validated handoff baselines, block on unexplained changes]
+prohibited_behavior: [auto-clean or mutate repositories, treat orchestration artifact changes as source-repository dirt, continue with no targets or dirty unresolved inaccessible or not-git targets]
+validation: [orch-execute-plan cites this rule, execute-plan records repository-specific preflight evidence, repository-preflight helper remains read-only]
+source_authority: [execute-plan repository preflight specification]
+deprecated_sources: []

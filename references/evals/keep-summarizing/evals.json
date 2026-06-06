@@ -66,6 +66,12 @@
       "prompt": "Run a v3 migration dry run over legacy perspective-only notes.",
       "expected_output": "Writes migration/v3-inventory.jsonl with candidate lifecycle stage, candidate perspective, candidate status, confidence, reason, and action, and marks ambiguous or mixed notes for manual review instead of silently promoting them.",
       "files": []
+    },
+    {
+      "id": 12,
+      "prompt": "Use what-is-helpful gateway mode for an implementation_plan query where relevant notes exist in customer-design, development-design, implementation, and operation lifecycle partitions with mixed current, proposed, rejected, and superseded statuses.",
+      "expected_output": "Discovers relevant candidates across all allowed lifecycle partitions before lifecycle and status authority classification, validates materially relevant candidates, returns the smallest useful classified set grouped as authority, candidate, background, or blocked, allows only authority to shape the implementation plan, and keeps relevant non-authority notes visible with uncertainty or incompatibility rationale.",
+      "files": []
     }
   ],
   "v4_evals": [

@@ -28,6 +28,24 @@ Forbidden:
 
 Execution must use context already carried by the specification, plan, phase, task, and declared handoffs. Although `execute-plan` maps to the `execution` retrieval policy for upstream artifact preparation, execution itself must not run v3 retrieval queries, invoke `what-is-helpful`, or promote candidate/background notes while executing.
 
+## Repository Preflight
+
+Before execution selection, capability checks, delegation, or implementation-file modification:
+
+1. Resolve every target source repository from the selected plan/phase/task write scopes, referenced project files, and canonical project metadata. Keep target source repositories distinct from the repository that contains orchestration artifacts.
+2. Run the read-only helper for the selected task files or explicit repositories:
+
+   ```text
+   python3 scripts/orch.py repository-preflight --task-file <task-path> [--task-file <task-path> ...]
+   ```
+
+3. Require every resolved target repository to report `clean`. Block when no target repository resolves or any target reports `dirty`, `unresolved`, `inaccessible`, or `not-git`.
+4. Record the resolved target repository list, source, baseline, status, and changed-path evidence in blocked or result output.
+
+The helper uses `git status --porcelain=v1 --untracked-files=all` and is strictly read-only. Never automatically stash, commit, reset, restore, clean, delete, or otherwise alter pre-existing changes to pass preflight.
+
+Recheck target repository cleanliness immediately before each scheduler wave and immediately before a single-agent fallback task begins. After accepting validated executor-result handoffs, build an accepted-baseline JSON object that maps each absolute repository path to the exact porcelain entries proven by those handoffs, then pass it with `--accepted-baseline <json-path>`. The accepted baseline explains only proven prior-wave/task outputs; any unrelated or unexplained current entry blocks further execution. Do not accept a baseline from an unvalidated handoff.
+
 ## Selection
 
 Resolve target in order:
@@ -49,7 +67,7 @@ Before execution, determine whether the active agent environment supports sub-ag
 
 ## Preflight
 
-Verify the related spec, root plan, parent phase, selected task files, declared prerequisite tasks, required source files, resolved decisions, and required prior handoffs.
+After repository preflight passes, verify the related spec, root plan, parent phase, selected task files, declared prerequisite tasks, required source files, resolved decisions, and required prior handoffs.
 
 If anything blocks execution, stop and return the blocker format. Ask at most 2 blocking clarification questions. Use declared fallbacks instead of asking when available.
 
@@ -59,20 +77,21 @@ The main agent is the monitor, scheduler, and validator. It should not directly 
 
 1. Build the current execution queue from tasks whose dependencies are satisfied.
 2. Partition the queue into waves of independent tasks with disjoint write scopes.
-3. Delegate each task in the wave to a separate sub-agent when scopes allow parallel execution.
-4. Give every sub-agent:
+3. Recheck every target repository for the wave against the initial or accepted-handoff baseline; block the entire wave on any unexplained change.
+4. Delegate each task in the wave to a separate sub-agent when scopes allow parallel execution.
+5. Give every sub-agent:
    - the assigned task path and relevant spec, plan, and phase paths;
    - allowed source and target files/modules;
    - exact validation required by the task;
    - instruction not to revert or overwrite other agents' work;
    - instruction to create an `executor-result` handoff before exit;
    - instruction to update its task status and the task status in the parent phase file before exit.
-5. Wait for all sub-agents in the active wave to finish.
-6. Validate each executor handoff against the task, parent phase, root plan, and source specification.
-7. Accept only handoffs that include assigned task, files/symbols changed, validation evidence, deviations, unresolved issues, and next action.
-8. If a handoff is valid and completion criteria are satisfied, mark the task `Completed`; if partial or blocked, mark `On Hold` or keep `In progress` with the blocker.
-9. Refresh task status in the parent phase file and root plan task/phase indexes.
-10. Continue with the next executable wave until the selected task, phase, or plan is complete or blocked.
+6. Wait for all sub-agents in the active wave to finish.
+7. Validate each executor handoff against the task, parent phase, root plan, and source specification.
+8. Accept only handoffs that include assigned task, files/symbols changed, validation evidence, deviations, unresolved issues, and next action.
+9. If a handoff is valid and completion criteria are satisfied, mark the task `Completed`; if partial or blocked, mark `On Hold` or keep `In progress` with the blocker.
+10. Refresh task status in the parent phase file and root plan task/phase indexes.
+11. Build the next accepted-handoff baseline only from validated handoff evidence, then continue with the next executable wave until the selected task, phase, or plan is complete or blocked.
 
 When parallel tasks are possible, use multiple sub-agents. When tasks cannot safely run in parallel, delegate sequentially and record the reason.
 
@@ -81,6 +100,7 @@ When parallel tasks are possible, use multiple sub-agents. When tasks cannot saf
 Use this path when sub-agents are not supported or safe.
 
 - Select the first executable task for the requested task, phase, or plan.
+- Recheck every target repository for that task against the initial or accepted-handoff baseline immediately before implementation begins.
 - Execute only that one task in the current conversation trip.
 - Follow the task file exactly and modify only task-scoped files unless the task explicitly expands scope.
 - Run declared validation when possible; otherwise report why it was skipped.
@@ -128,6 +148,8 @@ Execution path: sub-agent-scheduler|single-agent-fallback
 Blocker: <specific blocker>
 Questions asked: <0|1|2>
 Required action: <specific action>
+Repository preflight:
+- <absolute target repository> | source=<resolution source> | baseline=initial|accepted-handoff | status=dirty|unresolved|inaccessible|not-git | changes=<changed/staged/deleted/untracked or unexplained paths>
 Files changed:
 - <path or none>
 Handoff: <path or required create-handoff action>
@@ -139,6 +161,8 @@ Handoff: <path or required create-handoff action>
 Execution result: completed|partially-completed|failed
 Target: <plan|phase|task id/path>
 Execution path: sub-agent-scheduler|single-agent-fallback
+Repository preflight:
+- <absolute target repository> | source=<resolution source> | baseline=initial|accepted-handoff | status=clean|blocked
 Executed:
 - <task id/path>
 Files changed:
@@ -154,4 +178,4 @@ Next action: <next executable action or review-plan>
 
 ## Validation
 
-Confirm no `.work-bundle/knowledge/` files were loaded or modified, only relevant execution artifacts were loaded, only task-scoped files changed, sub-agent support was checked, scheduler mode used multiple sub-agents when safe parallel work existed, fallback mode executed only one task, every sub-agent created an executor handoff and updated task status before exit, accepted handoffs were validated against task/phase/plan/spec, phase and plan handoffs were created when those targets completed, validation status is recorded, deviations and changed symbols are recorded, no more than 2 blocking questions were asked, and no archive operation occurred during execution.
+Confirm repository preflight ran before selection/capability checks/delegation/modification, every target source repository was resolved and recorded separately from the orchestration artifact repository, every target passed initial preflight, rechecks ran before each wave or fallback task, accepted baselines came only from validated executor-result handoffs, unexplained changes blocked execution, no repository cleanup or mutation was attempted, no `.work-bundle/knowledge/` files were loaded or modified, only relevant execution artifacts were loaded, only task-scoped files changed, sub-agent support was checked, scheduler mode used multiple sub-agents when safe parallel work existed, fallback mode executed only one task, every sub-agent created an executor handoff and updated task status before exit, accepted handoffs were validated against task/phase/plan/spec, phase and plan handoffs were created when those targets completed, validation status is recorded, deviations and changed symbols are recorded, no more than 2 blocking questions were asked, and no archive operation occurred during execution.

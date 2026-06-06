@@ -42,9 +42,25 @@ source_type: discussion | tender_doc | investigation_note | design_doc | bid_doc
 
 Front matter `evidence` is required when evidence affects status, retrieval authority, validation, or promotion. Body evidence may explain rationale, but it does not replace front matter evidence for promoted statuses.
 
-SQLite FTS is derived from Markdown. It may retrieve notes across statuses, but results must be classified as `authority`, `candidate`, `background`, or `blocked` before use. Use the rule: retrieve broadly, classify explicitly, use authority narrowly.
+SQLite FTS is derived from Markdown. It may retrieve notes across lifecycle stages and statuses, but results must be classified as `authority`, `candidate`, `background`, or `blocked` before use. Use the rule: discover fully, load minimally, classify explicitly, use authority narrowly, and return selectively.
+
+Gateway retrieval uses this pipeline:
+
+```text
+task query
+  -> full candidate discovery across allowed lifecycle partitions
+  -> visibility, sensitivity, and scope filtering
+  -> minimum necessary full-body validation
+  -> lifecycle + status + work-target classification
+  -> authority | candidate | background | blocked
+  -> smallest useful classified result
+```
+
+Lifecycle limits authority and durable write ownership for the work target; lifecycle does not hide relevant discovery candidates. FTS rank, recency, and lifecycle proximity may help discovery or ranking, but they cannot override retrieval-role authority. Only `authority` results may directly shape requirements, executable tasks, implementation decisions, or review conclusions. Relevant `candidate`, `background`, and `blocked` results remain visible with their uncertainty or incompatibility explained.
 
 For orchestration gateway use, run `scripts/ks.py query --target <retrieval-policy>`. Valid policies are `implementation_spec`, `implementation_plan`, `execution`, `customer_spec`, `bidding`, `deployment`, and `operation`.
+
+Orchestration must retrieve durable knowledge through `ks-what-is-helpful` gateway mode and must not browse `.work-bundle/knowledge/**` directly. `orch-execute-plan` remains a no-retrieval stage: execution consumes carried spec, plan, phase, task, declared handoff, and task-scoped source/test context only, and must not invoke the gateway.
 
 ## Project Registry
 
@@ -234,7 +250,8 @@ For save/update work, align execution with current directives:
 For retrieval work, use `what-is-helpful`:
 
 - standard mode for user-facing discovery and explanation
-- gateway mode for orchestrator-facing retrieval-policy results with explicit authority, candidate, background, and blocked roles
+- gateway mode for orchestrator-facing full candidate discovery followed by explicit authority, candidate, background, and blocked classification
+- in either mode, load full note bodies only for materially relevant candidates and return the smallest useful result set
 
 For ambiguous work:
 

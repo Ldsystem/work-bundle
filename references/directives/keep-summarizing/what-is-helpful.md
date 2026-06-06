@@ -49,9 +49,10 @@ If the task goal is vague, ask one clarifying question before broad retrieval.
    - Infer likely lifecycle-aware leaf perspectives from `references/ks-perspectives.md` (`development-design/architecture/decisions`, `development-design/workflow/data-flow`, `development-design/workflow/process-flow`, `implementation/module-structure`, etc.).
 
 2. **Greedy candidate matching**
-   - Treat matching as greedy within the declared task purpose: investigate every registry item, perspective index, atomic note, and open-question watchpoint that might plausibly help the current goal.
+   - Treat matching as greedy within the declared task purpose: discover relevant candidates across every allowed lifecycle partition, registry item, perspective index, atomic note, and open-question watchpoint that might plausibly help the current goal.
+   - Do not use lifecycle stage, status, lifecycle proximity, recency, or FTS rank to pre-exclude relevant discovery candidates. Lifecycle and status classify authority after discovery; they do not limit discovery visibility.
    - Do not stop after the first strong match when nearby notes, related perspectives, tags, titles, source paths, or trigger terms may contain useful context.
-   - Use keyword, metadata, perspective, link, and vector discovery as candidate finders, then validate candidates against registry metadata, lifecycle, front matter, and note bodies before recommending them.
+   - Use keyword, metadata, perspective, link, and vector discovery as candidate finders, apply visibility/sensitivity/scope filters, then validate candidates against registry metadata, lifecycle, front matter, and note bodies before recommending them.
    - Keep the final output selective: greedy matching expands the candidate set, not the returned reading list.
    - Ignore `context-packs/` during normal browsing. Load them only when the user explicitly asks to inspect, refresh, migrate, decompose, or build context packs.
 
@@ -59,8 +60,8 @@ If the task goal is vague, ask one clarifying question before broad retrieval.
    - `project.yaml` for project identity, allowed roots, lifecycle, and sensitivity rules.
    - `indexes/document-registry.jsonl` for note titles, paths, perspectives, tags, and status.
    - `indexes/open-question-registry.jsonl` for watch context only (not as facts).
-   - Perspective-level indexes or note listing under matched `notes/<lifecycle-stage>/<leaf-perspective>/` paths.
-   - Vector or keyword discovery only to find candidates; confirm against registry metadata and note front matter before recommending.
+   - Perspective-level indexes or note listings under plausibly matched `notes/<lifecycle-stage>/<leaf-perspective>/` paths across allowed lifecycle partitions.
+   - Vector or keyword discovery only to find candidates; confirm against registry metadata and note front matter before loading a full body or recommending.
 
 4. **Validate candidate content**
    - Read full note bodies for candidates that may materially affect the task, decision, plan, review, or implementation context.
@@ -72,8 +73,9 @@ If the task goal is vague, ask one clarifying question before broad retrieval.
 
 5. **Classify and rank candidates**
    - In gateway mode, run `scripts/ks.py query --project <slug> --target <retrieval-policy> --query <query> --include-background`.
+   - Classify only after full candidate discovery and candidate validation. Lifecycle limits authority and durable write ownership for the work target; it does not hide relevant candidates.
    - Use returned `retrieval_role` exactly as the role label: `authority`, `candidate`, `background`, or `blocked`.
-   - `authority` may shape downstream artifacts. `candidate`, `background`, and `blocked` must be kept separate and must not become requirements, tasks, or decisions without promotion.
+   - `authority` may shape downstream artifacts. `candidate`, `background`, and `blocked` must remain visible when relevant, with rationale, but must not become requirements, tasks, decisions, or review conclusions without promotion.
    - In discovery mode, provide confidence labels for human reading, but do not replace v3 retrieval roles when a retrieval policy is provided.
    Score each item by:
    - **relevance**: directly answers the task goal or a sub-question.
@@ -105,10 +107,14 @@ Use this mode when called by `orchestrator` or when the caller provides a retrie
 Required behavior:
 
 1. Resolve the project and ensure `indexes/knowledge.sqlite` is current; if not, rebuild with `scripts/ks.py index --project <slug>`.
-2. Run `scripts/ks.py query --project <slug> --target <retrieval-policy> --query <task query> --include-background`.
-3. Group results by `retrieval_role`.
-4. Return `retrieval_policy`, query, grouped results, omitted/blocked rationale, and related open-question watchpoints.
-5. Do not convert non-authority results into requirements, tasks, or durable decisions.
+2. Discover relevant candidates across all allowed lifecycle partitions; do not prefilter discovery to the retrieval policy's authority lifecycle stages.
+3. Apply visibility, sensitivity, and scope filters, then load full bodies only for candidates that may materially affect the task.
+4. Run `scripts/ks.py query --project <slug> --target <retrieval-policy> --query <task query> --include-background` and classify validated candidates by lifecycle, status, and work target.
+5. Group results by `retrieval_role`.
+6. Return `retrieval_policy`, query, the smallest useful grouped result set, omitted/blocked rationale, and related open-question watchpoints.
+7. Do not convert non-authority results into requirements, tasks, durable decisions, or review conclusions.
+
+Orchestration callers must use this gateway instead of browsing `.work-bundle/knowledge/**` directly. `orch-execute-plan` is a no-retrieval stage and must not invoke this gateway during execution.
 
 ## Return
 

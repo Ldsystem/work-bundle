@@ -9,6 +9,7 @@ from documents import cmd_git_status, cmd_next_action_candidates, cmd_related, c
 from handoffs import cmd_index_handoffs, cmd_list_handoffs, cmd_set_handoff_status, cmd_write_handoff
 from init import cmd_init
 from plans import cmd_archive_plan, cmd_index_plans, cmd_list_plans, cmd_set_plan_status, cmd_write_phase, cmd_write_plan, cmd_write_task
+from repository_preflight import cmd_repository_preflight
 from specs import cmd_index_specs, cmd_list_specs, cmd_set_spec_status, cmd_write_spec
 
 
@@ -23,6 +24,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("state", parents=[parent]).set_defaults(func=cmd_state)
     sub.add_parser("next-action-candidates", parents=[parent]).set_defaults(func=cmd_next_action_candidates)
     sub.add_parser("git-status", parents=[parent]).set_defaults(func=cmd_git_status)
+    repository_preflight = sub.add_parser("repository-preflight", parents=[parent])
+    repository_preflight.add_argument("--task-file", action="append", default=[])
+    repository_preflight.add_argument("--reference", action="append", default=[])
+    repository_preflight.add_argument("--repository", action="append", default=[])
+    repository_preflight.add_argument("--accepted-baseline")
+    repository_preflight.set_defaults(func=cmd_repository_preflight)
     related = sub.add_parser("related", parents=[parent])
     related.add_argument("--id", required=True)
     related.set_defaults(func=cmd_related)

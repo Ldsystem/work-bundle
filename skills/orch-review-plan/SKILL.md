@@ -37,6 +37,12 @@ Load `references/directives/orchestration/review-plan.md` for directive-specific
 
 Use `scripts/orch.py` when deterministic helper behavior is needed.
 
+## Review Delegation
+
+Determine whether validated implementation and review evidence is a structural update. For mixed implementation, validation, handoff, and review evidence, delegate knowledge maintenance to `ks-extract-valuable-points`; use `ks-breakdown-design` only for design-file-only evidence.
+
+Provide the reviewed specification, plan, relevant handoffs, validation evidence, changed project files or symbols, expected durable conclusions, target project identity, and current disposition. After the delegated `ks-*` owner returns, validate its structural-value result, written or updated durable paths or evidence-backed no-write rationale, index rebuild status, blockers, and completion state before resuming disposition evaluation. Keep review blocked and do not archive when delegation is unavailable or its return evidence is incomplete.
+
 ## Boundary
 
-Write generated orchestration artifacts only under .work-bundle/orchestration; do not write durable knowledge.
+Write generated orchestration artifacts only under .work-bundle/orchestration. You may invoke, schedule, or hand off to an approved `ks-*` owner and consume its result, but do not directly create, edit, promote, delete, or index durable knowledge.

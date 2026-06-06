@@ -56,6 +56,13 @@ def target_lifecycles(target: str, include_background: bool) -> set[str]:
     raise SystemExit(f"Unknown retrieval target: {target}")
 
 
+def discovery_lifecycles(target: str, include_background: bool) -> set[str]:
+    target_scope = target_lifecycles(target, include_background=False)
+    if include_background:
+        return set(LIFECYCLE_PATH_SEGMENTS)
+    return target_scope
+
+
 def fts_literal_query(query: str) -> str:
     terms = [term.strip() for term in re.split(r"\s+", query or "") if term.strip()]
     if not terms:
@@ -68,7 +75,7 @@ def cmd_query(args: argparse.Namespace) -> None:
     db_path = root / "indexes" / "knowledge.sqlite"
     if not db_path.exists():
         cmd_index(args)
-    lifecycles = sorted(target_lifecycles(args.target, args.include_background))
+    lifecycles = sorted(discovery_lifecycles(args.target, args.include_background))
     placeholders = ",".join("?" for _ in lifecycles)
     sql = f"""
         SELECT n.*, bm25(knowledge_note_fts) AS rank
@@ -88,4 +95,3 @@ def cmd_query(args: argparse.Namespace) -> None:
             print(json.dumps(result, ensure_ascii=False))
     finally:
         conn.close()
-

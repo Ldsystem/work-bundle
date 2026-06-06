@@ -27,17 +27,21 @@ required_behavior:
   - include Knowledge Base Update disposition in implementation specifications
   - carry disposition into implementation plan tasks and handoff criteria
   - collect suggested durable conclusions or explicit none in executor-result handoffs
-  - when disposition remains required, delegate durable knowledge update to ks-extract-valuable-points or ks-breakdown-design according to source material
+  - assess validated implementation and review evidence for structural updates
+  - delegate mixed structural evidence to ks-extract-valuable-points and design-file-only structural evidence to ks-breakdown-design
+  - provide reviewed spec plan handoffs validation changed files or symbols expected conclusions target project and current disposition
+  - validate returned structural-value result durable paths or no-write rationale index rebuild status blockers and completion state before resuming disposition evaluation
   - gate review archive on completed or not-needed disposition
 prohibited_behavior:
   - archive completed plans while knowledge update disposition remains required or blocked
   - directly write durable knowledge from orchestration skills
+  - treat missing incomplete contradictory or blocked delegation evidence as completed or not-needed
   - create orchestration plan phases or tasks that write .work-bundle/knowledge directly
   - make execution agents browse .work-bundle/knowledge directly
 validation:
   - rule is listed by corresponding orch skill Runtime Rules
   - directives require the section, plan criteria, and review gate
-  - review directive names the ks skill follow-up for required durable updates
+  - review directive defines delegate-return-resume and blocked fallback behavior
   - wb rule validation passes
 source_authority:
   - user-requested default update knowledge base enforcement

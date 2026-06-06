@@ -84,6 +84,30 @@
       "prompt": "Review a completed plan that should promote a confirmed note to implemented.",
       "expected_output": "Selects review-plan, requires validation evidence suitable for front matter evidence before recommending implemented status, and does not silently write durable knowledge.",
       "files": []
+    },
+    {
+      "id": 15,
+      "prompt": "Execute a task whose resolved target source repository has an unrelated untracked file before execution starts.",
+      "expected_output": "Selects execute-plan, runs read-only repository preflight before selection, capability checks, delegation, or implementation, blocks the task because the target repository is dirty, records repository-specific changed-path evidence, and does not stash, commit, reset, restore, clean, delete, or otherwise mutate the repository.",
+      "files": []
+    },
+    {
+      "id": 16,
+      "prompt": "Execute a scheduler wave whose task write scopes resolve to two target source repositories, where one repository is clean and the other is dirty.",
+      "expected_output": "Resolves and records both target source repositories separately from the orchestration artifact repository, runs read-only preflight for both, blocks the entire scheduler wave because one target repository is dirty, reports status and changed-path evidence per repository, and makes no implementation changes.",
+      "files": []
+    },
+    {
+      "id": 17,
+      "prompt": "Review a completed plan whose validated implementation introduces a new source-of-truth rule that should become durable project knowledge.",
+      "expected_output": "Selects review-plan, identifies a structural update, keeps knowledge-update disposition required, delegates the mixed specification, plan, handoff, validation, and changed-file evidence to ks-extract-valuable-points, validates returned durable paths or an evidence-backed no-write rationale plus index rebuild status, resumes disposition evaluation, and never writes durable knowledge directly.",
+      "files": []
+    },
+    {
+      "id": 18,
+      "prompt": "Review a completed plan with a structural update when ks-extract-valuable-points cannot run in the active environment.",
+      "expected_output": "Selects review-plan, keeps knowledge-update disposition required or blocked, does not archive, reports an actionable ks-extract-valuable-points delegation input and next action, and does not treat unavailable or incomplete delegation evidence as completed or not-needed.",
+      "files": []
     }
   ],
   "v4_evals": [
