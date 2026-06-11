@@ -1,11 +1,151 @@
+"""Mechanical rule migration, index sync, and validation helpers.
+
+This module performs structure-only checks: front matter keys, body section
+headings, index consistency, path placement, line limits, and prohibited fields.
+It does not judge semantic rule quality (for example vague ``applies_when``
+wording); agents own that via ``wb-create-rule`` skill instructions.
+"""
+
 from __future__ import annotations
 
 from core import *
 
 
-PROHIBITED_RULE_FIELDS = {"scope", "type", "blocks", "severity", "status", "source_authority"}
-REQUIRED_FRONT_MATTER = ["id", "applies_when", "enforcement", "load", "requires"]
-REQUIRED_BODY_SECTIONS = ["Purpose", "Must", "Must Not", "Validation", "On Violation"]
+VALIDATION_MANIFEST_REL = "references/wb-create-rule-validation.yaml"
+
+_DEFAULT_REQUIRED_FRONT_MATTER = ["id", "applies_when", "enforcement", "load", "requires"]
+_DEFAULT_REQUIRED_BODY_SECTIONS = ["Purpose", "Must", "Must Not", "Validation", "On Violation"]
+_DEFAULT_PROHIBITED_RULE_FIELDS = {"scope", "type", "blocks", "severity", "status", "source_authority"}
+_DEFAULT_ALLOWED_SCOPES = ["work-bundle", "keep-summarizing", "orchestration", "integrity-check"]
+_DEFAULT_ID_PREFIX_SCOPE_MAP = {
+    "wb-": "work-bundle",
+    "ks-": "keep-summarizing",
+    "orch-": "orchestration",
+    "rule-integrity-check-": "integrity-check",
+}
+_DEFAULT_FORBIDDEN_PATH_PREFIXES = ["global"]
+
+_VALIDATION_MANIFEST_CACHE: dict[str, object] | None = None
+
+
+def _validation_manifest_path() -> Path | None:
+    wb_root = resolve_work_bundle_root()
+    if wb_root is not None:
+        candidate = wb_root / VALIDATION_MANIFEST_REL
+        if candidate.is_file():
+            return candidate
+    script_repo_root = Path(__file__).resolve().parents[2]
+    candidate = script_repo_root / VALIDATION_MANIFEST_REL
+    return candidate if candidate.is_file() else None
+
+
+def _parse_nested_yaml_map(text: str, key: str) -> dict[str, str]:
+    lines = text.splitlines()
+    result: dict[str, str] = {}
+    in_section = False
+    for line in lines:
+        if line.strip() == f"{key}:":
+            in_section = True
+            continue
+        if not in_section:
+            continue
+        if line and not line.startswith("  "):
+            break
+        stripped = line.strip()
+        if ":" in stripped:
+            map_key, map_value = stripped.split(":", 1)
+            result[map_key.strip()] = map_value.strip()
+    return result
+
+
+def _parse_nested_yaml_list(text: str, parent_key: str, child_key: str) -> list[str]:
+    lines = text.splitlines()
+    in_parent = False
+    in_child = False
+    values: list[str] = []
+    for line in lines:
+        if line.strip() == f"{parent_key}:":
+            in_parent = True
+            in_child = False
+            continue
+        if not in_parent:
+            continue
+        if line and not line.startswith("  "):
+            break
+        if line.strip() == f"{child_key}:":
+            in_child = True
+            continue
+        if in_child:
+            if line.startswith("  ") and not line.startswith("    "):
+                break
+            item = line.strip()
+            if item.startswith("- "):
+                values.append(item[2:].strip().strip('"'))
+    return values
+
+
+def load_validation_manifest() -> dict[str, object]:
+    global _VALIDATION_MANIFEST_CACHE
+    if _VALIDATION_MANIFEST_CACHE is not None:
+        return _VALIDATION_MANIFEST_CACHE
+
+    manifest_path = _validation_manifest_path()
+    if manifest_path is None:
+        _VALIDATION_MANIFEST_CACHE = {
+            "required_front_matter": list(_DEFAULT_REQUIRED_FRONT_MATTER),
+            "required_body_sections": list(_DEFAULT_REQUIRED_BODY_SECTIONS),
+            "prohibited_rule_fields": sorted(_DEFAULT_PROHIBITED_RULE_FIELDS),
+            "allowed_scopes": list(_DEFAULT_ALLOWED_SCOPES),
+            "id_prefix_scope_map": dict(_DEFAULT_ID_PREFIX_SCOPE_MAP),
+            "forbidden_path_prefixes": list(_DEFAULT_FORBIDDEN_PATH_PREFIXES),
+        }
+        return _VALIDATION_MANIFEST_CACHE
+
+    text = read(manifest_path)
+    parsed = parse_yaml_like(text)
+    prefix_map = _parse_nested_yaml_map(text, "id_prefix_scope_map")
+    forbidden = _parse_nested_yaml_list(text, "path_rules", "forbidden")
+    forbidden_prefixes = [
+        item.removeprefix("rules/").removesuffix("/**").split("/")[0]
+        for item in forbidden
+        if item.startswith("rules/")
+    ]
+    _VALIDATION_MANIFEST_CACHE = {
+        "required_front_matter": yaml_list(parsed.get("required_front_matter"), _DEFAULT_REQUIRED_FRONT_MATTER),
+        "required_body_sections": yaml_list(parsed.get("required_body_sections"), _DEFAULT_REQUIRED_BODY_SECTIONS),
+        "prohibited_rule_fields": yaml_list(parsed.get("prohibited_rule_fields"), sorted(_DEFAULT_PROHIBITED_RULE_FIELDS)),
+        "allowed_scopes": yaml_list(parsed.get("allowed_scopes"), _DEFAULT_ALLOWED_SCOPES),
+        "id_prefix_scope_map": prefix_map or dict(_DEFAULT_ID_PREFIX_SCOPE_MAP),
+        "forbidden_path_prefixes": forbidden_prefixes or list(_DEFAULT_FORBIDDEN_PATH_PREFIXES),
+    }
+    return _VALIDATION_MANIFEST_CACHE
+
+
+def required_front_matter() -> list[str]:
+    return yaml_list(load_validation_manifest().get("required_front_matter"), _DEFAULT_REQUIRED_FRONT_MATTER)
+
+
+def required_body_sections() -> list[str]:
+    return yaml_list(load_validation_manifest().get("required_body_sections"), _DEFAULT_REQUIRED_BODY_SECTIONS)
+
+
+def prohibited_rule_fields() -> set[str]:
+    return set(yaml_list(load_validation_manifest().get("prohibited_rule_fields"), sorted(_DEFAULT_PROHIBITED_RULE_FIELDS)))
+
+
+def allowed_scopes() -> set[str]:
+    return set(yaml_list(load_validation_manifest().get("allowed_scopes"), _DEFAULT_ALLOWED_SCOPES))
+
+
+def id_prefix_scope_map() -> dict[str, str]:
+    raw = load_validation_manifest().get("id_prefix_scope_map")
+    if isinstance(raw, dict) and raw:
+        return {str(key): str(value) for key, value in raw.items()}
+    return dict(_DEFAULT_ID_PREFIX_SCOPE_MAP)
+
+
+def forbidden_path_prefixes() -> set[str]:
+    return set(yaml_list(load_validation_manifest().get("forbidden_path_prefixes"), _DEFAULT_FORBIDDEN_PATH_PREFIXES))
 
 
 def parse_yaml_like(text: str) -> dict[str, object]:
@@ -128,13 +268,27 @@ def markdown_rules(root: Path) -> list[Path]:
     return sorted(path for path in root.glob("**/*.md") if path.is_file())
 
 
+def scoped_rule_id_prefix(rule_id: str) -> str | None:
+    for prefix, _scope in sorted(id_prefix_scope_map().items(), key=lambda item: len(item[0]), reverse=True):
+        if rule_id.startswith(prefix):
+            return prefix
+    return None
+
+
+def expected_scope_for_rule_id(rule_id: str) -> str | None:
+    for prefix, scope in sorted(id_prefix_scope_map().items(), key=lambda item: len(item[0]), reverse=True):
+        if rule_id.startswith(prefix):
+            return scope
+    return None
+
+
 def index_entry(root: Path, path: Path) -> dict[str, object]:
     front, _ = split_front_matter(read(path))
     if front is None:
         front = {}
     return {
         "id": str(front.get("id", path.stem)),
-        "path": str(path.relative_to(root.parent if root.name == "rules" else root)),
+        "path": str(path.relative_to(root)),
         "applies_when": yaml_list(front.get("applies_when")),
         "enforcement": str(front.get("enforcement", "")),
         "load": str(front.get("load", "")),
@@ -165,9 +319,6 @@ def render_index(root: Path, entries: list[dict[str, object]]) -> str:
 def sync_index(root: Path) -> list[dict[str, object]]:
     entries = [index_entry(root, path) for path in markdown_rules(root)]
     write(root / "index.yaml", render_index(root, entries))
-    for nested_index in root.glob("**/index.yaml"):
-        if nested_index != root / "index.yaml":
-            nested_index.unlink()
     return entries
 
 
@@ -179,12 +330,51 @@ def cmd_create_rules(args: list[str]) -> int:
     root.mkdir(parents=True, exist_ok=True)
     migrated = []
     for path in sorted(root.glob("**/*.yaml")):
+        if path.name == "index.yaml":
+            continue
         migrated_path = migrate_legacy_yaml(path)
         if migrated_path:
             migrated.append(str(migrated_path))
     entries = sync_index(root)
     out({"status": "passed", "migrated": migrated, "rules": [entry["id"] for entry in entries]})
     return 0
+
+
+def validate_rule_path_placement(root: Path, path: Path) -> list[str]:
+    failures: list[str] = []
+    rel = path.relative_to(root)
+    rel_text = str(rel)
+    parts = rel.parts
+
+    if parts and parts[0] in forbidden_path_prefixes():
+        failures.append(f"{rel_text}:forbidden_path:{parts[0]}")
+        return failures
+
+    if len(parts) == 1:
+        front, _ = split_front_matter(read(path))
+        rule_id = str(front.get("id", path.stem)) if front else path.stem
+        expected_scope = expected_scope_for_rule_id(rule_id)
+        if expected_scope is not None:
+            if root.name in allowed_scopes() and root.name == expected_scope:
+                return failures
+            failures.append(f"{rel_text}:scoped_rule_at_root:{rule_id}:{expected_scope}")
+        return failures
+
+    if len(parts) == 2:
+        scope = parts[0]
+        if scope not in allowed_scopes():
+            failures.append(f"{rel_text}:invalid_scope_directory:{scope}")
+        front, _ = split_front_matter(read(path))
+        rule_id = str(front.get("id", path.stem)) if front else path.stem
+        expected_scope = expected_scope_for_rule_id(rule_id)
+        if expected_scope is not None and expected_scope != scope:
+            failures.append(f"{rel_text}:scope_id_mismatch:{rule_id}:{expected_scope}")
+        elif expected_scope is None and scoped_rule_id_prefix(rule_id) is None:
+            failures.append(f"{rel_text}:cross_cutting_in_scope_directory:{scope}")
+        return failures
+
+    failures.append(f"{rel_text}:invalid_path_depth")
+    return failures
 
 
 def validate_rule_file(root: Path, path: Path) -> list[str]:
@@ -194,10 +384,10 @@ def validate_rule_file(root: Path, path: Path) -> list[str]:
     rel = str(path.relative_to(root))
     if front is None:
         return [f"{rel}:missing_front_matter"]
-    for field in REQUIRED_FRONT_MATTER:
+    for field in required_front_matter():
         if field not in front:
             failures.append(f"{rel}:missing_front_matter:{field}")
-    for field in PROHIBITED_RULE_FIELDS:
+    for field in prohibited_rule_fields():
         if field in front:
             failures.append(f"{rel}:prohibited_front_matter:{field}")
     if front.get("enforcement") not in {"must", "should"}:
@@ -208,20 +398,20 @@ def validate_rule_file(root: Path, path: Path) -> list[str]:
         failures.append(f"{rel}:empty_applies_when")
     if len(text.splitlines()) >= 500:
         failures.append(f"{rel}:too_long")
-    for section in REQUIRED_BODY_SECTIONS:
+    for section in required_body_sections():
         if f"## {section}" not in body:
             failures.append(f"{rel}:missing_section:{section}")
+    failures.extend(validate_rule_path_placement(root, path))
     return failures
 
 
 def validate_index(root: Path) -> list[str]:
     failures: list[str] = []
     index_path = root / "index.yaml"
-    index = parse_yaml_like(read(index_path))
     if not index_path.exists():
         return ["index.yaml:missing"]
     text = read(index_path)
-    for field in PROHIBITED_RULE_FIELDS:
+    for field in prohibited_rule_fields():
         if re.search(rf"^\s*{re.escape(field)}:", text, re.MULTILINE):
             failures.append(f"index.yaml:prohibited_field:{field}")
     indexed_ids = set(re.findall(r"^\s+- id:\s*(.+?)\s*$", text, re.MULTILINE))
@@ -230,8 +420,8 @@ def validate_index(root: Path) -> list[str]:
         front, _ = split_front_matter(read(path))
         if front and front.get("id"):
             rule_ids.add(str(front["id"]))
-            expected = render_index(root, [index_entry(root, path)])
-            for token in [f"- id: {front['id']}", f"path: {path.relative_to(root.parent)}"]:
+            rel_path = str(path.relative_to(root))
+            for token in [f"- id: {front['id']}", f"path: {rel_path}"]:
                 if token not in text:
                     failures.append(f"index.yaml:missing_or_mismatched:{front['id']}:{token}")
     missing = sorted(rule_ids - indexed_ids)

@@ -1,0 +1,48 @@
+id: wb-create-rule-validation
+status: current
+
+required_front_matter:
+  - id
+  - applies_when
+  - enforcement
+  - load
+  - requires
+
+required_body_sections:
+  - Purpose
+  - Must
+  - Must Not
+  - Validation
+  - On Violation
+
+prohibited_rule_fields:
+  - scope
+  - type
+  - blocks
+  - severity
+  - status
+  - source_authority
+
+allowed_scopes:
+  - work-bundle
+  - keep-summarizing
+  - orchestration
+  - integrity-check
+
+allowed_scope_patterns:
+  - wb-*
+  - ks-*
+  - orch-*
+  - rule-integrity-check-*
+
+id_prefix_scope_map:
+  wb-: work-bundle
+  ks-: keep-summarizing
+  orch-: orchestration
+  rule-integrity-check-: integrity-check
+
+path_rules:
+  scoped: rules/<scope>/*.md
+  cross_cutting: rules/*.md
+  forbidden:
+    - rules/global/**

@@ -1,0 +1,39 @@
+rules:
+  - id: wb-create-rule
+    path: wb-create-rule.md
+    applies_when:
+      - user requests creation, update, migration, or validation of work-bundle runtime rules
+      - agent creates or edits Markdown rule files under rules/
+      - agent registers or syncs rules in rules/index.yaml
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: wb-project-registry
+    path: wb-project-registry.md
+    applies_when:
+      - task.registers_project
+      - task.creates_workspace_slug
+      - task.resolves_project_location
+      - task.resolves_knowledge_base_location
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: wb-script-instruction
+    path: wb-script-instruction.md
+    applies_when:
+      - user requests creation of a new work-bundle script
+      - user requests update of scripts under scripts/
+      - agent maintains script dispatchers, doctors, or project initialization scripts
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: wb-skill-registry
+    path: wb-skill-registry.md
+    applies_when:
+      - task.registers_skill
+      - task.resolves_available_skills
+      - task.resolves_role_skills
+      - task.resolves_stage_skills
+    enforcement: must
+    load: conditional
+    requires: []

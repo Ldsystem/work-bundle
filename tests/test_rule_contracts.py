@@ -19,8 +19,35 @@ def run_wb(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[s
     )
 
 
+def valid_rule_md(
+    rule_id: str,
+    *,
+    applies_when: list[str] | None = None,
+    extra_front_matter: str = "",
+) -> str:
+    applies = applies_when if applies_when is not None else ["task runs"]
+    applies_yaml = "\n".join(f"  - {item}" for item in applies)
+    return (
+        "---\n"
+        f"id: {rule_id}\n"
+        "applies_when:\n"
+        f"{applies_yaml}\n"
+        "enforcement: must\n"
+        "load: conditional\n"
+        "requires: []\n"
+        f"{extra_front_matter}"
+        "---\n\n"
+        f"# {rule_id}\n\n"
+        "## Purpose\n\n- purpose\n\n"
+        "## Must\n\n- must\n\n"
+        "## Must Not\n\n- must not\n\n"
+        "## Validation\n\n- validate\n\n"
+        "## On Violation\n\n- stop\n"
+    )
+
+
 def test_validate_current_rules_passes() -> None:
-    result = run_wb("validate-rules", "rules")
+    result = run_wb("validate-rules", str(REPO_ROOT / "rules" / "work-bundle"))
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)["status"] == "passed"
 
@@ -62,27 +89,13 @@ def test_validate_rules_rejects_prohibited_front_matter(tmp_path: Path) -> None:
     root = tmp_path / "rules"
     root.mkdir()
     (root / "bad.md").write_text(
-        "---\n"
-        "id: bad-rule\n"
-        "scope: work-bundle\n"
-        "applies_when:\n"
-        "  - bad activation\n"
-        "enforcement: must\n"
-        "load: conditional\n"
-        "requires: []\n"
-        "---\n\n"
-        "# Bad Rule\n\n"
-        "## Purpose\n\n- purpose\n\n"
-        "## Must\n\n- must\n\n"
-        "## Must Not\n\n- must not\n\n"
-        "## Validation\n\n- validate\n\n"
-        "## On Violation\n\n- stop\n",
+        valid_rule_md("bad-rule", extra_front_matter="scope: work-bundle\n"),
         encoding="utf-8",
     )
     (root / "index.yaml").write_text(
         "rules:\n"
         "  - id: bad-rule\n"
-        "    path: rules/bad.md\n"
+        "    path: bad.md\n"
         "    applies_when:\n"
         "      - bad activation\n"
         "    enforcement: must\n"
@@ -95,3 +108,130 @@ def test_validate_rules_rejects_prohibited_front_matter(tmp_path: Path) -> None:
     assert result.returncode == 1
     failures = json.loads(result.stdout)["failures"]
     assert "bad.md:prohibited_front_matter:scope" in failures
+
+
+def test_validate_rules_rejects_empty_applies_when(tmp_path: Path) -> None:
+    root = tmp_path / "rules"
+    root.mkdir()
+    (root / "work-bundle").mkdir()
+    (root / "work-bundle" / "wb-empty-when.md").write_text(
+        valid_rule_md("wb-empty-when", applies_when=[]),
+        encoding="utf-8",
+    )
+    run_wb("create-rules", str(root))
+
+    result = run_wb("validate-rules", str(root))
+    assert result.returncode == 1
+    failures = json.loads(result.stdout)["failures"]
+    assert "work-bundle/wb-empty-when.md:empty_applies_when" in failures
+
+
+def test_validate_rules_rejects_forbidden_global_path(tmp_path: Path) -> None:
+    root = tmp_path / "rules"
+    global_dir = root / "global"
+    global_dir.mkdir(parents=True)
+    (global_dir / "bad.md").write_text(valid_rule_md("cross-cutting-rule"), encoding="utf-8")
+    run_wb("create-rules", str(root))
+
+    result = run_wb("validate-rules", str(root))
+    assert result.returncode == 1
+    failures = json.loads(result.stdout)["failures"]
+    assert "global/bad.md:forbidden_path:global" in failures
+
+
+def test_validate_rules_rejects_scoped_rule_at_rules_root(tmp_path: Path) -> None:
+    root = tmp_path / "rules"
+    root.mkdir()
+    (root / "wb-at-root.md").write_text(valid_rule_md("wb-at-root"), encoding="utf-8")
+    run_wb("create-rules", str(root))
+
+    result = run_wb("validate-rules", str(root))
+    assert result.returncode == 1
+    failures = json.loads(result.stdout)["failures"]
+    assert "wb-at-root.md:scoped_rule_at_root:wb-at-root:work-bundle" in failures
+
+
+def test_validate_rules_accepts_valid_scoped_placement(tmp_path: Path) -> None:
+    root = tmp_path / "rules"
+    scope = root / "work-bundle"
+    scope.mkdir(parents=True)
+    (scope / "wb-valid-rule.md").write_text(valid_rule_md("wb-valid-rule"), encoding="utf-8")
+    run_wb("create-rules", str(root))
+
+    result = run_wb("validate-rules", str(root))
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_validate_rules_accepts_vague_applies_when_mechanically(tmp_path: Path) -> None:
+    root = tmp_path / "rules"
+    scope = root / "work-bundle"
+    scope.mkdir(parents=True)
+    (scope / "wb-vague-when.md").write_text(
+        valid_rule_md("wb-vague-when", applies_when=["when appropriate", "as needed"]),
+        encoding="utf-8",
+    )
+    run_wb("create-rules", str(root))
+
+    result = run_wb("validate-rules", str(root))
+    assert result.returncode == 0, result.stdout + result.stderr
+    failures = json.loads(result.stdout).get("failures", [])
+    assert not any("vague" in failure for failure in failures)
+
+
+def test_validate_rules_rejects_scope_id_mismatch(tmp_path: Path) -> None:
+    root = tmp_path / "rules"
+    scope = root / "keep-summarizing"
+    scope.mkdir(parents=True)
+    (scope / "wb-wrong-scope.md").write_text(valid_rule_md("wb-wrong-scope"), encoding="utf-8")
+    run_wb("create-rules", str(root))
+
+    result = run_wb("validate-rules", str(root))
+    assert result.returncode == 1
+    failures = json.loads(result.stdout)["failures"]
+    assert "keep-summarizing/wb-wrong-scope.md:scope_id_mismatch:wb-wrong-scope:work-bundle" in failures
+
+
+def test_index_paths_stable_across_double_sync(tmp_path: Path) -> None:
+    root = tmp_path / "rules"
+    scope = root / "work-bundle"
+    scope.mkdir(parents=True)
+    (scope / "wb-index-stable.md").write_text(valid_rule_md("wb-index-stable"), encoding="utf-8")
+    (root / "cross-cutting.md").write_text(valid_rule_md("cross-cutting-rule"), encoding="utf-8")
+
+    first = run_wb("create-rules", str(root))
+    assert first.returncode == 0, first.stdout + first.stderr
+    index_after_first = (root / "index.yaml").read_text(encoding="utf-8")
+
+    second = run_wb("create-rules", str(root))
+    assert second.returncode == 0, second.stdout + second.stderr
+    index_after_second = (root / "index.yaml").read_text(encoding="utf-8")
+
+    assert index_after_first == index_after_second
+    assert "path: work-bundle/wb-index-stable.md" in index_after_second
+    assert "path: cross-cutting.md" in index_after_second
+    assert "path: rules/" not in index_after_second
+    assert "../" not in index_after_second
+
+
+def test_index_entry_paths_relative_to_rules_root(tmp_path: Path) -> None:
+    sys.path.insert(0, str(REPO_ROOT / "scripts" / "work-bundle"))
+    try:
+        import rules as rules_module
+
+        root = tmp_path / "rules"
+        scope = root / "work-bundle"
+        scope.mkdir(parents=True)
+        rule_path = scope / "wb-relative-path.md"
+        rule_path.write_text(valid_rule_md("wb-relative-path"), encoding="utf-8")
+
+        entry = rules_module.index_entry(root, rule_path)
+        assert entry["path"] == "work-bundle/wb-relative-path.md"
+
+        first = rules_module.sync_index(root)
+        second = rules_module.sync_index(root)
+        assert first == second
+        assert all(not str(entry["path"]).startswith("rules/") for entry in second)
+        assert all(".." not in str(entry["path"]) for entry in second)
+    finally:
+        if sys.path and sys.path[0] == str(REPO_ROOT / "scripts" / "work-bundle"):
+            sys.path.pop(0)
