@@ -64,7 +64,7 @@ Orchestration must retrieve durable knowledge through `ks-what-is-helpful` gatew
 
 ## Project Registry
 
-Use `references/bootstrap/agent-bootstrap.md` as the authority for global project registry location, override inputs, copy restrictions, and project resolution priority.
+Use `.work-bundle/project.yaml` as the authority for project metadata, override inputs, copy restrictions, and project resolution priority. Resolve the global project registry from `~/.work-bundle/bootstrap.yaml` only when cross-project registry access is required. Use project-local `AGENTS.md`, initialized from `references/assets/template/AGENTS.md`, for work-bundle runtime entry rules. Resolve stable role context from `roles/` role profiles.
 
 ## Structural-Value Test
 
@@ -448,4 +448,4 @@ Completion is not valid after a note or open-question write until the relevant i
 
 ## V4 Boundary Validation
 
-V4 work-bundle validation may inspect repository binding, bootstrap files, runtime rules, and skill registry references. These checks do not expand durable knowledge ownership: notes remain under `.work-bundle/knowledge/`, and orchestration/runtime artifacts remain under `.work-bundle/orchestration/`.
+V4 work-bundle validation may inspect project metadata, agent entry, role profiles, runtime rules, and skill registry references. These checks do not expand durable knowledge ownership: notes remain under `.work-bundle/knowledge/`, and orchestration/runtime artifacts remain under `.work-bundle/orchestration/`.

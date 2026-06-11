@@ -1,5 +1,42 @@
 from core import *
 
+PROFILE = '''id: project-domain-profile
+status: deprecated
+authority: compatibility-reference
+canonical_metadata: .work-bundle/project.yaml
+migration_owner: /wb-initialize-project
+doctor_flow: /wb-initialize-project doctor
+migrate_flow: /wb-initialize-project migrate
+version: 1
+generated_by: wb-initialize-project
+updated_at: 2026-05-25
+industry: agent-workflow-tooling
+business_context: Local-first agent knowledge and orchestration workflow tooling.
+core_domain_objects: [work-bundle, durable-knowledge, orchestration-artifact, skill, runtime-rule, role-context]
+core_lifecycles: [spec -> plan -> phase -> task -> execute -> handoff -> review]
+domain_constraints: [keep durable knowledge separate from orchestration artifacts, compact runtime files first]
+common_misunderstandings: [do not treat open questions as facts, do not let execute-plan retrieve knowledge]
+current_lifecycle_stage: development-design
+stage_specific_authority:
+  tender: weak input unless confirmed later
+  investigation: discovery findings; useful for scope and clarification
+  customer-design: customer-visible intent, not engineering authority by default
+  bidding: commercial commitment; not implementation design by default
+  development-design: primary authority for specs and plans
+  implementation: verified behavior from code, handoff, review, or tests
+  deployment: runtime and rollout authority
+  go-live-delivery: delivery and acceptance authority
+  operation: production/runtime authority
+role_positioning:
+  default: selected role profiles must apply this domain profile before producing domain-sensitive output
+source_knowledge:
+  - path: explicit-source
+    role: authority
+    reason: input context
+warnings: []
+'''
+
+
 def cmd_domain_profile(args: list[str], merge: bool = False, validate: bool = False) -> int:
     if validate:
         parser = argparse.ArgumentParser(prog='wb.py validate-domain-profile')

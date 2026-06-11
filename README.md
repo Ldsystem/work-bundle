@@ -11,7 +11,13 @@ Project home for migrated work-bundle skills, scripts, references, and local orc
 
 ## Skill Links
 
-Install all work-bundle skills into the shared agent skill root:
+Install bootstrap/registry and symlink all work-bundle skills into the shared agent skill root:
+
+```bash
+bin/install.sh
+```
+
+Install or refresh skill symlinks only:
 
 ```bash
 bin/install-work-bundle-skills

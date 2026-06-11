@@ -3,8 +3,10 @@ status: current
 scope: work-bundle
 applies_to:
   paths:
-    - references/bootstrap/agent-bootstrap.md
-    - references/bootstrap/repository-binding.md
+    - .work-bundle/project.yaml
+    - AGENTS.md
+    - references/assets/template/AGENTS.md
+    - roles/
     - rules/*.yaml
   skills:
     - wb-integrity-check
@@ -15,10 +17,10 @@ enable_when:
 severity: must
 required_behavior:
   - detect and report eager loading that violates startup-minimal context rules
-  - verify loading boundaries for agent-bootstrap, project-domain-profile, repository-binding, and roadmap files
+  - verify loading boundaries for project metadata, agent entry, role profiles, and roadmap files
   - classify loading issues with explicit risk level and concrete remediation action
 prohibited_behavior:
-  - forcing startup to load full roadmap, full repository-binding, full project-domain-profile, all notes, all rules, or all skill references
+  - forcing startup to load full roadmap, full project metadata, all role profiles, all notes, all rules, or all skill references
 validation:
   - report includes compression/loading section and startup-loading matrix
   - findings include runtime_loading_risk and recommended_action fields

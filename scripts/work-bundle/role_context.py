@@ -37,7 +37,8 @@ def cmd_role_context(args: list[str], validate: bool = False) -> int:
     project_root = Path(parsed.project_root).resolve()
     source = Path(parsed.source_artifact).resolve() if parsed.source_artifact else None
     source_text = read(source) if source else ''
-    stage = parsed.stage or first_match(r'(?i)^lifecycle_stage:\s*([^\n]+)', source_text) or first_match(r'(?i)^stage:\s*([^\n]+)', source_text) or first_match(r'^current_lifecycle_stage:\s*([^\n]+)', read(project_root / 'references/bootstrap/project-domain-profile.yaml')) or 'unknown'
+    project_metadata_path = project_root / '.work-bundle/project.yaml'
+    stage = parsed.stage or first_match(r'(?i)^lifecycle_stage:\s*([^\n]+)', source_text) or first_match(r'(?i)^stage:\s*([^\n]+)', source_text) or first_match(r'^current_lifecycle_stage:\s*([^\n]+)', read(project_metadata_path)) or 'unknown'
     perspective = parsed.perspective or (stage if stage != 'unknown' else 'unknown')
     blocked = parsed.directive == 'execute-plan' and source is None
     blocker = 'execute-plan requires carried source artifact role context' if blocked else None
@@ -58,7 +59,8 @@ def cmd_role_context(args: list[str], validate: bool = False) -> int:
     warnings = [] if stage != 'unknown' else ['lifecycle stage unresolved']
     if resolution == 'fallback-draft-role':
         warnings.append('role resolution used one draft role')
-    data = {'role_context': {'source': 'wb-select-role-context', 'version': 1, 'target_directive': parsed.directive, 'source_artifact': str(source) if source else None, 'lifecycle_stage': stage, 'perspective': perspective, 'authority_stage': stage, 'primary_role': primary, 'supporting_roles': supporting, 'resolution': resolution, 'draft_role': draft_role, 'domain_profile': 'references/bootstrap/project-domain-profile.yaml', 'role_profiles': role_paths, 'skill_registry': GLOBAL_SKILL_REGISTRY, 'project_skill_override': '.work-bundle/orchestration/skill-registry.override.yaml' if (project_root / '.work-bundle/orchestration/skill-registry.override.yaml').exists() else None, 'suggested_skills': skill_hints(project_root, parsed.directive), 'source_basis': [item for item in ['.work-bundle/project.yaml', 'references/bootstrap/agent-bootstrap.md', str(source) if source else None] if item], 'warnings': warnings, 'blocked': blocked, 'blocker': blocker}}
+    agent_entry = 'AGENTS.md' if (project_root / 'AGENTS.md').exists() else 'references/assets/template/AGENTS.md'
+    data = {'role_context': {'source': 'wb-select-role-context', 'version': 1, 'target_directive': parsed.directive, 'source_artifact': str(source) if source else None, 'lifecycle_stage': stage, 'perspective': perspective, 'authority_stage': stage, 'primary_role': primary, 'supporting_roles': supporting, 'resolution': resolution, 'draft_role': draft_role, 'domain_profile': '.work-bundle/project.yaml', 'role_profiles': role_paths, 'skill_registry': GLOBAL_SKILL_REGISTRY, 'project_skill_override': '.work-bundle/orchestration/skill-registry.override.yaml' if (project_root / '.work-bundle/orchestration/skill-registry.override.yaml').exists() else None, 'suggested_skills': skill_hints(project_root, parsed.directive), 'source_basis': [item for item in ['.work-bundle/project.yaml', agent_entry, str(source) if source else None] if item], 'warnings': warnings, 'blocked': blocked, 'blocker': blocker}}
     text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
     if parsed.output:
         write(Path(parsed.output), text + '\n')

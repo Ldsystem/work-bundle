@@ -1,37 +1,114 @@
 ---
 name: wb-initialize-project
-description: 'Initialize, validate, doctor, or migrate a project-local work-bundle workspace using canonical bootstrap-resolved project commands.'
+description: Initialize, validate, doctor, or migrate a project-local work-bundle workspace via scripts/wb.py dispatcher commands.
 ---
 
 # wb-initialize-project
 
-Use when a project needs work-bundle initialization, deterministic repair, validation, or migration.
+## Purpose
 
-## Commands
+Initialize, doctor, validate, register, inspect, or migrate a project as a work-bundle adapted workspace using mechanical dispatcher commands only.
 
-Use the unified work-bundle dispatcher:
+## Inputs
 
-- Initialize or repair project structure: `python3 scripts/wb.py init-project <project-root> [--name <name>] [--force]`
-- Register an existing project root: `python3 scripts/wb.py register-project <project-root> [--name <name>]`
-- Inspect project and registry status: `python3 scripts/wb.py show-project --project-root <project-root>`
-- Validate project structure: `python3 scripts/wb.py validate-project <project-root>`
-- Migrate legacy project structure: `python3 scripts/wb.py migrate-project <project-root>`
+- `project_root`: concrete project path.
+- `~/.work-bundle/bootstrap.yaml` for `project_registry` and `work_bundle_root` resolution.
+- Optional `WB_WORK_BUNDLE_ROOT` environment override when the agent must pass an explicit toolkit root to dispatcher commands.
+- Work-bundle reference templates and manifests under the bootstrap-resolved work-bundle root:
+  - `references/assets/template/project.yaml`
+  - `references/assets/template/projects.yaml`
+  - `references/assets/template/AGENTS.md`
+  - `references/wb-initialize-project-default-work-bundle-tree.yaml`
 
-`initialize-project` remains a compatibility alias, but new instructions should use `init-project`.
+## Must
 
-## Behavior
+Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatcher commands. Do not create, modify, or validate `scripts/work-bundle/project.py` or other script modules from this skill.
 
-- Resolve runtime roots from `~/.work-bundle/bootstrap.yaml`.
+| Mode | Command |
+|---|---|
+| Initialize | `init-project <project-root> [--name <name>] [--force] [--dry-run] [--disable-work-bundle-git] [--create-project-skill-override]` |
+| Doctor | `doctor-project <project-root> [--repair] [--force]` |
+| Inspect only | `show-project [--project-root <project-root>]` |
+| Strict validate | `validate-project <project-root> [--dry-run]` |
+| Register only | `register-project <project-root> [--name <name>]` |
+| Migrate | `migrate-project <project-root> [--name <name>] [--force]` |
+
+`initialize-project` remains a compatibility alias for `init-project`; prefer `init-project` in new instructions.
+
+**Preserve behavior (default):** commands preserve existing non-empty files. Re-running `init-project` on a healthy project reports `changed_files: []`.
+
+**`init-project --force`:** may overwrite init-managed template files only: `AGENTS.md`, `.work-bundle/project.yaml`, `rules/index.yaml`, `.work-bundle/knowledge/project.yaml`.
+
+**`migrate-project --force`:** narrower migration-only repair subset; overwrites `.work-bundle/project.yaml` only. Does not overwrite general init-managed files such as `AGENTS.md`.
+
+**`init-project --dry-run` / `validate-project --dry-run`:** inspect and report mechanical failures without writing project files.
+
+**Registry and slug (per `wb-project-registry`):**
+
+- Resolve the project registry path from `bootstrap.yaml` field `project_registry`.
+- Register every initialized project to `projects.yaml` as a new workspace slug or an existing workspace slug.
+- Derive the workspace slug from `--name` when provided; otherwise from the project root directory name (normalized lowercase alphanumeric with hyphens).
+- On slug or project-root match, merge registry entries and preserve existing `aliases` and `source_repositories` unless explicitly replaced.
+- Ask for the workspace slug decision only when it is missing and blocking.
+
+**Initialization structure:**
+
 - Create `.work-bundle/knowledge/{context-packs,indexes,notes,open-questions}`.
-- Create the full `.work-bundle/orchestration` spec, plan, handoff, and docs substructure during initialization.
+- Create the full `.work-bundle/orchestration` subtree at initialization:
+  - `orchestration/spec/{active,archived}`
+  - `orchestration/plan/{active,archived}`
+  - `orchestration/handoff/orchestration/{active,archived}`
+  - `orchestration/handoff/executor/{active,archived}`
+  - `orchestration/{docs,principles,templates,reviews,execution-state}`
+- Directory membership is driven by `references/wb-initialize-project-default-work-bundle-tree.yaml`.
+- Render `.work-bundle/project.yaml` from `references/assets/template/project.yaml`.
+- Create or preserve `AGENTS.md` from `references/assets/template/AGENTS.md` and required `.gitignore` entries.
 - Initialize `.work-bundle/knowledge` as its own Git repository and create its initial deterministic commit when needed.
-- Create or preserve `.work-bundle/project.yaml`, `AGENTS.md`, and required `.gitignore` entries.
-- Register the project in the bootstrap-resolved global project registry.
-- Create a project-level initialization commit when the target project is a Git repository and commit creation is not blocked.
+- Bind registry IO to `references/assets/template/projects.yaml`.
+- Fail mechanically when a required reference asset is missing; do not invent fallback content.
 
-## Boundaries
+**Validation scope:** mechanical checks only — file presence, directory structure, schema keys, registry status, and Git status. No semantic prose or bootstrap-artifact checks.
 
-- Do not create specs, plans, phases, tasks, reviews, or handoffs during initialization.
-- Do not delete existing knowledge, orchestration artifacts, registry data, or unknown user files.
-- Validation checks file presence, directory structure, schema shape, registry status, and Git status only.
-- Migration may add missing deterministic structure and write a migration report, but must preserve existing notes, open questions, orchestration artifacts, Git history, and project identity.
+## Doctor Mode
+
+Use `doctor-project` as the canonical doctor command.
+
+- `doctor-project` without `--repair`: inspect and report mechanical failures only.
+- `doctor-project --repair`: repair deterministic structure defects; default repair preserves existing non-empty user content.
+- `doctor-project --repair --force`: repair with init-scoped template overwrite permission.
+- Do not rewrite user-authored project content without explicit `--force`.
+- Do not migrate registry identity without preserving the old slug mapping or reporting the required user decision.
+
+## Migration Mode
+
+Use `migrate-project` for legacy layout upgrades.
+
+- Detect legacy `.work-bundle` layout, missing registry fields, obsolete template sections, retired bootstrap artifacts, legacy `rules/contract.yaml`, and moved template paths.
+- Preserve existing knowledge notes, open questions, orchestration artifacts, Git history, and project identity.
+- Add missing current files and directories without deleting unknown files.
+- Write a migration report under `.work-bundle/orchestration/docs/migration-report-YYYY-MM-DD.md`.
+- When retired legacy bootstrap artifacts are present, archive evidence under `.work-bundle/orchestration/docs/legacy-bootstrap-archive-YYYY-MM-DD/`, remove active legacy bootstrap paths, and list retired artifacts in the migration report.
+- When legacy `rules/contract.yaml` is present, archive it under `.work-bundle/orchestration/docs/legacy-rules-contract-archive-YYYY-MM-DD/` and remove the active file.
+- `migrate-project --force` applies migration-only structural repair; it does not broaden overwrite to general init-managed files.
+
+## Must Not
+
+- Load, create, require, validate, or reference retired legacy bootstrap artifacts or paths.
+- Create or validate scripts; this skill consumes dispatcher commands only.
+- Eagerly scan all work-bundle skills, rules, or references beyond command output.
+- Store project registry state under `project_root` or the work-bundle root.
+- Delete existing knowledge, orchestration artifacts, registry data, or unknown user files.
+- Create specifications, plans, phases, tasks, reviews, or handoffs during initialization.
+
+## Output
+
+- Initialized, doctored, validated, registered, or migrated project workspace.
+- Updated bootstrap-resolved `projects.yaml` registry entry when registration runs.
+- JSON command output with `status`, `failures`, `registry_path`, `registry_entry` or `registry_status`, and `changed_files` where applicable.
+- Migration report and optional legacy-bootstrap archive paths under `.work-bundle/orchestration/docs/` when migration retires legacy artifacts.
+
+## On Failure
+
+- Stop before destructive changes.
+- Report the blocking file, missing reference asset, registry entry, or slug decision from command JSON `failures`.
+- Ask at most one blocking question when slug or registry identity is unresolved.

@@ -15,8 +15,8 @@ for arg in "$@"; do
   esac
 done
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-work_bundle_root="$(cd "$script_dir/.." && pwd)"
+bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+work_bundle_root="$(cd "$bin_dir/.." && pwd)"
 work_bundle_config_root="${HOME}/.work-bundle"
 registry_root="${work_bundle_config_root}/registry"
 template_root="${work_bundle_root}/references/assets/template"
@@ -101,24 +101,23 @@ install_bootstrap
 copy_if_missing "${template_root}/projects.yaml" "${registry_root}/projects.yaml"
 copy_if_missing "${template_root}/skill-registry.yaml" "${registry_root}/skill-registry.yaml"
 
-installer="${work_bundle_root}/bin/insall-work-bundle-skills"
+installer="${bin_dir}/install-work-bundle-skills"
 if [[ ! -x "$installer" ]]; then
   record failed "$installer"
-  echo "missing executable builtin skill installer: $installer" >&2
+  echo "missing executable skill installer: $installer" >&2
 else
-  if [[ "$dry_run" -eq 0 ]]; then
-    if installer_output="$("$installer")"; then
-      printf '%s\n' "$installer_output"
-      case "$installer_output" in
-        updated:*) record updated "$installer" ;;
-        skipped:*) record skipped "$installer" ;;
-        *) record updated "$installer" ;;
-      esac
-    else
-      record failed "$installer"
-    fi
+  installer_args=()
+  if [[ "$force" -eq 1 ]]; then
+    installer_args+=(--force)
+  fi
+  if [[ "$dry_run" -eq 1 ]]; then
+    installer_args+=(--dry-run)
+  fi
+  if installer_output="$("$installer" "${installer_args[@]}")"; then
+    printf '%s\n' "$installer_output"
+    record updated "$installer"
   else
-    record skipped "$installer"
+    record failed "$installer"
   fi
 fi
 

@@ -8,6 +8,15 @@ roots:
   - .work-bundle/knowledge/context-packs
   - .work-bundle/knowledge/indexes
   - .work-bundle/orchestration/spec/active
+  - .work-bundle/orchestration/spec/archived
   - .work-bundle/orchestration/plan/active
+  - .work-bundle/orchestration/plan/archived
+  - .work-bundle/orchestration/handoff/orchestration/active
+  - .work-bundle/orchestration/handoff/orchestration/archived
   - .work-bundle/orchestration/handoff/executor/active
+  - .work-bundle/orchestration/handoff/executor/archived
+  - .work-bundle/orchestration/docs
+  - .work-bundle/orchestration/principles
+  - .work-bundle/orchestration/templates
   - .work-bundle/orchestration/reviews
+  - .work-bundle/orchestration/execution-state

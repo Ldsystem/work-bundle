@@ -1,4 +1,5 @@
 from core import *
+from project import inspect_project, project_failures
 
 def cmd_doctor(args: list[str], report: bool = False, workflow: bool = False) -> int:
     parser = argparse.ArgumentParser(prog='wb.py doctor')
