@@ -1,0 +1,48 @@
+stage_skill_hints:
+  development-design:
+    suggested_roles: [solution-architect, backend-developer, frontend-developer, database-engineer, qa-reviewer]
+    suggested_outputs: [implementation-spec, architecture-spec, task-breakdown, work-bundle-rule-set]
+  implementation:
+    suggested_roles: [backend-developer, frontend-developer, qa-reviewer]
+    suggested_outputs: [execution-plan, code-review, test-plan]
+skills:
+  keep-summarizing:
+    type: internal
+    source: <work-bundle-skill-source-path>
+    mode: native
+    priority: required
+    used_by: [solution-architect, backend-developer, qa-reviewer]
+    stages: [development-design, implementation]
+    allowed_outputs: [durable-knowledge, retrieval-gateway]
+    validation: [must_not_write_orchestration_artifacts]
+    fallback: none
+  orchestrator:
+    type: internal
+    source: <work-bundle-skill-source-path>
+    mode: native
+    priority: required
+    used_by: [solution-architect, backend-developer, qa-reviewer]
+    stages: [development-design, implementation]
+    allowed_outputs: [spec, plan, task, handoff, review]
+    validation: [must_not_write_durable_knowledge]
+    fallback: none
+  repo-intake-and-plan:
+    type: external
+    source: <external-skill-source-path>
+    mode: native
+    priority: optional
+    used_by: [solution-architect, backend-developer, frontend-developer]
+    stages: [development-design, implementation]
+    allowed_outputs: [repo-structure-summary, command-inventory, reproduction-plan, ambiguity-risk-list]
+    validation: [readme_first, scan_only, must_not_setup_environment, must_not_execute_reproduction]
+    fallback: manual_repo_inspection
+  ui-ux-pro-max:
+    type: external
+    source: <external-skill-source-path>
+    mode: native
+    priority: optional
+    used_by: [solution-architect, frontend-developer, qa-reviewer]
+    stages: [customer-design, development-design, implementation]
+    allowed_outputs: [design-system, ui-spec, ux-audit, stack-guidelines]
+    validation: [design_system_first, stack_guidance_required, avoid_emoji_icons, accessibility_check]
+    fallback: manual_uiux_review

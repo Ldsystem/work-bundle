@@ -44,7 +44,7 @@ PROJECT_METADATA_REQUIRED_FIELDS = [
 ]
 REQUIRED_PROJECT_GITIGNORE = ['.work-bundle/', 'AGENTS.md']
 WORK_BUNDLE_IGNORES = ['*.secret', '*.key', '*.pem', '.env', '.env.*', 'cache/', 'tmp/', 'temp', '.DS_Store', '*.zip', '*.tar', '*.gz', '*.7z', '*.log', '.cursor/', '.idea/', '.vscode/']
-ORCHESTRATION_DIRS = ['orchestration/principles', 'orchestration/templates', 'orchestration/spec/active', 'orchestration/spec/archived', 'orchestration/plan/active', 'orchestration/plan/archived', 'orchestration/handoff/executor/active', 'orchestration/handoff/orchestration/active', 'orchestration/docs', 'orchestration/reviews', 'orchestration/execution-state']
+ORCHESTRATION_DIRS = ['orchestration/spec/active', 'orchestration/spec/archived', 'orchestration/plan/active', 'orchestration/plan/archived', 'orchestration/handoff/orchestration/active', 'orchestration/handoff/orchestration/archived', 'orchestration/handoff/executor/active', 'orchestration/handoff/executor/archived', 'orchestration/docs', 'orchestration/principles', 'orchestration/templates', 'orchestration/reviews', 'orchestration/execution-state']
 KNOWLEDGE_DIRS = ['knowledge/notes', 'knowledge/open-questions', 'knowledge/context-packs', 'knowledge/indexes']
 ROLE_NAMES = ['project-manager', 'solution-architect', 'domain-analyst', 'ui-designer', 'frontend-developer', 'backend-developer', 'database-engineer', 'qa-reviewer', 'devops-engineer']
 STACK_TERMS = ['Spring', 'React', 'Vue', 'Angular', 'Svelte', 'MySQL', 'PostgreSQL', 'AWS', 'Azure', 'GCP']
@@ -123,6 +123,7 @@ Deterministic diagnostics:
 7. load task-specific spec or plan
 
 ## Transition Notes
+- Migration owner: `/wb-initialize-project`.
 - Do not treat project-local bootstrap markdown as authority.
 - Do not encode project identity in global bootstrap authority.
 - Do not use split metadata files as runtime authority.
@@ -265,6 +266,9 @@ def resolve_bootstrap_runtime() -> dict[str, object]:
     config_root = work_bundle_config_root()
     bootstrap_path = config_root / GLOBAL_BOOTSTRAP_FILE_NAME
     pointer_path = config_root / WORK_BUNDLE_ROOT_POINTER_FILE_NAME
+    bootstrap = compact_yaml_map(read(bootstrap_path))
+    bootstrap_root_raw = bootstrap.get('work_bundle_root', '').strip()
+    bootstrap_root = Path(bootstrap_root_raw).expanduser() if bootstrap_root_raw else None
     result: dict[str, object] = {
         'work_bundle_config_root': str(config_root),
         'global_bootstrap_path': str(bootstrap_path),
@@ -274,8 +278,14 @@ def resolve_bootstrap_runtime() -> dict[str, object]:
         'work_bundle_root_pointer_state': 'missing',
         'work_bundle_root_pointer_diagnostic': DIAG_POINTER_MISSING,
         'work_bundle_root_pointer_reason': 'pointer file not found',
-        'resolved_work_bundle_root': None,
+        'resolved_work_bundle_root': str(bootstrap_root.resolve()) if bootstrap_root and bootstrap_root.exists() else None,
     }
+    if bootstrap_root and bootstrap_root.exists():
+        result['work_bundle_root_pointer_diagnostic'] = None
+        result['work_bundle_root_pointer_reason'] = None
+        if not pointer_path.exists():
+            result['work_bundle_root_pointer_state'] = 'bootstrap-authority'
+        return result
     if not pointer_path.exists():
         return result
     pointer = compact_yaml_map(read(pointer_path))
@@ -313,6 +323,13 @@ def resolve_bootstrap_runtime() -> dict[str, object]:
 def ensure_work_bundle_root_pointer(work_bundle_root: Path) -> str | None:
     config_root = work_bundle_config_root()
     pointer_path = config_root / WORK_BUNDLE_ROOT_POINTER_FILE_NAME
+    current = compact_yaml_map(read(pointer_path))
+    if (
+        current.get('pointer_version') == str(WORK_BUNDLE_ROOT_POINTER_VERSION)
+        and current.get('work_bundle_root') == str(work_bundle_root.resolve())
+        and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', current.get('updated_at', ''))
+    ):
+        return None
     text = '\n'.join([
         f'pointer_version: {WORK_BUNDLE_ROOT_POINTER_VERSION}',
         f'work_bundle_root: {work_bundle_root.resolve()}',
@@ -527,10 +544,13 @@ def project_failures(data: dict, strict: bool = True, include_roles: bool = Fals
 
 def apply_project(project_root: Path, init_git: bool = True, create_override: bool = False) -> list[str]:
     wb = project_root / '.work-bundle'
+    knowledge = wb / 'knowledge'
     changed: list[str] = []
     if ensure_lines(project_root / '.gitignore', REQUIRED_PROJECT_GITIGNORE):
         changed.append(str(project_root / '.gitignore'))
-    if write(project_root / 'AGENTS.md', AGENTS, overwrite=False):
+    template_root = Path(resolve_bootstrap_runtime().get('resolved_work_bundle_root') or Path.cwd()) / 'references/assets/template'
+    agents_template = read(template_root / 'AGENTS.md') or AGENTS
+    if write(project_root / 'AGENTS.md', agents_template, overwrite=False):
         changed.append(str(project_root / 'AGENTS.md'))
     for directory in KNOWLEDGE_DIRS + ORCHESTRATION_DIRS:
         path = wb / directory
@@ -542,13 +562,29 @@ def apply_project(project_root: Path, init_git: bool = True, create_override: bo
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
             changed.append(str(path))
-    if write(wb / 'knowledge/project.yaml', 'id: project\nstatus: current\n', overwrite=False):
-        changed.append(str(wb / 'knowledge/project.yaml'))
+    for role in ROLE_NAMES:
+        role_path = project_root / 'roles' / f'{role}.yaml'
+        role_text = '\n'.join([
+            f'id: {role}',
+            'status: current',
+            'domain_profile: references/bootstrap/project-domain-profile.yaml',
+            'duty_profile:',
+            '  stance: project-specific role context must be resolved before work',
+            '  skilled_at: []',
+            '  quality_focus: []',
+            '  must_resolve_from_context:',
+            '    - project-domain-profile',
+            '',
+        ])
+        if write(role_path, role_text, overwrite=False):
+            changed.append(str(role_path))
+    if write(knowledge / 'project.yaml', 'id: project\nstatus: current\n', overwrite=False):
+        changed.append(str(knowledge / 'project.yaml'))
     if ensure_lines(wb / '.gitignore', WORK_BUNDLE_IGNORES):
         changed.append(str(wb / '.gitignore'))
-    if init_git and not (wb / '.git').exists():
-        subprocess.run(['git', 'init', str(wb)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        changed.append(str(wb / '.git'))
+    if init_git and not (knowledge / '.git').exists():
+        subprocess.run(['git', 'init', str(knowledge)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        changed.append(str(knowledge / '.git'))
     if write(project_root / 'references/bootstrap/repository-binding.md', binding(project_root)):
         changed.append(str(project_root / 'references/bootstrap/repository-binding.md'))
     if write(project_root / 'references/bootstrap/agent-bootstrap.md', BOOTSTRAP):
@@ -559,7 +595,7 @@ def apply_project(project_root: Path, init_git: bool = True, create_override: bo
         changed.append(str(project_root / 'rules/contract.yaml'))
     if write(project_root / 'rules/index.yaml', 'rules_root: rules\ngenerated_by: wb-initialize-project\nstatus: initialized\nrule_files: []\n', overwrite=False):
         changed.append(str(project_root / 'rules/index.yaml'))
-    if write(project_root / '.work-bundle/project.yaml', '\n'.join([
+    project_metadata = '\n'.join([
         'metadata_version: 1',
         'authority: canonical',
         f'project_root: {project_root}',
@@ -582,15 +618,29 @@ def apply_project(project_root: Path, init_git: bool = True, create_override: bo
         '  doctor_flow: "Use /wb-initialize-project doctor for stale legacy project metadata structures."',
         '  migrate_flow: "Use /wb-initialize-project migrate to converge old metadata paths to .work-bundle/project.yaml."',
         '',
-    ]), overwrite=False):
+    ])
+    if write(project_root / '.work-bundle/project.yaml', project_metadata, overwrite=False):
         changed.append(str(project_root / '.work-bundle/project.yaml'))
     if create_override:
         path = wb / 'orchestration/skill-registry.override.yaml'
         if write(path, 'id: project-skill-registry-override\nstatus: current\noverrides: {}\n', overwrite=False):
             changed.append(str(path))
-    pointer_path = ensure_work_bundle_root_pointer(project_root)
+    runtime_root = resolve_bootstrap_runtime().get('resolved_work_bundle_root')
+    pointer_path = ensure_work_bundle_root_pointer(Path(str(runtime_root)).expanduser() if runtime_root else Path.cwd())
     if pointer_path:
         changed.append(pointer_path)
+    if init_git and (knowledge / '.git').exists():
+        subprocess.run(['git', '-C', str(knowledge), 'add', '.'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        has_head = subprocess.run(['git', '-C', str(knowledge), 'rev-parse', '--verify', 'HEAD'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+        has_changes = subprocess.run(['git', '-C', str(knowledge), 'diff', '--cached', '--quiet'], check=False).returncode != 0
+        if has_changes and not has_head:
+            if subprocess.run(['git', '-C', str(knowledge), 'commit', '-m', 'chore: initialize work-bundle knowledge'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                changed.append(str(knowledge / '.git/initial-commit'))
+    if (project_root / '.git').exists():
+        tracked = [project_root / '.gitignore', project_root / 'AGENTS.md', project_root / '.work-bundle/project.yaml']
+        subprocess.run(['git', '-C', str(project_root), 'add', '-f', *[str(path.relative_to(project_root)) for path in tracked if path.exists()]], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        has_staged = subprocess.run(['git', '-C', str(project_root), 'diff', '--cached', '--quiet'], check=False).returncode != 0
+        if has_staged:
+            if subprocess.run(['git', '-C', str(project_root), 'commit', '-m', 'chore: initialize work-bundle project'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                changed.append(str(project_root / '.git/work-bundle-initialization-commit'))
     return sorted(set(changed))
-
-

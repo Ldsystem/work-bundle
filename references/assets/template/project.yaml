@@ -1,0 +1,15 @@
+metadata_version: 1
+authority: canonical
+project_root: <absolute-path-to-project-root>
+industry: <industry-or-domain>
+language:
+  - <runtime-or-framework>
+git:
+  allow_operations: <commit|stage|pull>
+  permissive_operations: <push>
+  forbid_operations: <reset --hard>
+migration:
+  authority_owner: /wb-initialize-project
+  compatibility_window: none
+  doctor_flow: "Use /wb-initialize-project doctor for stale legacy project metadata structures."
+  migrate_flow: "Use /wb-initialize-project migrate to converge old metadata paths to .work-bundle/project.yaml."

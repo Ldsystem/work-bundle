@@ -7,7 +7,7 @@ from doctor import cmd_doctor
 from integrity import cmd_integrity_report, cmd_merge_skill_hints
 from legacy import cmd_legacy_command_removed
 from metadata_profile import cmd_domain_profile
-from project import cmd_project
+from project import cmd_init_project, cmd_migrate_project, cmd_project, cmd_register_project_command, cmd_show_project, cmd_validate_project
 from role_context import cmd_role_context
 from rules import cmd_create_rules, cmd_validate_rules
 from skill_registry import cmd_registry
@@ -27,7 +27,7 @@ def main() -> int:
     if command in LEGACY_COMMAND_MIGRATIONS:
         return cmd_legacy_command_removed(command, LEGACY_COMMAND_MIGRATIONS[command])
     aliases = {
-        'apply-project-initialization': 'initialize-project',
+        'apply-project-initialization': 'init-project',
         'apply-repository-model': 'initialize-project',
         'extract-domain-profile': 'generate-project-metadata-profile',
         'merge-registry-entry': 'register-skill',
@@ -38,12 +38,18 @@ def main() -> int:
         'integrity-report': 'integrity-check-report',
     }
     command = aliases.get(command, command)
-    if command == 'initialize-project':
-        return cmd_project(parsed.args, apply=True, repo_model=True)
+    if command in {'init-project', 'initialize-project'}:
+        return cmd_init_project(parsed.args)
+    if command == 'register-project':
+        return cmd_register_project_command(parsed.args)
+    if command == 'show-project':
+        return cmd_show_project(parsed.args)
+    if command == 'migrate-project':
+        return cmd_migrate_project(parsed.args)
     if command == 'inspect-project-initialization':
         return cmd_project(parsed.args, inspect_only=True, repo_model=True)
     if command == 'validate-project':
-        return cmd_project(parsed.args, apply=False, repo_model=True)
+        return cmd_validate_project(parsed.args)
     if command == 'create-rules':
         return cmd_create_rules(parsed.args)
     if command == 'validate-rules':
