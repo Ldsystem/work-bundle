@@ -126,6 +126,8 @@ Use the unified work-bundle dispatcher:
 | `python3 scripts/wb.py create-rules <rules-root>` | Migrate legacy YAML rules to Markdown where applicable; sync `index.yaml` for discovered rules |
 | `python3 scripts/wb.py validate-rules <rules-root>` | Mechanical validation; non-zero exit on failures |
 
+`<rules-root>` must be the canonical `rules/` directory. Do not pass scope subdirectories such as `rules/work-bundle/`; those create incorrect nested indexes and are rejected by the scripts.
+
 Typical workflow:
 
 1. Create or update the rule Markdown file at the correct scoped or root path.
@@ -212,7 +214,7 @@ Scripts will **not** judge `applies_when` meaning or reject vague tokens. That r
 - Place scoped rules under the correct `rules/<scope>/` directory per the prefix map.
 - Place cross-cutting rules at `rules/<rule-id>.md` (root), never under `rules/global/`.
 - Prefer `load: conditional` unless startup loading is explicitly required.
-- Run `validate-rules` on touched paths after rule work.
+- Run `validate-rules` on the canonical `rules/` root after rule work; never on scope subdirectories.
 - Inspect `applies_when` semantically before completing registration.
 
 ## Must Not
@@ -223,6 +225,7 @@ Scripts will **not** judge `applies_when` meaning or reject vague tokens. That r
 - Do not create `.mdc` rule files.
 - Do not cite non-git paths as authority.
 - Do not create or document a `rules/global/` directory.
+- Do not run `create-rules` or `validate-rules` against scope subdirectories such as `rules/work-bundle/`.
 - Do not rely on scripts to judge `applies_when` semantics.
 
 ## Validation

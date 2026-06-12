@@ -47,9 +47,58 @@ def valid_rule_md(
 
 
 def test_validate_current_rules_passes() -> None:
-    result = run_wb("validate-rules", str(REPO_ROOT / "rules" / "work-bundle"))
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout)["status"] == "passed"
+    sys.path.insert(0, str(REPO_ROOT / "scripts" / "work-bundle"))
+    try:
+        import rules as rules_module
+
+        rules_root = REPO_ROOT / "rules"
+        for path in rules_module.markdown_rules(rules_root / "work-bundle"):
+            failures = rules_module.validate_rule_file(rules_root, path)
+            assert failures == [], failures
+        index_failures = rules_module.validate_index(rules_root)
+        work_bundle_index_failures = [
+            failure for failure in index_failures if failure.startswith("index.yaml:") and "wb-" in failure
+        ]
+        assert work_bundle_index_failures == [], work_bundle_index_failures
+    finally:
+        if sys.path and sys.path[0] == str(REPO_ROOT / "scripts" / "work-bundle"):
+            sys.path.pop(0)
+
+
+def test_validate_rules_rejects_scoped_rules_root(tmp_path: Path) -> None:
+    root = tmp_path / "rules" / "work-bundle"
+    root.mkdir(parents=True)
+    (root / "wb-scoped-root.md").write_text(valid_rule_md("wb-scoped-root"), encoding="utf-8")
+
+    result = run_wb("validate-rules", str(root))
+    assert result.returncode == 1
+    failures = json.loads(result.stdout)["failures"]
+    assert any("scoped_rules_root_not_allowed" in failure for failure in failures)
+
+
+def test_create_rules_rejects_scoped_rules_root(tmp_path: Path) -> None:
+    root = tmp_path / "rules" / "work-bundle"
+    root.mkdir(parents=True)
+    (root / "wb-scoped-root.md").write_text(valid_rule_md("wb-scoped-root"), encoding="utf-8")
+
+    result = run_wb("create-rules", str(root))
+    assert result.returncode == 1
+    failures = json.loads(result.stdout)["failures"]
+    assert any("scoped_rules_root_not_allowed" in failure for failure in failures)
+    assert not (root / "index.yaml").exists()
+
+
+def test_validate_rules_rejects_nested_scope_index(tmp_path: Path) -> None:
+    root = tmp_path / "rules"
+    scope = root / "work-bundle"
+    scope.mkdir(parents=True)
+    (scope / "wb-valid-rule.md").write_text(valid_rule_md("wb-valid-rule"), encoding="utf-8")
+    (scope / "index.yaml").write_text("rules: []\n", encoding="utf-8")
+
+    result = run_wb("validate-rules", str(root))
+    assert result.returncode == 1
+    failures = json.loads(result.stdout)["failures"]
+    assert "work-bundle/index.yaml:nested_index_not_allowed" in failures
 
 
 def test_create_rules_migrates_legacy_yaml_to_markdown(tmp_path: Path) -> None:

@@ -9,5 +9,8 @@ Command examples:
 ```bash
 python3 scripts/wb.py initialize-project <project-root>
 python3 scripts/wb.py create-rules rules
+python3 scripts/wb.py validate-rules rules
 python3 scripts/wb.py integrity-check-report new --template references/integrity-check/integrity-check-template.md --output-root /tmp/reports --title check
 ```
+
+Use the canonical `rules/` directory for `create-rules` and `validate-rules`. Scope subdirectories such as `rules/work-bundle/` are rejected because they create incorrect nested indexes.

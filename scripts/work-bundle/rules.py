@@ -148,6 +148,19 @@ def forbidden_path_prefixes() -> set[str]:
     return set(yaml_list(load_validation_manifest().get("forbidden_path_prefixes"), _DEFAULT_FORBIDDEN_PATH_PREFIXES))
 
 
+def is_scoped_rules_subdirectory(root: Path) -> bool:
+    """Return True when ``root`` is a scope directory such as ``rules/work-bundle/``."""
+    return root.name in allowed_scopes() and root.parent.name == "rules"
+
+
+def scoped_rules_root_error(root: Path) -> str:
+    canonical = root.parent
+    return (
+        f"{root}:scoped_rules_root_not_allowed:"
+        f"use canonical rules root {canonical} instead of scope directory {root.name}/"
+    )
+
+
 def parse_yaml_like(text: str) -> dict[str, object]:
     data: dict[str, object] = {}
     lines = text.splitlines()
@@ -327,6 +340,9 @@ def cmd_create_rules(args: list[str]) -> int:
     parser.add_argument("rules_root")
     parsed = parser.parse_args(args)
     root = Path(parsed.rules_root)
+    if is_scoped_rules_subdirectory(root):
+        out({"status": "issues-found", "failures": [scoped_rules_root_error(root)]})
+        return 1
     root.mkdir(parents=True, exist_ok=True)
     migrated = []
     for path in sorted(root.glob("**/*.yaml")):
@@ -405,6 +421,17 @@ def validate_rule_file(root: Path, path: Path) -> list[str]:
     return failures
 
 
+def validate_no_scoped_indexes(root: Path) -> list[str]:
+    failures: list[str] = []
+    if root.name != "rules":
+        return failures
+    for scope in sorted(allowed_scopes()):
+        nested = root / scope / "index.yaml"
+        if nested.exists():
+            failures.append(f"{scope}/index.yaml:nested_index_not_allowed")
+    return failures
+
+
 def validate_index(root: Path) -> list[str]:
     failures: list[str] = []
     index_path = root / "index.yaml"
@@ -436,6 +463,9 @@ def cmd_validate_rules(args: list[str]) -> int:
     parser.add_argument("rules_root")
     parsed = parser.parse_args(args)
     root = Path(parsed.rules_root)
+    if is_scoped_rules_subdirectory(root):
+        out({"status": "issues-found", "failures": [scoped_rules_root_error(root)]})
+        return 1
     failures: list[str] = []
     if list(root.glob("**/*.mdc")):
         failures.append("generated_mdc_present")
@@ -444,6 +474,7 @@ def cmd_validate_rules(args: list[str]) -> int:
         failures.extend(f"legacy_yaml_rule:{path}" for path in legacy_yaml)
     for path in markdown_rules(root):
         failures.extend(validate_rule_file(root, path))
+    failures.extend(validate_no_scoped_indexes(root))
     failures.extend(validate_index(root))
     out({"status": "passed" if not failures else "issues-found", "failures": failures})
     return 0 if not failures else 1

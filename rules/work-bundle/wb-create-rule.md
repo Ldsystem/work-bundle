@@ -23,8 +23,8 @@ Summarize the enforceable contract for creating, migrating, and validating work-
 - Include body sections: Purpose, Must, Must Not, Validation, On Violation.
 - Register every rule in `rules/index.yaml` with metadata mirroring front matter.
 - Keep rules under 500 lines and self-contained in the rule body.
-- Run `python3 scripts/wb.py create-rules <rules-root>` to sync the index after changes.
-- Run `python3 scripts/wb.py validate-rules <rules-root>` for mechanical checks on touched paths.
+- Run `python3 scripts/wb.py create-rules <rules-root>` to sync the index after changes; `<rules-root>` must be the canonical `rules/` directory.
+- Run `python3 scripts/wb.py validate-rules <rules-root>` for mechanical checks; never pass scope subdirectories such as `rules/work-bundle/`.
 - Inspect `applies_when` semantically for concrete, actionable conditions before registration.
 - Load mechanical catalogs from `references/wb-create-rule-validation.yaml` when verifying placement and fields.
 
@@ -33,6 +33,7 @@ Summarize the enforceable contract for creating, migrating, and validating work-
 - Do not cite paths outside the git repository as authority.
 - Do not use legacy front matter fields: `scope`, `type`, `blocks`, `severity`, `status`, or `source_authority`.
 - Do not create `.mdc` rule files or a `rules/global/` directory.
+- Do not run `create-rules` or `validate-rules` against scope subdirectories; that creates incorrect nested indexes.
 - Do not rely on scripts to judge `applies_when` meaning; scripts check presence and format only.
 - Do not register documentation-only notes as enforceable rules.
 
