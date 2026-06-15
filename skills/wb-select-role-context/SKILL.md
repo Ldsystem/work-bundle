@@ -3,6 +3,8 @@ name: wb-select-role-context
 description: 'Resolve lifecycle stage, perspective, stable role profiles, project domain positioning, and skill hints without browsing durable knowledge. Work-bundle scoped as wb-select-role-context.'
 ---
 
+> **DEPRECATED (2026-06-11):** This skill is scheduled for removal. Orch skills no longer cite it. Follow-up work will retire script wiring and `rules/role-context.yaml`.
+
 # wb-select-role-context
 
 Returns compact role_context JSON/YAML. It may read bootstrap files, domain profile, role mappings, global registry, optional project override, and source artifacts. It must not browse `.work-bundle/knowledge/` directly.

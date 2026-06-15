@@ -23,7 +23,6 @@ Load `references/directives/keep-summarizing/extract-valuable-points.md` for dir
 
 ## Runtime Rules
 
-- `ks-directive-selection`: `rules/ks-directive-selection.yaml`
 - `ks-knowledge-boundary`: `rules/ks-knowledge-boundary.yaml`
 - `ks-persistence-gate`: `rules/ks-persistence-gate.yaml`
 - `ks-structural-value`: `rules/ks-structural-value.yaml`

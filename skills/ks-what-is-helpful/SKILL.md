@@ -19,7 +19,6 @@ Load `references/directives/keep-summarizing/what-is-helpful.md` for directive-s
 
 ## Runtime Rules
 
-- `ks-directive-selection`: `rules/ks-directive-selection.yaml`
 - `ks-knowledge-boundary`: `rules/ks-knowledge-boundary.yaml`
 - `ks-context-pack-policy`: `rules/ks-context-pack-policy.yaml`
 - `ks-open-question-policy`: `rules/ks-open-question-policy.yaml`

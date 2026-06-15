@@ -19,7 +19,6 @@ Load `references/directives/keep-summarizing/help-with-directives.md` for direct
 
 ## Runtime Rules
 
-- `ks-directive-selection`: `rules/ks-directive-selection.yaml`
 - `ks-off-switches`: `rules/ks-off-switches.yaml`
 
 ## Scripts

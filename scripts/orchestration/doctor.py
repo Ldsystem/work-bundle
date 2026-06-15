@@ -86,9 +86,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             ["## Repository Preflight", "every target source repository", "Block when no target repository resolves or any target reports `dirty`"],
         ),
         (
-            bundle_root / "skills" / "orch-execute-plan" / "migration.md",
+            bundle_root / "skills" / "orch-execute-plan" / "SKILL.md",
             "orch-execute-plan skill",
-            ["orch-execute-plan", "references/directives/orchestration/execute-plan.md"],
+            ["orch-execute-plan", "references/directives/orchestration/execute-plan.md", "Execution Constraints (skill-owned)", "clean-worktree preflight"],
         ),
         (
             what_is_helpful,
@@ -106,9 +106,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             ["## Delegate-Return-Resume Protocol", "delegate mixed implementation, validation, handoff, and review evidence to `ks-extract-valuable-points`", "do not archive until all other review checks pass and disposition is `completed` or `not-needed`"],
         ),
         (
-            bundle_root / "skills" / "orch-review-plan" / "migration.md",
+            bundle_root / "skills" / "orch-review-plan" / "SKILL.md",
             "orch-review-plan skill",
-            ["orch-review-completion", "Keep review blocked and do not archive when delegation is unavailable or its return evidence is incomplete"],
+            ["orch-review-completion", "ks-extract-valuable-points", "may invoke, schedule, or hand off to an approved `ks-*` owner"],
         ),
     ]
     for path, label, required_terms in workflow_contracts:

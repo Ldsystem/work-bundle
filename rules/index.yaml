@@ -7,14 +7,6 @@ rules:
     enforcement: must
     load: conditional
     requires: []
-  - id: orch-directive-selection
-    path: orchestration/orch-directive-selection.md
-    applies_when:
-      - user invokes any orch-* skill or orchestration directive
-      - an orchestration request starts without a declared primary directive
-    enforcement: must
-    load: conditional
-    requires: []
   - id: orch-doctor-readonly
     path: orchestration/orch-doctor-readonly.md
     applies_when:
@@ -71,6 +63,160 @@ rules:
     applies_when:
       - review-plan runs after implementation
       - orchestration completion may create or change durable implementation knowledge during specification authoring, planning, or review
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-integrity-check-agent-authority
+    path: integrity-check/rule-integrity-check-agent-authority.md
+    applies_when:
+      - wb-integrity-check runs
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-integrity-check-loading-boundary
+    path: integrity-check/rule-integrity-check-loading-boundary.md
+    applies_when:
+      - integrity-check evaluates startup and compression boundaries
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-integrity-check-report-lifecycle
+    path: integrity-check/rule-integrity-check-report-lifecycle.md
+    applies_when:
+      - integrity report is created or updated
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-integrity-check-scope
+    path: integrity-check/rule-integrity-check-scope.md
+    applies_when:
+      - wb-integrity-check runs
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-integrity-check-script-boundary
+    path: integrity-check/rule-integrity-check-script-boundary.md
+    applies_when:
+      - integrity-check helper CLI commands run
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-context-pack-policy
+    path: ks-context-pack-policy.md
+    applies_when:
+      - context packs are requested
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-git-authority
+    path: ks-git-authority.md
+    applies_when:
+      - git operation is requested inside knowledge repo
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-index-maintenance
+    path: ks-index-maintenance.md
+    applies_when:
+      - durable notes or open questions changed
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-knowledge-boundary
+    path: ks-knowledge-boundary.md
+    applies_when:
+      - knowledge access or write is requested
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-note-state-authority
+    path: ks-note-state-authority.md
+    applies_when:
+      - knowledge note state affects retrieval or persistence authority
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-off-switches
+    path: ks-off-switches.md
+    applies_when:
+      - user disables persistence or asks draft only
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-open-question-policy
+    path: ks-open-question-policy.md
+    applies_when:
+      - future work or unresolved question is handled
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-persistence-gate
+    path: ks-persistence-gate.md
+    applies_when:
+      - knowledge write may occur
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-perspective-routing
+    path: ks-perspective-routing.md
+    applies_when:
+      - note path or perspective is selected
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-sensitivity-filter
+    path: ks-sensitivity-filter.md
+    applies_when:
+      - source content is inspected or written
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-ks-structural-value
+    path: ks-structural-value.md
+    applies_when:
+      - candidate durable point is evaluated
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-work-bundle-lifecycle-authority
+    path: lifecycle-authority.md
+    applies_when:
+      - v4 work-bundle operation requires lifecycle-authority
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-work-bundle-repository-boundary
+    path: repository-boundary.md
+    applies_when:
+      - v4 work-bundle operation requires repository-boundary
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-work-bundle-role-context
+    path: role-context.md
+    applies_when:
+      - v4 work-bundle operation requires role-context
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-work-bundle-runtime-artifact-format
+    path: runtime-artifact-format.md
+    applies_when:
+      - v4 work-bundle operation requires runtime-artifact-format
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-work-bundle-security-exclusion
+    path: security-exclusion.md
+    applies_when:
+      - v4 work-bundle operation requires security-exclusion
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: rule-work-bundle-skill-registry
+    path: skill-registry.md
+    applies_when:
+      - v4 work-bundle operation requires skill-registry
     enforcement: must
     load: conditional
     requires: []

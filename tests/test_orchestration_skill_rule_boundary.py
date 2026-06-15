@@ -1,0 +1,77 @@
+import re
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+ORCH_SKILL_GLOB = "skills/orch-*/SKILL.md"
+
+
+def orch_skill_paths() -> list[Path]:
+    return sorted(REPO_ROOT.glob(ORCH_SKILL_GLOB))
+
+
+def skill_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def runtime_rule_paths(text: str) -> list[str]:
+    return re.findall(r"`(rules/orchestration/[^`]+)`", text)
+
+
+def test_all_orch_skills_have_rule_loading() -> None:
+    for path in orch_skill_paths():
+        text = skill_text(path)
+        if "## Runtime Rules" not in text:
+            continue
+        assert "## Rule Loading (mandatory)" in text, path.name
+        runtime_idx = text.index("## Runtime Rules")
+        loading_idx = text.index("## Rule Loading (mandatory)")
+        assert loading_idx > runtime_idx, path.name
+
+
+def test_runtime_rules_paths_exist() -> None:
+    for path in orch_skill_paths():
+        for rule_path in runtime_rule_paths(skill_text(path)):
+            target = REPO_ROOT / rule_path
+            assert target.is_file(), f"{path.name} cites missing rule {rule_path}"
+
+
+def test_no_role_context_in_orch_skills() -> None:
+    for path in orch_skill_paths():
+        text = skill_text(path)
+        assert "## Role Context" not in text, path.name
+        assert "wb-select-role-context" not in text, path.name
+
+
+def test_boundary_sections_do_not_duplicate_m2_prose() -> None:
+    forbidden = ("do not write durable", "directly create, edit, promote")
+    for path in orch_skill_paths():
+        text = skill_text(path)
+        if "## Boundary" not in text:
+            continue
+        boundary = text.split("## Boundary", 1)[1].split("\n## ", 1)[0]
+        for phrase in forbidden:
+            assert phrase not in boundary.lower(), f"{path.name} Boundary duplicates M2: {phrase}"
+
+
+def test_m6_m9_rules_are_pointer_stubs() -> None:
+    m6 = (REPO_ROOT / "rules/orchestration/orch-execute-plan.md").read_text(encoding="utf-8")
+    m9 = (REPO_ROOT / "rules/orchestration/orch-doctor-readonly.md").read_text(encoding="utf-8")
+
+    assert "Enforcement pointer" in m6
+    assert "skills/orch-execute-plan/SKILL.md" in m6
+    assert "Enforcement pointer" in m9
+    assert "skills/orch-doctor/SKILL.md" in m9
+    assert len(m6.splitlines()) <= 35
+    assert len(m9.splitlines()) <= 35
+
+
+def test_execute_and_doctor_skills_own_constraints() -> None:
+    execute = skill_text(REPO_ROOT / "skills/orch-execute-plan/SKILL.md")
+    doctor = skill_text(REPO_ROOT / "skills/orch-doctor/SKILL.md")
+
+    assert "## Execution Constraints (skill-owned)" in execute
+    assert "repository preflight" in execute.lower() or "clean-worktree preflight" in execute.lower()
+    assert "## Read-Only Constraints (skill-owned)" in doctor
+    assert "Files changed: none" in doctor

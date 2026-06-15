@@ -19,7 +19,6 @@ Load `references/directives/keep-summarizing/detect-structural-update.md` for di
 
 ## Runtime Rules
 
-- `ks-directive-selection`: `rules/ks-directive-selection.yaml`
 - `ks-structural-value`: `rules/ks-structural-value.yaml`
 - `ks-sensitivity-filter`: `rules/ks-sensitivity-filter.yaml`
 
