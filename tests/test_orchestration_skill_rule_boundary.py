@@ -55,16 +55,13 @@ def test_boundary_sections_do_not_duplicate_m2_prose() -> None:
             assert phrase not in boundary.lower(), f"{path.name} Boundary duplicates M2: {phrase}"
 
 
-def test_m6_m9_rules_are_pointer_stubs() -> None:
-    m6 = (REPO_ROOT / "rules/orchestration/orch-execute-plan.md").read_text(encoding="utf-8")
-    m9 = (REPO_ROOT / "rules/orchestration/orch-doctor-readonly.md").read_text(encoding="utf-8")
-
-    assert "Enforcement pointer" in m6
-    assert "skills/orch-execute-plan/SKILL.md" in m6
-    assert "Enforcement pointer" in m9
-    assert "skills/orch-doctor/SKILL.md" in m9
-    assert len(m6.splitlines()) <= 35
-    assert len(m9.splitlines()) <= 35
+def test_no_enforcement_pointer_stub_rules() -> None:
+    removed = (
+        REPO_ROOT / "rules/orchestration/orch-execute-plan.md",
+        REPO_ROOT / "rules/orchestration/orch-doctor-readonly.md",
+    )
+    for path in removed:
+        assert not path.is_file(), f"removed stub rule still present: {path}"
 
 
 def test_execute_and_doctor_skills_own_constraints() -> None:

@@ -57,7 +57,7 @@ Confirm diagnostics stayed read-only, ks skill coverage was checked, skill front
 
 ## Runtime Rules
 
-- `ks-doctor-readonly`: `rules/keep-summarizing/ks-doctor-readonly.md`
+- `ks-knowledge-boundary`: `rules/keep-summarizing/ks-knowledge-boundary.md`
 
 ## Rule Loading (mandatory)
 

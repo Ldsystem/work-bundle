@@ -96,11 +96,9 @@ def test_oq_citation_fixes() -> None:
     assert "ks-git-authority" in manage.split("## Runtime Rules")[1]
 
 
-def test_ks_doctor_readonly_is_pointer_stub() -> None:
-    stub = (REPO_ROOT / "rules/keep-summarizing/ks-doctor-readonly.md").read_text(encoding="utf-8")
-    assert "Enforcement pointer" in stub
-    assert "skills/ks-doctor/SKILL.md" in stub
-    assert len(stub.splitlines()) <= 35
+def test_no_ks_doctor_readonly_stub_rule() -> None:
+    path = REPO_ROOT / "rules/keep-summarizing/ks-doctor-readonly.md"
+    assert not path.is_file(), "removed stub rule still present"
 
 
 def test_ks_doctor_skill_owns_constraints() -> None:

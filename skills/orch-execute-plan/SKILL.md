@@ -189,7 +189,6 @@ Confirm repository preflight ran before selection/capability checks/delegation/m
 ## Runtime Rules
 
 - `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
-- `orch-execute-plan`: `rules/orchestration/orch-execute-plan.md`
 - `orch-handoff-required`: `rules/orchestration/orch-handoff-required.md`
 
 ## Rule Loading (mandatory)

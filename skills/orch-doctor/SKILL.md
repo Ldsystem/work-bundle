@@ -102,7 +102,7 @@ Confirm `dev-rules-doctor` was used first, diagnostics stayed read-only, orch sk
 
 ## Runtime Rules
 
-- `orch-doctor-readonly`: `rules/orchestration/orch-doctor-readonly.md`
+- `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
 
 ## Rule Loading (mandatory)
 

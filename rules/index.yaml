@@ -7,13 +7,6 @@ rules:
     enforcement: must
     load: conditional
     requires: []
-  - id: ks-doctor-readonly
-    path: keep-summarizing/ks-doctor-readonly.md
-    applies_when:
-      - user invokes ks-doctor or keep-summarizing read-only diagnostics
-    enforcement: must
-    load: conditional
-    requires: []
   - id: ks-git-authority
     path: keep-summarizing/ks-git-authority.md
     applies_when:
@@ -92,22 +85,6 @@ rules:
     applies_when:
       - an orchestration artifact is created or validated
       - a specification, plan, phase, task, handoff, or orchestration document is authored or repaired
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: orch-doctor-readonly
-    path: orchestration/orch-doctor-readonly.md
-    applies_when:
-      - user invokes orch-doctor or the doctor directive
-      - orchestrator read-only diagnostics are requested
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: orch-execute-plan
-    path: orchestration/orch-execute-plan.md
-    applies_when:
-      - user invokes orch-execute-plan or the execute-plan directive
-      - execute-plan resolves or begins an executable task or scheduler wave
     enforcement: must
     load: conditional
     requires: []
