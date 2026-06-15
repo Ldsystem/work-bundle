@@ -16,13 +16,13 @@
     {
       "id": 3,
       "prompt": "Use keep-summarizing for project alpha. Create a human-readable English project feature overview for stakeholder briefing.",
-      "expected_output": "Redirects reader-facing document creation to orchestrator create-document, states that keep-summarizing owns durable knowledge only, and does not create reader-facing output files or files inside .work-bundle/knowledge.",
+      "expected_output": "Redirects reader-facing document creation to orch-create-document, states that keep-summarizing owns durable knowledge only, and does not create reader-facing output files or files inside .work-bundle/knowledge.",
       "files": []
     },
     {
       "id": 8,
       "prompt": "Use keep-summarizing for project alpha. Create a Chinese speech draft output from curated knowledge and save it to knowledge/alpha/speech.md.",
-      "expected_output": "Refuses to create a reader-facing document inside a durable knowledge repo and redirects the request to orchestrator create-document under .work-bundle/orchestration/docs/.",
+      "expected_output": "Refuses to create a reader-facing document inside a durable knowledge repo and redirects the request to orch-create-document under .work-bundle/orchestration/docs/.",
       "files": []
     },
     {

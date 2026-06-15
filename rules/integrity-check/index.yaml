@@ -1,8 +1,0 @@
-id: integrity-check-rule-index
-status: current
-rules:
-  - rules/integrity-check/rule-integrity-check-scope.yaml
-  - rules/integrity-check/rule-integrity-check-agent-authority.yaml
-  - rules/integrity-check/rule-integrity-check-script-boundary.yaml
-  - rules/integrity-check/rule-integrity-check-report-lifecycle.yaml
-  - rules/integrity-check/rule-integrity-check-loading-boundary.yaml

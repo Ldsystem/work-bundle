@@ -57,16 +57,15 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 issues.append("orch-execute-plan lacks explicit no-retrieval rule")
         elif policy not in text and "Knowledge Gateway" in text:
             issues.append(f"orch skill does not mention mapped retrieval policy {policy}: {skill_name}")
-    ks_directive_root = bundle_root / "references" / "directives" / "keep-summarizing"
-    what_is_helpful = ks_directive_root / "what-is-helpful.md"
-    if not what_is_helpful.exists():
-        issues.append("missing keep-summarizing what-is-helpful directive")
+    ks_what_is_helpful_skill = skill_root / "ks-what-is-helpful" / "SKILL.md"
+    if not ks_what_is_helpful_skill.exists():
+        issues.append("missing ks-what-is-helpful skill file")
     else:
-        text = what_is_helpful.read_text(encoding="utf-8")
+        text = ks_what_is_helpful_skill.read_text(encoding="utf-8")
         for required in ["Gateway mode", "ks.py query", "retrieval_role", "authority", "candidate", "background", "blocked"]:
             if required not in text:
-                issues.append(f"what-is-helpful missing gateway contract term: {required}")
-    for path in [bundle_root / "skills" / "ks-what-is-helpful" / "migration.md", bundle_root / "references" / "assets" / "keep-summarizing" / "workflow.md"]:
+                issues.append(f"ks-what-is-helpful missing gateway contract term: {required}")
+    for path in [bundle_root / "references" / "assets" / "keep-summarizing" / "workflow.md"]:
         if path.exists():
             text = path.read_text(encoding="utf-8")
             if "notes/<leaf-perspective>" in text or "status: archived" in text:
@@ -96,14 +95,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             ["Execution Constraints (skill-owned)", "clean-worktree preflight"],
         ),
         (
-            what_is_helpful,
-            "what-is-helpful directive",
-            ["discover relevant candidates across every allowed lifecycle partition", "Classify only after full candidate discovery", "`authority` may shape downstream artifacts"],
-        ),
-        (
-            bundle_root / "skills" / "ks-what-is-helpful" / "migration.md",
+            ks_what_is_helpful_skill,
             "ks-what-is-helpful skill",
-            ["ks-note-state-authority", "Discover relevant candidates across all allowed lifecycle partitions before lifecycle/status authority classification"],
+            ["discover relevant candidates across all allowed lifecycle partitions", "Classify validated candidates as `authority`", "`authority` may directly shape downstream requirements"],
         ),
         (
             skill_root / "orch-review-plan" / "SKILL.md",

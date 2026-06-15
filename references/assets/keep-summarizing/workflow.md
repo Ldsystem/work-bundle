@@ -99,9 +99,9 @@ Before writing any note, record the passing reason in the agent response or note
 Before any write, the agent must complete all checks below:
 
 1. Project is resolved to `.work-bundle/knowledge/` or an explicitly selected external legacy source for migration/read-only intake.
-2. The selected directive allows writing.
+2. The selected ks skill allows writing.
 3. Target path is under `notes/<lifecycle-stage>/<leaf-perspective>/`, `open-questions/<lifecycle-stage>/<leaf-perspective>/`, or `context-packs/`.
-4. The perspective is a lifecycle-aware leaf path from `references/ks-perspectives.md`.
+4. The perspective is a lifecycle-aware leaf path from `references/assets/keep-summarizing/perspectives.md`.
 5. The content excludes raw chat logs, secrets, credentials, personal data, temporary command output, and one-off debugging details.
 6. Lifecycle stage, status, source type, and evidence are valid and justified.
 7. Existing related notes were checked for duplicate or conflicting knowledge.
@@ -135,7 +135,7 @@ Context packs are temporary scaffolding for agent startup, not canonical project
 
 ## Breakdown And Extraction Closure
 
-For `breakdown-design` and `extract-valuable-points`, persistence is the default end state, not an optional follow-up.
+For `ks-breakdown-design` and `ks-extract-valuable-points`, persistence is the default end state, not an optional follow-up.
 
 Hard rule:
 
@@ -164,7 +164,7 @@ Do not write an open question when:
 
 - it is just the agent's uncertainty
 - it is a weak guess
-- it is a missing fact discovered while preparing reader-facing output through `orchestrator` `create-document`
+- it is a missing fact discovered while preparing reader-facing output through `orch-create-document`
 - the user only says `sure`, `good suggestion`, or other weak approval without indicating future tracking value
 
 Persisted open questions must be clearly labeled as accepted future work, not as facts.
@@ -188,7 +188,7 @@ Open questions are watch context:
 - They remind the agent about accepted unresolved project problems.
 - They are not embedded runtime rules.
 - They do not constrain implementation as facts.
-- They should not appear in reader-facing documents generated through `orchestrator` `create-document`.
+- They should not appear in reader-facing documents generated through `orch-create-document`.
 
 When current work matches an open question's `trigger_terms`, the agent should say which watchpoint matched and ask the user what to do next:
 
@@ -238,16 +238,16 @@ This approach is mature now; save it as current.
 
 Before saving a weak or ambiguous signal as `current`, ask for confirmation or save it as `draft`.
 
-## Directive-Aligned Flow
+## Skill-Aligned Flow
 
-For save/update work, align execution with current directives:
+For save/update work, align execution with current ks skills:
 
-1. Use `extract-valuable-points` to extract durable points **and** break them down by leaf perspectives.
-2. Use `detect-structural-update` to decide save, draft-only, or do-not-save.
-3. If save is approved, redirect prepared targets to `write-knowledge`.
-4. Rebuild indexes with `maintain-indexes`.
+1. Use `ks-extract-valuable-points` to extract durable points **and** break them down by leaf perspectives.
+2. Use `ks-detect-structural-update` to decide save, draft-only, or do-not-save.
+3. If save is approved, redirect prepared targets to `ks-write-knowledge`.
+4. Rebuild indexes with `ks-maintain-indexes`.
 
-For retrieval work, use `what-is-helpful`:
+For retrieval work, use `ks-what-is-helpful`:
 
 - standard mode for user-facing discovery and explanation
 - gateway mode for orchestrator-facing full candidate discovery followed by explicit authority, candidate, background, and blocked classification
@@ -256,7 +256,7 @@ For retrieval work, use `what-is-helpful`:
 For ambiguous work:
 
 - if the user asks to persist and discover at the same time, perform discovery first, then ask before writing unless the write target and status are explicit
-- if the user asks for a human-facing artifact, redirect to `orchestrator`
+- if the user asks for a human-facing artifact, redirect to `orch-create-document`
 - if the user asks to summarize raw conversation, extract durable points only and discard raw transcript shape
 
 ## Mode Controls
@@ -357,7 +357,7 @@ Rules:
 - Promoted `confirmed`, `implemented`, and promoted `current` notes require front matter evidence when that evidence affects status or retrieval authority.
 - Superseded and deprecated notes should link to replacements.
 - Superseded, deprecated, and rejected notes are not default authority.
-- Reader-facing documents produced through `orchestrator` `create-document` are derived outputs until the user accepts them as curated knowledge.
+- Reader-facing documents produced through `orch-create-document` are derived outputs until the user accepts them as curated knowledge.
 
 ## Conflict Policy
 
@@ -418,7 +418,7 @@ Never run Git commands in source repositories under keep-summarizing authority. 
 - Default `visibility` is `private`.
 - Default `sensitivity` is `normal`.
 - Notes marked `confidential` or `secret` are excluded from embedding export by default.
-- Reader-facing documents are created through `orchestrator` and inherit the highest sensitivity of their source notes there.
+- Reader-facing documents are created through `orch-create-document` and inherit the highest sensitivity of their source notes there.
 - Handoffs inherit source sensitivity and are not indexed by default.
 - Store redacted structural explanations instead of secrets.
 

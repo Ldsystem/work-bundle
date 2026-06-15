@@ -1,4 +1,85 @@
 rules:
+  - id: ks-context-pack-policy
+    path: keep-summarizing/ks-context-pack-policy.md
+    applies_when:
+      - context packs are requested
+      - context-pack maintenance or migration is performed
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: ks-git-authority
+    path: keep-summarizing/ks-git-authority.md
+    applies_when:
+      - git operation is requested inside the selected durable knowledge repo
+      - keep-summarizing git authority is evaluated for a migration or maintenance task
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: ks-index-maintenance
+    path: keep-summarizing/ks-index-maintenance.md
+    applies_when:
+      - durable notes accepted context packs or open questions change
+      - completion follows a note or open-question write
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: ks-knowledge-boundary
+    path: keep-summarizing/ks-knowledge-boundary.md
+    applies_when:
+      - knowledge access or write is requested
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: ks-note-state-authority
+    path: keep-summarizing/ks-note-state-authority.md
+    applies_when:
+      - knowledge note state affects retrieval or persistence authority
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: ks-off-switches
+    path: keep-summarizing/ks-off-switches.md
+    applies_when:
+      - user disables persistence or asks draft only
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: ks-open-question-policy
+    path: keep-summarizing/ks-open-question-policy.md
+    applies_when:
+      - future work or unresolved question is handled
+      - open-question persistence is proposed or requested
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: ks-persistence-gate
+    path: keep-summarizing/ks-persistence-gate.md
+    applies_when:
+      - knowledge write may occur
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: ks-perspective-routing
+    path: keep-summarizing/ks-perspective-routing.md
+    applies_when:
+      - note path or perspective is selected
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: ks-sensitivity-filter
+    path: keep-summarizing/ks-sensitivity-filter.md
+    applies_when:
+      - source content is inspected or written
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: ks-structural-value
+    path: keep-summarizing/ks-structural-value.md
+    applies_when:
+      - candidate durable point is evaluated
+    enforcement: must
+    load: conditional
+    requires: []
   - id: orch-artifact-authoring
     path: orchestration/orch-artifact-authoring.md
     applies_when:
@@ -98,83 +179,6 @@ rules:
     path: integrity-check/rule-integrity-check-script-boundary.md
     applies_when:
       - integrity-check helper CLI commands run
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-context-pack-policy
-    path: ks-context-pack-policy.md
-    applies_when:
-      - context packs are requested
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-git-authority
-    path: ks-git-authority.md
-    applies_when:
-      - git operation is requested inside knowledge repo
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-index-maintenance
-    path: ks-index-maintenance.md
-    applies_when:
-      - durable notes or open questions changed
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-knowledge-boundary
-    path: ks-knowledge-boundary.md
-    applies_when:
-      - knowledge access or write is requested
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-note-state-authority
-    path: ks-note-state-authority.md
-    applies_when:
-      - knowledge note state affects retrieval or persistence authority
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-off-switches
-    path: ks-off-switches.md
-    applies_when:
-      - user disables persistence or asks draft only
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-open-question-policy
-    path: ks-open-question-policy.md
-    applies_when:
-      - future work or unresolved question is handled
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-persistence-gate
-    path: ks-persistence-gate.md
-    applies_when:
-      - knowledge write may occur
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-perspective-routing
-    path: ks-perspective-routing.md
-    applies_when:
-      - note path or perspective is selected
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-sensitivity-filter
-    path: ks-sensitivity-filter.md
-    applies_when:
-      - source content is inspected or written
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-ks-structural-value
-    path: ks-structural-value.md
-    applies_when:
-      - candidate durable point is evaluated
     enforcement: must
     load: conditional
     requires: []
