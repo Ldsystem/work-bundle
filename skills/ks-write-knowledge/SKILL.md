@@ -55,16 +55,19 @@ The user explicitly requests persistence or gave a strong persist signal.
 10. Write only after target path, lifecycle status, and content boundaries are explicit.
 11. Rebuild indexes via `ks-maintain-indexes`.
 
-Operational rules (detail in Runtime Rules):
+Apply loaded Runtime Rules:
 
-- do not write when off-switches block persistence
-- do not create files outside allowed knowledge paths
+- Off-switches: follow `ks-off-switches`
+- Knowledge root and path scope: follow `ks-knowledge-boundary`
+- Sensitivity exclusions: follow `ks-sensitivity-filter`
+- Open-question confirmation: follow `ks-persistence-gate` and `ks-note-state-authority`
+- Index completion: follow `ks-index-maintenance`
+
+Operational rules (skill-owned):
+
 - preserve required front matter; one concept per note
 - prefer updating existing notes over duplicates
 - cite source paths when material exists
-- exclude raw chats, credentials, tokens, personal data, and one-off debugging
-- do not mark inferred or weakly approved material as `current`
-- write open questions to notes only when user-provided or confirmed
 
 ## Stop Conditions
 
@@ -75,8 +78,8 @@ Return `Waiting for your direction` instead of writing when:
 - lifecycle status is unclear
 - source contradicts or duplicates a `current` note without resolution
 - implementation-shaped material contains domain rules but no semantic target is selected
-- the user gave only weak approval
-- the request mixes durable knowledge with reader-facing output, handoff, plan, or specification work
+
+Weak approval and mixed-artifact stop conditions: follow **Write Constraints (skill-owned)**.
 
 ## Return
 
@@ -109,6 +112,13 @@ Before substantive keep-summarizing work, read **every** rule listed in **Runtim
 
 If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
 
+## Write Constraints (skill-owned)
+
+Return `Waiting for your direction` instead of writing when:
+
+- the user gave only weak approval
+- the request mixes durable knowledge with reader-facing output, handoff, plan, or specification work
+
 ## Scripts
 
 Use `scripts/ks.py` when deterministic helper behavior is needed.
@@ -119,4 +129,4 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Boundary
 
-Write only under `.work-bundle/knowledge/` allowed paths; redirect orchestration artifacts to orch-* skills.
+Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).

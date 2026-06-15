@@ -33,11 +33,9 @@ Content change without status change (`ks-write-knowledge`).
 
 ## Workflow
 
-1. Follow the v3 status ladder and `project.yaml` status rules (see Runtime Rules).
-2. Preserve reasons and link replacements.
-3. Require front matter evidence when promoting to `implemented` or promoting `current` from `implemented`.
-4. Regenerate indexes via `ks-maintain-indexes`.
-5. Recommend a commit when appropriate (see `ks-git-authority`).
+1. Apply status transitions and promotion evidence per **Lifecycle Constraints (skill-owned)**.
+2. Regenerate indexes via `ks-maintain-indexes`.
+3. Recommend a commit when appropriate (see `ks-git-authority`).
 
 ## Return
 
@@ -52,6 +50,7 @@ Content change without status change (`ks-write-knowledge`).
 - `ks-persistence-gate`: `rules/keep-summarizing/ks-persistence-gate.md`
 - `ks-perspective-routing`: `rules/keep-summarizing/ks-perspective-routing.md`
 - `ks-sensitivity-filter`: `rules/keep-summarizing/ks-sensitivity-filter.md`
+- `ks-git-authority`: `rules/keep-summarizing/ks-git-authority.md`
 
 ## Rule Loading (mandatory)
 
@@ -64,6 +63,12 @@ Before substantive keep-summarizing work, read **every** rule listed in **Runtim
 
 If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
 
+## Lifecycle Constraints (skill-owned)
+
+- Follow the v3 status ladder and `project.yaml` status rules (see loaded Runtime Rules).
+- Preserve reasons and link replacements when superseding or deprecating.
+- Require front matter evidence when promoting to `implemented` or promoting `current` from `implemented`.
+
 ## Scripts
 
 Use `scripts/ks.py` when deterministic helper behavior is needed.
@@ -74,4 +79,4 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Boundary
 
-Write only under `.work-bundle/knowledge/` allowed paths; redirect orchestration artifacts to orch-* skills.
+Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).

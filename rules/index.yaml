@@ -7,6 +7,13 @@ rules:
     enforcement: must
     load: conditional
     requires: []
+  - id: ks-doctor-readonly
+    path: keep-summarizing/ks-doctor-readonly.md
+    applies_when:
+      - user invokes ks-doctor or keep-summarizing read-only diagnostics
+    enforcement: must
+    load: conditional
+    requires: []
   - id: ks-git-authority
     path: keep-summarizing/ks-git-authority.md
     applies_when:

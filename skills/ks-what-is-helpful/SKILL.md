@@ -56,40 +56,43 @@ If the task goal is vague, ask one clarifying question before broad retrieval.
 
 ## Retrieval and gateway
 
-Discovery and classification contract:
+Discovery and classification contract: follow `ks-note-state-authority` (`rules/keep-summarizing/ks-note-state-authority.md`).
 
-- discover relevant candidates across all allowed lifecycle partitions before lifecycle/status authority classification. Lifecycle does not pre-exclude discovery candidates.
-- Apply visibility, sensitivity, and scope filters, then load full note bodies only for candidates that may materially affect the task.
-- Classify validated candidates as `authority`, `candidate`, `background`, or `blocked`; only `authority` may directly shape downstream requirements, tasks, decisions, or review conclusions.
-- Return the smallest useful classified result set rather than bulk-loading or dumping the knowledge base.
+Context packs during retrieval: follow `ks-context-pack-policy` (`rules/keep-summarizing/ks-context-pack-policy.md`).
 
-Workflow:
+Run the directive workflow in **Retrieval Workflow (skill-owned)**.
+
+## Retrieval Workflow (skill-owned)
 
 1. **Clarify the ask** — restate goal and success criteria; infer likely leaf perspectives from `references/assets/keep-summarizing/perspectives.md`.
 2. **Greedy candidate matching** — discover across every allowed lifecycle partition, registry item, perspective index, atomic note, and open-question watchpoint; do not pre-exclude by lifecycle stage or FTS rank; keep output selective (typically 3–12 items).
-3. **Minimum necessary loading** — `project.yaml`, `indexes/document-registry.jsonl`, `indexes/open-question-registry.jsonl`, perspective indexes; ignore `context-packs/` unless explicitly requested.
+3. **Minimum necessary loading** — `project.yaml`, `indexes/document-registry.jsonl`, `indexes/open-question-registry.jsonl`, perspective indexes; follow loaded `ks-context-pack-policy` for context-pack handling.
 4. **Validate candidates** — read bodies that may materially affect the task; drop weak metadata matches; flag domain rules trapped in implementation notes as extraction gaps.
-5. **Classify and rank** — in gateway mode run `scripts/ks.py query --project <slug> --target <retrieval-policy> --query <query> --include-background`; use `retrieval_role` exactly; score by relevance, actionability, authority/trust, and specificity.
-6. **Filter noise** — open questions are watch context, not facts; respect visibility/sensitivity; no context packs in normal browsing results.
+5. **Classify and rank** — apply loaded `ks-note-state-authority`; score by relevance, actionability, authority/trust, and specificity.
+6. **Filter noise** — open questions are watch context, not facts; respect visibility and sensitivity per loaded rules.
 7. **Surface gaps** — distinguish “no note found” from weak evidence; suggest `ks-extract-valuable-points`, `ks-breakdown-design`, or `ks-track-open-questions` when appropriate.
 8. **Offer next steps** — annotated reading order; optional gateway mode when caller supplies retrieval policy.
 
-## Gateway mode
+### Gateway mode
 
 When called by orchestration or when the caller provides a retrieval policy:
 
 1. Resolve the project; rebuild `indexes/knowledge.sqlite` with `scripts/ks.py index --project <slug>` if stale.
 2. Discover candidates across all allowed lifecycle partitions; do not prefilter to policy authority stages.
 3. Apply filters; load bodies only for material candidates.
-4. Run `scripts/ks.py query` and classify by lifecycle, status, and work target.
+4. Run `scripts/ks.py query --project <slug> --target <retrieval-policy> --query <query> --include-background`; classify by lifecycle, status, and work target per loaded `ks-note-state-authority`; use `retrieval_role` exactly.
 5. Group by `retrieval_role`; return policy, query, grouped results, omitted/blocked rationale, and watchpoints.
 6. Do not convert non-authority results into requirements, tasks, decisions, or review conclusions.
 
 Orchestration callers must use this gateway instead of browsing `.work-bundle/knowledge/**` directly. `orch-execute-plan` is a no-retrieval stage and must not invoke this gateway during execution.
 
-## Return
+### Ranked shortlist output
 
 Structured result with: task summary; recommended knowledge (path, summary, why useful, confidence, retrieval role, status); related watchpoints (labeled watch context); optional topic map; gaps; 2–4 next options.
+
+## Return
+
+Deliver the ranked shortlist defined in **Retrieval Workflow (skill-owned)**.
 
 ## Runtime Rules
 
@@ -116,4 +119,4 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Boundary
 
-Write only under `.work-bundle/knowledge/` allowed paths; redirect orchestration artifacts to orch-* skills.
+Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).

@@ -43,17 +43,22 @@ Speculative questions the user has not accepted.
 ## Workflow
 
 1. Run structural-value test (see `ks-structural-value`).
-2. Write standalone note under `open-questions/<lifecycle-stage>/<perspective>/`.
-3. Rebuild `indexes/open-question-registry.jsonl` via `ks-maintain-indexes`.
+2. Apply open-question policy per loaded `ks-open-question-policy`.
+3. Complete watchpoint front matter per **Open Question Constraints (skill-owned)**.
+4. Write standalone note under `open-questions/<lifecycle-stage>/<perspective>/`.
+5. Rebuild `indexes/open-question-registry.jsonl` via `ks-maintain-indexes`.
 
 ## Strict Rules
 
-- Do not persist agent-generated questions without explicit user confirmation.
-- Do not store open questions inside durable notes.
-- Do not label an open question as a fact, decision, or rule.
-- Use only leaf perspectives.
-- Require trigger terms before completion.
-- If confirmation or trigger terms are missing, return `Waiting for your direction`.
+Apply loaded Runtime Rules:
+
+- Open-question confirmation and watchpoint policy: follow `ks-open-question-policy`
+- Structural-value gate: follow `ks-structural-value`
+- Knowledge path and scope: follow `ks-knowledge-boundary`
+- Persistence gates: follow `ks-persistence-gate`
+- Note and watchpoint state: follow `ks-note-state-authority`
+- Index completion: follow `ks-index-maintenance`
+- Sensitivity exclusions: follow `ks-sensitivity-filter`
 
 ## Return
 
@@ -72,6 +77,7 @@ Speculative questions the user has not accepted.
 - `ks-note-state-authority`: `rules/keep-summarizing/ks-note-state-authority.md`
 - `ks-index-maintenance`: `rules/keep-summarizing/ks-index-maintenance.md`
 - `ks-sensitivity-filter`: `rules/keep-summarizing/ks-sensitivity-filter.md`
+- `ks-structural-value`: `rules/keep-summarizing/ks-structural-value.md`
 
 ## Rule Loading (mandatory)
 
@@ -84,10 +90,17 @@ Before substantive keep-summarizing work, read **every** rule listed in **Runtim
 
 If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
 
+## Open Question Constraints (skill-owned)
+
+- Use only leaf perspectives under `open-questions/<lifecycle-stage>/<perspective>/`.
+- Require trigger terms in front matter before completion.
+- Complete watchpoint front matter: question text, perspective, trigger terms, and tracking rationale.
+- If trigger terms are missing, return `Waiting for your direction`.
+
 ## Scripts
 
 Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Boundary
 
-Write only under `.work-bundle/knowledge/` allowed paths; redirect orchestration artifacts to orch-* skills.
+Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).

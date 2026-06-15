@@ -39,8 +39,7 @@ There is no identified conflict; use `ks-write-knowledge` for straightforward up
 ## Workflow
 
 1. Compare content and front matter.
-2. Choose: `merge`, `replace`, `create-new`, or `ask-user`.
-3. Do not silently overwrite contradictory `current` notes.
+2. Apply resolution workflow per **Conflict Resolution Constraints (skill-owned)**.
 
 ## Return
 
@@ -66,6 +65,11 @@ Before substantive keep-summarizing work, read **every** rule listed in **Runtim
 
 If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
 
+## Conflict Resolution Constraints (skill-owned)
+
+- Choose one resolution path: `merge`, `replace`, `create-new`, or `ask-user`.
+- Do not silently overwrite contradictory `current` notes.
+
 ## Scripts
 
 Use `scripts/ks.py` when deterministic helper behavior is needed.
@@ -76,4 +80,4 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Boundary
 
-Write only under `.work-bundle/knowledge/` allowed paths; redirect orchestration artifacts to orch-* skills.
+Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).

@@ -33,41 +33,9 @@ No matching open question exists (use `ks-track-open-questions` to create one).
 
 ## Workflow
 
-Ask the user to choose:
-
-1. Mark resolved and record the accepted answer.
-2. Keep open and append current context.
-3. Split into a new open question.
-4. Ignore for now.
-
-When resolved:
-
-- set `status: resolved`
-- add `resolved_at`
-- add `resolution_summary`
-- optionally set `resolved_by_note_id`
-- rebuild `indexes/open-question-registry.jsonl`
-
-Strict rules:
-
-- Do not mark resolved unless the answer is accepted and stable.
-- Do not convert a resolved answer into a durable note unless the user asks or the answer passes `ks-write-knowledge`.
-- Keep the open-question file as the watchpoint history.
-- If the answer changes durable project behavior, propose a linked note update separately.
-
-When waiting for the user:
-
-```text
-Waiting for your direction.
-
-Choose one:
-1. Mark resolved and record the accepted answer.
-2. Keep open and append current context.
-3. Split into a new open question.
-4. Ignore for now.
-
-Recommended: 1 when the answer is accepted and stable.
-```
+1. Apply open-question policy per loaded `ks-open-question-policy`.
+2. Present the user choice menu and apply updates per **Resolution Constraints (skill-owned)**.
+3. Rebuild `indexes/open-question-registry.jsonl` via `ks-maintain-indexes` when status or content changes.
 
 ## Return
 
@@ -94,10 +62,42 @@ Before substantive keep-summarizing work, read **every** rule listed in **Runtim
 
 If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
 
+## Resolution Constraints (skill-owned)
+
+Ask the user to choose:
+
+1. Mark resolved and record the accepted answer.
+2. Keep open and append current context.
+3. Split into a new open question.
+4. Ignore for now.
+
+When resolved:
+
+- set `status: resolved`
+- add `resolved_at`
+- add `resolution_summary`
+- optionally set `resolved_by_note_id`
+
+Resolution policy: follow loaded `ks-open-question-policy` for confirmation, durable-note conversion, and watchpoint history.
+
+When waiting for the user:
+
+```text
+Waiting for your direction.
+
+Choose one:
+1. Mark resolved and record the accepted answer.
+2. Keep open and append current context.
+3. Split into a new open question.
+4. Ignore for now.
+
+Recommended: 1 when the answer is accepted and stable.
+```
+
 ## Scripts
 
 Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Boundary
 
-Write only under `.work-bundle/knowledge/` allowed paths; redirect orchestration artifacts to orch-* skills.
+Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).

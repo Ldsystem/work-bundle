@@ -42,15 +42,7 @@ Indexes are already current and no Markdown changed.
 2. Run `scripts/ks.py index-open-questions --project <slug>` after open-question changes.
 3. Report duplicates, broken links, and missing metadata.
 
-Operational rules (detail in `ks-index-maintenance`):
-
-- never treat indexes as source of truth
-- rebuild after durable note changes
-- exclude temporary handoffs unless explicitly included
-- preserve stable chunk IDs when headings remain stable
-- do not hand-edit generated index files
-- do not report persistence complete until index commands have run successfully
-- if index rebuild fails, report the failure and do not claim the knowledge repo is updated
+Index completion and maintenance policy: follow `ks-index-maintenance`.
 
 ## Return
 
@@ -80,4 +72,4 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Boundary
 
-Write only under `.work-bundle/knowledge/` allowed paths; redirect orchestration artifacts to orch-* skills.
+Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).

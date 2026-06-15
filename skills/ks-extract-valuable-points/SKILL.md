@@ -42,40 +42,29 @@ The user only wants to find existing knowledge (`ks-what-is-helpful`) or already
 
 ## Workflow
 
-1. Apply the structural-value test from `workflow.md` and `ks-structural-value`.
-2. Read `references/assets/keep-summarizing/perspectives.md` before proposing targets.
-3. Separate durable from temporary material.
-4. Split durable findings into atomic units: one durable question per note candidate.
-5. Assign each point to the most specific leaf perspective path.
-6. For each point, propose target path and update-existing vs create-new.
-7. Extract domain semantics from implementation/interface-shaped material into domain/workflow/data targets.
-8. Mark duplicates as `duplicate-covered` or propose canonical note plus linked stub.
-9. Decompose context-pack material into atomic notes; do not preserve packs as durable units unless explicitly requested.
-10. Use separate `open-questions/<lifecycle-stage>/<perspective>` targets for open questions.
-11. Persist approved durable points before ending when the user asked for extraction.
-12. Stop with `Waiting for your direction` when required direction is missing.
-13. If blocking questions cannot be asked mid-work, persist safe points as `draft`, rebuild indexes, then ask remaining questions.
-14. Redirect prepared breakdown to `ks-write-knowledge` and rebuild indexes.
+Run extraction per **Extraction Constraints (skill-owned)**.
+
+Apply loaded Runtime Rules:
+
+- Structural-value gate: follow `ks-structural-value`
+- Perspective fit, leaf path, granularity, and domain routing: follow `ks-structural-value` and perspective mapping from `references/assets/keep-summarizing/perspectives.md`
+- Sensitivity exclusions: follow `ks-sensitivity-filter`
+- Persistence gates and off-switches: follow `ks-persistence-gate` and `ks-off-switches`
+- Context-pack handling: follow loaded `ks-persistence-gate` and workflow decomposition steps in **Extraction Constraints (skill-owned)**
+- Open-question confirmation: follow loaded `ks-persistence-gate`
 
 ## Strict Rules
 
+Apply loaded Runtime Rules per **Workflow** pointer list.
+
+### Must Not (skill-owned)
+
 - Do not output a generic summary as durable knowledge candidates.
 - Do not preserve raw conversation order as note structure.
-- Do not create a candidate without leaf perspective and structural-value reason.
-- Do not create full duplicate notes across perspectives.
-- Do not leave domain rules only in implementation/interface candidates.
-- Do not treat context packs as canonical durable notes.
-- Do not include temporary bugs, credentials, tokens, or personal data.
-- Do not persist agent-generated uncertainty as open questions without user confirmation.
-- Do not end with only proposed targets when safe persistence is possible.
 
 ## Return
 
-- durable points; non-durable points to ignore; possible structural updates
-- perspective breakdown per point (leaf path, reason, target path, update/create)
-- suggested titles; confidence; source evidence
-- written or updated note paths when persistence was safe
-- index rebuild status; blocking questions when required
+Deliver the candidate table and status fields defined in **Extraction Constraints (skill-owned)**.
 
 ## Runtime Rules
 
@@ -96,10 +85,51 @@ Before substantive keep-summarizing work, read **every** rule listed in **Runtim
 
 If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
 
+## Extraction Constraints (skill-owned)
+
+### Session extraction ordering
+
+1. Apply the structural-value test from `workflow.md` and `ks-structural-value`.
+2. Read `references/assets/keep-summarizing/perspectives.md` before proposing targets.
+3. Separate durable from temporary material.
+4. Split durable findings into atomic units: one durable question per note candidate.
+5. Assign each point to the most specific leaf perspective path.
+6. For each point, propose target path and update-existing vs create-new.
+7. Extract domain semantics from implementation/interface-shaped material into domain/workflow/data targets.
+8. Mark duplicates as `duplicate-covered` or propose canonical note plus linked stub.
+9. Decompose context-pack material into atomic notes; do not preserve packs as durable units unless explicitly requested.
+10. Use separate `open-questions/<lifecycle-stage>/<perspective>` targets for open questions.
+11. Persist approved durable points before ending when the user asked for extraction.
+12. Redirect prepared breakdown to `ks-write-knowledge` and rebuild indexes.
+
+### Candidate table shape
+
+Each candidate row includes:
+
+- durable point summary
+- leaf perspective path and mapping reason
+- target path and update-existing vs create-new
+- suggested title, confidence, and source evidence
+- duplicate status (`duplicate-covered` or canonical note plus linked stub)
+
+Also return:
+
+- durable points; non-durable points to ignore; possible structural updates
+- perspective breakdown per point (leaf path, reason, target path, update/create)
+- suggested titles; confidence; source evidence
+- written or updated note paths when persistence was safe
+- index rebuild status; blocking questions when required
+
+### Safe-draft mid-work persistence flow
+
+- Stop with `Waiting for your direction` when required direction is missing.
+- When blocking questions cannot be asked mid-work, persist safe points as `draft`, rebuild indexes, then ask remaining questions.
+- Do not end with only proposed targets when safe persistence is possible.
+
 ## Scripts
 
 Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Boundary
 
-Write only under `.work-bundle/knowledge/` allowed paths; redirect orchestration artifacts to orch-* skills.
+Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).

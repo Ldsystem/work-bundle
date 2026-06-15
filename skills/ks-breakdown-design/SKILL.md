@@ -52,28 +52,29 @@ The user only wants to find existing knowledge (`ks-what-is-helpful`) or generat
 3. Identify design intent even if headings are weak, duplicated, or missing.
 4. Separate durable conclusions from brainstorming, rejected options, and non-persisted open questions.
 5. Infer themes and group by requested `desired_parts`.
-6. Preserve every meaningful source point as an atomic note or update candidate; unsettled points become `draft` candidates.
-7. Map each point to the most specific leaf perspective path.
-8. Enforce granularity: one source point or durable question per proposed note; reject container-level paths.
-9. Preserve traceability to source file, heading path, point order, and excerpt.
-10. Compare with existing notes before proposing new files; prefer updates over duplicates.
-11. Return a coverage report mapping every source point to a note or update candidate.
-12. Add a breakdown map linking source sections to note IDs for semantic recovery.
-13. Persist approved durable points before ending unless `target_mode` is `plan-only` or `draft only`.
-14. Return a plan first only when `target_mode` is `plan-only`, confidence is low, or a safety gate blocks persistence.
-15. Use scripts only after the breakdown plan exists and persistence is approved.
+6. Compare with existing notes before proposing new files; prefer updates over duplicates.
+
+Run breakdown mapping, coverage, and persistence per **Coverage Constraints (skill-owned)**.
+
+Apply loaded Runtime Rules:
+
+- Perspective fit, leaf path, granularity, and domain routing: follow `ks-perspective-routing`
+- Structural-value gate: follow `ks-structural-value`
+- Persistence gates: follow `ks-persistence-gate`
+- Sensitivity exclusions: follow `ks-sensitivity-filter`
+- Index maintenance: follow `ks-index-maintenance`
+- Off-switches: follow `ks-off-switches`
+
+Use scripts only after the breakdown plan exists and persistence is approved.
 
 ## Strict Coverage Rules
 
+Apply loaded Runtime Rules per **Workflow** pointer list.
+
+### Must Not (skill-owned)
+
 - Do not skip meaningful uncertain points; map to `draft` candidates.
 - Do not copy the design file as a standalone knowledge file.
-- Do not preserve source document structure as the note tree; use leaf perspectives.
-- Do not use broad paths such as `architecture`, `data-flow`, or `decisions`.
-- Every coverage row: source heading/path, point order, target leaf perspective, target candidate, disposition.
-- Dispositions: `new-note`, `update-existing`, `duplicate-covered`, `draft-candidate`, or `open-question-candidate`.
-- If any meaningful point cannot be mapped, stop with `Waiting for your direction`.
-- When applying updates: use `ks-write-knowledge` for notes and `ks-track-open-questions` for confirmed open questions; then `ks-maintain-indexes`.
-- If blocking questions cannot be asked mid-work, persist safe points, write uncertain points as `draft`, rebuild indexes, then ask remaining questions.
 
 ## Return
 
@@ -105,6 +106,33 @@ Before substantive keep-summarizing work, read **every** rule listed in **Runtim
 
 If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
 
+## Coverage Constraints (skill-owned)
+
+### Breakdown mapping
+
+- Preserve every meaningful source point as an atomic note or update candidate; unsettled points become `draft` candidates.
+- Map each point to the most specific leaf perspective path per loaded `ks-perspective-routing`.
+- Enforce granularity: one source point or durable question per proposed note.
+- Preserve traceability to source file, heading path, point order, and excerpt.
+
+### Coverage report and breakdown map
+
+- Return a coverage report mapping every source point to a note or update candidate.
+- Add a breakdown map linking source sections to note IDs for semantic recovery.
+- Every coverage row includes: source heading/path, point order, target leaf perspective, target candidate, disposition.
+- Dispositions: `new-note`, `update-existing`, `duplicate-covered`, `draft-candidate`, or `open-question-candidate`.
+- If any meaningful point cannot be mapped, stop with `Waiting for your direction`.
+
+### target_mode handling
+
+- Persist approved durable points before ending unless `target_mode` is `plan-only` or `draft only`.
+- Return a plan first only when `target_mode` is `plan-only`, confidence is low, or a safety gate blocks persistence.
+
+### Persistence handoff
+
+- When applying updates: use `ks-write-knowledge` for notes and `ks-track-open-questions` for confirmed open questions; then `ks-maintain-indexes`.
+- If blocking questions cannot be asked mid-work, persist safe points, write uncertain points as `draft`, rebuild indexes, then ask remaining questions.
+
 ## Scripts
 
 Use `scripts/ks.py` when deterministic helper behavior is needed.
@@ -115,4 +143,4 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Boundary
 
-Write only under `.work-bundle/knowledge/` allowed paths; redirect orchestration artifacts to orch-* skills.
+Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).

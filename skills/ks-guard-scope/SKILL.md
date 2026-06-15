@@ -29,27 +29,17 @@ Before any write, index export, or Git operation in the knowledge repo.
 
 ## Workflow
 
-Verify:
+Run preflight checks per **Preflight Constraints (skill-owned)**.
 
-- selected project resolves to `.work-bundle/knowledge/` or an explicitly selected external legacy root for migration/read-only intake
-- registry data, when used, comes from `~/.work-bundle/registry/projects.yaml`, `KS_PROJECT_REGISTRY`, or `--registry-file`, and is treated as local runtime state
-- target path is inside the selected knowledge repo
-- Git command is allowlisted (see `ks-git-authority`)
-- note has `visibility` and `sensitivity` (see `ks-sensitivity-filter`)
-- embedding export excludes blocked statuses and sensitivities
-- reader-facing documents are redirected to `orch-create-document` and inherit source sensitivity there
+Apply loaded Runtime Rules:
 
-Fail if:
+- Knowledge root and path scope: follow `ks-knowledge-boundary`
+- Sensitivity and metadata: follow `ks-sensitivity-filter`
+- Persistence gates: follow `ks-persistence-gate`
+- Off-switches: follow `ks-off-switches`
+- Git allowlist: follow `ks-git-authority`
 
-- the target path is under `.work-bundle/orchestration/`
-- the target path is outside the selected knowledge repo
-- the note target is not under `notes/<lifecycle-stage>/<leaf-perspective>/`
-- the open-question target is not under `open-questions/<lifecycle-stage>/<leaf-perspective>/`
-- the target perspective is broad or missing
-- the write would create Markdown at the knowledge root
-- the operation would copy raw source files, raw design files, transcripts, logs, credentials, tokens, or personal data into knowledge
-- Git is requested outside the selected knowledge repo
-- persistence gates or off-switches block the operation (see Runtime Rules)
+Reader-facing documents: redirect to `orch-create-document` and inherit source sensitivity there.
 
 ## Return
 
@@ -62,6 +52,7 @@ Fail if:
 - `ks-persistence-gate`: `rules/keep-summarizing/ks-persistence-gate.md`
 - `ks-sensitivity-filter`: `rules/keep-summarizing/ks-sensitivity-filter.md`
 - `ks-off-switches`: `rules/keep-summarizing/ks-off-switches.md`
+- `ks-git-authority`: `rules/keep-summarizing/ks-git-authority.md`
 
 ## Rule Loading (mandatory)
 
@@ -74,6 +65,36 @@ Before substantive keep-summarizing work, read **every** rule listed in **Runtim
 
 If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
 
+## Preflight Constraints (skill-owned)
+
+### Registry resolution
+
+When registry data is used:
+
+- Resolve project data from `~/.work-bundle/registry/projects.yaml`, `KS_PROJECT_REGISTRY`, or `--registry-file`.
+- Treat registry data as local runtime state, not durable knowledge.
+
+### Embedding-export exclusions
+
+- Exclude blocked statuses and sensitivities from embedding export per loaded `ks-sensitivity-filter` and `ks-persistence-gate` rules.
+
+### Per-check pass/fail matrix
+
+| Check | Pass | Fail |
+| --- | --- | --- |
+| Knowledge root | Selected project resolves to `.work-bundle/knowledge/` or an explicitly selected external legacy root for migration/read-only intake | Selected root is invalid or unresolved |
+| Target path scope | Target path is inside the selected knowledge repo | Target is under `.work-bundle/orchestration/` or outside the selected knowledge repo |
+| Note path | Target is under `notes/<lifecycle-stage>/<leaf-perspective>/` | Wrong path, broad perspective, or missing perspective |
+| Open-question path | Target is under `open-questions/<lifecycle-stage>/<leaf-perspective>/` | Wrong path, broad perspective, or missing perspective |
+| Knowledge root write | — | Write would create Markdown at the knowledge root |
+| Git scope | Git command is allowlisted per `ks-git-authority` in the selected knowledge repo | Git requested outside the selected knowledge repo |
+| Note metadata | Note has `visibility` and `sensitivity` per `ks-sensitivity-filter` | Missing or invalid metadata |
+| Sensitivity/content | Passes `ks-sensitivity-filter` | Excluded material would be persisted |
+| Persistence gates | Passes `ks-persistence-gate` | Gate blocks the operation |
+| Off-switches | Passes `ks-off-switches` | Switch blocks the operation |
+| Embedding export | Blocked statuses and sensitivities excluded | Blocked content would be exported |
+| Reader-facing docs | Redirect to `orch-create-document` | — |
+
 ## Scripts
 
 Use `scripts/ks.py` when deterministic helper behavior is needed.
@@ -84,4 +105,4 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 
 ## Boundary
 
-Write only under `.work-bundle/knowledge/` allowed paths; redirect orchestration artifacts to orch-* skills.
+Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).
