@@ -63,8 +63,8 @@
     },
     {
       "id": 11,
-      "prompt": "Doctor the orchestrator skill for installation health, malformed directives, and workflow bias.",
-      "expected_output": "Selects doctor, uses dev-rules-doctor first, runs the develop-rules doctor command, audits SKILL.md, directives, README, workflow, evals, helper commands, and cross-skill v3 gateway wiring read-only, checks that execute-plan preserves both sub-agent scheduler and single-agent fallback paths, verifies archival belongs to review-plan, and reports concrete repairs without changing files.",
+      "prompt": "Doctor the orchestrator skill for installation health, malformed orch skills, and workflow bias.",
+      "expected_output": "Selects orch-doctor, uses dev-rules-doctor first, runs the develop-rules doctor command, audits orch skill files, workflow, evals, helper commands, and cross-skill v3 gateway wiring read-only, checks that orch-execute-plan preserves both sub-agent scheduler and single-agent fallback paths, verifies archival belongs to orch-review-plan, and reports concrete repairs without changing files.",
       "files": []
     },
     {

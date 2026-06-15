@@ -14,21 +14,21 @@ def evals(path: str) -> list[dict[str, object]]:
 
 
 def test_review_requires_delegate_return_resume_for_structural_updates() -> None:
-    directive = text("references/directives/orchestration/review-plan.md")
+    skill = text("skills/orch-review-plan/SKILL.md")
 
-    assert "## Delegate-Return-Resume Protocol" in directive
-    assert "delegate mixed implementation, validation, handoff, and review evidence to `ks-extract-valuable-points`" in directive
-    assert "written or updated durable knowledge paths" in directive
-    assert "evidence-backed no-write rationale" in directive
-    assert "index rebuild status" in directive
-    assert "resume knowledge-update disposition evaluation" in directive
+    assert "## Delegate-Return-Resume Protocol" in skill
+    assert "delegate mixed implementation, validation, handoff, and review evidence to `ks-extract-valuable-points`" in skill
+    assert "written or updated durable knowledge paths" in skill
+    assert "evidence-backed no-write rationale" in skill
+    assert "index rebuild status" in skill
+    assert "resume knowledge-update disposition evaluation" in skill
 
 
 def test_review_blocks_archive_when_delegation_is_unavailable_or_incomplete() -> None:
-    directive = text("references/directives/orchestration/review-plan.md")
+    skill = text("skills/orch-review-plan/SKILL.md")
     workflow = text("references/assets/orchestration/workflow.md")
 
-    assert "delegation cannot run in the active environment or returned evidence is incomplete" in directive
+    assert "delegation cannot run in the active environment or returned evidence is incomplete" in skill
     assert "keeps archive blocked if delegation is unavailable or evidence is incomplete" in workflow
     assert "only when knowledge-update disposition is `completed` or `not-needed`" in workflow
 
@@ -36,12 +36,11 @@ def test_review_blocks_archive_when_delegation_is_unavailable_or_incomplete() ->
 def test_orchestration_boundary_permits_delegation_but_forbids_direct_knowledge_writes() -> None:
     boundary = text("rules/orchestration/orch-orchestration-boundary.md")
     review_skill = text("skills/orch-review-plan/SKILL.md")
-    directive = text("references/directives/orchestration/review-plan.md")
 
     assert "permit cross-skill invocation scheduling or handoff to approved ks-* owners" in boundary
     assert "directly create edit promote delete or index durable knowledge from orch-* skills" in boundary
     assert "may invoke, schedule, or hand off to an approved `ks-*` owner" in review_skill
-    assert "must not directly create, edit, promote, delete, or index `.work-bundle/knowledge/**`" in directive
+    assert "must not directly create, edit, promote, delete, or index `.work-bundle/knowledge/**`" in review_skill
 
 
 def test_disposition_rule_requires_return_evidence_before_resume() -> None:
@@ -53,10 +52,10 @@ def test_disposition_rule_requires_return_evidence_before_resume() -> None:
     assert "treat missing incomplete contradictory or blocked delegation evidence as completed or not-needed" in rule
 
 
-def test_doctor_uses_active_directive_roots_and_checks_three_workflow_contracts() -> None:
+def test_doctor_uses_active_skill_roots_and_checks_three_workflow_contracts() -> None:
     doctor = text("scripts/orchestration/doctor.py")
 
-    assert '"references" / "directives" / "orchestration"' in doctor
+    assert '"skills"' in doctor
     assert '"references" / "directives" / "keep-summarizing"' in doctor
     assert "orch-execute-plan" in doctor
     assert "ks-note-state-authority" in doctor

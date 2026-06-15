@@ -37,21 +37,26 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             issues.append(f"artifact under knowledge root: {path}")
         if artifact_mentions_retrieval_without_roles(path):
             issues.append(f"retrieval artifact lacks role labels: {path.relative_to(root)}")
-    directive_root = bundle_root / "references" / "directives" / "orchestration"
-    knowledge_directives = {"create-specification", "create-implementation-plan", "create-document", "create-handoff", "review-plan", "execute-plan"}
-    for directive in knowledge_directives:
-        path = directive_root / f"{directive}.md"
+    skill_root = bundle_root / "skills"
+    orch_skill_policy_map = {
+        "orch-create-specification": "implementation_spec",
+        "orch-create-implementation-plan": "implementation_plan",
+        "orch-create-document": "customer_spec",
+        "orch-create-handoff": "implementation_plan",
+        "orch-review-plan": "implementation_plan",
+        "orch-execute-plan": "execution",
+    }
+    for skill_name, policy in orch_skill_policy_map.items():
+        path = skill_root / skill_name / "SKILL.md"
         if not path.exists():
-            issues.append(f"missing directive file for policy check: {directive}")
+            issues.append(f"missing orch skill file for policy check: {skill_name}")
             continue
         text = path.read_text(encoding="utf-8")
-        if directive == "execute-plan":
+        if skill_name == "orch-execute-plan":
             if "must not run v3 retrieval" not in text and "must not invoke retrieval" not in text:
-                issues.append("execute-plan lacks explicit no-retrieval rule")
-        elif directive not in DIRECTIVE_POLICY_MAP:
-            issues.append(f"missing retrieval policy mapping: {directive}")
-        elif DIRECTIVE_POLICY_MAP[directive] not in text and "Knowledge Gateway" in text:
-            issues.append(f"directive does not mention mapped retrieval policy {DIRECTIVE_POLICY_MAP[directive]}: {directive}")
+                issues.append("orch-execute-plan lacks explicit no-retrieval rule")
+        elif policy not in text and "Knowledge Gateway" in text:
+            issues.append(f"orch skill does not mention mapped retrieval policy {policy}: {skill_name}")
     ks_directive_root = bundle_root / "references" / "directives" / "keep-summarizing"
     what_is_helpful = ks_directive_root / "what-is-helpful.md"
     if not what_is_helpful.exists():
@@ -81,14 +86,14 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             ["full candidate discovery followed by explicit authority, candidate, background, and blocked classification"],
         ),
         (
-            directive_root / "execute-plan.md",
-            "execute-plan directive",
+            skill_root / "orch-execute-plan" / "SKILL.md",
+            "orch-execute-plan skill",
             ["## Repository Preflight", "every target source repository", "Block when no target repository resolves or any target reports `dirty`"],
         ),
         (
-            bundle_root / "skills" / "orch-execute-plan" / "SKILL.md",
+            skill_root / "orch-execute-plan" / "SKILL.md",
             "orch-execute-plan skill",
-            ["orch-execute-plan", "references/directives/orchestration/execute-plan.md", "Execution Constraints (skill-owned)", "clean-worktree preflight"],
+            ["Execution Constraints (skill-owned)", "clean-worktree preflight"],
         ),
         (
             what_is_helpful,
@@ -101,12 +106,12 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             ["ks-note-state-authority", "Discover relevant candidates across all allowed lifecycle partitions before lifecycle/status authority classification"],
         ),
         (
-            directive_root / "review-plan.md",
-            "review-plan directive",
+            skill_root / "orch-review-plan" / "SKILL.md",
+            "orch-review-plan skill",
             ["## Delegate-Return-Resume Protocol", "delegate mixed implementation, validation, handoff, and review evidence to `ks-extract-valuable-points`", "do not archive until all other review checks pass and disposition is `completed` or `not-needed`"],
         ),
         (
-            bundle_root / "skills" / "orch-review-plan" / "SKILL.md",
+            skill_root / "orch-review-plan" / "SKILL.md",
             "orch-review-plan skill",
             ["orch-review-completion", "ks-extract-valuable-points", "may invoke, schedule, or hand off to an approved `ks-*` owner"],
         ),
