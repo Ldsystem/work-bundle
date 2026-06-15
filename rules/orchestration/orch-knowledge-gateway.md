@@ -1,0 +1,60 @@
+---
+id: orch-knowledge-gateway
+applies_when:
+  - create-specification needs durable project knowledge before drafting
+  - create-implementation-plan needs durable project knowledge or spec repair context
+  - create-document needs durable project knowledge before drafting
+  - create-handoff needs durable project knowledge for an orchestration handoff outside execution completion
+  - review-plan needs durable project knowledge for validation-backed review
+enforcement: must
+load: conditional
+requires: []
+---
+
+# Orchestration Knowledge Gateway
+
+## Purpose
+
+Route orchestration access to durable project knowledge through the approved `ks-what-is-helpful` gateway. Orchestration creates derived artifacts; keep-summarizing preserves durable knowledge. This rule does **not** apply during `execute-plan`.
+
+## Must
+
+- Retrieve durable project knowledge through `keep-summarizing` with `what-is-helpful` gateway mode before using knowledge context in orchestration directives covered by this rule.
+- Discover relevant candidates across allowed lifecycle partitions before lifecycle and status authority classification.
+- Classify retrieved notes as `authority`, `candidate`, `background`, or `blocked`.
+- Use only `authority` results to shape requirements, executable tasks, decisions, or review conclusions.
+- Keep gateway output to the smallest useful classified result set.
+- Apply retrieval policy per directive:
+
+| Directive | Policy |
+| --- | --- |
+| `create-specification` | `implementation_spec` |
+| `create-implementation-plan` | `implementation_plan` |
+| `create-document` | `customer_spec` |
+| `create-handoff` (orchestration type) | `implementation_plan` |
+| `review-plan` | `implementation_plan` |
+
+- Allow `candidate` and `background` context only as rationale, traceability, or promotion input—not as executable requirements.
+- Treat `blocked` context as non-shaping evidence that must not drive downstream work.
+- Carry accepted authority context into orchestration artifacts so downstream executors do not need future knowledge-base lookup.
+
+## Must Not
+
+- Browse `.work-bundle/knowledge/` directly as a shortcut from orchestration directives covered by this rule.
+- Prefilter discovery to authority lifecycle stages before full candidate discovery completes.
+- Let `candidate`, `background`, or `blocked` results directly shape requirements, tasks, decisions, or review conclusions.
+- retrieve durable knowledge during execute-plan; execution agents must not read `.work-bundle/knowledge/` directly.
+- Apply this gateway rule to `execute-plan`, executor-result handoffs created during execution, or any execution-stage retrieval.
+- Defer required execution context to future `.work-bundle/knowledge/` lookup after planning completes.
+
+## Validation
+
+- Confirm retrieval used the approved gateway and named retrieval policy for the active directive.
+- Confirm classification labels appear when retrieved notes shape orchestration work.
+- Confirm only authority context shaped requirements, tasks, or review conclusions.
+- Confirm no direct `.work-bundle/knowledge/` browsing occurred from the active orchestration directive.
+- Confirm `execute-plan` and execution-completion handoffs did not invoke this gateway.
+
+## On Violation
+
+Stop the orchestration step, rerun retrieval through `ks-what-is-helpful` with full candidate discovery and narrow authority classification, and remove any requirements or tasks shaped by non-authority or direct-browse context before continuing.

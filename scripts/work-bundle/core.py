@@ -39,7 +39,8 @@ ROLE_KEYWORDS = {
     'qa-reviewer': ['qa', 'test', 'testing', 'quality', 'verification', 'validation', 'acceptance'],
     'devops-engineer': ['devops', 'deployment', 'release', 'pipeline', 'ci', 'cd', 'operation', 'infra'],
 }
-RULES = ['repository-boundary', 'knowledge-boundary', 'orchestration-boundary', 'lifecycle-authority', 'retrieval-gateway', 'role-context', 'skill-registry', 'domain-profile', 'execution-boundary', 'handoff-boundary', 'review-archive-boundary', 'doctor-readonly', 'runtime-artifact-format', 'security-exclusion']
+# Retired v4 root stubs merged into rules/orchestration/: orchestration-boundary -> orch-orchestration-boundary; knowledge-boundary, retrieval-gateway -> orch-knowledge-gateway; execution-boundary -> orch-execute-plan; handoff-boundary -> orch-handoff-required; review-archive-boundary -> orch-review-completion
+RULES = ['repository-boundary', 'lifecycle-authority', 'role-context', 'skill-registry', 'domain-profile', 'doctor-readonly', 'runtime-artifact-format', 'security-exclusion']
 STAGE_MAP = {
     'tender': ('domain-analyst', ['project-manager']),
     'investigation': ('domain-analyst', ['solution-architect', 'project-manager']),

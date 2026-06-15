@@ -88,7 +88,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         (
             bundle_root / "skills" / "orch-execute-plan" / "migration.md",
             "orch-execute-plan skill",
-            ["orch-repository-clean-preflight", "references/directives/orchestration/execute-plan.md"],
+            ["orch-execute-plan", "references/directives/orchestration/execute-plan.md"],
         ),
         (
             what_is_helpful,
@@ -108,7 +108,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         (
             bundle_root / "skills" / "orch-review-plan" / "migration.md",
             "orch-review-plan skill",
-            ["orch-knowledge-update-disposition", "Keep review blocked and do not archive when delegation is unavailable or its return evidence is incomplete"],
+            ["orch-review-completion", "Keep review blocked and do not archive when delegation is unavailable or its return evidence is incomplete"],
         ),
     ]
     for path, label, required_terms in workflow_contracts:

@@ -34,8 +34,8 @@ def test_review_blocks_archive_when_delegation_is_unavailable_or_incomplete() ->
 
 
 def test_orchestration_boundary_permits_delegation_but_forbids_direct_knowledge_writes() -> None:
-    boundary = text("rules/orch-orchestration-boundary.yaml")
-    review_skill = text("skills/orch-review-plan/migration.md")
+    boundary = text("rules/orchestration/orch-orchestration-boundary.md")
+    review_skill = text("skills/orch-review-plan/SKILL.md")
     directive = text("references/directives/orchestration/review-plan.md")
 
     assert "permit cross-skill invocation scheduling or handoff to approved ks-* owners" in boundary
@@ -45,7 +45,7 @@ def test_orchestration_boundary_permits_delegation_but_forbids_direct_knowledge_
 
 
 def test_disposition_rule_requires_return_evidence_before_resume() -> None:
-    rule = text("rules/orch-knowledge-update-disposition.yaml")
+    rule = text("rules/orchestration/orch-review-completion.md")
 
     assert "assess validated implementation and review evidence for structural updates" in rule
     assert "delegate mixed structural evidence to ks-extract-valuable-points" in rule
@@ -58,9 +58,9 @@ def test_doctor_uses_active_directive_roots_and_checks_three_workflow_contracts(
 
     assert '"references" / "directives" / "orchestration"' in doctor
     assert '"references" / "directives" / "keep-summarizing"' in doctor
-    assert "orch-repository-clean-preflight" in doctor
+    assert "orch-execute-plan" in doctor
     assert "ks-note-state-authority" in doctor
-    assert "orch-knowledge-update-disposition" in doctor
+    assert "orch-review-completion" in doctor
     assert "Before execution selection, capability checks, delegation, or implementation changes" in doctor
     assert "Classify only after full candidate discovery" in doctor
     assert "Delegate-Return-Resume Protocol" in doctor

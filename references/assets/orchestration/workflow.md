@@ -22,6 +22,8 @@
 
 Orchestration artifacts live under `.work-bundle/orchestration/` and are not durable knowledge. Do not store specs, plans, or handoffs under `.work-bundle/knowledge/`.
 
+Runtime orchestration rules live under `rules/orchestration/` (Markdown); orch skills cite merged rules from that directory.
+
 ## Execution Chain
 
 ```text

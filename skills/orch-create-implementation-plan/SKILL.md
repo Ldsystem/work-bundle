@@ -23,15 +23,12 @@ Load `references/directives/orchestration/create-implementation-plan.md` for dir
 
 ## Runtime Rules
 
-- `orch-directive-selection`: `rules/orch-directive-selection.yaml`
-- `orch-orchestration-boundary`: `rules/orch-orchestration-boundary.yaml`
-- `orch-knowledge-gateway`: `rules/orch-knowledge-gateway.yaml`
-- `orch-artifact-role-separation`: `rules/orch-artifact-role-separation.yaml`
-- `orch-contract-loading`: `rules/orch-contract-loading.yaml`
-- `orch-plan-quality`: `rules/orch-plan-quality.yaml`
-- `orch-plan-open-question-gate`: `rules/orch-plan-open-question-gate.yaml`
-- `orch-knowledge-update-disposition`: `rules/orch-knowledge-update-disposition.yaml`
-- `orch-spec-open-question-boundary`: `rules/orch-spec-open-question-boundary.yaml`
+- `orch-directive-selection`: `rules/orchestration/orch-directive-selection.md`
+- `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
+- `orch-knowledge-gateway`: `rules/orchestration/orch-knowledge-gateway.md`
+- `orch-open-questions`: `rules/orchestration/orch-open-questions.md`
+- `orch-artifact-authoring`: `rules/orchestration/orch-artifact-authoring.md`
+- `orch-review-completion`: `rules/orchestration/orch-review-completion.md`
 
 ## Scripts
 

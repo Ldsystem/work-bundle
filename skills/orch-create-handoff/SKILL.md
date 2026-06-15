@@ -23,10 +23,10 @@ Load `references/directives/orchestration/create-handoff.md` for directive-speci
 
 ## Runtime Rules
 
-- `orch-directive-selection`: `rules/orch-directive-selection.yaml`
-- `orch-orchestration-boundary`: `rules/orch-orchestration-boundary.yaml`
-- `orch-contract-loading`: `rules/orch-contract-loading.yaml`
-- `orch-handoff-required`: `rules/orch-handoff-required.yaml`
+- `orch-directive-selection`: `rules/orchestration/orch-directive-selection.md`
+- `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
+- `orch-artifact-authoring`: `rules/orchestration/orch-artifact-authoring.md`
+- `orch-handoff-required`: `rules/orchestration/orch-handoff-required.md`
 
 ## Scripts
 

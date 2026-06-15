@@ -19,8 +19,8 @@ Load `references/directives/orchestration/doctor.md` for directive-specific beha
 
 ## Runtime Rules
 
-- `orch-directive-selection`: `rules/orch-directive-selection.yaml`
-- `orch-doctor-readonly`: `rules/orch-doctor-readonly.yaml`
+- `orch-directive-selection`: `rules/orchestration/orch-directive-selection.md`
+- `orch-doctor-readonly`: `rules/orchestration/orch-doctor-readonly.md`
 
 ## Scripts
 

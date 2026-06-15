@@ -23,15 +23,12 @@ Load `references/directives/orchestration/review-plan.md` for directive-specific
 
 ## Runtime Rules
 
-- `orch-directive-selection`: `rules/orch-directive-selection.yaml`
-- `orch-orchestration-boundary`: `rules/orch-orchestration-boundary.yaml`
-- `orch-knowledge-gateway`: `rules/orch-knowledge-gateway.yaml`
-- `orch-artifact-role-separation`: `rules/orch-artifact-role-separation.yaml`
-- `orch-plan-quality`: `rules/orch-plan-quality.yaml`
-- `orch-execution-boundary`: `rules/orch-execution-boundary.yaml`
-- `orch-handoff-required`: `rules/orch-handoff-required.yaml`
-- `orch-knowledge-update-disposition`: `rules/orch-knowledge-update-disposition.yaml`
-- `orch-review-archive`: `rules/orch-review-archive.yaml`
+- `orch-directive-selection`: `rules/orchestration/orch-directive-selection.md`
+- `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
+- `orch-knowledge-gateway`: `rules/orchestration/orch-knowledge-gateway.md`
+- `orch-artifact-authoring`: `rules/orchestration/orch-artifact-authoring.md`
+- `orch-handoff-required`: `rules/orchestration/orch-handoff-required.md`
+- `orch-review-completion`: `rules/orchestration/orch-review-completion.md`
 
 ## Scripts
 

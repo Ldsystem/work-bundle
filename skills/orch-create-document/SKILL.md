@@ -23,10 +23,10 @@ Load `references/directives/orchestration/create-document.md` for directive-spec
 
 ## Runtime Rules
 
-- `orch-directive-selection`: `rules/orch-directive-selection.yaml`
-- `orch-orchestration-boundary`: `rules/orch-orchestration-boundary.yaml`
-- `orch-knowledge-gateway`: `rules/orch-knowledge-gateway.yaml`
-- `orch-contract-loading`: `rules/orch-contract-loading.yaml`
+- `orch-directive-selection`: `rules/orchestration/orch-directive-selection.md`
+- `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
+- `orch-knowledge-gateway`: `rules/orchestration/orch-knowledge-gateway.md`
+- `orch-artifact-authoring`: `rules/orchestration/orch-artifact-authoring.md`
 
 ## Scripts
 
