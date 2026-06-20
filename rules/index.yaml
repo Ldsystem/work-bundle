@@ -1,4 +1,15 @@
 rules:
+  - id: agent-codegraph-first
+    path: agent-codegraph-first.md
+    applies_when:
+      - the targeted repository root contains `.codegraph/`
+      - task affects source-code files in that targeted repository that CodeGraph indexes with meaningful symbol or relation extraction
+      - task requires source-code browsing, inspection, review, planning, repair, refactor, migration, or editing
+      - task requires locating symbols, files, call chains, dependencies, module boundaries, implementation paths, or impact radius
+      - task is not limited to Markdown rules, skills, references, templates, documentation, or WorkBundle knowledge-only edits
+    enforcement: must
+    load: conditional
+    requires: []
   - id: ks-context-pack-policy
     path: keep-summarizing/ks-context-pack-policy.md
     applies_when:

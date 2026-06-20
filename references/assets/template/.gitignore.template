@@ -1,0 +1,45 @@
+.work-bundle/
+AGENTS.md
+
+# OS
+.DS_Store
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# Secrets / env
+.env
+.env.*
+*.secret
+*.key
+*.pem
+
+# Python / pytest
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Archives / logs
+*.log
+*.zip
+*.tar
+*.gz
+
+# Node (optional hygiene)
+node_modules/

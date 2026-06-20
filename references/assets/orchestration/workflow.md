@@ -57,7 +57,7 @@ Artifact schemas and required sections: `references/assets/orchestration/contrac
 
 ## Knowledge Gateway
 
-When durable project knowledge is required before specification or planning, use `keep-summarizing` with `what-is-helpful` gateway mode. Do not browse `.work-bundle/knowledge/` directly from orchestration skills.
+When durable project knowledge is required before specification or planning, use `keep-summarizing` with `ks-what-is-helpful` gateway mode. Do not browse `.work-bundle/knowledge/` directly from orchestration skills.
 
 Typical retrieval policy mapping:
 
