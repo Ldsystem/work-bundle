@@ -35,7 +35,9 @@ Route orchestration access to durable project knowledge through the approved `ks
 | `review-plan` | `implementation_plan` |
 
 - Allow `candidate` and `background` context only as rationale, traceability, or promotion input—not as executable requirements.
-- Treat `blocked` context as non-shaping evidence that must not drive downstream work.
+- Record material `candidate`, `background`, or `blocked` context as visible rationale, traceability, conflict evidence, or open-question input when it affects requirements, architecture, workflow, API, persistence, validation, execution behavior, or user-purpose conflict.
+- Treat non-material `candidate`, `background`, or `blocked` context as source context or omit it from the artifact; do not resolve non-material unsettled notes during `create-specification`.
+- Treat `blocked` context as non-shaping evidence that must not drive downstream work; when material, surface it as blocking open-question evidence instead of silently deciding.
 - Carry accepted authority context into orchestration artifacts so downstream executors do not need future knowledge-base lookup.
 
 ## Must Not
@@ -43,6 +45,8 @@ Route orchestration access to durable project knowledge through the approved `ks
 - Browse `.work-bundle/knowledge/` directly as a shortcut from orchestration directives covered by this rule.
 - Prefilter discovery to authority lifecycle stages before full candidate discovery completes.
 - Let `candidate`, `background`, or `blocked` results directly shape requirements, tasks, decisions, or review conclusions.
+- Convert material or non-material non-authority context into requirements, constraints, acceptance criteria, tasks, decisions, or review conclusions without explicit resolution or accepted authority.
+- Block `create-specification` only because non-material unsettled notes exist.
 - retrieve durable knowledge during execute-plan; execution agents must not read `.work-bundle/knowledge/` directly.
 - Apply this gateway rule to `execute-plan`, executor-result handoffs created during execution, or any execution-stage retrieval.
 - Defer required execution context to future `.work-bundle/knowledge/` lookup after planning completes.

@@ -72,6 +72,12 @@ Typical retrieval policy mapping:
 
 Classify retrieved notes as `authority`, `candidate`, `background`, or `blocked`. Only `authority` context may shape requirements and executable tasks.
 
+For `orch-create-specification`, missing supporting authority notes do not automatically block authoring. The agent records the retrieval gap, analyzes the user purpose from the prompt and current repository evidence, and uses Design Interrogation only for unresolved intent that evidence cannot answer. Material non-authority evidence stays visible as rationale, traceability, conflict evidence, or open-question input; it must not become requirement text unless resolved by the user or later accepted authority.
+
+Specifications must record source context, the change-driven Extra evidence loop, Open Questions with advised options, Knowledge Base Update disposition, and a body-level `Quality gate: verified|blocked`. A blocked quality gate prevents implementation planning until blocking questions are resolved and the specification is repaired. A verified quality gate is required before `orch-create-implementation-plan` derives root plan, phase, or task artifacts.
+
+After `orch-create-implementation-plan` generates the root plan, phase files, and task files, it runs generated-plan verification against the source specification before completion. The verification checks source-spec ID coverage, exact artifact paths, dependencies, task write scopes, safe parallelization decisions, validation commands, and `create-handoff` requirements. Generated-artifact drift, missing coverage, dependency mistakes, unsafe parallelization, validation gaps, handoff gaps, and internal consistency problems are repaired in the same planning turn and then rechecked. Unresolved source-spec defects still stop planning for specification repair instead of being patched over in generated plan artifacts.
+
 ## Execution Modes
 
 Before execution selection, capability checks, delegation, or implementation changes, `orch-execute-plan` resolves every target source repository separately from the orchestration artifact repository and runs read-only clean-worktree preflight. It blocks on dirty, unresolved, inaccessible, non-Git, or empty target sets and never automatically stashes, commits, resets, restores, cleans, deletes, or otherwise mutates repositories to pass.

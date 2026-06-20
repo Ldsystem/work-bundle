@@ -24,7 +24,23 @@ tags: [Optional: List of relevant tags or categories, e.g., `infrastructure`, `p
 
 [List and define all acronyms, abbreviations, and domain-specific terms used in this specification.]
 
-## 3. Requirements, Constraints & Guidelines
+## 3. Source Context
+
+[Record the evidence used before drafting. Include durable knowledge gateway results grouped by `authority`, `candidate`, `background`, and `blocked`, plus current repository evidence with path, role, and relevance. Only `authority` durable knowledge may shape requirements, constraints, acceptance criteria, or downstream tasks.]
+
+When no supporting authority note exists for the user purpose, record the retrieval gap and analyze the purpose from user input and repository evidence. Use Design Interrogation only for unresolved design intent that cannot be answered from current evidence.
+
+### 3.1 Design Interrogation
+
+[Required when user intent is under-specified, repository evidence conflicts, or no supporting note exists and the purpose cannot be resolved from current evidence.]
+
+- **Trigger**: no-supporting-note|under-specified-purpose|repository-evidence-conflict|none
+- **Question**: Ask one design question at a time.
+- **Recommended answer**: Provide the advised answer and rationale.
+- **User resolution**: Record accepted answer or unresolved.
+- **Evidence conclusion**: Record any accepted conclusion as specification evidence.
+
+## 4. Requirements, Constraints & Guidelines
 
 [Explicitly list all requirements, constraints, rules, and guidelines. Use bullet points or tables for clarity.]
 
@@ -35,11 +51,11 @@ tags: [Optional: List of relevant tags or categories, e.g., `infrastructure`, `p
 - **GUD-001**: Guideline 1
 - **PAT-001**: Pattern to follow 1
 
-## 4. Interfaces & Data Contracts
+## 5. Interfaces & Data Contracts
 
 [Describe the interfaces, APIs, data contracts, or integration points. Use tables or code blocks for schemas and examples.]
 
-## 5. Acceptance Criteria
+## 6. Acceptance Criteria
 
 [Define clear, testable acceptance criteria for each requirement using Given-When-Then format where appropriate.]
 
@@ -47,7 +63,7 @@ tags: [Optional: List of relevant tags or categories, e.g., `infrastructure`, `p
 - **AC-002**: The system shall [specific behavior] when [condition]
 - **AC-003**: [Additional acceptance criteria as needed]
 
-## 6. Test Automation Strategy
+## 7. Test Automation Strategy
 
 [Define the testing approach, frameworks, and automation requirements.]
 
@@ -58,11 +74,11 @@ tags: [Optional: List of relevant tags or categories, e.g., `infrastructure`, `p
 - **Coverage Requirements**: [minimum code coverage thresholds]
 - **Performance Testing**: [approach for load and performance testing]
 
-## 7. Rationale & Context
+## 8. Rationale & Context
 
 [Explain the reasoning behind the requirements, constraints, and guidelines. Provide context for design decisions.]
 
-## 8. Dependencies & External Integrations
+## 9. Dependencies & External Integrations
 
 [Define the external systems, services, and architectural dependencies required for this specification. Focus on **what** is needed rather than **how** it's implemented. Avoid specific package or library versions unless they represent architectural constraints.]
 
@@ -86,7 +102,25 @@ tags: [Optional: List of relevant tags or categories, e.g., `infrastructure`, `p
 
 **Note**: This section should focus on architectural and business dependencies, not specific package implementations. For example, specify "OAuth 2.0 authentication library" rather than "Microsoft.AspNetCore.Authentication.JwtBearer v6.0.1".
 
-## 9. Knowledge Base Update
+## 10. Open Questions
+
+[List unresolved decisions, uncertainty, conflicts, and material non-authority evidence that affects requirements, architecture, workflow, API, persistence, validation, execution behavior, or user purpose.]
+
+Every open question must include:
+
+| Field | Required |
+| --- | --- |
+| ID | yes |
+| Question or uncertainty | yes |
+| Related scope | yes |
+| Source | yes |
+| Blocking | yes |
+| Required resolution | yes |
+| Advised options | yes |
+
+Candidate, background, blocked, draft, proposed, stale, or otherwise non-authority durable knowledge must not become requirement text. When material, record it as rationale, traceability, conflict evidence, or blocking open-question input.
+
+## 11. Knowledge Base Update
 
 [Record whether this specification is expected to produce durable project knowledge without instructing agents to write durable notes directly.]
 
@@ -99,17 +133,44 @@ tags: [Optional: List of relevant tags or categories, e.g., `infrastructure`, `p
 - **Blocks review/archive**: yes|no
 - **Rationale**: [Explain why the disposition applies.]
 
-## 10. Examples & Edge Cases
+Set disposition to `required` when accepted Design Interrogation conclusions establish new durable orchestration policy, workflow design, or reusable process behavior.
+
+## 12. Examples & Edge Cases
 
     ```code
     // Code snippet or data example demonstrating the correct application of the guidelines, including edge cases
     ```
 
-## 11. Validation Criteria
+## 13. Validation Criteria
 
 [List the criteria or tests that must be satisfied for compliance with this specification.]
 
-## 12. Related Specifications / Further Reading
+## 14. Quality Gate
+
+Quality gate: verified|blocked
+
+Checked:
+
+- user purpose coverage
+- durable knowledge classification
+- current repository contract coverage
+- affected-file coverage
+- assumptions and alternatives
+- open questions
+
+Findings:
+
+- [gap or none]
+
+Extra evidence loop:
+
+- round 1: changed|unchanged|blocked - [drift/gap/evidence result]
+- round 2: changed|unchanged|blocked - [drift/gap/evidence result, when needed]
+Final result: verified|blocked
+
+Run another evidence round whenever a round changes, fixes, adds, removes, or reclassifies material evidence. If any round records a blocking open question, the quality gate remains `blocked` until the question is resolved and the loop runs again.
+
+## 15. Related Specifications / Further Reading
 
 [Link to related spec 1]
 [Link to relevant external documentation]

@@ -17,7 +17,11 @@ Use `references/assets/orchestration/workflow.md` as the shared workflow authori
 
 Before drafting from durable project knowledge, use `keep-summarizing` with `what-is-helpful` gateway mode. Do not directly browse `.work-bundle/knowledge/`.
 
-For v3 knowledge, map implementation specifications to the `implementation_spec` retrieval policy. Source context must separate `authority`, `candidate`, `background`, and `blocked` results. Only `authority` context may shape requirements and contracts; candidate/background context may appear only as rationale, traceability, or promotion input.
+For v3 knowledge, map implementation specifications to the `implementation_spec` retrieval policy. Source context must separate `authority`, `candidate`, `background`, and `blocked` results, and it must label repository evidence by role such as skill, rule, reference, script, test, design, or user input. Only `authority` durable context may shape requirements, constraints, interfaces, acceptance criteria, or downstream task instructions.
+
+Material non-authority durable context (`candidate`, `background`, or `blocked`) must stay visible when it relates to the user purpose, architecture, workflow, policy, API, persistence, validation, execution behavior, or a conflict. Record it as rationale, traceability, conflict evidence, or open-question input; do not promote it into a requirement unless the user resolves it or an approved durable-knowledge workflow later makes it authority. Non-material non-authority context may be summarized as outside scope or omitted.
+
+When the gateway returns no notes that support the current user purpose, do not block solely for that absence. Record the query and evidence gap, analyze the user purpose directly, inspect current repository evidence where possible, and use Design interrogation only for unresolved decisions that repository evidence cannot answer.
 
 The specification is the first execution-chain artifact:
 
@@ -33,10 +37,12 @@ It must carry enough accepted context for planning and execution without future 
 - Distinguish requirements, constraints, assumptions, alternatives, and open questions.
 - Inspect relevant note states and open-question watchpoints through the approved knowledge gateway when durable knowledge affects the scope.
 - Surface relevant draft, proposed, conflicting, stale, or missing-evidence context as uncertainty; do not convert it into requirements.
-- Include an `Open Questions` section. If relevant uncertainty exists, list ID, question or uncertainty, related scope, source, blocking yes/no, and required resolution. If none exists, state `None for this specification scope.`
+- Include an `Open Questions` section. If relevant uncertainty exists, list ID, question or uncertainty, related scope, source, blocking yes/no, required resolution, and at least one feasible advised option. If none exists, state `None for this specification scope.`
+- Treat material unsettled evidence as blocking only when it affects requirements, architecture, workflow, policy, API, persistence, validation, execution behavior, or conflicts with user purpose.
 - Include a `Knowledge Base Update` section in every new or repaired specification.
 - In `Knowledge Base Update`, allow only these dispositions for new specs: `required`, `not-needed`, `blocked`.
 - In `Knowledge Base Update`, require `Expected durable conclusions`, `Evidence sources`, `Responsible follow-up`, `Blocks review/archive`, and `Rationale`.
+- Set `Knowledge Base Update` disposition to `required` when accepted Design interrogation conclusions establish new durable orchestration workflow policy or reusable process behavior.
 - When no durable update is expected, set `Expected durable conclusions` to `None for this specification scope.`
 - Record only disposition and follow-up path in `Knowledge Base Update`; do not instruct agents to write durable notes from the specification.
 - Define domain terms and acronyms.
@@ -45,16 +51,55 @@ It must carry enough accepted context for planning and execution without future 
 - Record missing or uncertain context as assumptions or open questions.
 - Do not store specifications under `.work-bundle/knowledge/`.
 
+## Extra Evidence Loop
+
+After initial evidence collection and before finalizing the specification, run an agent-owned semantic evidence round. Scripts may support mechanical checks, but scripts must not decide whether the specification has enough evidence.
+
+Each round must check:
+
+1. Drift against the user purpose and resolved user decisions. If drift exists, repair the specification.
+2. Gaps in required context, affected files, decisions, constraints, validation, or open questions. If evidence is available, repair the gap.
+3. Evidence support for all user requirements. If support is missing but more evidence exists through the approved knowledge gateway or current repository context, collect it through that approved path and update the specification. If no more evidence exists, record the unsupported requirement or decision as a blocking open question.
+
+Use the simple change-driven loop:
+
+```text
+Run evidence round
+  -> if the round changed, fixed, added, removed, or reclassified anything:
+       run another round
+  -> if the round changed nothing:
+       break
+```
+
+Record the result compactly in the specification body:
+
+```text
+Extra evidence loop:
+- round 1: changed|unchanged|blocked - <drift/gap/evidence result>
+- round 2: changed|unchanged|blocked - <drift/gap/evidence result>
+Final result: verified|blocked
+```
+
+If any round records a blocking open question, the final result and quality gate remain `blocked` until the question is resolved and the loop runs again.
+
+## Design Interrogation
+
+Use Design interrogation when the approved gateway has no supporting note for the user purpose, or when repository evidence still leaves the ultimate design intent under-specified. Inspect repository evidence first; ask the user only for decisions that cannot be resolved from existing files or accepted context.
+
+Ask one question at a time, include the agent's recommended answer, and record the accepted answer or unresolved state in the specification source context or evidence section. Accepted conclusions are source evidence for the specification, but they are not durable knowledge until an approved follow-up persists them.
+
 ## Hard Rules
 
 - Stop if the spec cannot be self-contained enough for planning.
 - Stop if durable knowledge is needed but was not retrieved through `keep-summarizing`.
+- Stop before downstream implementation planning when `Quality gate: blocked` is recorded.
 - Do not implement source changes, edit application/test files, run migrations, apply patches, or execute plan tasks while creating a specification.
 - If the user also asks for implementation, finish the specification artifact first, then stop and require an explicit `execute-plan` request.
 - Do not defer required execution context to future `.work-bundle/knowledge/` lookup.
 - Do not mix implementation plan tasks into the spec; record planning needs as constraints or open questions.
 - Do not hide unresolved architecture, data model, API contract, persistence, execution-flow, or authority decisions inside assumptions.
 - Do not instruct agents to write durable knowledge directly from the specification; only record disposition, evidence expectations, and the responsible follow-up path.
+- Do not reintroduce `wb-select-role-context`; the current contract is no role-context except the explicit deprecation/exclusion note below.
 - Do not write raw chat logs, unsupported facts, or hidden reasoning.
 
 ## Output
@@ -92,9 +137,35 @@ Every generated specification must also include this section even if the contrac
 - **Rationale**: <why the disposition applies>
 ```
 
+Every generated specification must include a body-level quality gate result. `verified` and `blocked` are quality-gate results only; do not add `verified` to YAML front-matter lifecycle status language.
+
+```markdown
+## Quality Gate
+
+Quality gate: verified|blocked
+
+Checked:
+
+- user purpose coverage
+- durable knowledge classification
+- current repository contract coverage
+- affected-file coverage
+- assumptions and alternatives
+- open questions
+
+Findings:
+
+- <gap or none>
+
+Extra evidence loop:
+- round 1: changed|unchanged|blocked - <drift/gap/evidence result>
+- round 2: changed|unchanged|blocked - <drift/gap/evidence result>
+Final result: verified|blocked
+```
+
 ## Validation
 
-Confirm the spec is self-contained, cites source context, carries execution-relevant knowledge into the body, records assumptions/open questions, includes the required `Knowledge Base Update` section and no-update wording when applicable, follows naming/location rules, and does not require downstream agents to read `.work-bundle/knowledge/`.
+Confirm the spec is self-contained, cites role-labeled source context, carries execution-relevant authority knowledge and repository evidence into the body, surfaces material non-authority context without letting it shape requirements, records assumptions/open questions with advised options, includes Design interrogation evidence when unsupported or under-specified purpose required it, includes the required `Knowledge Base Update` section and no-update wording when applicable, records `Quality gate: verified|blocked` in the body, follows naming/location rules, and does not require downstream agents to read `.work-bundle/knowledge/`.
 
 ## Runtime Rules
 

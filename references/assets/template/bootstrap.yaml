@@ -3,3 +3,4 @@ authority: canonical
 work_bundle_root: __WORK_BUNDLE_ROOT__
 project_registry: "$work_bundle_config_root/registry/projects.yaml"
 skill_registry: "$work_bundle_config_root/registry/skill-registry.yaml"
+prefer_subagent: false

@@ -38,6 +38,9 @@ Downstream executors may read only the related spec, root plan, relevant phase, 
 - Convert the spec into deterministic phases, tasks, dependencies, affected files/modules, validation, completion criteria, and handoff requirements.
 - Carry required execution context from spec into the root plan, each phase, and each task by referencing stable spec IDs and adding only task-specific execution detail.
 - Carry the source spec `Knowledge Base Update` disposition, expected durable conclusions, evidence-source expectations, and follow-up path into the root plan, final task or review criteria, and executor-result handoff requirements.
+- After generating the root plan, phase files, and task files, run a generated-plan verification pass against the source specification before reporting completion.
+- The generated-plan verification pass must check exact artifact paths, source-spec ID coverage, dependencies, safe parallelization opportunities, task write scopes, validation commands, and `create-handoff` completion requirements.
+- Repair generated-artifact drift, missing coverage, dependency mistakes, unsafe parallelization, validation gaps, handoff gaps, and internal consistency problems in the same planning turn, then repeat verification until no generated-artifact gap remains or a source-spec defect blocks progress.
 - Add leading clarification or spec-repair tasks only when the source specification has no unresolved open questions but still lacks stable IDs, paths, validation details, or file-level execution context.
 - Use explicit IDs, paths, statuses, dependencies, commands, validation rules, and completion criteria.
 - Do not create handoff files directly; require `create-handoff`.
@@ -79,6 +82,7 @@ These rules are mandatory:
 - Do not create tasks without dependencies, validation, completion criteria, and handoff requirement.
 - Do not create tasks that duplicate specification prose instead of citing spec IDs.
 - Do not create phases or tasks without exact source files, target files, target symbols, validation instructions, and relevant spec-ID references.
+- Do not report planning completion while generated plan, phase, or task artifacts still drift from the source specification, omit required spec IDs, contain inconsistent paths or dependencies, lack safe parallelization notes, or lack validation and handoff requirements.
 - Do not create phases or tasks whose target files are `.work-bundle/knowledge/**`; those writes belong to `ks-*` skills after orchestration review or explicit knowledge follow-up.
 - Do not use broad globs such as `src/**` as the only source or target path for a task. A broad directory may appear only when paired with exact files or a narrow symbol-level explanation.
 - Do not write raw chat logs, unsupported facts, or durable knowledge notes.
@@ -106,12 +110,14 @@ Root plan:
 - requirements, constraints, source references, alternatives, open questions, risks by ID and execution impact;
 - phase index;
 - desired files/modules;
+- generated-artifact verification evidence showing source-spec coverage, exact paths, dependencies, safe parallelization, validation, and handoff requirements were checked and repaired before completion;
 - tests and completion criteria, including the final knowledge-update disposition gate.
 
 Each phase:
 
 - subset of spec IDs required for the phase;
 - phase-specific decisions, dependencies, task index, tests, completion criteria.
+- phase-level generated-artifact verification expectations for spec-ID alignment, dependencies, task ordering, safe parallelization, validation, and handoff requirements.
 - no copied spec sections beyond short one-line summaries.
 
 Each task:
@@ -119,6 +125,7 @@ Each task:
 - exact self-contained execution context based on cited spec IDs;
 - goals, dependencies, source files, target files, target symbols;
 - implementation instructions, validation, completion criteria, and executor-result handoff requirements that carry any expected durable conclusions or explicit `none`.
+- generated-artifact integrity expectations for exact files, dependencies, validation, handoff requirements, and required same-turn repair when the task artifact is incomplete or inconsistent.
 - no copied spec sections beyond short one-line summaries.
 
 ## IDs and Status
@@ -158,6 +165,13 @@ Load only when creating or validating:
 
 Confirm required front matter and sections exist, the source specification includes `Knowledge Base Update`, paths and dependencies are explicit, execution context is carried forward through spec-ID references plus concrete file-level instructions, no executor is required to read `.work-bundle/knowledge/`, blockers become leading clarification/spec-repair tasks, no phase or task targets `.work-bundle/knowledge/**`, indexes are updated, and every plan/phase/task has mandatory `executor-result` handoff criteria that carry suggested durable conclusions or explicit `none`.
 
+Run generated-plan verification before reporting completion:
+
+- compare the root plan, every phase, and every task back to the source specification's stable IDs, resolved alternatives, open-question decisions, constraints, affected files, validation expectations, and handoff requirements;
+- confirm exact paths, dependencies, task ordering, safe parallelization flags, source files, target files, target symbols, validation commands, and completion criteria are internally consistent across root plan, phases, and tasks;
+- repair generated-artifact drift, missing coverage, duplicate spec prose, invalid dependencies, unsafe or missing parallelization notes, validation gaps, and handoff gaps in the same turn;
+- stop for specification repair instead of patching around the issue when the source specification itself has unresolved questions, missing stable IDs, missing evidence, or contradictory instructions.
+
 Reject and repair the plan if:
 
 - a phase or task duplicates long specification prose;
@@ -165,6 +179,7 @@ Reject and repair the plan if:
 - a task lacks exact source files, target files, target symbols, validation, or handoff criteria;
 - the plan blurs specification requirements with execution ordering;
 - an executor would need to infer target files or dependencies from broad prose.
+- generated-plan verification finds artifact drift, coverage gaps, path or dependency inconsistencies, unsafe parallelization, missing validation, or missing handoff requirements.
 
 ## Runtime Rules
 

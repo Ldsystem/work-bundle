@@ -75,6 +75,7 @@ CLI_HELP_EPILOG = '''Canonical consolidated command surface:
   inspect-project-initialization <project-root>
   initialize-project <project-root>
   validate-project <project-root> --dry-run
+  set-prefer-subagent <true|false|enable|disable|on|off> --scope <global|project> [--project-root <project-root>]
   generate-project-metadata-profile --input <authority-context> --output <output-path>
   merge-project-metadata-profile --current <current-profile> --incoming <incoming-profile> --output <output-path>
   validate-project-metadata-profile <profile-path>
@@ -147,6 +148,17 @@ def compact_yaml_map(text: str) -> dict[str, str]:
     return data
 
 
+def yaml_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {'true', 'yes', 'on', '1'}:
+        return True
+    if normalized in {'false', 'no', 'off', '0', ''}:
+        return False
+    return default
+
+
 def utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
@@ -174,11 +186,39 @@ def resolve_bootstrap_runtime() -> dict[str, object]:
     config_root = work_bundle_config_root()
     bootstrap_path = config_root / GLOBAL_BOOTSTRAP_FILE_NAME
     resolved = resolve_work_bundle_root()
+    bootstrap = compact_yaml_map(read(bootstrap_path)) if bootstrap_path.is_file() else {}
+    global_prefer_subagent = yaml_bool(bootstrap.get('prefer_subagent'), False)
     return {
         'work_bundle_config_root': str(config_root),
         'global_bootstrap_path': str(bootstrap_path),
         'global_bootstrap_exists': bootstrap_path.is_file(),
         'resolved_work_bundle_root': str(resolved) if resolved else None,
+        'prefer_subagent': global_prefer_subagent,
+    }
+
+
+def project_metadata_path(project_root: Path) -> Path:
+    return project_root.expanduser().resolve() / '.work-bundle' / 'project.yaml'
+
+
+def resolve_effective_prefer_subagent(project_root: Path | None = None) -> dict[str, object]:
+    config_root = work_bundle_config_root()
+    bootstrap_path = config_root / GLOBAL_BOOTSTRAP_FILE_NAME
+    bootstrap = compact_yaml_map(read(bootstrap_path)) if bootstrap_path.is_file() else {}
+    global_prefer_subagent = yaml_bool(bootstrap.get('prefer_subagent'), False)
+
+    project_path = project_metadata_path(project_root) if project_root is not None else None
+    project_metadata = compact_yaml_map(read(project_path)) if project_path and project_path.is_file() else {}
+    has_project_override = 'prefer_subagent' in project_metadata
+    effective = yaml_bool(project_metadata.get('prefer_subagent'), global_prefer_subagent) if has_project_override else global_prefer_subagent
+    source = 'project' if has_project_override else ('global' if 'prefer_subagent' in bootstrap else 'default')
+    return {
+        'prefer_subagent': effective,
+        'source': source,
+        'project_prefer_subagent': yaml_bool(project_metadata.get('prefer_subagent'), False) if has_project_override else None,
+        'global_prefer_subagent': global_prefer_subagent,
+        'global_bootstrap_path': str(bootstrap_path),
+        'project_metadata_path': str(project_path) if project_path else None,
     }
 
 

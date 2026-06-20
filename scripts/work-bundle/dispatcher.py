@@ -8,7 +8,7 @@ from integrity import cmd_integrity_report, cmd_merge_skill_hints
 from legacy import cmd_legacy_command_removed
 from metadata_profile import cmd_domain_profile
 from bootstrap_config import cmd_migrate_work_bundle_config
-from project import cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_project, cmd_register_project_command, cmd_show_project, cmd_validate_project
+from project import cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_project, cmd_register_project_command, cmd_set_prefer_subagent, cmd_show_project, cmd_validate_project
 from role_context import cmd_role_context
 from rules import cmd_create_rules, cmd_validate_rules
 from skill_registry import cmd_registry
@@ -55,6 +55,8 @@ def main() -> int:
         return cmd_project(parsed.args, inspect_only=True, repo_model=True)
     if command == 'validate-project':
         return cmd_validate_project(parsed.args)
+    if command == 'set-prefer-subagent':
+        return cmd_set_prefer_subagent(parsed.args)
     if command == 'create-rules':
         return cmd_create_rules(parsed.args)
     if command == 'validate-rules':

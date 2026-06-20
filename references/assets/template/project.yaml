@@ -2,6 +2,7 @@ metadata_version: 1
 authority: canonical
 project_root: <absolute-path-to-project-root>
 industry: <industry-or-domain>
+prefer_subagent: false
 language:
   - <runtime-or-framework>
 git:

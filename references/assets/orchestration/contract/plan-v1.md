@@ -81,16 +81,30 @@ Use a compact source-spec ID map. Do not paste long specification sections into 
 |---|---|---|---|---|---|---|
 | TEST-001 | unit|integration|model-behavior|manual | `[file/module/function/API]` | phase-001 | - | `[command if applicable]` | [Measurable result.] |
 
-## 8. Completion Criteria
+## 8. Generated Artifact Verification
+
+Record the verification pass performed after generating the root plan, phases, and tasks.
+
+| ID | Check | Scope | Result | Repair |
+|---|---|---|---|---|
+| VERIFY-001 | source-spec ID coverage maps every implemented requirement, constraint, resolved alternative, and resolved open question to plan/phase/task artifacts. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-002 | Exact artifact paths, source files, target files, dependencies, task ordering, validation commands, and completion criteria are internally consistent. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-003 | Safe parallelization is exposed where dependencies and write scopes allow, and unsafe parallelization is explicitly blocked by dependency or scope evidence. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-004 | Every task, phase, and plan completion path requires `create-handoff` with an `executor-result` handoff. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+
+If any generated artifact drifts from the source specification, omits required spec-ID coverage, contains inconsistent paths or dependencies, lacks validation, or lacks handoff criteria, repair the generated artifacts in the same planning turn and repeat this verification. If the source specification itself has unresolved questions, missing stable IDs, missing evidence, or contradictory instructions, stop for specification repair instead of inventing plan content.
+
+## 9. Completion Criteria
 
 - **DONE-REQ-001**: All requirements are validated or explicitly marked not applicable with reason.
 - **DONE-CON-001**: All constraints are validated with concrete evidence.
 - **DONE-TEST-001**: Required tests pass or have documented failure reason and remediation task.
 - **DONE-ACH-001**: The implementation achieves the stated plan goal.
 - **DONE-FILE-001**: Desired files are created, updated, deleted, or confirmed unnecessary.
+- **DONE-VERIFY-001**: Generated root plan, phase, and task artifacts were verified against the source specification and repaired for drift, gaps, dependencies, validations, safe parallelization, and handoff requirements before completion.
 - **DONE-HANDOFF-001**: Executor invokes `create-handoff` and creates a plan-scoped `executor-result` handoff under `.work-bundle/orchestration/handoff/executor/active/` before reporting the root plan as completed or blocked.
 
-## 9. Related Specifications / Further Reading
+## 10. Related Specifications / Further Reading
 
 - [Related specification](.work-bundle/orchestration/spec/active/...)
 - [Relevant durable knowledge](.work-bundle/knowledge/notes/...)

@@ -13,6 +13,8 @@ Initialize, doctor, validate, register, inspect, or migrate a project as a work-
 
 - `project_root`: concrete project path.
 - `~/.work-bundle/bootstrap.yaml` for `project_registry` and `work_bundle_root` resolution.
+- `~/.work-bundle/bootstrap.yaml` field `prefer_subagent` for the global sub-agent scheduling preference default.
+- `$project_root/.work-bundle/project.yaml` field `prefer_subagent` for the current workspace override.
 - Optional `WB_WORK_BUNDLE_ROOT` environment override when the agent must pass an explicit toolkit root to dispatcher commands.
 - Work-bundle reference templates and manifests under the bootstrap-resolved work-bundle root:
   - `references/assets/template/project.yaml`
@@ -32,6 +34,7 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 | Strict validate | `validate-project <project-root> [--dry-run]` |
 | Register only | `register-project <project-root> [--name <name>]` |
 | Migrate | `migrate-project <project-root> [--name <name>] [--force]` |
+| Set sub-agent preference | `set-prefer-subagent <true|false|enable|disable|on|off> --scope <global|project> [--project-root <project-root>]` |
 
 `initialize-project` remains a compatibility alias for `init-project`; prefer `init-project` in new instructions.
 
@@ -42,6 +45,20 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 **`migrate-project --force`:** narrower migration-only repair subset; overwrites `.work-bundle/project.yaml` only. Does not overwrite general init-managed files such as `AGENTS.md`.
 
 **`init-project --dry-run` / `validate-project --dry-run`:** inspect and report mechanical failures without writing project files.
+
+**`prefer_subagent` management:**
+
+- `prefer_subagent` is a boolean preference only; it does not bypass orchestration preflight, dependency, write-scope, handoff, or fallback rules.
+- Effective value resolves as project metadata first, then global bootstrap, then `false`:
+  - project: `$project_root/.work-bundle/project.yaml` -> `prefer_subagent`;
+  - global: `$work_bundle_config_root/bootstrap.yaml` -> `prefer_subagent`;
+  - default: `false`.
+- Use `set-prefer-subagent true --scope global` for requests such as "Enable global `prefer_subagent`".
+- Use `set-prefer-subagent false --scope global` for requests such as "Disable global `prefer_subagent`".
+- Use `set-prefer-subagent false --scope project --project-root <project-root>` for requests such as "Disable `prefer_subagent` for current workspace".
+- Use `set-prefer-subagent true --scope project --project-root <project-root>` for requests such as "Enable `prefer_subagent` for current workspace".
+- The command updates only the selected YAML file and reports `target_path`, `changed_files`, and `effective_prefer_subagent` in JSON.
+- Do not hand-edit either YAML file for this preference when the dispatcher command is available.
 
 **Registry and slug (per `wb-project-registry`):**
 
@@ -62,6 +79,7 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
   - `orchestration/{docs,principles,templates,reviews,execution-state}`
 - Directory membership is driven by `references/wb-initialize-project-default-work-bundle-tree.yaml`.
 - Render `.work-bundle/project.yaml` from `references/assets/template/project.yaml`.
+- Render `.work-bundle/project.yaml` with a `prefer_subagent: false` default unless a future template version explicitly changes the default.
 - Create or preserve `AGENTS.md` from `references/assets/template/AGENTS.md` and required `.gitignore` entries.
 - Initialize `.work-bundle/knowledge` as its own Git repository and create its initial deterministic commit when needed.
 - Bind registry IO to `references/assets/template/projects.yaml`.
@@ -105,6 +123,7 @@ Use `migrate-project` for legacy layout upgrades.
 - Initialized, doctored, validated, registered, or migrated project workspace.
 - Updated bootstrap-resolved `projects.yaml` registry entry when registration runs.
 - JSON command output with `status`, `failures`, `registry_path`, `registry_entry` or `registry_status`, and `changed_files` where applicable.
+- For `set-prefer-subagent`, JSON command output with `status`, `scope`, `prefer_subagent`, `target_path`, `changed_files`, and `effective_prefer_subagent`.
 - Migration report and optional legacy-bootstrap archive paths under `.work-bundle/orchestration/docs/` when migration retires legacy artifacts.
 
 ## On Failure

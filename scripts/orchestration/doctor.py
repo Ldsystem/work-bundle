@@ -1,3 +1,5 @@
+import json
+
 from core import *
 from handoffs import index_handoffs
 from plans import index_plans
@@ -14,6 +16,73 @@ def check_contract_terms(issues: list[str], path: Path, label: str, required_ter
             issues.append(f"{label} missing workflow contract term: {term}")
 
 
+def check_eval_shape(issues: list[str], path: Path) -> None:
+    if not path.exists():
+        issues.append(f"missing orchestration evals: {path}")
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        issues.append(f"invalid orchestration eval JSON: {exc}")
+        return
+    cases = data.get("evals")
+    if not isinstance(cases, list):
+        issues.append("orchestration eval JSON missing evals list")
+        return
+    seen_ids: set[object] = set()
+    for index, case in enumerate(cases):
+        if not isinstance(case, dict):
+            issues.append(f"orchestration eval entry {index} is not an object")
+            continue
+        missing = [key for key in ("id", "prompt", "expected_output", "files") if key not in case]
+        if missing:
+            issues.append(f"orchestration eval entry {index} missing fields: {', '.join(missing)}")
+        case_id = case.get("id")
+        if not isinstance(case_id, (int, str)):
+            issues.append(f"orchestration eval entry {index} has invalid id")
+            continue
+        if case_id in seen_ids:
+            issues.append(f"duplicate orchestration eval id: {case_id}")
+        seen_ids.add(case_id)
+
+
+def check_forbidden_active_dependencies(issues: list[str], paths: list[Path]) -> None:
+    forbidden_runtime_file = "HAB" "ITS.md"
+    positive_role_context_terms = (
+        "## Role Context",
+        "Use `wb-select-role-context`",
+        "Invoke `wb-select-role-context`",
+        "Required Skill: `wb-select-role-context`",
+    )
+    for path in paths:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if forbidden_runtime_file in text:
+            issues.append(f"active orchestration contract depends on forbidden runtime file: {path}")
+        for term in positive_role_context_terms:
+            if term in text:
+                issues.append(f"active orchestration contract reintroduces role-context dependency: {path}")
+
+
+def index_row_identity(index_scope: str, row: dict[str, object]) -> tuple[object, ...]:
+    row_type = str(row.get("type", index_scope))
+    row_id = str(row.get("id", ""))
+    if index_scope == "plan" and row_type == "phase":
+        return (row_type, row.get("plan_id"), row_id)
+    if index_scope == "plan" and row_type == "task":
+        return (row_type, row.get("plan_id"), row.get("phase_id"), row_id)
+    if index_scope == "handoff":
+        return (
+            row_type,
+            row.get("related_plan"),
+            row.get("related_phase"),
+            row.get("related_task"),
+            row_id,
+        )
+    return (row_type, row_id)
+
+
 def cmd_doctor(args: argparse.Namespace) -> None:
     init_dirs(args)
     issues = []
@@ -22,22 +91,37 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     for required in ["spec/active", "spec/archived", "spec/index.jsonl", "plan/active", "plan/archived", "plan/index.jsonl", "handoff/orchestration/active", "handoff/orchestration/archived", "handoff/executor/active", "handoff/executor/archived", "handoff/index.jsonl", "docs"]:
         if not (root / required).exists():
             issues.append(f"missing {required}")
-    seen = set()
-    for index in ["spec/index.jsonl", "plan/index.jsonl", "handoff/index.jsonl"]:
+    for index_scope, index in [
+        ("spec", "spec/index.jsonl"),
+        ("plan", "plan/index.jsonl"),
+        ("handoff", "handoff/index.jsonl"),
+    ]:
+        seen: set[tuple[object, ...]] = set()
         for row in load_index(root / index):
-            rid = str(row.get("id", ""))
-            if rid in seen:
-                issues.append(f"duplicate id {rid}")
-            seen.add(rid)
+            identity = index_row_identity(index_scope, row)
+            if identity in seen:
+                issues.append(f"duplicate {index_scope} identity {identity}")
+            seen.add(identity)
             path = project_root(args) / str(row.get("path", ""))
             if not is_relative_to(path, root):
                 issues.append(f"index path escapes orchestration root: {row}")
-    for path in root.glob("**/*.md"):
-        if ".work-bundle/knowledge" in path.resolve().as_posix():
-            issues.append(f"artifact under knowledge root: {path}")
+    active_artifact_roots = [
+        root / "spec" / "active",
+        root / "plan" / "active",
+        root / "handoff" / "orchestration" / "active",
+        root / "handoff" / "executor" / "active",
+        root / "docs",
+    ]
+    for active_root in active_artifact_roots:
+        for path in active_root.glob("**/*.md"):
+            if ".work-bundle/knowledge" in path.resolve().as_posix():
+                issues.append(f"artifact under knowledge root: {path}")
+    for path in (root / "spec" / "active").glob("**/*.md"):
         if artifact_mentions_retrieval_without_roles(path):
             issues.append(f"retrieval artifact lacks role labels: {path.relative_to(root)}")
     skill_root = bundle_root / "skills"
+    orchestration_evals = bundle_root / "references" / "evals" / "orchestration" / "evals.json"
+    check_eval_shape(issues, orchestration_evals)
     orch_skill_policy_map = {
         "orch-create-specification": "implementation_spec",
         "orch-create-implementation-plan": "implementation_plan",
@@ -76,6 +160,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             "orchestration workflow",
             [
                 "Before execution selection, capability checks, delegation, or implementation changes",
+                "Quality gate: verified|blocked",
+                "runs generated-plan verification against the source specification before completion",
                 "keeps archive blocked if delegation is unavailable or evidence is incomplete",
             ],
         ),
@@ -85,9 +171,29 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             ["full candidate discovery followed by explicit authority, candidate, background, and blocked classification"],
         ),
         (
+            skill_root / "orch-create-specification" / "SKILL.md",
+            "orch-create-specification skill",
+            [
+                "authority`, `candidate`, `background`, and `blocked",
+                "Extra evidence loop",
+                "Quality gate: verified|blocked",
+            ],
+        ),
+        (
+            skill_root / "orch-create-implementation-plan" / "SKILL.md",
+            "orch-create-implementation-plan skill",
+            ["generated-plan verification pass", "Repair generated-artifact drift", "safe parallelization"],
+        ),
+        (
             skill_root / "orch-execute-plan" / "SKILL.md",
             "orch-execute-plan skill",
-            ["## Repository Preflight", "every target source repository", "Block when no target repository resolves or any target reports `dirty`"],
+            [
+                "## Repository Preflight",
+                "every target source repository",
+                "Block when no target repository resolves or any target reports `dirty`",
+                "related specification, root plan, parent phase, and assigned task before handoff",
+                "Do not fail only because sub-agent support is missing",
+            ],
         ),
         (
             skill_root / "orch-execute-plan" / "SKILL.md",
@@ -97,7 +203,27 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         (
             ks_what_is_helpful_skill,
             "ks-what-is-helpful skill",
-            ["discover relevant candidates across all allowed lifecycle partitions", "Classify validated candidates as `authority`", "`authority` may directly shape downstream requirements"],
+            [
+                "discover across every allowed lifecycle partition",
+                "Classify and rank",
+                "use `retrieval_role` exactly",
+                "Do not convert non-authority results into requirements, tasks, decisions, or review conclusions",
+            ],
+        ),
+        (
+            bundle_root / "rules" / "agent-codegraph-first.md",
+            "CodeGraph-first rule",
+            ["targeted repository root contains `.codegraph/`", "Do not skip CodeGraph silently", "record the concrete fallback reason"],
+        ),
+        (
+            orchestration_evals,
+            "orchestration evals",
+            [
+                "material candidate knowledge conflicts with the user purpose",
+                "quality gate is verified",
+                "repairs the task-scoped gap and repeats verification before handoff",
+                "target repository has no .codegraph directory",
+            ],
         ),
         (
             skill_root / "orch-review-plan" / "SKILL.md",
@@ -112,6 +238,16 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     ]
     for path, label, required_terms in workflow_contracts:
         check_contract_terms(issues, path, label, required_terms)
+    check_forbidden_active_dependencies(
+        issues,
+        [
+            skill_root / "orch-create-specification" / "SKILL.md",
+            skill_root / "orch-create-implementation-plan" / "SKILL.md",
+            skill_root / "orch-execute-plan" / "SKILL.md",
+            bundle_root / "references" / "assets" / "orchestration" / "workflow.md",
+            bundle_root / "rules" / "agent-codegraph-first.md",
+        ],
+    )
     if issues:
         for issue in issues:
             print(issue)

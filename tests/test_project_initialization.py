@@ -74,6 +74,7 @@ def bootstrap_config(tmp_path: Path, work_bundle_root: Path | None = None) -> Pa
                 f"work_bundle_root: {work_bundle_root or REPO_ROOT}",
                 'project_registry: "$work_bundle_config_root/registry/projects.yaml"',
                 'skill_registry: "$work_bundle_config_root/registry/skill-registry.yaml"',
+                "prefer_subagent: false",
                 "",
             ]
         ),
@@ -474,6 +475,8 @@ def test_validate_project_omits_pointer_diagnostics(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     data = json.loads(result.stdout)
     assert data["path_model"]["work_bundle_root"]
+    assert data["prefer_subagent"]["prefer_subagent"] is False
+    assert data["prefer_subagent"]["source"] == "project"
     for key in (
         "work_bundle_root_pointer_path",
         "work_bundle_root_pointer_exists",
@@ -553,6 +556,92 @@ def test_migrate_work_bundle_config_migrates_legacy_bootstrap(tmp_path: Path) ->
     assert not (config_root / "work-bundle-root.yaml").exists()
     if data.get("retired_root_pointer"):
         assert Path(data["retired_root_pointer"]).is_file()
+
+
+def test_templates_include_layered_prefer_subagent_defaults() -> None:
+    bootstrap_text = (REPO_ROOT / "references/assets/template/bootstrap.yaml").read_text(encoding="utf-8")
+    project_text = (REPO_ROOT / "references/assets/template/project.yaml").read_text(encoding="utf-8")
+    agents_text = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
+
+    assert "prefer_subagent: false" in bootstrap_text
+    assert "prefer_subagent: false" in project_text
+    assert ".work-bundle/project.yaml` -> `prefer_subagent`" in agents_text
+    assert "then `$work_bundle_config_root/bootstrap.yaml` -> `prefer_subagent`, then `false`" in agents_text
+    assert "bypass repository preflight" in agents_text
+
+
+def test_resolve_effective_prefer_subagent_uses_project_global_default_order(tmp_path: Path, monkeypatch) -> None:
+    sys.path.insert(0, str(REPO_ROOT / "scripts" / "work-bundle"))
+    try:
+        import core  # type: ignore[import-not-found]
+
+        config_root = tmp_path / "config"
+        config_root.mkdir()
+        monkeypatch.setenv("WB_CONFIG_ROOT", str(config_root))
+        project_root = tmp_path / "project"
+        metadata_path = project_root / ".work-bundle/project.yaml"
+        metadata_path.parent.mkdir(parents=True)
+
+        assert core.resolve_effective_prefer_subagent(project_root)["prefer_subagent"] is False
+        assert core.resolve_effective_prefer_subagent(project_root)["source"] == "default"
+
+        (config_root / "bootstrap.yaml").write_text("prefer_subagent: true\n", encoding="utf-8")
+        assert core.resolve_effective_prefer_subagent(project_root)["prefer_subagent"] is True
+        assert core.resolve_effective_prefer_subagent(project_root)["source"] == "global"
+
+        metadata_path.write_text("prefer_subagent: false\n", encoding="utf-8")
+        resolved = core.resolve_effective_prefer_subagent(project_root)
+        assert resolved["prefer_subagent"] is False
+        assert resolved["source"] == "project"
+
+        metadata_path.write_text("prefer_subagent: true\n", encoding="utf-8")
+        assert core.resolve_effective_prefer_subagent(project_root)["prefer_subagent"] is True
+    finally:
+        if sys.path and sys.path[0] == str(REPO_ROOT / "scripts" / "work-bundle"):
+            sys.path.pop(0)
+        sys.modules.pop("core", None)
+
+
+def test_set_prefer_subagent_updates_global_bootstrap(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+
+    result = run_wb(config_root, "set-prefer-subagent", "enable", "--scope", "global", "--project-root", str(project))
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+
+    assert data["command"] == "set-prefer-subagent"
+    assert data["scope"] == "global"
+    assert data["prefer_subagent"] is True
+    assert data["status"] == "updated"
+    assert data["target_path"] == str((config_root / "bootstrap.yaml").resolve())
+    assert "prefer_subagent: true" in (config_root / "bootstrap.yaml").read_text(encoding="utf-8")
+    assert data["effective_prefer_subagent"]["prefer_subagent"] is False
+    assert data["effective_prefer_subagent"]["source"] == "project"
+
+    project_text = (project / ".work-bundle/project.yaml").read_text(encoding="utf-8")
+    assert "prefer_subagent: false" in project_text
+
+
+def test_set_prefer_subagent_updates_current_workspace_override(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    assert run_wb(config_root, "set-prefer-subagent", "enable", "--scope", "global", "--project-root", str(project)).returncode == 0
+
+    result = run_wb(config_root, "set-prefer-subagent", "disable", "--scope", "project", "--project-root", str(project))
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+
+    assert data["scope"] == "project"
+    assert data["prefer_subagent"] is False
+    assert data["target_path"] == str((project / ".work-bundle/project.yaml").resolve())
+    assert data["effective_prefer_subagent"]["prefer_subagent"] is False
+    assert data["effective_prefer_subagent"]["source"] == "project"
+    assert "prefer_subagent: false" in (project / ".work-bundle/project.yaml").read_text(encoding="utf-8")
+
+    show = run_wb(config_root, "show-project", "--project-root", str(project))
+    assert show.returncode == 0, show.stdout + show.stderr
+    show_data = json.loads(show.stdout)
+    assert show_data["prefer_subagent"]["global_prefer_subagent"] is True
+    assert show_data["prefer_subagent"]["project_prefer_subagent"] is False
 
 
 def test_migrate_work_bundle_config_resolves_legacy_pointer_without_toolkit_flag(tmp_path: Path) -> None:

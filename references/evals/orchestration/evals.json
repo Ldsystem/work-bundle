@@ -108,6 +108,36 @@
       "prompt": "Review a completed plan with a structural update when ks-extract-valuable-points cannot run in the active environment.",
       "expected_output": "Selects review-plan, keeps knowledge-update disposition required or blocked, does not archive, reports an actionable ks-extract-valuable-points delegation input and next action, and does not treat unavailable or incomplete delegation evidence as completed or not-needed.",
       "files": []
+    },
+    {
+      "id": 19,
+      "prompt": "Create an implementation specification when the gateway returns no durable note supports the current purpose.",
+      "expected_output": "Selects create-specification, records the gateway query and retrieval gap in Source Context, analyzes the user purpose from prompt and repository evidence, asks Design Interrogation questions only for unresolved intent with recommended answers, does not block solely because no supporting note exists, and sets Knowledge Base Update required when the accepted conclusion creates reusable workflow policy.",
+      "files": []
+    },
+    {
+      "id": 20,
+      "prompt": "Create an implementation specification when material candidate knowledge conflicts with the user purpose.",
+      "expected_output": "Selects create-specification, labels the material candidate as non-authority evidence, records it as rationale, traceability, conflict evidence, or open-question input, does not promote the candidate into requirements, and keeps the quality gate blocked until the material conflict is resolved.",
+      "files": []
+    },
+    {
+      "id": 21,
+      "prompt": "Create an implementation plan from a specification whose quality gate is verified.",
+      "expected_output": "Confirms the source specification records Source Context, Extra evidence loop, Open Questions, Knowledge Base Update, and records `Quality gate: verified`; then create-implementation-plan may derive plan artifacts and must still verify generated artifacts against the source specification before reporting completion.",
+      "files": []
+    },
+    {
+      "id": 22,
+      "prompt": "Execute a plan task with a delegated sub-agent, then prepare its executor-result handoff after implementation reveals a task-scoped gap.",
+      "expected_output": "Preserves repository preflight, accepted-baseline, dependency, and disjoint write-scope checks; instructs the delegated sub-agent to verify against the related specification, root plan, parent phase, and task; repairs the task-scoped gap and repeats verification before handoff; records explicit findings, repairs, and clean recheck evidence in the executor-result handoff; and preserves single-agent fallback without treating unavailable sub-agents as failure.",
+      "files": []
+    },
+    {
+      "id": 23,
+      "prompt": "Execute a source-inspection task when the target repository has no .codegraph directory and effective prefer_subagent resolves to false.",
+      "expected_output": "Selects execute-plan, records that CodeGraph is skipped because the repository is not indexed, preserves text-search fallback, uses the single-agent fallback for exactly one task, keeps execution no-retrieval, does not require any additional runtime preference file, and does not bypass repository preflight, dependency checks, write-scope checks, or executor-result handoff requirements.",
+      "files": []
     }
   ],
   "v4_evals": [

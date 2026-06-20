@@ -52,7 +52,12 @@ Verify:
 8. every knowledge-using orch skill has a retrieval policy mapping or an explicit no-retrieval rule;
 9. `keep-summarizing` `what-is-helpful` documents gateway mode, `ks.py query`, and `authority | candidate | background | blocked` retrieval roles;
 10. keep-summarizing active docs do not advertise legacy note paths or `archived` note status;
-11. orchestration evals that require v3 role labels are backed by orch skill documentation.
+11. orchestration evals that require v3 role labels are backed by orch skill documentation;
+12. specification contracts contain source-evidence roles, the change-driven extra evidence loop, and the body-level `Quality gate: verified|blocked` result;
+13. planning contracts require generated-artifact verification and repair before completion;
+14. execution contracts require spec/plan/phase/task verification, preserve no-retrieval execution, and keep single-agent fallback available;
+15. the CodeGraph-first rule remains conditional on an indexed target and requires a recorded fallback reason when unavailable;
+16. active orchestration contracts do not depend on `HABITS.md` or the deprecated role-selection subsystem.
 
 ## Workflow Integrity Checks
 
@@ -62,6 +67,8 @@ Verify:
 - artifact creation modes do not execute implementation work;
 - `orch-execute-plan` checks sub-agent support before delegation;
 - `orch-execute-plan` preserves the single-agent fallback and does not fail only because sub-agents are unavailable;
+- layered `prefer_subagent` remains permission-only and cannot bypass preflight, dependency, scope, or handoff safety checks;
+- executor-result handoffs require agent-owned drift/gap verification and a post-repair recheck;
 - `orch-execute-plan` does not archive specs, plans, or handoffs;
 - `orch-review-plan` is the only skill that archives completed specification, plan, and handoff artifacts;
 - `orch-review-plan` creates a repair specification instead of fixing source files when review fails;
@@ -76,6 +83,11 @@ Look for one-sided or conflicting instructions that would bias execution toward 
 - review must not be treated as execution;
 - execution completion must not imply archival;
 - durable knowledge extraction must not be implied by orchestration handoffs.
+
+Deterministic doctor checks are limited to bounded file presence, JSON shape,
+required contract terms, and forbidden active dependencies. They must not judge
+semantic evidence sufficiency, user-purpose drift, materiality, or whether the
+agent-owned evidence loop needs another round.
 
 When bias is found, cite the conflicting artifact and the exact behavior risk.
 
@@ -98,7 +110,7 @@ Files changed: none
 
 ## Validation
 
-Confirm `dev-rules-doctor` was used first, diagnostics stayed read-only, orch skill coverage was checked, skill front matter was checked, workflow responsibilities remained distinct, required fallback paths were present, archival remained isolated to `orch-review-plan`, and no files were changed.
+Confirm `dev-rules-doctor` was used first, diagnostics stayed read-only, orch skill coverage was checked, skill front matter was checked, quality-gate and verification contract terms were present, forbidden active dependencies were absent, workflow responsibilities remained distinct, required fallback paths were present, archival remained isolated to `orch-review-plan`, and no files were changed.
 
 ## Runtime Rules
 

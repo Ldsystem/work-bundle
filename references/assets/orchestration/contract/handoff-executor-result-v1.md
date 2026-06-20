@@ -69,7 +69,20 @@ Report how the implementation satisfies or fails each relevant requirement and c
 | CON-001 | spec|plan|phase|task | [Constraint.] | satisfied|not-satisfied|not-applicable | [Evidence path, test, or explanation.] |
 | PAT-001 | knowledge|plan|phase|task | [Pattern/rule.] | satisfied|not-satisfied|not-applicable | [Evidence path, test, or explanation.] |
 
-## 5. Files Changed
+## 5. Drift / Gap Verification
+
+Verify the implementation after validation and before creating this handoff. Compare it with the related specification, root plan, parent phase, and assigned task. Repair every task-scoped finding, then repeat the verification until no task-scoped drift or gap remains. If a required repair exceeds task scope, record it as unresolved and report the task blocked rather than clean.
+
+| ID | Artifact Checked | Drift / Gap Finding | Repair Applied | Recheck Result | Evidence |
+|---|---|---|---|---|---|
+| VERIFY-001 | specification | none|[finding] | none|[repair] | clean|blocked | [spec IDs, file, test, or inspection evidence] |
+| VERIFY-002 | root plan | none|[finding] | none|[repair] | clean|blocked | [plan section, file, test, or inspection evidence] |
+| VERIFY-003 | parent phase | none|[finding] | none|[repair] | clean|blocked | [phase section, file, test, or inspection evidence] |
+| VERIFY-004 | assigned task | none|[finding] | none|[repair] | clean|blocked | [task criterion, file, test, or inspection evidence] |
+
+Final drift/gap result: `clean|blocked`
+
+## 6. Files Changed
 
 List every changed file. Use exact project-relative paths.
 
@@ -78,7 +91,7 @@ List every changed file. Use exact project-relative paths.
 | FILE-001 | `[exact file path]` | created|updated|deleted|renamed | [Concrete change summary.] | task-001 |
 | FILE-002 | `[exact file path]` | created|updated|deleted|renamed | [Concrete change summary.] | task-002 |
 
-## 6. Symbols Changed
+## 7. Symbols Changed
 
 List changed classes, functions, modules, interfaces, schemas, configuration keys, commands, endpoints, events, or data structures.
 
@@ -87,7 +100,7 @@ List changed classes, functions, modules, interfaces, schemas, configuration key
 | SYM-001 | `[exact file path]` | class|function|module|interface|schema|config|endpoint|event|command | `[symbol name]` | [Concrete change.] |
 | SYM-002 | `[exact file path]` | class|function|module|interface|schema|config|endpoint|event|command | `[symbol name]` | [Concrete change.] |
 
-## 7. Data Model / Domain Model Impact
+## 8. Data Model / Domain Model Impact
 
 Use this section when the implementation affects data structures, schemas, entities, state, identifiers, domain concepts, or lifecycle behavior.
 
@@ -96,7 +109,7 @@ Use this section when the implementation affects data structures, schemas, entit
 | DATA-001 | data-model | `[entity/table/schema/state]` | [Concrete change.] | none|backward-compatible|breaking|unknown |
 | DOMAIN-001 | domain-model | `[domain concept]` | [Concrete change.] | none|backward-compatible|breaking|unknown |
 
-## 8. API / Interface / Integration Impact
+## 9. API / Interface / Integration Impact
 
 Use this section when the implementation affects APIs, DTOs, events, commands, external systems, or integration behavior.
 
@@ -105,14 +118,14 @@ Use this section when the implementation affects APIs, DTOs, events, commands, e
 | API-001 | api|dto|event|command|integration | `[endpoint/interface/event/system]` | [Concrete change.] | none|backward-compatible|breaking|unknown |
 | INT-001 | api|dto|event|command|integration | `[endpoint/interface/event/system]` | [Concrete change.] | none|backward-compatible|breaking|unknown |
 
-## 9. Behavior Changed
+## 10. Behavior Changed
 
 Describe observable behavior changes.
 
 - **BEHAVIOR-001**: [Before behavior.] → [After behavior.]
 - **BEHAVIOR-002**: [Before behavior.] → [After behavior.]
 
-## 10. Tests Run
+## 11. Tests Run
 
 List every test, command, manual verification, or inspection performed.
 
@@ -122,7 +135,7 @@ List every test, command, manual verification, or inspection performed.
 | TEST-002 | unit|integration|e2e|manual|inspection|build | `[target]` | `[command or method]` | passed|failed|skipped|not-run | [Output, path, or summary.] |
 
 
-## 11. Deviations From Spec / Plan / Phase / Task
+## 12. Deviations From Spec / Plan / Phase / Task
 
 List every deviation from the related orchestration artifacts.
 
@@ -131,7 +144,7 @@ List every deviation from the related orchestration artifacts.
 | DEV-001 | spec|plan|phase|task | [Expected instruction.] | [Actual implementation.] | [Reason.] | true|false |
 | DEV-002 | spec|plan|phase|task | [Expected instruction.] | [Actual implementation.] | [Reason.] | true|false |
 
-## 12. Problems Encountered
+## 13. Problems Encountered
 
 List execution problems encountered during implementation.
 
@@ -140,7 +153,7 @@ List execution problems encountered during implementation.
   - **Action Taken**: [Action taken.]
   - **Remaining Work**: [Remaining work or `none`.]
 
-## 13. Unresolved Issues
+## 14. Unresolved Issues
 
 List unresolved issues that block completion, review, testing, or durable knowledge extraction.
 
@@ -149,7 +162,7 @@ List unresolved issues that block completion, review, testing, or durable knowle
   - **Required Action**: [Concrete required action.]
   - **Owner**: orchestration-agent|executor|human|unknown
 
-## 14. Open Questions
+## 15. Open Questions
 
 List open questions discovered during execution.
 
@@ -158,7 +171,7 @@ List open questions discovered during execution.
   - **Blocks**: [spec|plan|phase|task|test|review|knowledge-update]
   - **Suggested Default**: [Default if safe, otherwise `none`.]
 
-## 15. Completion Criteria Evidence
+## 16. Completion Criteria Evidence
 
 Report evidence for completion criteria from the related plan, phase, and task files.
 
@@ -167,7 +180,7 @@ Report evidence for completion criteria from the related plan, phase, and task f
 | DONE-001 | plan|phase|task | [Criterion.] | achieved|not-achieved|not-applicable | [Evidence.] |
 | DONE-002 | plan|phase|task | [Criterion.] | achieved|not-achieved|not-applicable | [Evidence.] |
 
-## 16. Suggested Durable Conclusions
+## 17. Suggested Durable Conclusions
 
 List only conclusions that may be worth extracting into `.work-bundle/knowledge/` by `keep-summarizing`. Do not write durable knowledge directly from this handoff.
 
@@ -184,7 +197,7 @@ This section is mandatory. Provide suggested durable conclusions with evidence, 
 - **DURABLE-000**: explicit `none`
   - **Evidence**: [Why no durable conclusion is suggested.]
 
-## 17. Recommended Orchestration Review
+## 18. Recommended Orchestration Review
 
 Specify what the orchestration agent should do next.
 
@@ -193,7 +206,7 @@ Specify what the orchestration agent should do next.
 - **REVIEW-003**: [Resolve listed deviations, issues, or open questions.]
 - **REVIEW-004**: [Decide whether to call `keep-summarizing` for durable conclusion extraction.]
 
-## 18. Recommended Next Actions
+## 19. Recommended Next Actions
 
 List deterministic next actions.
 
@@ -202,7 +215,7 @@ List deterministic next actions.
 | NEXT-001 | [Concrete next action.] | orchestration-agent|executor|human | [dependency id or `none`] | [Expected output.] |
 | NEXT-002 | [Concrete next action.] | orchestration-agent|executor|human | [dependency id or `none`] | [Expected output.] |
 
-## 19. Handoff Completion Criteria
+## 20. Handoff Completion Criteria
 
 - **HANDOFF-DONE-001**: All changed files are listed with exact paths.
 - **HANDOFF-DONE-002**: All tests run or skipped are reported with results.
@@ -210,3 +223,4 @@ List deterministic next actions.
 - **HANDOFF-DONE-004**: All unresolved issues and open questions are listed.
 - **HANDOFF-DONE-005**: Suggested durable conclusions are listed with evidence, or explicit `none` is recorded with evidence.
 - **HANDOFF-DONE-006**: Recommended orchestration review and next actions are provided.
+- **HANDOFF-DONE-007**: Drift/gap verification names the related specification, root plan, parent phase, and task, records findings and repairs, and ends with a clean recheck or an explicit blocker.

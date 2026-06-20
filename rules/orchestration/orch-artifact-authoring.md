@@ -21,6 +21,7 @@ Keep orchestration artifacts human-readable, contract-compliant, and executable 
 - Reference stable spec IDs such as `REQ-`, `CON-`, `AC-`, `OQ-`, and `API-` in plans, phases, and tasks instead of repeating full requirement prose.
 - Provide concrete source files, target files, target symbols, validation instructions, and completion criteria in every task.
 - Carry execution context forward through spec-ID references plus file-level instructions only.
+- Keep source-context, extra-evidence-loop, open-question, Knowledge Base Update, and body-level `Quality gate: verified|blocked` sections in specifications when required by the specification contract.
 - Summarize spec intent at most once in a root plan, then cite IDs for downstream detail.
 - Require leading spec-repair tasks when a phase or task lacks stable IDs, exact paths, validation details, or file-level execution context.
 - Update plan, phase, and handoff indexes when artifacts change.

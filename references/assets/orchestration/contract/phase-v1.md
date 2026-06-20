@@ -83,14 +83,27 @@ Resolve alternatives and open questions as leading tasks before implementation t
 |---|---|---|---|---|---|
 | TEST-001 | unit|integration|model-behavior|manual | `[file/module/function/API]` | task-002 | `[command if applicable]` | [Measurable result.] |
 
-## 5. Completion Criteria
+## 5. Generated Artifact Verification
+
+Record phase-level verification against the source specification and root plan.
+
+| ID | Check | Result | Repair |
+|---|---|---|---|
+| VERIFY-001 | Phase requirements cite the relevant source-spec IDs and do not duplicate long specification prose. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-002 | Task map paths, dependencies, ordering, and safe parallelization flags match exact task write scopes and root-plan sequencing. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-003 | Phase tests, completion criteria, and phase-scoped `create-handoff` requirement are present and consistent with child tasks. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+
+Repair generated phase or child-task drift, missing spec-ID alignment, dependency mistakes, unsafe parallelization, validation gaps, and handoff gaps in the same planning turn. Stop for specification repair when the source spec cannot support a deterministic phase.
+
+## 6. Completion Criteria
 
 - **DONE-REQ-001**: [Requirement validation result and evidence.]
 - **DONE-CON-001**: [Constraint validation result and evidence.]
 - **DONE-TEST-001**: [Test result summary.]
 - **DONE-ACH-001**: [Phase achievement summary.]
+- **DONE-VERIFY-001**: Phase and child task artifacts were verified against source-spec IDs, dependencies, safe parallelization, validation, and handoff requirements before completion.
 - **DONE-HANDOFF-001**: Executor invokes `create-handoff` and creates a phase-scoped `executor-result` handoff under `.work-bundle/orchestration/handoff/executor/active/` before reporting this phase as completed or blocked.
 
-## 6. Executor Handoff Requirements
+## 7. Executor Handoff Requirements
 
 The executor must invoke `create-handoff` at the end of this phase and report files changed, symbols changed, tasks completed, tests run, test results, deviations, unresolved issues, and suggested durable conclusions.

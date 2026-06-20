@@ -67,9 +67,13 @@ An executable task has status `Planned` or `In progress`, satisfied dependencies
 
 Before execution, determine whether the active agent environment supports sub-agents.
 
-- If sub-agents are supported and the selected target has one or more executable tasks, use the sub-agent scheduler path.
-- If sub-agents are unavailable, disabled by the user, blocked by the environment, or unsafe because scopes overlap or the next step depends on a single result, use the single-agent fallback.
+- Resolve effective `prefer_subagent` as project metadata first, then global bootstrap, then `false`: `.work-bundle/project.yaml` -> `prefer_subagent`, `$work_bundle_config_root/bootstrap.yaml` -> `prefer_subagent`, fallback `false`.
+- Treat `prefer_subagent: true` only as permission to prefer the sub-agent scheduler when all existing safety checks pass.
+- Treat `prefer_subagent: false` as a preference for single-agent fallback unless the user explicitly requests safe scheduler delegation for the current target.
+- If effective `prefer_subagent` is `true`, sub-agents are supported, and the selected target has one or more safe executable tasks, use the sub-agent scheduler path.
+- If effective `prefer_subagent` is `false`, sub-agents are unavailable, disabled by the user, blocked by the environment, or unsafe because scopes overlap or the next step depends on a single result, use the single-agent fallback.
 - Do not fail only because sub-agent support is missing. Record fallback reason in the result and handoff.
+- Never allow `prefer_subagent` to bypass repository preflight, accepted-baseline checks, disjoint write scopes, dependency checks, handoff requirements, or the single-agent fallback.
 
 ## Preflight
 
@@ -90,6 +94,9 @@ The main agent is the monitor, scheduler, and validator. It should not directly 
    - allowed source and target files/modules;
    - exact validation required by the task;
    - instruction not to revert or overwrite other agents' work;
+   - instruction to verify its implementation against the related specification, root plan, parent phase, and assigned task before handoff;
+   - instruction to repair every task-scoped drift or gap found by that verification, rerun the verification until no task-scoped drift or gap remains, and stop with an explicit blocker when repair would exceed task scope;
+   - instruction to record explicit drift/gap verification evidence in the executor-result handoff, including artifacts checked, findings, repairs, recheck result, and any unresolved out-of-scope issue;
    - instruction to create an `executor-result` handoff before exit;
    - instruction to update its task status and the task status in the parent phase file before exit.
 6. Wait for all sub-agents in the active wave to finish.
@@ -109,6 +116,7 @@ Use this path when sub-agents are not supported or safe.
 - Recheck every target repository for that task against the initial or accepted-handoff baseline immediately before implementation begins.
 - Execute only that one task in the current conversation trip.
 - Follow the task file exactly and modify only task-scoped files unless the task explicitly expands scope.
+- Before handoff, verify the implementation against the related specification, root plan, parent phase, and selected task. Repair every task-scoped drift or gap, rerun the verification until it is clean, and record the same explicit drift/gap evidence required from delegated sub-agents. Stop with a blocker when repair would exceed task scope.
 - Run declared validation when possible; otherwise report why it was skipped.
 - Create or explicitly require a task-scoped `executor-result` handoff before exit.
 - Update the task status and the task status in the parent phase file when criteria are met or a blocker is known.
@@ -184,7 +192,7 @@ Next action: <next executable action or review-plan>
 
 ## Validation
 
-Confirm repository preflight ran before selection/capability checks/delegation/modification, every target source repository was resolved and recorded separately from the orchestration artifact repository, every target passed initial preflight, rechecks ran before each wave or fallback task, accepted baselines came only from validated executor-result handoffs, unexplained changes blocked execution, no repository cleanup or mutation was attempted, no `.work-bundle/knowledge/` files were loaded or modified, only relevant execution artifacts were loaded, only task-scoped files changed, sub-agent support was checked, scheduler mode used multiple sub-agents when safe parallel work existed, fallback mode executed only one task, every sub-agent created an executor handoff and updated task status before exit, accepted handoffs were validated against task/phase/plan/spec, phase and plan handoffs were created when those targets completed, validation status is recorded, deviations and changed symbols are recorded, no more than 2 blocking questions were asked, and no archive operation occurred during execution.
+Confirm repository preflight ran before selection/capability checks/delegation/modification, every target source repository was resolved and recorded separately from the orchestration artifact repository, every target passed initial preflight, rechecks ran before each wave or fallback task, accepted baselines came only from validated executor-result handoffs, unexplained changes blocked execution, no repository cleanup or mutation was attempted, no `.work-bundle/knowledge/` files were loaded or modified, only relevant execution artifacts were loaded, only task-scoped files changed, sub-agent support was checked, scheduler mode used multiple sub-agents when safe parallel work existed, fallback mode executed only one task, every delegated or fallback executor verified its implementation against the related specification, root plan, parent phase, and task before handoff, every task-scoped drift or gap was repaired and rechecked, unresolved out-of-scope findings blocked completion, every executor handoff includes explicit drift/gap verification evidence, every sub-agent created an executor handoff and updated task status before exit, accepted handoffs were validated against task/phase/plan/spec, phase and plan handoffs were created when those targets completed, validation status is recorded, deviations and changed symbols are recorded, no more than 2 blocking questions were asked, and no archive operation occurred during execution.
 
 ## Runtime Rules
 
@@ -224,6 +232,7 @@ Bound plan execution to carried orchestration context and task-scoped project fi
 - Execute only one task per conversation trip in single-agent fallback mode.
 - Modify only task-scoped files unless the task explicitly expands scope.
 - Require every completed or blocked task, phase, and plan to produce an `executor-result` handoff through `create-handoff` before reporting completion (handoff field requirements: follow `orch-handoff-required`).
+- Require delegated and fallback executors to verify implementation against the related specification, root plan, parent phase, and task before handoff; repair and recheck every task-scoped drift or gap, block on out-of-scope findings, and record explicit verification evidence in the executor-result handoff.
 - Update task, phase, and plan statuses coherently with validated handoff evidence.
 - Ask at most 2 blocking clarification questions; use declared fallbacks instead of asking when available.
 - Carry execution role context from upstream artifacts without invoking knowledge retrieval during execution.

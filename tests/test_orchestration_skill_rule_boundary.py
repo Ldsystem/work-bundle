@@ -41,7 +41,10 @@ def test_no_role_context_in_orch_skills() -> None:
     for path in orch_skill_paths():
         text = skill_text(path)
         assert "## Role Context" not in text, path.name
-        assert "wb-select-role-context" not in text, path.name
+        assert "wb-select-role-context" not in text.replace("Do not reintroduce `wb-select-role-context`", ""), path.name
+        if "role-context" in text:
+            assert "deprecated" in text.lower(), path.name
+            assert "Do not invoke it from orch skills" in text, path.name
 
 
 def test_boundary_sections_do_not_duplicate_m2_prose() -> None:
@@ -72,3 +75,28 @@ def test_execute_and_doctor_skills_own_constraints() -> None:
     assert "repository preflight" in execute.lower() or "clean-worktree preflight" in execute.lower()
     assert "## Read-Only Constraints (skill-owned)" in doctor
     assert "Files changed: none" in doctor
+
+
+def test_create_specification_keeps_quality_gate_terms_and_rule_loading() -> None:
+    skill = skill_text(REPO_ROOT / "skills/orch-create-specification/SKILL.md")
+
+    assert "## Runtime Rules" in skill
+    assert "## Rule Loading (mandatory)" in skill
+    assert "`orch-orchestration-boundary`" in skill
+    assert "`orch-handoff-required`" in skill
+    assert "Extra evidence loop" in skill
+    assert "Quality gate: verified|blocked" in skill
+    assert "material non-authority" in skill
+    assert "Design Interrogation" in skill
+
+
+def test_orch_doctor_declares_full_quality_gate_and_forbidden_dependency_checks() -> None:
+    skill = skill_text(REPO_ROOT / "skills/orch-doctor/SKILL.md")
+
+    assert "source-evidence roles" in skill
+    assert "generated-artifact verification and repair" in skill
+    assert "preserve no-retrieval execution" in skill
+    assert "CodeGraph-first rule remains conditional" in skill
+    assert "active orchestration contracts do not depend on `HABITS.md`" in skill
+    assert "deprecated role-selection subsystem" in skill
+    assert "must not judge" in skill

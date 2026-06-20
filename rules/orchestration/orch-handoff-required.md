@@ -23,6 +23,8 @@ Require executor-result and orchestration handoffs before reporting execution or
   - `executor-result`: implementation result from an executor agent to the orchestration agent.
 - Include required handoff fields: front matter and status badge, source context used, current state, completed and pending work, relevant files or artifacts, dependencies, risks, assumptions, open questions, validation or test evidence when applicable, and executable next actions with completion criteria.
 - For executor-result handoffs, include assigned task, implementation summary, files or symbols changed, tests run, test results, deviations, unresolved issues, suggested durable conclusions, and recommended orchestration review.
+- For executor-result handoffs, include a dedicated drift/gap verification section that names the related specification, root plan, parent phase, and task checked; records each finding and task-scoped repair; records the post-repair recheck result; and explicitly states when no drift or gap was found.
+- Do not report execution complete while drift or gaps remain within task scope. Record out-of-scope findings as unresolved issues and block completion when they prevent conformance with the assigned artifacts.
 - Keep executor-result handoffs on carried spec, plan, phase, task, declared handoff, and task-scoped source or test context only; do not retrieve durable knowledge during execution-completion handoffs.
 - Update `.work-bundle/orchestration/handoff/index.jsonl` with id, type, status, path, project, timestamps, and related spec, plan, phase, and task links.
 - Require phase-scoped and plan-scoped `executor-result` handoffs when those scopes complete, including completed tasks, validation evidence, deviations, blockers, and next executable phase or task.
@@ -34,6 +36,7 @@ Require executor-result and orchestration handoffs before reporting execution or
 - Present suggested durable conclusions as persisted knowledge.
 - Retrieve durable knowledge while creating executor-result handoffs during `execute-plan`.
 - Omit changed files or symbols, validation evidence, deviations, unresolved issues, or next action from executor-result handoffs.
+- Omit explicit spec/root-plan/phase/task drift-gap verification evidence or claim a clean result without recording the artifacts checked and recheck outcome.
 - Skip handoff creation because sub-agents, fallback mode, or partial completion made the outcome informal.
 
 ## Validation
@@ -41,6 +44,7 @@ Require executor-result and orchestration handoffs before reporting execution or
 - Confirm a handoff file exists under `.work-bundle/orchestration/handoff/` before completion is reported.
 - Confirm handoff type, required sections, and executor-result fields match the completed scope.
 - Confirm executor-result handoffs created during execution did not invoke knowledge retrieval.
+- Confirm executor-result handoffs identify the specification, root plan, parent phase, and task checked; include findings, repairs, and final recheck evidence; and do not leave repairable task-scoped drift unresolved.
 - Confirm the handoff index entry reflects the new or updated handoff.
 
 ## On Violation

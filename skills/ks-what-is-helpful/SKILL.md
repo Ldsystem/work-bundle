@@ -81,8 +81,10 @@ When called by orchestration or when the caller provides a retrieval policy:
 2. Discover candidates across all allowed lifecycle partitions; do not prefilter to policy authority stages.
 3. Apply filters; load bodies only for material candidates.
 4. Run `scripts/ks.py query --project <slug> --target <retrieval-policy> --query <query> --include-background`; classify by lifecycle, status, and work target per loaded `ks-note-state-authority`; use `retrieval_role` exactly.
-5. Group by `retrieval_role`; return policy, query, grouped results, omitted/blocked rationale, and watchpoints.
-6. Do not convert non-authority results into requirements, tasks, decisions, or review conclusions.
+5. Group by `retrieval_role`; return policy, query, grouped results, material omitted or blocked rationale, and watchpoints.
+6. Label material candidate, background, blocked, or watchpoint evidence that may affect requirements, architecture, workflow, API, persistence, validation, execution behavior, or user-purpose conflict so orchestration callers can surface it as rationale, traceability, conflict evidence, or open-question input.
+7. Mark non-material unsettled results as omitted or non-blocking rationale; do not require orchestration callers to resolve them during `create-specification`.
+8. Do not convert non-authority results into requirements, tasks, decisions, or review conclusions.
 
 Orchestration callers must use this gateway instead of browsing `.work-bundle/knowledge/**` directly. `orch-execute-plan` is a no-retrieval stage and must not invoke this gateway during execution.
 

@@ -65,6 +65,18 @@ def test_validate_current_rules_passes() -> None:
             sys.path.pop(0)
 
 
+def test_codegraph_rule_stays_index_gated_and_preserves_fallback() -> None:
+    rule = (REPO_ROOT / "rules/agent-codegraph-first.md").read_text(encoding="utf-8")
+    index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
+
+    gated_condition = "the targeted repository root contains `.codegraph/`"
+    assert gated_condition in rule
+    assert gated_condition in index
+    assert "Do not skip CodeGraph unless CodeGraph is unavailable" in rule
+    assert "returns an explicit tool or runtime error" in rule
+    assert "record the concrete fallback reason before continuing" in rule
+
+
 def test_validate_rules_rejects_scoped_rules_root(tmp_path: Path) -> None:
     root = tmp_path / "rules" / "work-bundle"
     root.mkdir(parents=True)
