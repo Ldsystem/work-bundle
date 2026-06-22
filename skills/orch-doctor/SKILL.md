@@ -58,6 +58,10 @@ Verify:
 14. execution contracts require spec/plan/phase/task verification, preserve no-retrieval execution, and keep single-agent fallback available;
 15. the CodeGraph-first rule remains conditional on an indexed target and requires a recorded fallback reason when unavailable;
 16. active orchestration contracts do not depend on `HABITS.md` or the deprecated role-selection subsystem.
+17. execution, handoff, review, task, and executor-result contracts contain CodeGraph sync wording, including `codegraph sync`, `pre_inspection_sync`, `post_change_sync`, and `sync-failed` fallback evidence where applicable;
+18. execution, handoff, review, task, and executor-result contracts contain visible delegation wording, including `delegation:`, `visible_reference`, and `internal_spawn_used_for_task_delegation: false`;
+19. no active orch contract reintroduces invisible internal spawn work as a valid task-delegation vehicle;
+20. handoff and review contracts reference the evidence fields required to validate CodeGraph and visible delegation outcomes.
 
 ## Workflow Integrity Checks
 
@@ -69,6 +73,7 @@ Verify:
 - `orch-execute-plan` preserves the single-agent fallback and does not fail only because sub-agents are unavailable;
 - layered `prefer_subagent` remains permission-only and cannot bypass preflight, dependency, scope, or handoff safety checks;
 - executor-result handoffs require agent-owned drift/gap verification and a post-repair recheck;
+- executor-result handoffs require applicable `codegraph:` and `delegation:` evidence and reject invisible internal spawn regressions for task delegation;
 - `orch-execute-plan` does not archive specs, plans, or handoffs;
 - `orch-review-plan` is the only skill that archives completed specification, plan, and handoff artifacts;
 - `orch-review-plan` creates a repair specification instead of fixing source files when review fails;
@@ -83,6 +88,8 @@ Look for one-sided or conflicting instructions that would bias execution toward 
 - review must not be treated as execution;
 - execution completion must not imply archival;
 - durable knowledge extraction must not be implied by orchestration handoffs.
+- CodeGraph sync evidence must not be optional when `.codegraph/` exists and graph-derived source work is in scope;
+- visible delegation wording must not allow invisible internal spawn work to own delegated plan, phase, or task execution.
 
 Deterministic doctor checks are limited to bounded file presence, JSON shape,
 required contract terms, and forbidden active dependencies. They must not judge
@@ -110,7 +117,7 @@ Files changed: none
 
 ## Validation
 
-Confirm `dev-rules-doctor` was used first, diagnostics stayed read-only, orch skill coverage was checked, skill front matter was checked, quality-gate and verification contract terms were present, forbidden active dependencies were absent, workflow responsibilities remained distinct, required fallback paths were present, archival remained isolated to `orch-review-plan`, and no files were changed.
+Confirm `dev-rules-doctor` was used first, diagnostics stayed read-only, orch skill coverage was checked, skill front matter was checked, quality-gate and verification contract terms were present, CodeGraph sync evidence terms and visible delegation evidence terms were present, invisible internal spawn task-delegation regressions were absent, evidence contract references were present, forbidden active dependencies were absent, workflow responsibilities remained distinct, required fallback paths were present, archival remained isolated to `orch-review-plan`, and no files were changed.
 
 ## Runtime Rules
 
@@ -140,6 +147,8 @@ Diagnose develop-rules installation health and orchestrator workflow consistency
 - Verify `orch-execute-plan` checks sub-agent support, preserves single-agent fallback, and does not archive artifacts during execution.
 - Verify `orch-review-plan` is the only skill that archives completed specification, plan, and handoff artifacts.
 - Verify knowledge-using orch skills route through `keep-summarizing` rather than direct `.work-bundle/knowledge/` browsing.
+- Verify CodeGraph evidence contract wording includes `codegraph:`, `pre_inspection_sync`, `post_change_sync`, `sync-failed`, and accepted no-index fallback where applicable.
+- Verify visible delegation contract wording includes `delegation:`, `visible_reference`, and `internal_spawn_used_for_task_delegation: false`, and does not permit invisible internal spawn work to own delegated task execution.
 - Look for workflow bias such as mandatory sub-agents when unavailable, skipped handoffs, execution treated as review, or handoff conclusions treated as persisted knowledge.
 - Report findings as concrete repair actions with cited conflicting artifacts when issues are found.
 - Emit doctor output with `Files changed: none`.

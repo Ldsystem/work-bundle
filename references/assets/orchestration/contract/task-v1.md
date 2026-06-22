@@ -64,6 +64,23 @@ List the exact source-spec IDs this task implements or validates. Do not paste f
 
 Instructions must be concrete file-level execution steps. Do not restate the full source specification. Use the spec references above for requirement meaning.
 
+When source-code inspection or edits are in scope, include concise task-level CodeGraph expectations:
+
+- identify each target repository or local project root when known;
+- state whether CodeGraph is applicable when `.codegraph/` exists, or require the executor to record no-index fallback;
+- require a `codegraph:` evidence block in the executor-result handoff when source-code work is in scope;
+- require `pre_inspection_sync` before graph-derived inspection when CodeGraph is available;
+- require `post_change_sync` before final graph impact validation when indexed source changes;
+- require accepted fallback evidence such as `no-index` or `sync-failed` when CodeGraph is not used.
+
+When task ownership may be delegated, include concise delegation expectations:
+
+- require visible thread/worktree delegation when delegation is used;
+- require a `delegation:` evidence block in the executor-result handoff;
+- require `visible_reference` when the environment provides one;
+- require `internal_spawn_used_for_task_delegation: false`;
+- allow internal helper workers only when they do not own delegated task execution.
+
 ## 6. Validation
 
 1. [Exact validation command, test, inspection, or expected result.]

@@ -173,6 +173,7 @@ def inspect_repository_state(
     *,
     source: str = "explicit-repository",
     accepted_changes: Iterable[str] | None = None,
+    allow_local_project: bool = False,
 ) -> dict[str, object]:
     """Inspect one repository using porcelain v1 without invoking mutation commands."""
     path = repository.resolve()
@@ -180,6 +181,8 @@ def inspect_repository_state(
     result: dict[str, object] = {
         "path": str(path),
         "source": source,
+        "target_kind": "git-backed",
+        "preflight_kind": "git-clean-worktree",
         "status": "clean",
         "baseline": baseline,
         "changes": [],
@@ -187,7 +190,19 @@ def inspect_repository_state(
     if not path.exists():
         result["status"] = "inaccessible"
         return result
-    if not path.is_dir() or _git_root(path) != path:
+    git_root = _git_root(path)
+    if not path.is_dir() or git_root != path:
+        if allow_local_project and path.is_dir() and git_root is None:
+            result["target_kind"] = "local-project"
+            result["preflight_kind"] = "local-project"
+            result["git_clean_worktree_applicable"] = False
+            result["local_project_evidence"] = {
+                "exists": True,
+                "is_dir": True,
+                "git_root": None,
+                "declared_source": source,
+            }
+            return result
         result["status"] = "not-git"
         return result
 
@@ -223,6 +238,7 @@ def repository_preflight(
             Path(target["path"]),
             source=target["source"],
             accepted_changes=accepted_baselines.get(target["path"]),
+            allow_local_project=True,
         )
         for target in targets
     ]

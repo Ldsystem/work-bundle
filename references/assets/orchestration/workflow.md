@@ -34,7 +34,7 @@ spec -> plan -> phase -> task -> execute -> handoff
 - **Root plan**: execution strategy, sequencing, phase map, risk handling, validation strategy, and dependency graph.
 - **Phase**: a bounded milestone grouping related tasks with only the spec IDs, decisions, files, and tests those tasks need.
 - **Task**: one executable unit with exact source files, target files, symbols, steps, validation, completion criteria, and handoff requirements.
-- **Execute**: run the selected task, phase, or plan scope; prefer sub-agent scheduling when safe, otherwise single-task fallback.
+- **Execute**: run the selected task, phase, or plan scope; prefer visible thread/worktree scheduling when safe, otherwise single-task fallback.
 - **Handoff**: record executor or orchestration continuation evidence before advancing status.
 
 Downstream executors may read only the related spec, root plan, relevant phase, relevant task, declared prior handoffs, and task-scoped source or test files. They must not read `.work-bundle/knowledge/` directly.
@@ -80,10 +80,21 @@ After `orch-create-implementation-plan` generates the root plan, phase files, an
 
 ## Execution Modes
 
-Before execution selection, capability checks, delegation, or implementation changes, `orch-execute-plan` resolves every target source repository separately from the orchestration artifact repository and runs read-only clean-worktree preflight. It blocks on dirty, unresolved, inaccessible, non-Git, or empty target sets and never automatically stashes, commits, resets, restores, cleans, deletes, or otherwise mutates repositories to pass.
+Before execution selection, capability checks, delegation, or implementation changes, `orch-execute-plan` resolves every target source repository or local project root separately from the orchestration artifact repository. Each target records `target_kind` and `preflight_kind`:
 
-- **Sub-agent scheduler**: recheck target repositories before each wave; partition independent tasks with disjoint write scopes; delegate; validate executor handoffs; accept only handoff-proven changes as the next baseline; update task and phase indexes between waves.
-- **Single-agent fallback**: recheck target repositories immediately before executing one task per conversation trip when sub-agents are unavailable or unsafe; still require executor-result handoff and status updates.
+- `git-backed` targets use `git-clean-worktree` preflight and accepted-baseline handling.
+- `local-project` targets use `local-project` preflight evidence that records the absolute root, source, accessibility, and that Git cleanliness is not applicable.
+
+Execution blocks on empty target sets, inaccessible targets, dirty or unresolved Git-backed targets, or unexplained Git-backed changes. It must not reject an explicitly resolved non-Git local project root solely because it is not a Git repository, and it never automatically stashes, commits, resets, restores, cleans, deletes, or otherwise mutates repositories to pass.
+
+After target preflight, CodeGraph is decided per target root. If `.codegraph/` is absent, record no-index fallback and do not initialize CodeGraph. If `.codegraph/` is present and CodeGraph is available, run `codegraph sync <absolute-repository-root>` before graph-derived inspection, delegation instructions, broad browsing, or editing. Same-repository sync operations are serialized. If sync fails, record `sync-failed` and use bounded fallback unless strict graph gating is explicitly required. Git-backed targets rerun clean-worktree preflight after sync; local-project targets rerun local-project preflight evidence. When indexed source changes, run a post-change `codegraph sync <absolute-repository-root>` before final graph impact validation and executor-result handoff.
+
+- **Sub-agent scheduler**: recheck target repositories before each wave; partition independent tasks with disjoint write scopes; delegate only to visible thread/worktree workers; validate executor handoffs; accept only handoff-proven changes as the next baseline; update task and phase indexes between waves.
+- **Single-agent fallback**: recheck target repositories immediately before executing one task per conversation trip when visible thread/worktree delegation is unavailable or unsafe; still require executor-result handoff and status updates.
+
+Scheduler task delegation must use a visible thread, visible worktree, or both. The scheduler verifies the selected delegation surface is visible before assigning plan, phase, or task ownership and records the visible reference when the environment provides a thread id, worktree path, or user-visible label. Invisible internal spawn work must not own delegated implementation work and must not be used as the plan, phase, or task delegation vehicle. `prefer_subagent: true` is permission to prefer safe visible delegation only; it cannot bypass visible delegation safety, preflight, scope, dependency, validation, or handoff gates.
+
+If visible thread/worktree delegation is unavailable, unsafe, or unsupported, execution uses single-agent fallback when that can satisfy the selected target. If fallback cannot satisfy the target, execution stops with a `delegation-visibility` blocker instead of silently delegating to invisible internal spawn work. Internal helper workers remain allowed for bounded analysis, local summarization, snippet comparison, or other non-delegated support work when task ownership stays in a visible thread/worktree or the current single-agent execution path.
 
 Unrelated or unexplained changes block the next wave or task. Execution remains a no-retrieval stage: `orch-execute-plan` does not browse durable knowledge, retrieve knowledge context, or archive specs, plans, or handoffs. Completion of a phase or plan requires phase- or plan-scoped executor-result handoffs and status updates before `orch-review-plan`.
 

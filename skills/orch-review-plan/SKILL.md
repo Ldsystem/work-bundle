@@ -63,6 +63,10 @@ Validate:
 10. validated implementation and review evidence is assessed for structural updates;
 11. the final knowledge-update disposition is one of `completed`, `not-needed`, `blocked`, or `required`, with evidence for that outcome.
 
+For completed source-code tasks, reject review when applicable CodeGraph evidence is missing, stale, contradictory, or marked inapplicable without a reason. Required evidence includes a `codegraph:` block per target repository, `.codegraph/` index presence, `pre_inspection_sync` command/result when indexed, graph query or explored symbol, `post_change_sync` result when indexed source changed, final graph impact result, and an accepted fallback reason such as `no-index` or `sync-failed` when CodeGraph was not used.
+
+For delegated task, phase, or plan work, reject review when visible-delegation evidence is missing, contradictory, or marked inapplicable without a reason. Required evidence includes a `delegation:` block, delegation surface, `visible_reference` when the environment provides one, `internal_spawn_used_for_task_delegation: false`, and a fallback or blocker reason when visible threads/worktrees were unavailable or unsafe. Internal helper-worker use is acceptable only when the handoff shows it did not own delegated task execution.
+
 ## Delegate-Return-Resume Protocol
 
 When review identifies a structural update:
@@ -170,7 +174,7 @@ Knowledge update disposition: completed|not-needed
 
 ## Validation
 
-Confirm reviewed artifacts match the requested plan, durable knowledge was accessed only through `keep-summarizing` if needed, project file checks are limited to referenced files, failures create a repair specification instead of modifying implementation files, structural updates invoke the delegate-return-resume protocol, delegation returns written or updated paths or an evidence-backed no-write rationale plus index rebuild status, success/archive is allowed only for `Knowledge update disposition: completed` or `Knowledge update disposition: not-needed`, unavailable or incomplete delegation blocks archive with an actionable `ks-extract-valuable-points` next action, review may invoke an approved `ks-*` owner but must not write durable knowledge directly, indexes are refreshed, no files are deleted, and no artifact is written under `.work-bundle/knowledge/`.
+Confirm reviewed artifacts match the requested plan, durable knowledge was accessed only through `keep-summarizing` if needed, project file checks are limited to referenced files, applicable CodeGraph evidence is present and consistent or carries an accepted inapplicable/fallback reason, delegated work carries visible-delegation evidence with `visible_reference` when available and `internal_spawn_used_for_task_delegation: false`, failures create a repair specification instead of modifying implementation files, structural updates invoke the delegate-return-resume protocol, delegation returns written or updated paths or an evidence-backed no-write rationale plus index rebuild status, success/archive is allowed only for `Knowledge update disposition: completed` or `Knowledge update disposition: not-needed`, unavailable or incomplete delegation blocks archive with an actionable `ks-extract-valuable-points` next action, review may invoke an approved `ks-*` owner but must not write durable knowledge directly, indexes are refreshed, no files are deleted, and no artifact is written under `.work-bundle/knowledge/`.
 
 ## Runtime Rules
 

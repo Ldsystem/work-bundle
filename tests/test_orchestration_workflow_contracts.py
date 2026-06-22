@@ -49,7 +49,7 @@ def test_disposition_rule_requires_return_evidence_before_resume() -> None:
     assert "assess validated implementation and review evidence for structural updates" in rule
     assert "delegate mixed structural evidence to ks-extract-valuable-points" in rule
     assert "validate returned structural-value result durable paths or no-write rationale index rebuild status blockers and completion state" in rule
-    assert "treat missing incomplete contradictory or blocked delegation evidence as completed or not-needed" in rule
+    assert "Do not treat missing, incomplete, contradictory, or blocked delegation evidence as completed or not-needed" in rule
 
 
 def test_doctor_checks_complete_quality_gate_contract_structurally() -> None:
@@ -180,15 +180,96 @@ def test_execute_plan_requires_executor_drift_gap_verification_and_preserves_fal
     assert "related specification, root plan, parent phase, and assigned task before handoff" in skill
     assert "repair every task-scoped drift or gap" in skill.lower()
     assert "record explicit drift/gap verification evidence" in skill
-    assert "Do not fail only because sub-agent support is missing" in skill
+    assert "Do not fail only because visible delegation support is missing" in skill
     assert "single-agent fallback" in skill
-    assert "Never allow `prefer_subagent` to bypass repository preflight" in skill
+    assert "Never allow `prefer_subagent` to bypass visible delegation safety" in skill
 
     assert "dedicated drift/gap verification section" in rule
     assert "post-repair recheck result" in rule
     assert "## 5. Drift / Gap Verification" in contract
     assert "Final drift/gap result: `clean|blocked`" in contract
     assert "HANDOFF-DONE-007" in contract
+
+
+def test_execute_plan_requires_codegraph_preflight_and_no_index_fallback_contract() -> None:
+    skill = text("skills/orch-execute-plan/SKILL.md")
+    workflow = text("references/assets/orchestration/workflow.md")
+    handoff_rule = text("rules/orchestration/orch-handoff-required.md")
+    handoff_contract = text("references/assets/orchestration/contract/handoff-executor-result-v1.md")
+
+    assert "Before execution selection, capability checks, delegation, or implementation-file modification" in skill
+    assert "target_kind=git-backed" in skill
+    assert "target_kind=local-project" in skill
+    assert "Do not reject an explicitly resolved non-Git local project root solely as `not-git`" in skill
+    assert "git status --porcelain=v1 --untracked-files=all" in skill
+    assert "does not fabricate Git cleanliness evidence for local-project targets" in skill
+
+    assert "If the target root has no `.codegraph/`, record CodeGraph as skipped with reason `no-index`" in skill
+    assert "Do not initialize CodeGraph and do not run `codegraph sync`" in skill
+    assert "run `codegraph sync <absolute-repository-root>` after the applicable target preflight" in skill
+    assert "Then query CodeGraph for the task-relevant symbol" in skill
+    assert "post-change `codegraph sync <absolute-repository-root>`" in skill
+    assert "sync-failed" in skill
+
+    assert "Each target records `target_kind` and `preflight_kind`" in workflow
+    assert "Same-repository sync operations are serialized" in workflow
+    assert "local-project targets rerun local-project preflight evidence" in workflow
+
+    assert "pre-inspection `codegraph sync <repo-root>` command and result" in handoff_rule
+    assert "explicitly record no-index fallback" in handoff_rule
+    assert "target_kind: git-backed|local-project" in handoff_contract
+    assert "pre_inspection_sync:" in handoff_contract
+    assert "post_change_sync:" in handoff_contract
+    assert "decision_reason: null|no-index|not-source-code|sync-failed|<short reason>" in handoff_contract
+
+
+def test_execute_plan_requires_visible_delegation_and_allows_helpers_only() -> None:
+    skill = text("skills/orch-execute-plan/SKILL.md")
+    workflow = text("references/assets/orchestration/workflow.md")
+    handoff_rule = text("rules/orchestration/orch-handoff-required.md")
+    handoff_contract = text("references/assets/orchestration/contract/handoff-executor-result-v1.md")
+    review_skill = text("skills/orch-review-plan/SKILL.md")
+
+    assert "visible thread/worktree delegation" in skill
+    assert "delegated plan, phase, or task ownership will run in a user-visible thread" in skill
+    assert "Do not silently delegate to invisible internal spawn work" in skill
+    assert "Invisible internal spawn workers must not own delegated plan, phase, or task implementation work" in skill
+    assert "Internal workers may be used only for bounded helper analysis" in skill
+    assert "does not replace visible thread/worktree task delegation" in skill
+    assert "internal_spawn_used_for_task_delegation: false" in skill
+
+    assert "delegate only to visible thread/worktree workers" in workflow
+    assert "Invisible internal spawn work must not own delegated implementation work" in workflow
+    assert "Internal helper workers remain allowed for bounded analysis" in workflow
+
+    assert "include delegation evidence when a task, phase, or plan was delegated" in handoff_rule
+    assert "record contradictory delegation evidence such as `internal_spawn_used_for_task_delegation: true`" in handoff_rule
+    assert "visible_reference: \"<thread id, worktree path, or user-visible label>\"|null" in handoff_contract
+    assert "internal_spawn_used_for_task_delegation: false" in handoff_contract
+    assert "internal_workers_used_for_support:" in handoff_contract
+
+    assert "reject review when visible-delegation evidence is missing" in review_skill
+    assert "Internal helper-worker use is acceptable only when the handoff shows it did not own delegated task execution" in review_skill
+
+
+def test_orchestration_scope_does_not_add_execution_context_or_retrieval_dependency() -> None:
+    spec = text(".work-bundle/orchestration/spec/active/spec-process-codegraph-refresh-visible-delegation-20260621.md")
+    plan = text(".work-bundle/orchestration/plan/active/process-orchestration-execution-safety-v1.md")
+    skill = text("skills/orch-execute-plan/SKILL.md")
+    workflow = text("references/assets/orchestration/workflow.md")
+
+    for artifact in (spec, plan):
+        assert ".work-bundle/knowledge/**" in artifact
+
+    assert ".work-bundle/knowledge/" in skill
+    assert "Developing the broader execution-context artifact, schema, index, lifecycle, or archive behavior" in spec
+    assert "Adding `.work-bundle/orchestration/execution-state/` context files or context indexes" in spec
+    assert "DF-001" in plan
+    assert "Do not create execution-state/context artifacts" not in workflow
+    assert ".work-bundle/orchestration/execution-state" not in workflow
+    assert "Execution-context artifact work is absent from the implementation scope" in spec
+    assert "Execution must use context already carried by the specification, plan, phase, task, and declared handoffs" in skill
+    assert "must not run v3 retrieval queries" in skill
 
 
 def test_orchestration_codegraph_policy_does_not_require_habits() -> None:

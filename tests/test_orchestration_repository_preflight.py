@@ -80,6 +80,18 @@ def test_non_git_and_inaccessible_targets_block(tmp_path: Path) -> None:
     assert inspect_repository_state(non_git)["status"] == "not-git"
     assert inspect_repository_state(tmp_path / "missing")["status"] == "inaccessible"
 
+    local = inspect_repository_state(non_git, source="explicit-repository", allow_local_project=True)
+    assert local["status"] == "clean"
+    assert local["target_kind"] == "local-project"
+    assert local["preflight_kind"] == "local-project"
+    assert local["git_clean_worktree_applicable"] is False
+    assert local["local_project_evidence"] == {
+        "exists": True,
+        "is_dir": True,
+        "git_root": None,
+        "declared_source": "explicit-repository",
+    }
+
 
 def test_multi_repository_preflight_blocks_without_modifying_repositories(tmp_path: Path) -> None:
     clean = repository(tmp_path, "clean")
@@ -98,6 +110,30 @@ def test_multi_repository_preflight_blocks_without_modifying_repositories(tmp_pa
     assert git(dirty, "status", "--porcelain=v1", "--untracked-files=all") == before
 
 
+def test_mixed_git_backed_and_local_project_targets_pass_with_evidence(tmp_path: Path) -> None:
+    git_backed = repository(tmp_path, "git-backed")
+    local_project = tmp_path / "plain-project"
+    local_project.mkdir()
+    (local_project / "config.json").write_text("{}\n", encoding="utf-8")
+
+    result = repository_preflight(
+        [
+            {"path": str(git_backed), "source": "task-write-scope"},
+            {"path": str(local_project), "source": "explicit-repository"},
+        ]
+    )
+
+    payload = result["repository_preflight"]
+    assert payload["status"] == "passed"
+    rows = {row["path"]: row for row in payload["repositories"]}
+    assert rows[str(git_backed.resolve())]["target_kind"] == "git-backed"
+    assert rows[str(git_backed.resolve())]["preflight_kind"] == "git-clean-worktree"
+    assert rows[str(local_project.resolve())]["status"] == "clean"
+    assert rows[str(local_project.resolve())]["target_kind"] == "local-project"
+    assert rows[str(local_project.resolve())]["preflight_kind"] == "local-project"
+    assert rows[str(local_project.resolve())]["local_project_evidence"]["declared_source"] == "explicit-repository"
+
+
 def test_accepted_baseline_allows_only_accepted_changes(tmp_path: Path) -> None:
     repo = repository(tmp_path)
     (repo / "accepted.txt").write_text("accepted\n", encoding="utf-8")
@@ -110,6 +146,26 @@ def test_accepted_baseline_allows_only_accepted_changes(tmp_path: Path) -> None:
     result = inspect_repository_state(repo, accepted_changes=accepted)
     assert result["status"] == "dirty"
     assert result["unexplained_changes"] == ["?? unexplained.txt"]
+
+
+def test_git_backed_post_sync_style_unexplained_change_blocks(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    accepted = [" M tracked.txt"]
+    (repo / "tracked.txt").write_text("accepted baseline edit\n", encoding="utf-8")
+    assert inspect_repository_state(repo, accepted_changes=accepted)["status"] == "clean"
+
+    (repo / "codegraph-side-effect.txt").write_text("unexpected sync side effect\n", encoding="utf-8")
+    result = repository_preflight(
+        [{"path": str(repo.resolve()), "source": "task-write-scope"}],
+        accepted_baselines={str(repo.resolve()): accepted},
+    )
+
+    row = result["repository_preflight"]["repositories"][0]
+    assert result["repository_preflight"]["status"] == "blocked"
+    assert row["target_kind"] == "git-backed"
+    assert row["preflight_kind"] == "git-clean-worktree"
+    assert row["baseline"] == "accepted-handoff"
+    assert row["unexplained_changes"] == ["?? codegraph-side-effect.txt"]
 
 
 def test_resolution_prefers_task_write_scopes_then_metadata(tmp_path: Path) -> None:

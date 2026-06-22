@@ -138,6 +138,54 @@
       "prompt": "Execute a source-inspection task when the target repository has no .codegraph directory and effective prefer_subagent resolves to false.",
       "expected_output": "Selects execute-plan, records that CodeGraph is skipped because the repository is not indexed, preserves text-search fallback, uses the single-agent fallback for exactly one task, keeps execution no-retrieval, does not require any additional runtime preference file, and does not bypass repository preflight, dependency checks, write-scope checks, or executor-result handoff requirements.",
       "files": []
+    },
+    {
+      "id": 24,
+      "prompt": "Execute a task whose write scope resolves to one indexed repository and one repository without a .codegraph directory.",
+      "expected_output": "Selects execute-plan, records independent CodeGraph decisions per target, runs sync only for the indexed repository after preflight, records no-index fallback for the unindexed repository, and does not initialize CodeGraph.",
+      "files": []
+    },
+    {
+      "id": 25,
+      "prompt": "Execute a source-inspection task in an indexed Git repository where codegraph sync succeeds.",
+      "expected_output": "Runs repository preflight first, then codegraph sync with the absolute repository root, performs a task-relevant graph query before broad inspection or editing, reruns preflight after sync, and records sync/query evidence in the executor-result handoff.",
+      "files": []
+    },
+    {
+      "id": 26,
+      "prompt": "Execute a source-inspection task where codegraph sync fails and strict graph gating is not required.",
+      "expected_output": "Records sync-failed, uses bounded direct-file or text-search fallback, continues only after preserving repository preflight and scope checks, and includes the sync failure and fallback reason in the executor-result handoff.",
+      "files": []
+    },
+    {
+      "id": 27,
+      "prompt": "Complete a task that changed indexed source files in a CodeGraph-enabled Git repository.",
+      "expected_output": "Runs post-change codegraph sync before final graph impact validation and before the executor-result handoff, records the post-change sync result, and blocks if sync causes unexplained tracked or unignored Git changes.",
+      "files": []
+    },
+    {
+      "id": 28,
+      "prompt": "Schedule two parallel tasks that both target the same CodeGraph-enabled repository.",
+      "expected_output": "Serializes codegraph sync operations for that repository, avoids concurrent access to the same index, permits only safe parallel implementation work after sync/query gates, and records per-task repository evidence.",
+      "files": []
+    },
+    {
+      "id": 29,
+      "prompt": "Execute a scheduler wave with visible thread delegation available and safe disjoint task scopes.",
+      "expected_output": "Delegates task ownership only to visible threads or worktrees, records each visible_reference when provided, sets internal_spawn_used_for_task_delegation to false, validates executor handoffs, and preserves preflight and scope gates.",
+      "files": []
+    },
+    {
+      "id": 30,
+      "prompt": "Execute a plan task when only invisible internal spawn workers are available for delegation.",
+      "expected_output": "Rejects invisible internal spawn workers as the task delegation vehicle, uses single-agent fallback for one task when valid or reports a delegation-visibility blocker, and does not mark delegated execution complete without visible delegation evidence.",
+      "files": []
+    },
+    {
+      "id": 31,
+      "prompt": "Execute a delegated task while an internal helper worker is used only for bounded snippet comparison.",
+      "expected_output": "Allows the helper-worker support because visible thread or worktree ownership remains intact, records internal helper usage separately, keeps internal_spawn_used_for_task_delegation false, and requires the visible executor handoff to own validation and drift-gap evidence.",
+      "files": []
     }
   ],
   "v4_evals": [

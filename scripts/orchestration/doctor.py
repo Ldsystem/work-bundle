@@ -190,9 +190,10 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             [
                 "## Repository Preflight",
                 "every target source repository",
-                "Block when no target repository resolves or any target reports `dirty`",
+                "Block when no target repository resolves or any Git-backed target reports `dirty`",
                 "related specification, root plan, parent phase, and assigned task before handoff",
-                "Do not fail only because sub-agent support is missing",
+                "Do not fail only because visible delegation support is missing",
+                "internal_spawn_used_for_task_delegation: false",
             ],
         ),
         (

@@ -125,6 +125,55 @@ Describe observable behavior changes.
 - **BEHAVIOR-001**: [Before behavior.] → [After behavior.]
 - **BEHAVIOR-002**: [Before behavior.] → [After behavior.]
 
+## 10.1 Execution Evidence
+
+For source-code work, include one `codegraph:` evidence block per target repository or local project root. Include the block even when CodeGraph is skipped so review can distinguish accepted fallback from missing evidence.
+
+```yaml
+codegraph:
+  repository_id: <short-id-or-null>
+  repository_root: /absolute/path/to/repository-or-project
+  target_kind: git-backed|local-project
+  preflight_kind: git-clean-worktree|local-project|not-applicable
+  index_present: true|false
+  use_code_graph: true|false
+  applicability_decision: used|skipped|fallback
+  decision_reason: null|no-index|not-source-code|sync-failed|<short reason>
+  pre_inspection_sync:
+    command: codegraph sync /absolute/path/to/repository-or-project
+    result: passed|failed|skipped
+    reason: null|no-index|sync-failed|<short reason>
+  graph_query:
+    provider: mcp|cli|null
+    query_or_symbol: "<task-relevant query or symbol>"
+    result: passed|failed|skipped
+    reason: null|no-index|sync-failed|<short reason>
+  post_change_sync:
+    command: codegraph sync /absolute/path/to/repository-or-project
+    result: passed|failed|skipped|not-applicable
+    reason: null|no-index|no-indexed-source-change|sync-failed|<short reason>
+  fallback:
+    used: true|false
+    reason: null|no-index|sync-failed|not-source-code|<short reason>
+    allowed_scope: null|bounded direct file reads and text search
+  final_graph_impact_result: passed|failed|skipped|not-applicable
+```
+
+For delegated task, phase, or plan ownership, include one `delegation:` evidence block:
+
+```yaml
+delegation:
+  task_id: <task-id-or-null>
+  delegated: true|false
+  delegation_surface: visible-thread|visible-worktree|visible-thread-and-worktree|single-agent|blocked
+  visible_reference: "<thread id, worktree path, or user-visible label>"|null
+  internal_spawn_used_for_task_delegation: false
+  internal_workers_used_for_support: true|false
+  fallback_reason: null|visible-delegation-unavailable|visible-delegation-unsafe|single-agent-fallback|<short reason>
+```
+
+Do not mark a completed delegated task clean when `internal_spawn_used_for_task_delegation` is true or when `visible_reference` is omitted despite being available. If CodeGraph or delegation is inapplicable, record the reason instead of deleting the evidence section.
+
 ## 11. Tests Run
 
 List every test, command, manual verification, or inspection performed.

@@ -72,8 +72,13 @@ def test_codegraph_rule_stays_index_gated_and_preserves_fallback() -> None:
     gated_condition = "the targeted repository root contains `.codegraph/`"
     assert gated_condition in rule
     assert gated_condition in index
-    assert "Do not skip CodeGraph unless CodeGraph is unavailable" in rule
-    assert "returns an explicit tool or runtime error" in rule
+    assert "run `codegraph sync <repo-root>` after applicable repository preflight" in rule
+    assert "before graph-derived source inspection, delegation context preparation, or editing" in rule
+    assert "record `sync-failed`" in rule
+    assert "post-change `codegraph sync <repo-root>`" in rule
+    assert "Do not run `codegraph sync`, require CodeGraph use, or initialize CodeGraph" in rule
+    assert "record no-index fallback instead" in rule
+    assert "repository root lacked `.codegraph/`" in rule
     assert "record the concrete fallback reason before continuing" in rule
 
 

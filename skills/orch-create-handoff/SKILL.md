@@ -59,6 +59,10 @@ Every handoff includes:
 
 Executor-result handoffs also include assigned task, implementation summary, files/symbols changed, tests run, test results, deviations, unresolved issues, suggested durable conclusions, and recommended orchestration review.
 
+Executor-result handoffs for source-code work also include a compact `codegraph:` evidence block for each target repository when CodeGraph is applicable or explicitly skipped. Record repository root, target kind, preflight kind, `.codegraph/` index presence, applicability decision, `pre_inspection_sync`, graph query or explored symbol, `post_change_sync` when indexed source changed, fallback reason such as `no-index` or `sync-failed`, and final graph impact result. If CodeGraph is not applicable, state why instead of omitting the block.
+
+Executor-result handoffs for delegated task, phase, or plan ownership also include a compact `delegation:` evidence block with delegated flag, delegation surface, `visible_reference` when the environment provides one, `internal_spawn_used_for_task_delegation: false`, any internal helper-worker use, and fallback or blocker reason when visible delegation was unavailable or unsafe.
+
 ## Hard Rules
 
 - Do not store handoffs under `.work-bundle/knowledge/`.
@@ -68,6 +72,7 @@ Executor-result handoffs also include assigned task, implementation summary, fil
 - Do not present suggested durable conclusions as persisted knowledge.
 - Stop if source artifact paths or current state are unknown.
 - Executor-result handoffs must list changed files/symbols, validation, deviations, unresolved issues, and next action.
+- Executor-result handoffs must not omit applicable `codegraph:` or `delegation:` evidence, and must not record contradictory delegation evidence such as `internal_spawn_used_for_task_delegation: true`.
 
 ## Status and Index
 
@@ -88,7 +93,7 @@ Load only when creating or validating:
 
 ## Validation
 
-Confirm required metadata and sections exist, referenced specs/plans/phases/tasks/files are listed, next actions are executable, unresolved decisions are explicit, executor-result fields are complete, raw chat is excluded, no handoff is written under `.work-bundle/knowledge/`, orchestration handoff durable knowledge came through `keep-summarizing`, and execution-completion handoffs did not invoke retrieval.
+Confirm required metadata and sections exist, referenced specs/plans/phases/tasks/files are listed, next actions are executable, unresolved decisions are explicit, executor-result fields are complete, applicable `codegraph:` evidence includes `pre_inspection_sync`, graph query, `post_change_sync` or a reason, and fallback details, delegated executor-result handoffs include `delegation:`, `visible_reference` when available, and `internal_spawn_used_for_task_delegation: false`, raw chat is excluded, no handoff is written under `.work-bundle/knowledge/`, orchestration handoff durable knowledge came through `keep-summarizing`, and execution-completion handoffs did not invoke retrieval.
 
 ## Runtime Rules
 
