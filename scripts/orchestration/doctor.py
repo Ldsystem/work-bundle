@@ -6,6 +6,18 @@ from plans import index_plans
 from specs import load_index
 
 
+FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
+    "suggested_durable_conclusions",
+    "durable_candidate_facts",
+    "recommended_orchestration_review",
+    "recommended_next_actions",
+    "delegation",
+    "deviations",
+    "strategy_advice",
+    "knowledge_persistence",
+}
+
+
 def check_contract_terms(issues: list[str], path: Path, label: str, required_terms: list[str]) -> None:
     if not path.exists():
         issues.append(f"missing {label}: {path}")
@@ -65,6 +77,27 @@ def check_forbidden_active_dependencies(issues: list[str], paths: list[Path]) ->
                 issues.append(f"active orchestration contract reintroduces role-context dependency: {path}")
 
 
+def check_active_handoff_contract(issues: list[str], root: Path) -> None:
+    active_orchestration = root / "handoff" / "orchestration" / "active"
+    if active_orchestration.exists():
+        for path in active_orchestration.iterdir():
+            if path.is_file():
+                issues.append(f"active orchestration handoff is retired: {path.relative_to(root)}")
+
+    active_executor = root / "handoff" / "executor" / "active"
+    for pattern in ("*.yaml", "*.yml"):
+        for path in active_executor.glob(pattern):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line or line[0].isspace() or ":" not in line:
+                    continue
+                field = line.split(":", 1)[0]
+                if field in FORBIDDEN_EXECUTOR_RESULT_FIELDS:
+                    issues.append(
+                        f"active executor-result handoff contains forbidden field {field}: "
+                        f"{path.relative_to(root)}"
+                    )
+
+
 def index_row_identity(index_scope: str, row: dict[str, object]) -> tuple[object, ...]:
     row_type = str(row.get("type", index_scope))
     row_id = str(row.get("id", ""))
@@ -88,7 +121,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     issues = []
     root = orchestration_root(args)
     bundle_root = Path(__file__).resolve().parents[2]
-    for required in ["spec/active", "spec/archived", "spec/index.jsonl", "plan/active", "plan/archived", "plan/index.jsonl", "handoff/orchestration/active", "handoff/orchestration/archived", "handoff/executor/active", "handoff/executor/archived", "handoff/index.jsonl", "docs"]:
+    for required in ["spec/active", "spec/archived", "spec/index.jsonl", "plan/active", "plan/archived", "plan/index.jsonl", "handoff/orchestration/archived", "handoff/executor/active", "handoff/executor/archived", "handoff/index.jsonl", "docs"]:
         if not (root / required).exists():
             issues.append(f"missing {required}")
     for index_scope, index in [
@@ -108,7 +141,6 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     active_artifact_roots = [
         root / "spec" / "active",
         root / "plan" / "active",
-        root / "handoff" / "orchestration" / "active",
         root / "handoff" / "executor" / "active",
         root / "docs",
     ]
@@ -119,6 +151,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     for path in (root / "spec" / "active").glob("**/*.md"):
         if artifact_mentions_retrieval_without_roles(path):
             issues.append(f"retrieval artifact lacks role labels: {path.relative_to(root)}")
+    check_active_handoff_contract(issues, root)
     skill_root = bundle_root / "skills"
     orchestration_evals = bundle_root / "references" / "evals" / "orchestration" / "evals.json"
     check_eval_shape(issues, orchestration_evals)
@@ -163,6 +196,28 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 "Quality gate: verified|blocked",
                 "runs generated-plan verification against the source specification before completion",
                 "keeps archive blocked if delegation is unavailable or evidence is incomplete",
+                "continuation state comes from active specifications, plans, phases, tasks, indexes, and executor-result handoffs",
+            ],
+        ),
+        (
+            bundle_root / "references" / "assets" / "orchestration" / "contract" / "handoff-executor-result-v1.md",
+            "executor-result handoff contract",
+            [
+                "default_format: yaml",
+                "Required By Applicability",
+                "Forbidden Executor-Result Fields",
+                "task_fit_check:",
+                "delegation_evidence:",
+                "reason: null | no-index | sync-failed | not-source-code | blocked",
+            ],
+        ),
+        (
+            bundle_root / "scripts" / "orchestration" / "handoffs.py",
+            "handoff helper",
+            [
+                'HANDOFF_EXTENSIONS = (".md", ".yaml", ".yml")',
+                "Active orchestration handoff creation is retired",
+                '"yaml" if args.type == "executor-result" else "markdown"',
             ],
         ),
         (
@@ -224,6 +279,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 "quality gate is verified",
                 "repairs the task-scoped gap and repeats verification before handoff",
                 "target repository has no .codegraph directory",
+                "sparse YAML",
+                "active orchestration handoff",
             ],
         ),
         (

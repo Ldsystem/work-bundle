@@ -14,7 +14,7 @@ path: .work-bundle/orchestration/plan/active/[plan-id]/phase-001-[slug].md
 source_spec:
   - .work-bundle/orchestration/spec/active/...
 source_knowledge:
-  - .work-bundle/knowledge/notes/...
+  - carried by source specification
 task_index:
   - id: task-001
     name: [Task Name]
@@ -91,7 +91,7 @@ Record phase-level verification against the source specification and root plan.
 |---|---|---|---|
 | VERIFY-001 | Phase requirements cite the relevant source-spec IDs and do not duplicate long specification prose. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-002 | Task map paths, dependencies, ordering, and safe parallelization flags match exact task write scopes and root-plan sequencing. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
-| VERIFY-003 | Phase tests, completion criteria, and phase-scoped `create-handoff` requirement are present and consistent with child tasks. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-003 | Phase tests, completion criteria, and compact phase-scoped `executor-result` handoff requirement are present and consistent with child tasks. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 
 Repair generated phase or child-task drift, missing spec-ID alignment, dependency mistakes, unsafe parallelization, validation gaps, and handoff gaps in the same planning turn. Stop for specification repair when the source spec cannot support a deterministic phase.
 
@@ -102,8 +102,8 @@ Repair generated phase or child-task drift, missing spec-ID alignment, dependenc
 - **DONE-TEST-001**: [Test result summary.]
 - **DONE-ACH-001**: [Phase achievement summary.]
 - **DONE-VERIFY-001**: Phase and child task artifacts were verified against source-spec IDs, dependencies, safe parallelization, validation, and handoff requirements before completion.
-- **DONE-HANDOFF-001**: Executor invokes `create-handoff` and creates a phase-scoped `executor-result` handoff under `.work-bundle/orchestration/handoff/executor/active/` before reporting this phase as completed or blocked.
+- **DONE-HANDOFF-001**: Executor invokes `create-handoff` and creates a compact phase-scoped `executor-result` handoff under `.work-bundle/orchestration/handoff/executor/active/` before reporting this phase as completed or blocked.
 
 ## 7. Executor Handoff Requirements
 
-The executor must invoke `create-handoff` at the end of this phase and report files changed, symbols changed, tasks completed, tests run, test results, deviations, unresolved issues, and suggested durable conclusions.
+The executor must invoke `create-handoff` at the end of this phase and create a sparse YAML `executor-result` handoff. Include only applicable continuation and review evidence: completed tasks, changed or inspected files, symbols when useful, validation commands and results, unresolved blockers, phase-fit or task-fit evidence, repository/preflight evidence, compact CodeGraph evidence when source-code work was in scope, delegation_evidence when ownership was delegated, and Knowledge Base Update disposition when review must carry it forward. Omit empty sections, deviation narratives, durable-knowledge advice, next-action recommendations, and other executor advice fields.

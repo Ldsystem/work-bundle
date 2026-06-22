@@ -13,7 +13,7 @@ tags:
 source_spec:
   - .work-bundle/orchestration/spec/active/...
 source_knowledge:
-  - .work-bundle/knowledge/notes/...
+  - carried by source specification
 phase_index:
   - id: phase-001
     name: [Phase Name]
@@ -47,6 +47,12 @@ Use a compact source-spec ID map. Do not paste long specification sections into 
 |---|---|---|---|
 | SRC-001 | specification | `.work-bundle/orchestration/spec/active/...` | [How the spec constrains this plan.] |
 | CTX-001 | carried-context | `source specification` | [Accepted project knowledge is already carried in the spec; do not require plan executors to read `.work-bundle/knowledge/`.] |
+
+## 2.1 Knowledge Base Update Carry Forward
+
+- **Disposition**: required|not-needed|completed|blocked
+- **Source**: [Source specification Knowledge Base Update section or review decision.]
+- **Review Gate**: [How review should resolve or validate the disposition before archive.]
 
 ## 3. Phase Map
 
@@ -90,7 +96,7 @@ Record the verification pass performed after generating the root plan, phases, a
 | VERIFY-001 | source-spec ID coverage maps every implemented requirement, constraint, resolved alternative, and resolved open question to plan/phase/task artifacts. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-002 | Exact artifact paths, source files, target files, dependencies, task ordering, validation commands, and completion criteria are internally consistent. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-003 | Safe parallelization is exposed where dependencies and write scopes allow, and unsafe parallelization is explicitly blocked by dependency or scope evidence. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
-| VERIFY-004 | Every task, phase, and plan completion path requires `create-handoff` with an `executor-result` handoff. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-004 | Every task, phase, and plan completion path requires `create-handoff` with a compact, sparse YAML `executor-result` handoff whose body stays applicability-based. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 
 If any generated artifact drifts from the source specification, omits required spec-ID coverage, contains inconsistent paths or dependencies, lacks validation, or lacks handoff criteria, repair the generated artifacts in the same planning turn and repeat this verification. If the source specification itself has unresolved questions, missing stable IDs, missing evidence, or contradictory instructions, stop for specification repair instead of inventing plan content.
 
@@ -102,9 +108,9 @@ If any generated artifact drifts from the source specification, omits required s
 - **DONE-ACH-001**: The implementation achieves the stated plan goal.
 - **DONE-FILE-001**: Desired files are created, updated, deleted, or confirmed unnecessary.
 - **DONE-VERIFY-001**: Generated root plan, phase, and task artifacts were verified against the source specification and repaired for drift, gaps, dependencies, validations, safe parallelization, and handoff requirements before completion.
-- **DONE-HANDOFF-001**: Executor invokes `create-handoff` and creates a plan-scoped `executor-result` handoff under `.work-bundle/orchestration/handoff/executor/active/` before reporting the root plan as completed or blocked.
+- **DONE-HANDOFF-001**: Executor invokes `create-handoff` and creates a compact plan-scoped `executor-result` handoff under `.work-bundle/orchestration/handoff/executor/active/` before reporting the root plan as completed or blocked. The handoff carries only applicable continuation and review evidence, including Knowledge Base Update disposition when review must resolve it.
 
 ## 10. Related Specifications / Further Reading
 
 - [Related specification](.work-bundle/orchestration/spec/active/...)
-- [Relevant durable knowledge](.work-bundle/knowledge/notes/...)
+- [Carried durable-knowledge context, if any, from the source specification](.work-bundle/orchestration/spec/active/...)

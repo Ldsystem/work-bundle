@@ -103,6 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
     write_handoff.add_argument("--related-task")
     write_handoff.add_argument("--status", default="active")
     write_handoff.add_argument("--id")
+    write_handoff.add_argument("--format", choices=["yaml", "markdown"])
     write_handoff.set_defaults(func=cmd_write_handoff)
     list_handoffs = sub.add_parser("list-handoffs", parents=[parent])
     list_handoffs.add_argument("--type", choices=sorted(HANDOFF_TYPES))

@@ -1,13 +1,13 @@
 ---
 name: orch-create-handoff
-description: 'Create orchestration and executor-result handoffs for continuation or evidence.'
+description: 'Create compact executor-result handoffs for continuation or evidence.'
 ---
 
 # orch-create-handoff
 
 ## Scope
 
-Create orchestration and executor-result handoffs for continuation or evidence.
+Create compact executor-result handoffs for continuation or evidence. Orchestration handoffs are legacy artifacts only and are not created by the active workflow.
 
 ## Workflow Reference
 
@@ -15,9 +15,7 @@ Use `references/assets/orchestration/workflow.md` as the shared workflow authori
 
 ## Context
 
-Inspect relevant `.work-bundle/orchestration/` specs, plans, phases, tasks, previous handoffs, test results, and current execution state.
-
-If accepted durable project knowledge is needed for an orchestration handoff outside execution completion, use `keep-summarizing` with `what-is-helpful` gateway mode and the `implementation_plan` retrieval policy. Do not directly browse `.work-bundle/knowledge/`.
+Inspect relevant `.work-bundle/orchestration/` specs, plans, phases, tasks, previous executor-result handoffs, test results, and current execution state.
 
 Executor-result handoffs created during `execute-plan` must not retrieve durable knowledge. They may use only carried spec, plan, phase, task, declared handoff, and task-scoped source/test context.
 
@@ -25,8 +23,8 @@ Do not include raw chat logs, speculative reasoning, or unrelated history. Recor
 
 ## Types
 
-- `orchestration`: planning, review, coordination, or conversation continuation.
 - `executor-result`: implementation result from an executor agent to the orchestration agent.
+- `orchestration`: legacy-only historical handoff type. Do not create new active orchestration handoffs from this workflow.
 
 Infer type from purpose when absent.
 
@@ -34,8 +32,7 @@ Infer type from purpose when absent.
 
 ```text
 .work-bundle/orchestration/handoff/
-  orchestration/active/handoff-orch-YYYYMMDD-001-[slug].md
-  executor/active/handoff-exec-YYYYMMDD-001-[slug].md
+  executor/active/handoff-exec-YYYYMMDD-001-[slug].yaml
   orchestration/archived/
   executor/archived/
   index.jsonl
@@ -43,36 +40,33 @@ Infer type from purpose when absent.
 
 Handoffs are orchestration artifacts, not durable project knowledge.
 
+Use sparse YAML by default for executor-result handoffs. Existing archived Markdown handoffs remain legacy-compatible and indexable; do not convert them unless explicitly scoped.
+
 ## Required Content
 
-Every handoff includes:
+Executor-result handoffs follow `rules/orchestration/orch-handoff-required.md` and `references/assets/orchestration/contract/handoff-executor-result-v1.md`.
 
-- front matter and status badge;
-- source context used;
-- current state;
-- completed and pending work;
-- relevant files/artifacts;
-- dependencies;
-- risks, assumptions, open questions;
-- validation/test evidence when applicable;
-- executable next actions and completion criteria.
+Always include identity, related artifacts, result state, and concise summary. Include other fields only when applicable for continuation or review:
 
-Executor-result handoffs also include assigned task, implementation summary, files/symbols changed, tests run, test results, deviations, unresolved issues, suggested durable conclusions, and recommended orchestration review.
-
-Executor-result handoffs for source-code work also include a compact `codegraph:` evidence block for each target repository when CodeGraph is applicable or explicitly skipped. Record repository root, target kind, preflight kind, `.codegraph/` index presence, applicability decision, `pre_inspection_sync`, graph query or explored symbol, `post_change_sync` when indexed source changed, fallback reason such as `no-index` or `sync-failed`, and final graph impact result. If CodeGraph is not applicable, state why instead of omitting the block.
-
-Executor-result handoffs for delegated task, phase, or plan ownership also include a compact `delegation:` evidence block with delegated flag, delegation surface, `visible_reference` when the environment provides one, `internal_spawn_used_for_task_delegation: false`, any internal helper-worker use, and fallback or blocker reason when visible delegation was unavailable or unsafe.
+- `changes.files` for changed or inspected files, symbols, artifacts, schemas, commands, or docs.
+- `validation.commands` for commands, tests, inspections, or intentional skips.
+- `unresolved` only for remaining blockers or issues.
+- `task_fit_check` for completed or partial task results, covering the related specification, root plan, parent phase, and assigned task.
+- `repository` when repository preflight, accepted baseline, changed paths, or blocker state matters.
+- `codegraph` when source-code inspection or edits were in scope; keep it to `root`, `applicable`, `up_to_date`, and fallback/blocker facts unless more detail is needed.
+- `delegation_evidence` when task, phase, or plan ownership was delegated or fallback proof is required; record `internal_spawn_used_for_task_delegation: false`.
 
 ## Hard Rules
 
 - Do not store handoffs under `.work-bundle/knowledge/`.
+- Do not create new active `handoff-orch-*` artifacts or offer orchestration handoff creation as an active workflow path.
 - Do not implement source changes, edit application/test files, run migrations, apply patches, or execute plan tasks while creating a handoff.
 - If the user also asks for implementation, finish the handoff artifact first, then stop and require an explicit `execute-plan` request.
 - Do not include raw chat logs, private reasoning, or unrelated history.
-- Do not present suggested durable conclusions as persisted knowledge.
+- Do not include durable-knowledge recommendations, orchestration review recommendations, executor advice fields, or strategy advice in executor-result handoffs.
 - Stop if source artifact paths or current state are unknown.
-- Executor-result handoffs must list changed files/symbols, validation, deviations, unresolved issues, and next action.
-- Executor-result handoffs must not omit applicable `codegraph:` or `delegation:` evidence, and must not record contradictory delegation evidence such as `internal_spawn_used_for_task_delegation: true`.
+- Executor-result handoffs must list changed files or inspected artifacts, validation, unresolved blockers when present, and compact `task_fit_check` when applicable.
+- Executor-result handoffs must not omit applicable `codegraph:` or `delegation_evidence:` and must not record contradictory delegation evidence such as `internal_spawn_used_for_task_delegation: true`.
 
 ## Status and Index
 
@@ -88,12 +82,12 @@ Update `.work-bundle/orchestration/handoff/index.jsonl` with `id`, `type`, `stat
 
 Load only when creating or validating:
 
-- `references/assets/orchestration/contract/handoff-orchestration-v1.md`
 - `references/assets/orchestration/contract/handoff-executor-result-v1.md`
+- `references/assets/orchestration/contract/handoff-orchestration-v1.md` only for explicit legacy validation of existing orchestration handoffs.
 
 ## Validation
 
-Confirm required metadata and sections exist, referenced specs/plans/phases/tasks/files are listed, next actions are executable, unresolved decisions are explicit, executor-result fields are complete, applicable `codegraph:` evidence includes `pre_inspection_sync`, graph query, `post_change_sync` or a reason, and fallback details, delegated executor-result handoffs include `delegation:`, `visible_reference` when available, and `internal_spawn_used_for_task_delegation: false`, raw chat is excluded, no handoff is written under `.work-bundle/knowledge/`, orchestration handoff durable knowledge came through `keep-summarizing`, and execution-completion handoffs did not invoke retrieval.
+Confirm required sparse YAML metadata exists, referenced specs/plans/phases/tasks/files are listed when applicable, unresolved blockers are explicit when present, executor-result fields are complete by applicability rather than fixed section presence, forbidden executor advice fields are absent, applicable `codegraph:` evidence includes compact up-to-date or fallback/blocker facts, delegated executor-result handoffs include `delegation_evidence:`, `visible_reference` when available, and `internal_spawn_used_for_task_delegation: false`, raw chat is excluded, no handoff is written under `.work-bundle/knowledge/`, no active orchestration handoff is created, and execution-completion handoffs did not invoke retrieval.
 
 ## Runtime Rules
 

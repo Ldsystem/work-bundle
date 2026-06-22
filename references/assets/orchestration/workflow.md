@@ -11,11 +11,10 @@
     active/
     archived/
   handoff/
-    orchestration/
-      active/
-      archived/
     executor/
       active/
+      archived/
+    orchestration/
       archived/
   docs/
 ```
@@ -35,7 +34,7 @@ spec -> plan -> phase -> task -> execute -> handoff
 - **Phase**: a bounded milestone grouping related tasks with only the spec IDs, decisions, files, and tests those tasks need.
 - **Task**: one executable unit with exact source files, target files, symbols, steps, validation, completion criteria, and handoff requirements.
 - **Execute**: run the selected task, phase, or plan scope; prefer visible thread/worktree scheduling when safe, otherwise single-task fallback.
-- **Handoff**: record executor or orchestration continuation evidence before advancing status.
+- **Handoff**: record compact executor-result continuation evidence before advancing status.
 
 Downstream executors may read only the related spec, root plan, relevant phase, relevant task, declared prior handoffs, and task-scoped source or test files. They must not read `.work-bundle/knowledge/` directly.
 
@@ -48,7 +47,7 @@ Per-role agent instructions live in self-contained orch skills under `skills/orc
 | `orch-create-specification` | Author AI-ready specs under `spec/active/` |
 | `orch-create-implementation-plan` | Derive plan, phase, and task files from an active spec |
 | `orch-execute-plan` | Run tasks with scheduler or single-agent fallback |
-| `orch-create-handoff` | Write orchestration or executor-result handoffs |
+| `orch-create-handoff` | Write compact executor-result handoffs; legacy orchestration handoffs are not active workflow outputs |
 | `orch-review-plan` | Verify implementation, repair spec on failure, archive on success |
 | `orch-create-document` | Reader-facing docs under `docs/` |
 | `orch-doctor` | Read-only develop-rules and orchestrator diagnostics |
@@ -66,7 +65,7 @@ Typical retrieval policy mapping:
 | `orch-create-specification` | `implementation_spec` |
 | `orch-create-implementation-plan` | `implementation_plan` |
 | `orch-create-document` | `customer_spec` |
-| `orch-create-handoff` | `implementation_plan` |
+| `orch-create-handoff` | executor-result creation is no-retrieval during execution; other use is legacy or explicitly scoped |
 | `orch-review-plan` | `implementation_plan` |
 | `orch-execute-plan` | `execution` (upstream only; no retrieval during execution) |
 
@@ -89,20 +88,20 @@ Execution blocks on empty target sets, inaccessible targets, dirty or unresolved
 
 After target preflight, CodeGraph is decided per target root. If `.codegraph/` is absent, record no-index fallback and do not initialize CodeGraph. If `.codegraph/` is present and CodeGraph is available, run `codegraph sync <absolute-repository-root>` before graph-derived inspection, delegation instructions, broad browsing, or editing. Same-repository sync operations are serialized. If sync fails, record `sync-failed` and use bounded fallback unless strict graph gating is explicitly required. Git-backed targets rerun clean-worktree preflight after sync; local-project targets rerun local-project preflight evidence. When indexed source changes, run a post-change `codegraph sync <absolute-repository-root>` before final graph impact validation and executor-result handoff.
 
-- **Sub-agent scheduler**: recheck target repositories before each wave; partition independent tasks with disjoint write scopes; delegate only to visible thread/worktree workers; validate executor handoffs; accept only handoff-proven changes as the next baseline; update task and phase indexes between waves.
-- **Single-agent fallback**: recheck target repositories immediately before executing one task per conversation trip when visible thread/worktree delegation is unavailable or unsafe; still require executor-result handoff and status updates.
+- **Sub-agent scheduler**: recheck target repositories before each wave; partition independent tasks with disjoint write scopes; delegate only to visible thread/worktree workers; validate compact executor-result handoffs; accept only handoff-proven changes as the next baseline; update active artifacts and indexes between waves.
+- **Single-agent fallback**: recheck target repositories immediately before executing one task per conversation trip when visible thread/worktree delegation is unavailable or unsafe; still require a sparse YAML executor-result handoff and status updates.
 
 Scheduler task delegation must use a visible thread, visible worktree, or both. The scheduler verifies the selected delegation surface is visible before assigning plan, phase, or task ownership and records the visible reference when the environment provides a thread id, worktree path, or user-visible label. Invisible internal spawn work must not own delegated implementation work and must not be used as the plan, phase, or task delegation vehicle. `prefer_subagent: true` is permission to prefer safe visible delegation only; it cannot bypass visible delegation safety, preflight, scope, dependency, validation, or handoff gates.
 
 If visible thread/worktree delegation is unavailable, unsafe, or unsupported, execution uses single-agent fallback when that can satisfy the selected target. If fallback cannot satisfy the target, execution stops with a `delegation-visibility` blocker instead of silently delegating to invisible internal spawn work. Internal helper workers remain allowed for bounded analysis, local summarization, snippet comparison, or other non-delegated support work when task ownership stays in a visible thread/worktree or the current single-agent execution path.
 
-Unrelated or unexplained changes block the next wave or task. Execution remains a no-retrieval stage: `orch-execute-plan` does not browse durable knowledge, retrieve knowledge context, or archive specs, plans, or handoffs. Completion of a phase or plan requires phase- or plan-scoped executor-result handoffs and status updates before `orch-review-plan`.
+Unrelated or unexplained changes block the next wave or task. Execution remains a no-retrieval stage: `orch-execute-plan` does not browse durable knowledge, retrieve knowledge context, or archive specs, plans, or handoffs. Completion of a task, phase, or plan requires an applicability-based compact executor-result handoff and status updates before `orch-review-plan`; continuation state comes from active specifications, plans, phases, tasks, indexes, and executor-result handoffs rather than orchestration handoff artifacts under active continuation.
 
 ## Review and Archive
 
 Only `orch-review-plan` may archive completed specification, plan, and handoff artifacts. It assesses validated implementation and review evidence for structural updates before archival. Mixed structural evidence must be delegated to `ks-extract-valuable-points`; design-file-only structural evidence may be delegated to `ks-breakdown-design`. Orchestration may invoke, schedule, or hand off to the approved `ks-*` owner and consume its result, but it must never directly create, edit, promote, delete, or index durable knowledge.
 
-Review provides the target project, reviewed specification and plan, relevant handoffs, validation evidence, changed files or symbols, expected durable conclusions, structural-update summary, and current disposition. The delegated `ks-*` owner returns its structural-value result, written or updated durable paths or an evidence-backed no-write rationale, index rebuild status, blockers, and completion state. Review validates that return, resumes disposition evaluation, and keeps archive blocked if delegation is unavailable or evidence is incomplete. On failure it creates a repair specification instead of editing source files. On success, and only when knowledge-update disposition is `completed` or `not-needed`, it archives related active artifacts and refreshes orchestration indexes.
+Review provides the target project, reviewed specification and plan, relevant executor-result handoffs, validation evidence, changed files or symbols, structural-update summary, and Knowledge Base Update disposition carried from the source specification or root plan. The delegated `ks-*` owner returns its structural-value result, written or updated durable paths or an evidence-backed no-write rationale, index rebuild status, blockers, and completion state. Review validates that return, resumes disposition evaluation, and keeps archive blocked if delegation is unavailable or evidence is incomplete. On failure it creates a repair specification instead of editing source files. On success, and only when Knowledge Base Update disposition is `completed` or `not-needed`, it archives related active artifacts and refreshes orchestration indexes.
 
 ## Evaluation Material
 

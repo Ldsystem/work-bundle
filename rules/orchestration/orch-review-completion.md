@@ -16,13 +16,14 @@ Govern final review, knowledge-update disposition, delegate-return-resume for st
 
 ## Must
 
-- Run review only through `review-plan` after execution, using related active specification, plan, phase, task, handoff, and referenced project files.
+- Run review only through `review-plan` after execution, using related active specification, plan, phase, task, executor-result handoffs, linked legacy orchestration handoffs only when already referenced by the reviewed artifacts, and referenced project files.
 - Validate that specification requirements, plan coverage, handoff evidence, project file changes, validation results, and status indexes are coherent before archival.
-- Validate that executor-result handoffs contain complete and consistent CodeGraph evidence when source-code work required it: index presence, sync command/result, graph query or explored symbol, post-change sync when indexed source changed, accepted no-index or `sync-failed` fallback, and final graph impact result.
-- Validate that executor-result handoffs contain complete and consistent visible delegation evidence when task, phase, or plan ownership was delegated, including `visible_reference` when available and `internal_spawn_used_for_task_delegation: false`.
-- Reject completion when applicable CodeGraph or delegation evidence is missing, incomplete, stale, or contradictory to the implementation scope, target repository state, or execution mode.
+- Validate compact executor-result handoffs by required-by-applicability fields rather than fixed Markdown sections, including changed files or inspected artifacts, validation commands/results, unresolved blockers, task-fit checks, repository/preflight evidence, CodeGraph evidence, and delegation evidence.
+- Validate that executor-result handoffs contain complete and consistent compact CodeGraph evidence when source-code work required it: `root`, `applicable`, `up_to_date`, required fallback or blocker facts, and, for indexed source-code work, index presence, sync/query or explored-symbol evidence, post-change sync when indexed source changed, and final graph impact/up-to-date result.
+- Validate that executor-result handoffs contain complete and consistent `delegation_evidence` when task, phase, or plan ownership was delegated, including delegation surface, `visible_reference` when available, `internal_spawn_used_for_task_delegation: false`, internal helper-worker usage if any, and fallback or blocker reason when visible delegation was unavailable or unsafe.
+- Reject completion when applicable CodeGraph, delegation, validation, blocker, repository/preflight, or task-fit evidence is missing, incomplete, stale, or contradictory to the implementation scope, target repository state, or execution mode.
 - Include `Knowledge Base Update` disposition in specifications and carry disposition, expected durable conclusions, evidence sources, and follow-up path into plans, tasks, and handoff criteria.
-- Collect suggested durable conclusions or explicit `none` in executor-result handoffs.
+- Evaluate `Knowledge Base Update` disposition during review from the specification, plan, implementation evidence, validation evidence, and approved `ks-*` delegate-return evidence; do not require executor-result handoffs to carry durable-knowledge recommendations.
 - assess validated implementation and review evidence for structural updates.
 - delegate mixed structural evidence to ks-extract-valuable-points; use `ks-breakdown-design` only when structural evidence is design-file-only.
 - Provide the target project identity, reviewed specification, plan, relevant handoffs, validation evidence, changed project files or symbols, expected durable conclusions, structural-update summary, and current disposition to the delegated `ks-*` owner.
@@ -60,6 +61,9 @@ Delegate-return-resume protocol:
 - Do not treat missing, incomplete, contradictory, or blocked delegation evidence as completed or not-needed.
 - Do not treat missing, incomplete, contradictory, or blocked CodeGraph sync/query/post-change/fallback evidence as completed when the completed task required CodeGraph evidence.
 - Do not treat missing, incomplete, contradictory, or blocked visible delegation evidence as completed when plan, phase, or task ownership was delegated.
+- Do not fail compact executor-result handoffs merely because Markdown section headings are absent when the applicable structured evidence is present and consistent.
+- Do not require active orchestration handoffs as review inputs; continuation state comes from active specifications, plans, phases, tasks, indexes, and executor-result handoffs.
+- Do not require or accept executor-result durable-knowledge advice fields such as `suggested_durable_conclusions`, `durable_candidate_facts`, `recommended_orchestration_review`, `recommended_next_actions`, `strategy_advice`, or `knowledge_persistence`.
 - Create orchestration plan phases or tasks that write `.work-bundle/knowledge/` directly.
 - Make execution agents browse `.work-bundle/knowledge/` directly.
 - Fix implementation source files when review fails; create a repair specification instead.
@@ -69,8 +73,9 @@ Delegate-return-resume protocol:
 ## Validation
 
 - Confirm review used only allowed context and gateway retrieval when durable knowledge was needed.
-- Confirm required CodeGraph evidence is present and consistent for source-code targets before accepting completion or archival.
-- Confirm required visible delegation evidence is present and consistent before accepting delegated execution completion or archival.
+- Confirm compact executor-result handoffs were validated by field applicability, not fixed Markdown section presence.
+- Confirm required validation, unresolved blocker, task-fit, repository/preflight, CodeGraph, and delegation evidence is present and consistent before accepting completion or archival.
+- Confirm active orchestration handoff input was not required.
 - Confirm structural updates followed delegate-return-resume and returned complete evidence before archive resumed.
 - Confirm final disposition is one of `completed`, `not-needed`, `blocked`, or `required` with supporting evidence.
 - Confirm archive occurred only on success with disposition `completed` or `not-needed`.

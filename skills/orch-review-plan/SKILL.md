@@ -23,7 +23,8 @@ Allowed:
 
 - related active specification under `.work-bundle/orchestration/spec/active/`;
 - related active plan, phase, and task files under `.work-bundle/orchestration/plan/active/`;
-- related executor and orchestration handoffs under `.work-bundle/orchestration/handoff/`;
+- related executor-result handoffs under `.work-bundle/orchestration/handoff/`;
+- legacy orchestration handoffs only when already linked by an active artifact, index row, or repair/review history;
 - project files explicitly referenced by the specification, plan, task files, or handoffs;
 - durable project knowledge only if retrieved through `keep-summarizing` `what-is-helpful` gateway mode.
 
@@ -42,7 +43,6 @@ Resolve:
 - source specification ID/path;
 - all active phase and task files for the plan;
 - task-scoped and phase/plan-scoped executor handoffs;
-- orchestration handoffs that claim review, blockers, or continuation state;
 - relevant project files referenced by the resolved artifacts.
 
 Stop if the plan or source specification cannot be resolved.
@@ -53,7 +53,7 @@ Validate:
 
 1. specification requirements, constraints, interfaces, and acceptance criteria are represented in the plan;
 2. plan phases and tasks cover the specification without unsupported scope expansion;
-3. executor handoffs exist for completed tasks and include files changed, symbols changed, validation, deviations, unresolved issues, and next action;
+3. executor-result handoffs exist for completed or partial task, phase, and plan scopes and include compact fields by applicability: changed files or inspected artifacts, validation commands/results, unresolved blockers, task-fit check, repository/preflight evidence, CodeGraph evidence, and delegation evidence;
 4. phase and plan handoffs exist when those scopes are marked `Completed`;
 5. project files reflect the implementation claimed by the handoffs;
 6. validation evidence satisfies the task, phase, plan, and specification criteria;
@@ -63,9 +63,17 @@ Validate:
 10. validated implementation and review evidence is assessed for structural updates;
 11. the final knowledge-update disposition is one of `completed`, `not-needed`, `blocked`, or `required`, with evidence for that outcome.
 
-For completed source-code tasks, reject review when applicable CodeGraph evidence is missing, stale, contradictory, or marked inapplicable without a reason. Required evidence includes a `codegraph:` block per target repository, `.codegraph/` index presence, `pre_inspection_sync` command/result when indexed, graph query or explored symbol, `post_change_sync` result when indexed source changed, final graph impact result, and an accepted fallback reason such as `no-index` or `sync-failed` when CodeGraph was not used.
+Reject review when a compact executor-result handoff omits applicable safety evidence or marks it inapplicable without a concrete reason. Required-by-applicability checks include:
 
-For delegated task, phase, or plan work, reject review when visible-delegation evidence is missing, contradictory, or marked inapplicable without a reason. Required evidence includes a `delegation:` block, delegation surface, `visible_reference` when the environment provides one, `internal_spawn_used_for_task_delegation: false`, and a fallback or blocker reason when visible threads/worktrees were unavailable or unsafe. Internal helper-worker use is acceptable only when the handoff shows it did not own delegated task execution.
+- `changes.files` when files, symbols, artifacts, schemas, commands, or docs changed or were inspected;
+- `validation.commands` when any command, test, lint, inspection, or intentional skip occurred;
+- `unresolved` when blockers or unresolved issues remain;
+- `task_fit_check` for completed or partial task results, with the assigned task, result, checked specification/root-plan/phase/task artifacts, and meaningful findings;
+- `repository` when preflight, accepted-baseline, changed-path, or blocker state matters for continuation.
+
+For completed source-code tasks, reject review when applicable CodeGraph evidence is missing, stale, contradictory, or marked inapplicable without a reason. Required compact evidence includes a `codegraph:` block per source-code target repository with `root`, `applicable`, `up_to_date`, and the needed fallback or blocker fact. Indexed source-code work must still prove index presence, sync/query or explored-symbol evidence, post-change sync when indexed source changed, and final graph impact/up-to-date result, but review must not require fixed Markdown section headings or verbose field names when the compact evidence is semantically complete. Accepted fallback reasons include `no-index`, `sync-failed`, `not-source-code`, or `blocked`.
+
+For delegated task, phase, or plan work, reject review when visible-delegation evidence is missing, contradictory, or marked inapplicable without a reason. Required evidence is compact `delegation_evidence`, not orchestration advice: delegated flag, delegation surface, `visible_reference` when the environment provides one, `internal_spawn_used_for_task_delegation: false`, internal helper-worker usage if any, and a fallback or blocker reason when visible threads/worktrees were unavailable or unsafe. Internal helper-worker use is acceptable only when the handoff shows it did not own delegated task execution.
 
 ## Delegate-Return-Resume Protocol
 
@@ -106,7 +114,8 @@ The repair specification must be actionable without raw chat history.
 
 If all review checks pass and the knowledge update disposition is `completed` or `not-needed`:
 
-- mark related executor and orchestration handoffs `reviewed`, then archive them;
+- mark related executor-result handoffs `reviewed`, then archive them;
+- archive linked legacy orchestration handoffs only when they are part of the reviewed artifact set;
 - archive the related source specification;
 - archive the related root plan file, phase files, and task files;
 - refresh spec, plan, and handoff indexes;
@@ -174,7 +183,7 @@ Knowledge update disposition: completed|not-needed
 
 ## Validation
 
-Confirm reviewed artifacts match the requested plan, durable knowledge was accessed only through `keep-summarizing` if needed, project file checks are limited to referenced files, applicable CodeGraph evidence is present and consistent or carries an accepted inapplicable/fallback reason, delegated work carries visible-delegation evidence with `visible_reference` when available and `internal_spawn_used_for_task_delegation: false`, failures create a repair specification instead of modifying implementation files, structural updates invoke the delegate-return-resume protocol, delegation returns written or updated paths or an evidence-backed no-write rationale plus index rebuild status, success/archive is allowed only for `Knowledge update disposition: completed` or `Knowledge update disposition: not-needed`, unavailable or incomplete delegation blocks archive with an actionable `ks-extract-valuable-points` next action, review may invoke an approved `ks-*` owner but must not write durable knowledge directly, indexes are refreshed, no files are deleted, and no artifact is written under `.work-bundle/knowledge/`.
+Confirm reviewed artifacts match the requested plan, durable knowledge was accessed only through `keep-summarizing` if needed, project file checks are limited to referenced files, compact executor-result fields are validated by applicability rather than fixed Markdown sections, validation/blocker/task-fit/repository evidence is present when applicable, applicable CodeGraph evidence is present and consistent or carries an accepted inapplicable/fallback reason, delegated work carries `delegation_evidence` with `visible_reference` when available and `internal_spawn_used_for_task_delegation: false`, active orchestration handoff input is not required, failures create a repair specification instead of modifying implementation files, structural updates invoke the delegate-return-resume protocol, delegation returns written or updated paths or an evidence-backed no-write rationale plus index rebuild status, success/archive is allowed only for `Knowledge update disposition: completed` or `Knowledge update disposition: not-needed`, unavailable or incomplete delegation blocks archive with an actionable `ks-extract-valuable-points` next action, review may invoke an approved `ks-*` owner but must not write durable knowledge directly, indexes are refreshed, no files are deleted, and no artifact is written under `.work-bundle/knowledge/`.
 
 ## Runtime Rules
 

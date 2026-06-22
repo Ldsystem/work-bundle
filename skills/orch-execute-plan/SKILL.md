@@ -65,7 +65,7 @@ After repository preflight passes and before graph-derived inspection, delegatio
 - Serialize `codegraph sync` operations for the same repository. Parallel scheduler waves may run implementation work only when no two tasks are syncing or querying the same repository index concurrently.
 - For Git-backed targets, rerun repository preflight after a successful pre-inspection sync and before implementation begins. Any tracked or unignored change caused by sync is unexplained repository mutation and blocks execution. For local-project targets, rerun the local-project preflight evidence check after sync and record the post-sync accessibility state.
 - When a task changes indexed source in a CodeGraph-enabled target, run a post-change `codegraph sync <absolute-repository-root>` before final graph impact validation and before the executor-result handoff. Record post-change sync as passed, failed, skipped, or not-applicable.
-- Executor-result handoffs must record per target: repository root, source, `target_kind`, `preflight_kind`, CodeGraph index presence, applicability decision, pre-inspection sync command/result, graph query or explored symbol, fallback reason when used, post-change sync result when applicable, final graph impact result, and any `sync-failed` fallback.
+- Executor-result handoffs must record compact CodeGraph evidence by applicability. Include repository root, applicability, `up_to_date`, and required fallback or blocker facts such as `no-index`, `sync-failed`, `stale`, or `blocked`; add sync/query detail only when needed to explain a failure or indexed-source impact.
 
 ## Selection
 
@@ -117,12 +117,12 @@ The main agent is the monitor, scheduler, and validator. It should not directly 
    - instruction to record its visible thread/worktree reference when available and `internal_spawn_used_for_task_delegation: false` in the executor-result handoff;
    - instruction to verify its implementation against the related specification, root plan, parent phase, and assigned task before handoff;
    - instruction to repair every task-scoped drift or gap found by that verification, rerun the verification until no task-scoped drift or gap remains, and stop with an explicit blocker when repair would exceed task scope;
-   - instruction to record explicit drift/gap verification evidence in the executor-result handoff, including artifacts checked, findings, repairs, recheck result, and any unresolved out-of-scope issue;
-   - instruction to create an `executor-result` handoff before exit;
+   - instruction to record explicit drift/gap verification evidence through compact `task_fit_check`, including artifacts checked, findings, repairs or clean result, recheck result, and any unresolved out-of-scope issue;
+   - instruction to create a task-scoped sparse YAML `executor-result` handoff before exit, following `orch-handoff-required` and `references/assets/orchestration/contract/handoff-executor-result-v1.md`;
    - instruction to update its task status and the task status in the parent phase file before exit.
 7. Wait for all visible delegated workers in the active wave to finish.
 8. Validate each executor handoff against the task, parent phase, root plan, and source specification.
-9. Accept only handoffs that include assigned task, files/symbols changed, validation evidence, deviations, unresolved issues, visible delegation evidence when delegated, and next action.
+9. Accept only compact executor-result handoffs whose fields satisfy applicability rules: assigned task, result summary, changed files or inspected artifacts, validation evidence, unresolved blockers when present, `task_fit_check`, repository/preflight or accepted-baseline evidence when relevant, compact CodeGraph evidence when source-code work was in scope, and `delegation_evidence` when ownership was delegated or fallback proof is required.
 10. If a handoff is valid and completion criteria are satisfied, mark the task `Completed`; if partial or blocked, mark `On Hold` or keep `In progress` with the blocker.
 11. Refresh task status in the parent phase file and root plan task/phase indexes.
 12. Build the next accepted-handoff baseline only from validated handoff evidence, then continue with the next executable wave until the selected task, phase, or plan is complete or blocked.
@@ -139,7 +139,7 @@ Use this path when visible thread/worktree delegation is not supported or safe.
 - Follow the task file exactly and modify only task-scoped files unless the task explicitly expands scope.
 - Before handoff, verify the implementation against the related specification, root plan, parent phase, and selected task. Repair every task-scoped drift or gap, rerun the verification until it is clean, and record the same explicit drift/gap evidence required from delegated sub-agents. Stop with a blocker when repair would exceed task scope.
 - Run declared validation when possible; otherwise report why it was skipped.
-- Create or explicitly require a task-scoped `executor-result` handoff before exit.
+- Create or explicitly require a task-scoped sparse YAML `executor-result` handoff before exit. Execution-completion handoffs remain no-retrieval artifacts based only on carried spec, plan, phase, task, declared handoff, and task-scoped source/test context.
 - Update the task status and the task status in the parent phase file when criteria are met or a blocker is known.
 - Report the next executable task and stop.
 
@@ -153,14 +153,14 @@ After valid task handoffs show all tasks in a phase are complete:
 - update phase status to `Completed`;
 - update the phase status in the root plan file;
 - invoke `create-handoff` for a phase-scoped `executor-result` handoff;
-- include completed tasks, validation evidence, deviations, blockers, and next executable phase or task.
+- keep the phase handoff compact and applicability-based: completed tasks, changed or inspected artifacts, validation evidence, unresolved blockers when present, repository/CodeGraph/delegation evidence when relevant, and task-fit or phase-fit evidence sufficient for continuation.
 
 After all phases in a plan are complete:
 
 - validate plan completion criteria;
 - update plan status to `Completed`;
 - invoke `create-handoff` for a plan-scoped `executor-result` handoff;
-- include phase summaries, task handoffs, validation evidence, deviations, blockers, and recommended `review-plan` action.
+- keep the plan handoff compact and applicability-based: completed phases, task handoff references, final validation evidence, unresolved blockers when present, repository/CodeGraph/delegation evidence when relevant, and plan-fit evidence sufficient for review.
 
 Do not archive specs, plans, phases, tasks, or handoffs during execution. Archival belongs only to `review-plan`.
 
@@ -212,12 +212,12 @@ Handoffs:
 - <path>
 Status updates:
 - <task|phase|plan id>: <status>
-Next action: <next executable action or review-plan>
+Continuation state: <completed target or next executable target when still in execution scope>
 ```
 
 ## Validation
 
-Confirm repository preflight ran before selection/capability checks/delegation/modification, every target source repository was resolved and recorded separately from the orchestration artifact repository, every target passed initial preflight, rechecks ran before each wave or fallback task, accepted baselines came only from validated executor-result handoffs, unexplained changes blocked execution, no repository cleanup or mutation was attempted, no `.work-bundle/knowledge/` files were loaded or modified, only relevant execution artifacts were loaded, only task-scoped files changed, visible thread/worktree delegation support was checked, `prefer_subagent` remained permission-only and did not bypass visible delegation safety, scheduler mode used multiple visible delegated workers when safe parallel work existed, invisible internal spawn work did not own delegated plan/phase/task execution, fallback mode executed only one task or a `delegation-visibility` blocker was reported, internal helper workers were used only for bounded non-delegated support when present, every delegated or fallback executor verified its implementation against the related specification, root plan, parent phase, and task before handoff, every task-scoped drift or gap was repaired and rechecked, unresolved out-of-scope findings blocked completion, every executor handoff includes explicit drift/gap verification evidence, every delegated executor created an executor handoff with visible delegation evidence and updated task status before exit, accepted handoffs were validated against task/phase/plan/spec, phase and plan handoffs were created when those targets completed, validation status is recorded, deviations and changed symbols are recorded, no more than 2 blocking questions were asked, and no archive operation occurred during execution.
+Confirm repository preflight ran before selection/capability checks/delegation/modification, every target source repository was resolved and recorded separately from the orchestration artifact repository, every target passed initial preflight, rechecks ran before each wave or fallback task, accepted baselines came only from validated executor-result handoffs, unexplained changes blocked execution, no repository cleanup or mutation was attempted, no `.work-bundle/knowledge/` files were loaded or modified, only relevant execution artifacts were loaded, only task-scoped files changed, visible thread/worktree delegation support was checked, `prefer_subagent` remained permission-only and did not bypass visible delegation safety, scheduler mode used multiple visible delegated workers when safe parallel work existed, invisible internal spawn work did not own delegated plan/phase/task execution, fallback mode executed only one task or a `delegation-visibility` blocker was reported, internal helper workers were used only for bounded non-delegated support when present, every delegated or fallback executor verified its implementation against the related specification, root plan, parent phase, and task before handoff, every task-scoped drift or gap was repaired and rechecked, unresolved out-of-scope findings blocked completion, every executor handoff includes compact `task_fit_check` drift/gap verification evidence, every delegated executor created a sparse YAML executor handoff with `delegation_evidence` and updated task status before exit, accepted handoffs were validated against task/phase/plan/spec, phase and plan sparse executor-result handoffs were created when those targets completed, validation status is recorded, changed files or inspected artifacts are recorded, no forbidden executor advice fields are present, no more than 2 blocking questions were asked, and no archive operation occurred during execution.
 
 ## Runtime Rules
 
@@ -256,7 +256,7 @@ Bound plan execution to carried orchestration context and task-scoped project fi
 - Partition independent tasks with disjoint write scopes into scheduler waves; delegate task work only to visible thread/worktree workers when parallel execution is safe.
 - Execute only one task per conversation trip in single-agent fallback mode.
 - Modify only task-scoped files unless the task explicitly expands scope.
-- Require every completed or blocked task, phase, and plan to produce an `executor-result` handoff through `create-handoff` before reporting completion (handoff field requirements: follow `orch-handoff-required`).
+- Require every completed or blocked task, phase, and plan to produce a compact `executor-result` handoff through `create-handoff` before reporting completion (handoff field requirements: follow `orch-handoff-required` and the executor-result contract).
 - Require delegated and fallback executors to verify implementation against the related specification, root plan, parent phase, and task before handoff; repair and recheck every task-scoped drift or gap, block on out-of-scope findings, and record explicit verification evidence in the executor-result handoff.
 - Update task, phase, and plan statuses coherently with validated handoff evidence.
 - Ask at most 2 blocking clarification questions; use declared fallbacks instead of asking when available.

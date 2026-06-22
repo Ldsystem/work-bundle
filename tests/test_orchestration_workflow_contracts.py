@@ -1,16 +1,144 @@
+import argparse
 import json
 from pathlib import Path
+import sys
 
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+ORCHESTRATION_SCRIPT_ROOT = REPO_ROOT / "scripts" / "orchestration"
+sys.path.insert(0, str(ORCHESTRATION_SCRIPT_ROOT))
+
+from handoffs import cmd_write_handoff, index_handoffs
+from doctor import check_active_handoff_contract
 
 
 def text(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
+def orchestration_artifact_text(active_path: str, archived_path: str) -> str:
+    active = REPO_ROOT / active_path
+    if active.exists():
+        return active.read_text(encoding="utf-8")
+    return (REPO_ROOT / archived_path).read_text(encoding="utf-8")
+
+
 def evals(path: str) -> list[dict[str, object]]:
     return json.loads(text(path))["evals"]
+
+
+def handoff_args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
+    values: dict[str, object] = {
+        "project_root": str(tmp_path),
+        "content_file": str(tmp_path / "handoff-content.txt"),
+        "type": "executor-result",
+        "status": "active",
+        "id": "handoff-exec-20990101-001",
+        "title": "Task Result",
+        "format": None,
+        "related_spec": "spec-001",
+        "related_plan": "plan-001",
+        "related_phase": "phase-001",
+        "related_task": "task-001",
+    }
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+def test_handoff_helper_indexes_compact_yaml_executor_result(tmp_path: Path) -> None:
+    content_file = tmp_path / "handoff-content.txt"
+    content_file.write_text(
+        "result:\n"
+        "  state: completed\n"
+        "  summary: Compact helper regression.\n",
+        encoding="utf-8",
+    )
+
+    cmd_write_handoff(handoff_args(tmp_path, content_file=str(content_file)))
+    rows = index_handoffs(handoff_args(tmp_path))
+
+    row = next(item for item in rows if item["id"] == "handoff-exec-20990101-001")
+    assert row["type"] == "executor-result"
+    assert row["status"] == "active"
+    assert row["path"] == (
+        ".work-bundle/orchestration/handoff/executor/active/"
+        "handoff-exec-20990101-001-task-result.yaml"
+    )
+    assert row["project"] == tmp_path.name
+    assert row["created_at"]
+    assert row["updated_at"]
+    assert row["related_spec"] == "spec-001"
+    assert row["related_plan"] == "plan-001"
+    assert row["related_phase"] == "phase-001"
+    assert row["related_task"] == "task-001"
+
+
+def test_handoff_helper_preserves_legacy_markdown_indexing(tmp_path: Path) -> None:
+    legacy = (
+        tmp_path
+        / ".work-bundle"
+        / "orchestration"
+        / "handoff"
+        / "executor"
+        / "archived"
+        / "handoff-exec-20990101-002-legacy.md"
+    )
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(
+        "---\n"
+        "id: handoff-exec-20990101-002\n"
+        "type: executor-result\n"
+        "status: archived\n"
+        f"project: {tmp_path.name}\n"
+        "created_at: 2099-01-01\n"
+        "updated_at: 2099-01-02\n"
+        "related_spec: spec-legacy\n"
+        "related_plan: plan-legacy\n"
+        "related_phase: phase-legacy\n"
+        "related_task: task-legacy\n"
+        "---\n\n"
+        "# Legacy Markdown Handoff\n",
+        encoding="utf-8",
+    )
+
+    rows = index_handoffs(handoff_args(tmp_path))
+
+    row = next(item for item in rows if item["id"] == "handoff-exec-20990101-002")
+    assert row["type"] == "executor-result"
+    assert row["status"] == "archived"
+    assert row["path"] == (
+        ".work-bundle/orchestration/handoff/executor/archived/"
+        "handoff-exec-20990101-002-legacy.md"
+    )
+    assert row["project"] == tmp_path.name
+    assert row["created_at"] == "2099-01-01"
+    assert row["updated_at"] == "2099-01-02"
+    assert row["related_spec"] == "spec-legacy"
+    assert row["related_plan"] == "plan-legacy"
+    assert row["related_phase"] == "phase-legacy"
+    assert row["related_task"] == "task-legacy"
+
+
+def test_handoff_helper_rejects_active_orchestration_handoff_creation(tmp_path: Path) -> None:
+    content_file = tmp_path / "handoff-content.txt"
+    content_file.write_text("# Retired active orchestration handoff\n", encoding="utf-8")
+
+    args = handoff_args(
+        tmp_path,
+        content_file=str(content_file),
+        type="orchestration",
+        id="handoff-orch-20990101-001",
+        title="Retired Orchestration Handoff",
+    )
+
+    with pytest.raises(SystemExit, match="Active orchestration handoff creation is retired"):
+        cmd_write_handoff(args)
+
+    active_orchestration = (
+        tmp_path / ".work-bundle" / "orchestration" / "handoff" / "orchestration" / "active"
+    )
+    assert not list(active_orchestration.glob("handoff-orch-20990101-001*"))
 
 
 def test_review_requires_delegate_return_resume_for_structural_updates() -> None:
@@ -30,7 +158,7 @@ def test_review_blocks_archive_when_delegation_is_unavailable_or_incomplete() ->
 
     assert "delegation cannot run in the active environment or returned evidence is incomplete" in skill
     assert "keeps archive blocked if delegation is unavailable or evidence is incomplete" in workflow
-    assert "only when knowledge-update disposition is `completed` or `not-needed`" in workflow
+    assert "only when Knowledge Base Update disposition is `completed` or `not-needed`" in workflow
 
 
 def test_orchestration_boundary_permits_delegation_but_forbids_direct_knowledge_writes() -> None:
@@ -87,6 +215,64 @@ def test_doctor_skill_keeps_mechanical_checks_separate_from_agent_judgment() -> 
     assert "user-purpose drift" in doctor_skill
     assert "materiality" in doctor_skill
     assert "agent-owned evidence loop needs another round" in doctor_skill
+
+
+def test_doctor_checks_compact_handoffs_and_forbidden_fields_mechanically() -> None:
+    doctor = text("scripts/orchestration/doctor.py")
+    doctor_skill = text("skills/orch-doctor/SKILL.md")
+
+    assert "FORBIDDEN_EXECUTOR_RESULT_FIELDS" in doctor
+    assert "check_active_handoff_contract" in doctor
+    assert "active executor-result handoff contains forbidden field" in doctor
+    assert "Active orchestration handoff creation is retired" in doctor
+    assert "default_format: yaml" in doctor
+    assert "Required By Applicability" in doctor
+    assert "delegation_evidence:" in doctor
+    assert "reason: null | no-index | sync-failed | not-source-code | blocked" in doctor
+    assert "sparse YAML" in doctor_skill
+    assert "must not judge" in doctor_skill
+
+
+def test_doctor_rejects_forbidden_executor_fields_and_active_orchestration_handoffs(
+    tmp_path: Path,
+) -> None:
+    orchestration_root = tmp_path / ".work-bundle" / "orchestration"
+    executor_root = orchestration_root / "handoff" / "executor" / "active"
+    retired_root = orchestration_root / "handoff" / "orchestration" / "active"
+    executor_root.mkdir(parents=True)
+    retired_root.mkdir(parents=True)
+    (executor_root / "handoff-exec-invalid.yaml").write_text(
+        "id: handoff-exec-invalid\nrecommended_next_actions: []\n",
+        encoding="utf-8",
+    )
+    (retired_root / "handoff-orch-invalid.md").write_text(
+        "# Retired active handoff\n",
+        encoding="utf-8",
+    )
+    issues: list[str] = []
+
+    check_active_handoff_contract(issues, orchestration_root)
+
+    assert any("forbidden field recommended_next_actions" in issue for issue in issues)
+    assert any("active orchestration handoff is retired" in issue for issue in issues)
+
+
+def test_executor_result_contract_forbids_legacy_advice_fields() -> None:
+    contract = text("references/assets/orchestration/contract/handoff-executor-result-v1.md")
+    forbidden = (
+        "suggested_durable_conclusions",
+        "durable_candidate_facts",
+        "recommended_orchestration_review",
+        "recommended_next_actions",
+        "delegation",
+        "deviations",
+        "strategy_advice",
+        "knowledge_persistence",
+    )
+
+    assert "Forbidden Executor-Result Fields" in contract
+    for field in forbidden:
+        assert f"{field}:" in contract
 
 
 def test_orchestration_evals_cover_preflight_and_review_delegation_regressions() -> None:
@@ -184,11 +370,11 @@ def test_execute_plan_requires_executor_drift_gap_verification_and_preserves_fal
     assert "single-agent fallback" in skill
     assert "Never allow `prefer_subagent` to bypass visible delegation safety" in skill
 
-    assert "dedicated drift/gap verification section" in rule
-    assert "post-repair recheck result" in rule
-    assert "## 5. Drift / Gap Verification" in contract
-    assert "Final drift/gap result: `clean|blocked`" in contract
-    assert "HANDOFF-DONE-007" in contract
+    assert "`task_fit_check` naming the related task" in rule
+    assert "explicit spec/root-plan/phase/task drift-gap verification evidence" in rule
+    assert "task_fit_check:" in contract
+    assert "artifacts_checked:" in contract
+    assert "result: clean | repaired | unresolved | skipped" in contract
 
 
 def test_execute_plan_requires_codegraph_preflight_and_no_index_fallback_contract() -> None:
@@ -215,12 +401,12 @@ def test_execute_plan_requires_codegraph_preflight_and_no_index_fallback_contrac
     assert "Same-repository sync operations are serialized" in workflow
     assert "local-project targets rerun local-project preflight evidence" in workflow
 
-    assert "pre-inspection `codegraph sync <repo-root>` command and result" in handoff_rule
+    assert "include compact CodeGraph evidence when source-code inspection or edits were in scope" in handoff_rule
     assert "explicitly record no-index fallback" in handoff_rule
-    assert "target_kind: git-backed|local-project" in handoff_contract
-    assert "pre_inspection_sync:" in handoff_contract
-    assert "post_change_sync:" in handoff_contract
-    assert "decision_reason: null|no-index|not-source-code|sync-failed|<short reason>" in handoff_contract
+    assert "root: /absolute/path" in handoff_contract
+    assert "applicable: true | false" in handoff_contract
+    assert "up_to_date: true | false" in handoff_contract
+    assert "reason: null | no-index | sync-failed | not-source-code | blocked" in handoff_contract
 
 
 def test_execute_plan_requires_visible_delegation_and_allows_helpers_only() -> None:
@@ -242,32 +428,36 @@ def test_execute_plan_requires_visible_delegation_and_allows_helpers_only() -> N
     assert "Invisible internal spawn work must not own delegated implementation work" in workflow
     assert "Internal helper workers remain allowed for bounded analysis" in workflow
 
-    assert "include delegation evidence when a task, phase, or plan was delegated" in handoff_rule
+    assert "`delegation_evidence` only as proof of task ownership delegation" in handoff_rule
     assert "record contradictory delegation evidence such as `internal_spawn_used_for_task_delegation: true`" in handoff_rule
-    assert "visible_reference: \"<thread id, worktree path, or user-visible label>\"|null" in handoff_contract
+    assert "visible_reference: null" in handoff_contract
     assert "internal_spawn_used_for_task_delegation: false" in handoff_contract
-    assert "internal_workers_used_for_support:" in handoff_contract
+    assert "internal_workers_used_for_support: false" in handoff_contract
 
     assert "reject review when visible-delegation evidence is missing" in review_skill
     assert "Internal helper-worker use is acceptable only when the handoff shows it did not own delegated task execution" in review_skill
 
 
 def test_orchestration_scope_does_not_add_execution_context_or_retrieval_dependency() -> None:
-    spec = text(".work-bundle/orchestration/spec/active/spec-process-codegraph-refresh-visible-delegation-20260621.md")
-    plan = text(".work-bundle/orchestration/plan/active/process-orchestration-execution-safety-v1.md")
+    spec = orchestration_artifact_text(
+        ".work-bundle/orchestration/spec/active/spec-process-compact-executor-handoff-optimization-20260622.md",
+        ".work-bundle/orchestration/spec/archived/spec-process-compact-executor-handoff-optimization-20260622.md",
+    )
+    plan = orchestration_artifact_text(
+        ".work-bundle/orchestration/plan/active/process-orchestration-compact-handoff-v1.md",
+        ".work-bundle/orchestration/plan/archived/process-orchestration-compact-handoff-v1.md",
+    )
     skill = text("skills/orch-execute-plan/SKILL.md")
     workflow = text("references/assets/orchestration/workflow.md")
 
     for artifact in (spec, plan):
-        assert ".work-bundle/knowledge/**" in artifact
+        assert ".work-bundle/knowledge/" in artifact
 
     assert ".work-bundle/knowledge/" in skill
-    assert "Developing the broader execution-context artifact, schema, index, lifecycle, or archive behavior" in spec
-    assert "Adding `.work-bundle/orchestration/execution-state/` context files or context indexes" in spec
-    assert "DF-001" in plan
+    assert "execution remains no-retrieval" in spec
+    assert "executors must not read `.work-bundle/knowledge/`" in plan
     assert "Do not create execution-state/context artifacts" not in workflow
     assert ".work-bundle/orchestration/execution-state" not in workflow
-    assert "Execution-context artifact work is absent from the implementation scope" in spec
     assert "Execution must use context already carried by the specification, plan, phase, task, and declared handoffs" in skill
     assert "must not run v3 retrieval queries" in skill
 
@@ -292,6 +482,15 @@ def test_orchestration_evals_cover_delegated_executor_verification_and_fallback(
     assert "delegated sub-agent" in prompts
     assert "repairs the task-scoped gap and repeats verification before handoff" in expected
     assert "preserves single-agent fallback" in expected
+
+
+def test_orchestration_evals_cover_sparse_yaml_and_retired_active_handoffs() -> None:
+    cases = evals("references/evals/orchestration/evals.json")
+    expected = "\n".join(str(case["expected_output"]) for case in cases)
+
+    assert "sparse YAML" in expected
+    assert "active orchestration handoff" in expected
+    assert "forbidden executor advice fields" in expected
 
 
 def test_orchestration_evals_cover_codegraph_and_no_retrieval_fallback() -> None:

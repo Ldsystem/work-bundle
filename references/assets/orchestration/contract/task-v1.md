@@ -73,10 +73,10 @@ When source-code inspection or edits are in scope, include concise task-level Co
 - require `post_change_sync` before final graph impact validation when indexed source changes;
 - require accepted fallback evidence such as `no-index` or `sync-failed` when CodeGraph is not used.
 
-When task ownership may be delegated, include concise delegation expectations:
+When task ownership may be delegated, include concise delegation evidence expectations:
 
 - require visible thread/worktree delegation when delegation is used;
-- require a `delegation:` evidence block in the executor-result handoff;
+- require a `delegation_evidence:` block in the executor-result handoff;
 - require `visible_reference` when the environment provides one;
 - require `internal_spawn_used_for_task_delegation: false`;
 - allow internal helper workers only when they do not own delegated task execution.
@@ -102,4 +102,4 @@ Repair generated task drift, missing coverage, invalid dependencies, broad or in
 - **DONE-GOAL-001**: All goals in `## 1. Goals` are achieved with concrete evidence.
 - **DONE-TEST-001**: Required tests pass or failures are documented with remediation task.
 - **DONE-VERIFY-001**: This generated task artifact was verified against the source specification, root plan, and parent phase for spec-ID coverage, exact paths, dependencies, validation, and handoff requirements.
-- **DONE-HANDOFF-001**: Executor invokes `create-handoff` and creates a task-scoped `executor-result` handoff under `.work-bundle/orchestration/handoff/executor/active/` before reporting this task as completed or blocked.
+- **DONE-HANDOFF-001**: Executor invokes `create-handoff` and creates a compact task-scoped `executor-result` handoff under `.work-bundle/orchestration/handoff/executor/active/` before reporting this task as completed or blocked. The handoff is sparse YAML by default and includes only applicable changed-file, validation, unresolved-blocker, task-fit, repository, CodeGraph, delegation_evidence, and Knowledge Base Update disposition carry-forward fields.

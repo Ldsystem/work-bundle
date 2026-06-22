@@ -1,32 +1,24 @@
 ---
-id: handoff-orch-YYYYMMDD-001
-type: orchestration
-status: active
-project: <project-slug>
-created_at: YYYY-MM-DD
-source_context:
-  - conversation
-next_agent: orchestration-agent
+id: handoff-orchestration-v1
+type: contract
+status: legacy
+artifact_type: orchestration-handoff
+active_creation: false
 ---
 
-# Orchestration Handoff: <Title>
+# Orchestration Handoff Contract
 
-## Current objective
+This contract is legacy-only. It remains as compatibility documentation for existing archived or historical `handoff-orch-*` artifacts, but the active workflow must not create new orchestration handoffs.
 
-## Decisions made
+Continuation state now comes from active specifications, plans, phases, tasks, indexes, and compact `executor-result` handoffs.
 
-## Current implementation scope
+## Active Workflow Rule
 
-## Files / artifacts involved
+- Do not create new active `handoff-orch-*` artifacts.
+- Do not advertise orchestration handoffs as an active continuation feature.
+- Do not require orchestration handoffs for execution, review, or archive readiness.
+- Keep existing archived or historical orchestration handoffs readable and indexable during migration.
 
-## Current risks
+## Legacy Shape
 
-## Open questions
-
-## Recommended next action
-
-## Do not redo
-
-## Relevant durable knowledge
-
-## Relevant working artifacts
+Historical orchestration handoffs may contain narrative sections such as current objective, decisions made, implementation scope, risks, open questions, recommended next action, and related working artifacts. These sections are not an active creation template.

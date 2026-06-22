@@ -28,7 +28,7 @@
     {
       "id": 5,
       "prompt": "Create an executor-result handoff after implementation.",
-      "expected_output": "Selects create-handoff, writes executor-result handoffs under .work-bundle/orchestration/handoff/executor/active/, updates handoff index, and does not retrieve or write durable knowledge during execution completion.",
+      "expected_output": "Selects create-handoff, writes a sparse YAML executor-result handoff under .work-bundle/orchestration/handoff/executor/active/, includes fields by applicability, rejects forbidden executor advice fields, updates the handoff index, and does not create an active orchestration handoff or retrieve durable knowledge during execution completion.",
       "files": []
     },
     {
@@ -40,13 +40,13 @@
     {
       "id": 7,
       "prompt": "A sub-agent reports completion but its executor handoff omits validation evidence.",
-      "expected_output": "Rejects the handoff as invalid, does not mark the task complete, records the blocker, and requires a corrected executor handoff before advancing.",
+      "expected_output": "Rejects the compact handoff as invalid by applicability, does not mark the task complete, records the blocker, and requires corrected sparse YAML validation evidence before advancing.",
       "files": []
     },
     {
       "id": 8,
       "prompt": "Finish the last task in a phase and then the last phase in a plan.",
-      "expected_output": "Creates phase-scoped and plan-scoped executor-result handoffs, updates phase and plan statuses to Completed, reports review-plan as the next action, and does not archive artifacts.",
+      "expected_output": "Creates sparse YAML phase-scoped and plan-scoped executor-result handoffs, updates phase and plan statuses to Completed, does not create an active orchestration handoff, reports review-plan as the next action, and does not archive artifacts.",
       "files": []
     },
     {
@@ -58,7 +58,7 @@
     {
       "id": 10,
       "prompt": "Review an implemented plan where all specification, plan, handoff, and project file checks pass.",
-      "expected_output": "Selects review-plan, archives the related specification, plan tree, and handoffs, refreshes indexes, and reports review-complete without deleting files.",
+      "expected_output": "Selects review-plan, validates compact executor-result fields by applicability without requiring an active orchestration handoff, archives the related specification, plan tree, and handoffs, refreshes indexes, and reports review-complete without deleting files.",
       "files": []
     },
     {
@@ -130,7 +130,7 @@
     {
       "id": 22,
       "prompt": "Execute a plan task with a delegated sub-agent, then prepare its executor-result handoff after implementation reveals a task-scoped gap.",
-      "expected_output": "Preserves repository preflight, accepted-baseline, dependency, and disjoint write-scope checks; instructs the delegated sub-agent to verify against the related specification, root plan, parent phase, and task; repairs the task-scoped gap and repeats verification before handoff; records explicit findings, repairs, and clean recheck evidence in the executor-result handoff; and preserves single-agent fallback without treating unavailable sub-agents as failure.",
+      "expected_output": "Preserves repository preflight, accepted-baseline, dependency, and disjoint write-scope checks; instructs the delegated sub-agent to verify against the related specification, root plan, parent phase, and task; repairs the task-scoped gap and repeats verification before handoff; records compact task_fit_check findings, repairs, and clean recheck evidence in sparse YAML; and preserves single-agent fallback without treating unavailable sub-agents as failure.",
       "files": []
     },
     {
@@ -142,49 +142,49 @@
     {
       "id": 24,
       "prompt": "Execute a task whose write scope resolves to one indexed repository and one repository without a .codegraph directory.",
-      "expected_output": "Selects execute-plan, records independent CodeGraph decisions per target, runs sync only for the indexed repository after preflight, records no-index fallback for the unindexed repository, and does not initialize CodeGraph.",
+      "expected_output": "Selects execute-plan, records independent compact CodeGraph evidence per target, runs sync only for the indexed repository after preflight, records no-index with applicable false and up_to_date false for the unindexed repository, and does not initialize CodeGraph.",
       "files": []
     },
     {
       "id": 25,
       "prompt": "Execute a source-inspection task in an indexed Git repository where codegraph sync succeeds.",
-      "expected_output": "Runs repository preflight first, then codegraph sync with the absolute repository root, performs a task-relevant graph query before broad inspection or editing, reruns preflight after sync, and records sync/query evidence in the executor-result handoff.",
+      "expected_output": "Runs repository preflight first, then codegraph sync with the absolute repository root, performs a task-relevant graph query before broad inspection or editing, reruns preflight after sync, and records compact root, applicability, up_to_date, and required sync/query evidence in the executor-result handoff.",
       "files": []
     },
     {
       "id": 26,
       "prompt": "Execute a source-inspection task where codegraph sync fails and strict graph gating is not required.",
-      "expected_output": "Records sync-failed, uses bounded direct-file or text-search fallback, continues only after preserving repository preflight and scope checks, and includes the sync failure and fallback reason in the executor-result handoff.",
+      "expected_output": "Records compact sync-failed CodeGraph evidence, uses bounded direct-file or text-search fallback, continues only after preserving repository preflight and scope checks, and includes only the required failure and fallback facts in the executor-result handoff.",
       "files": []
     },
     {
       "id": 27,
       "prompt": "Complete a task that changed indexed source files in a CodeGraph-enabled Git repository.",
-      "expected_output": "Runs post-change codegraph sync before final graph impact validation and before the executor-result handoff, records the post-change sync result, and blocks if sync causes unexplained tracked or unignored Git changes.",
+      "expected_output": "Runs post-change codegraph sync before final graph impact validation and before the executor-result handoff, records compact up_to_date or blocker evidence, and blocks if sync causes unexplained tracked or unignored Git changes.",
       "files": []
     },
     {
       "id": 28,
       "prompt": "Schedule two parallel tasks that both target the same CodeGraph-enabled repository.",
-      "expected_output": "Serializes codegraph sync operations for that repository, avoids concurrent access to the same index, permits only safe parallel implementation work after sync/query gates, and records per-task repository evidence.",
+      "expected_output": "Serializes codegraph sync operations for that repository, avoids concurrent access to the same index, permits only safe parallel implementation work after sync/query gates, and records compact per-task repository and CodeGraph evidence.",
       "files": []
     },
     {
       "id": 29,
       "prompt": "Execute a scheduler wave with visible thread delegation available and safe disjoint task scopes.",
-      "expected_output": "Delegates task ownership only to visible threads or worktrees, records each visible_reference when provided, sets internal_spawn_used_for_task_delegation to false, validates executor handoffs, and preserves preflight and scope gates.",
+      "expected_output": "Delegates task ownership only to visible threads or worktrees, records compact delegation_evidence with each visible_reference when provided, sets internal_spawn_used_for_task_delegation to false, validates sparse executor-result handoffs, and preserves preflight and scope gates.",
       "files": []
     },
     {
       "id": 30,
       "prompt": "Execute a plan task when only invisible internal spawn workers are available for delegation.",
-      "expected_output": "Rejects invisible internal spawn workers as the task delegation vehicle, uses single-agent fallback for one task when valid or reports a delegation-visibility blocker, and does not mark delegated execution complete without visible delegation evidence.",
+      "expected_output": "Rejects invisible internal spawn workers as the task delegation vehicle, uses single-agent fallback for one task when valid or reports a delegation-visibility blocker, and does not mark delegated execution complete without compact visible delegation_evidence.",
       "files": []
     },
     {
       "id": 31,
       "prompt": "Execute a delegated task while an internal helper worker is used only for bounded snippet comparison.",
-      "expected_output": "Allows the helper-worker support because visible thread or worktree ownership remains intact, records internal helper usage separately, keeps internal_spawn_used_for_task_delegation false, and requires the visible executor handoff to own validation and drift-gap evidence.",
+      "expected_output": "Allows the helper-worker support because visible thread or worktree ownership remains intact, records internal helper usage in compact delegation_evidence, keeps internal_spawn_used_for_task_delegation false, and requires the visible executor handoff to own validation and task_fit_check evidence.",
       "files": []
     }
   ],

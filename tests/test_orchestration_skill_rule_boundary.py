@@ -83,7 +83,6 @@ def test_create_specification_keeps_quality_gate_terms_and_rule_loading() -> Non
     assert "## Runtime Rules" in skill
     assert "## Rule Loading (mandatory)" in skill
     assert "`orch-orchestration-boundary`" in skill
-    assert "`orch-handoff-required`" in skill
     assert "Extra evidence loop" in skill
     assert "Quality gate: verified|blocked" in skill
     assert "material non-authority" in skill
@@ -100,3 +99,8 @@ def test_orch_doctor_declares_full_quality_gate_and_forbidden_dependency_checks(
     assert "active orchestration contracts do not depend on `HABITS.md`" in skill
     assert "deprecated role-selection subsystem" in skill
     assert "must not judge" in skill
+    assert "sparse YAML" in skill
+    assert "forbidden executor advice fields" in skill
+    assert "active orchestration handoffs" in skill
+    assert "delegation_evidence" in skill
+    assert "`root`, `applicable`, `up_to_date`" in skill
