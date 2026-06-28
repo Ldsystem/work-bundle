@@ -1,1 +1,12 @@
-projects: []
+projects:
+  - slug: <project-slug>
+    name: <project-name>
+    work_bundle_root: <path to the project scope `.work-bundle/` dir, default to `$project_root/.work-bundle`>
+    knowledge_root: <path to the knowledge base of the project, default to `$project_root/.work-bundle/knowledge/`>
+    aliases: []
+    source_repositories:
+      - path: <path to source repository 1>
+        work_dir: <boolean type, indicates, whether the repository is work directory>
+        remote: ""
+    status: active
+    updated_at: 2026-05-18
