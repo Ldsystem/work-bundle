@@ -48,12 +48,12 @@ The user explicitly requests persistence or gave a strong persist signal.
 3. Read `references/assets/keep-summarizing/perspectives.md` for leaf path validation.
 4. Validate target is a specific leaf perspective, not a broad container.
 5. Validate granularity: one durable question per note.
-6. Check registry/index entries and note bodies for duplicates or conflicts.
+6. Check duplicates or conflicts through the approved query surface using neutral artifact, feature, functionality, component, file, API, schema, workflow, or explicit-name anchors. Do not browse JSONL indexes as the exploration path; JSONL remains a derived compatibility index.
 7. Ask before overwriting, replacing, or deprecating a conflicting `current` note.
 8. If the point duplicates an existing durable fact, choose or ask for one canonical note; use a short linked stub in secondary perspectives when useful.
 9. If source is implementation- or interface-shaped but contains stable domain semantics, extract into domain/workflow/data/validation/source-of-truth notes first.
 10. Write only after target path, lifecycle status, and content boundaries are explicit.
-11. Rebuild indexes via `ks-maintain-indexes`.
+11. Rebuild indexes via `ks-maintain-indexes`; completion requires vector-inclusive derived index status when relevant.
 
 Apply loaded Runtime Rules:
 

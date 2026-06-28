@@ -201,8 +201,9 @@ def test_doctor_checks_complete_quality_gate_contract_structurally() -> None:
     assert "targeted repository root contains `.codegraph/`" in doctor
     assert "Before execution selection, capability checks, delegation, or implementation changes" in doctor
     assert 'forbidden_runtime_file = "HAB" "ITS.md"' in doctor
-    assert "discover across every allowed lifecycle partition" in doctor
-    assert "use `retrieval_role` exactly" in doctor
+    assert "neutral-cross-stage" in doctor
+    assert "classification/output intent" in doctor
+    assert "semantic relevance, authority, polarity, conflict, materiality" in doctor
     assert "Do not convert non-authority results into requirements" in doctor
 
 
@@ -316,6 +317,45 @@ def test_orchestration_workflow_requires_verified_specification_gate_before_plan
     assert "verified quality gate is required before `orch-create-implementation-plan`" in workflow.lower()
 
 
+def test_orchestration_gateway_policy_is_not_discovery_stage_gate() -> None:
+    skill = text("skills/orch-create-specification/SKILL.md")
+    gateway_rule = text("rules/orchestration/orch-knowledge-gateway.md")
+    workflow = text("references/assets/orchestration/workflow.md")
+    contract = text("references/assets/orchestration/contract/specification-v1.md")
+    core = text("scripts/orchestration/core.py")
+
+    for artifact in (skill, workflow, contract):
+        assert "neutral" in artifact
+        assert "cross-stage" in artifact
+        assert "classification" in artifact
+        assert "output" in artifact
+    assert "polarity-neutral" in gateway_rule
+    assert "allowed lifecycle partitions" in gateway_rule
+    assert "classification" in gateway_rule
+
+    assert "must not discovery-filter candidates to that lifecycle stage" in skill
+    assert "Apply retrieval policy per directive as classification and output-grouping intent, not as a discovery-stage lifecycle filter" in gateway_rule
+    assert "not stage-gated discovery filters" in workflow
+    assert "classification/output intent rather than a discovery-stage filter" in contract
+    assert '"discovery": "neutral-cross-stage"' in core
+    assert '"usage": "classification-output-intent"' in core
+
+
+def test_orchestration_gateway_surfaces_conflicts_without_downstream_lookup() -> None:
+    skill = text("skills/orch-create-specification/SKILL.md")
+    gateway_rule = text("rules/orchestration/orch-knowledge-gateway.md")
+    workflow = text("references/assets/orchestration/workflow.md")
+    contract = text("references/assets/orchestration/contract/specification-v1.md")
+
+    assert "supporting, opposing, constraining, unresolved/open-question" in skill
+    assert "Candidate, background, and blocked evidence is non-shaping by default" in skill
+    assert "Treat `blocked` context as non-shaping evidence" in gateway_rule
+    assert "future knowledge-base lookup" in skill
+    assert "future knowledge-base lookup" in gateway_rule
+    assert "must not read `.work-bundle/knowledge/` directly" in workflow
+    assert "downstream planning and execution do not need to read `.work-bundle/knowledge/`" in contract
+
+
 def test_create_implementation_plan_requires_generated_artifact_verification_and_repair() -> None:
     skill = text("skills/orch-create-implementation-plan/SKILL.md")
     workflow = text("references/assets/orchestration/workflow.md")
@@ -359,6 +399,21 @@ def test_orchestration_evals_cover_create_specification_quality_gate_cases() -> 
     assert "does not block solely because no supporting note exists" in expected
     assert "does not promote the candidate into requirements" in expected
     assert "records `Quality gate: verified`" in expected
+
+
+def test_orchestration_evals_cover_no_stage_gate_conflict_and_downstream_no_lookup() -> None:
+    cases = evals("references/evals/orchestration/evals.json")
+    prompts = "\n".join(str(case["prompt"]) for case in cases)
+    expected = "\n".join(str(case["expected_output"]) for case in cases)
+
+    assert "outside the implementation_spec lifecycle" in prompts
+    assert "authority evidence materially opposes" in prompts
+    assert "downstream plan tasks from a verified specification" in prompts
+    assert "neutral cross-stage discovery" in expected
+    assert "classification and output-grouping intent" in expected
+    assert "does not discovery-filter candidates to implementation_spec lifecycle partitions" in expected
+    assert "opposing or constraining evidence" in expected
+    assert "does not require downstream knowledge-base lookup" in expected
 
 
 def test_execute_plan_requires_executor_drift_gap_verification_and_preserves_fallback() -> None:

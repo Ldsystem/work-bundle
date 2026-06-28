@@ -72,6 +72,30 @@
       "prompt": "Use what-is-helpful gateway mode for an implementation_plan query where relevant notes exist in customer-design, development-design, implementation, and operation lifecycle partitions with mixed current, proposed, rejected, and superseded statuses.",
       "expected_output": "Discovers relevant candidates across all allowed lifecycle partitions before lifecycle and status authority classification, validates materially relevant candidates, returns the smallest useful classified set grouped as authority, candidate, background, or blocked, allows only authority to shape the implementation plan, and keeps relevant non-authority notes visible with uncertainty or incompatibility rationale.",
       "files": []
+    },
+    {
+      "id": 13,
+      "prompt": "Use what-is-helpful gateway mode for a knowledge retrieval optimization task. Build the query from feature and workflow anchors, then retrieve candidates that match exact terms and semantic wording.",
+      "expected_output": "Forms polarity-neutral and stage/perspective/status-neutral anchors from the requested artifact, feature, functionality, component, file, API, schema, workflow, or explicit names; uses the approved ks.py query surface for hybrid SQLite FTS plus vector candidate discovery; and treats vector distance, FTS rank, fusion rank, and policy hints as mechanical retrieval metadata only.",
+      "files": []
+    },
+    {
+      "id": 14,
+      "prompt": "Durable notes changed after a keep-summarizing write. Refresh indexes for project alpha and report completion.",
+      "expected_output": "Runs index maintenance through ks-maintain-indexes, rebuilds or reports status for document registry, chunk registry, SQLite FTS, vector index artifacts, embedding manifest or chunk hashes, and open-question registry when relevant, and reports vector status as rebuilt, unavailable, skipped, or failed before claiming completion.",
+      "files": []
+    },
+    {
+      "id": 15,
+      "prompt": "Before writing a new note, check whether existing knowledge duplicates or conflicts with this feature. Use any index data that helps.",
+      "expected_output": "Checks duplicates and conflicts through approved neutral query surfaces, does not browse document-registry.jsonl, chunk-registry.jsonl, or open-question-registry.jsonl as the exploration surface, and keeps JSONL files as maintained machine-readable derived outputs.",
+      "files": []
+    },
+    {
+      "id": 16,
+      "prompt": "A hybrid query returns one candidate with close vector distance and another note that appears to oppose the requested workflow change. Decide what the output should say.",
+      "expected_output": "Uses script output only as mechanical candidates and trace evidence; the agent classifies relevance, authority, polarity, materiality, and blocker status; surfaces opposing or constraining evidence when material; and leaves unresolved material conflicts for the user instead of letting scripts or vector similarity decide truth.",
+      "files": []
     }
   ],
   "v4_evals": [

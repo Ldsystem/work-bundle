@@ -35,9 +35,11 @@ Before any long evidence gathering, create the specification shell with front ma
 
 ## 4. Source Context
 
-[Record the evidence used before drafting. Include durable knowledge gateway results grouped by `authority`, `candidate`, `background`, and `blocked`, plus current repository evidence with path, role, and relevance. Only `authority` durable knowledge may shape requirements, constraints, acceptance criteria, or downstream tasks.]
+[Record the evidence used before drafting. Include durable knowledge gateway results grouped by `authority`, `candidate`, `background`, and `blocked`, plus current repository evidence with path, role, and relevance. Durable knowledge discovery for specification creation must be neutral and cross-stage: record neutral query anchors, candidate sources or retrieval gaps, and the active retrieval policy as classification/output intent rather than a discovery-stage filter. Only `authority` durable knowledge may shape requirements, constraints, acceptance criteria, or downstream tasks.]
 
 When no supporting authority note exists for the user purpose, record the retrieval gap and analyze the purpose from user input and repository evidence. Use Design Interrogation only for unresolved design intent that cannot be answered from current evidence.
+
+When material non-authority evidence appears, record agent-owned polarity and materiality classification as supporting, opposing, constraining, unresolved/open-question, obsolete/replaced, or irrelevant-with-reason evidence. Candidate, background, and blocked evidence must remain non-shaping unless resolved by the user or promoted by accepted authority.
 
 ### 4.1 Design Interrogation
 
@@ -163,6 +165,8 @@ Set disposition to `required` when accepted Design Interrogation conclusions est
 - The generated specification includes `Initial User Purpose Evidence` sourced from the current user request and visible supplied artifacts only.
 - The generated specification includes `Draft Requirement Breakdown` and revises it after bounded evidence gathering.
 - The specification remains self-contained and does not require broad repository exploration before the shell exists.
+- The source context records neutral cross-stage retrieval anchors or a retrieval gap, and any named retrieval policy is used only for classification/output grouping.
+- The specification carries accepted authority context forward so downstream planning and execution do not need to read `.work-bundle/knowledge/`.
 
 ## 15. Quality Gate
 

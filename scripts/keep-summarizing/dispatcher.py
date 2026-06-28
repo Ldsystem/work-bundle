@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 
+from core import RETRIEVAL_POLICY_HINTS
 from doctor import cmd_doctor
 from git_ops import cmd_git
 from indexes import cmd_index, cmd_index_open_questions
@@ -47,9 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
     index.set_defaults(func=cmd_index)
     query = sub.add_parser("query")
     query.add_argument("--project", required=True)
-    query.add_argument("--target", required=True, choices=["implementation_spec", "implementation_plan", "execution", "customer_spec", "bidding", "deployment", "operation"])
+    query.add_argument("--target", choices=sorted(RETRIEVAL_POLICY_HINTS))
     query.add_argument("--query", required=True)
-    query.add_argument("--mode", default="authority")
+    query.add_argument("--mode", default="neutral")
     query.add_argument("--limit", type=int, default=20)
     query.add_argument("--include-background", action="store_true")
     add_resolution_args(query)

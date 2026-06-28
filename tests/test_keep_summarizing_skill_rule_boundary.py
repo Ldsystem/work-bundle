@@ -124,3 +124,107 @@ def test_skill_owned_sections_present() -> None:
     for slug, section in expected.items():
         text = skill_text(REPO_ROOT / "skills" / slug / "SKILL.md")
         assert f"## {section}" in text, slug
+
+
+def assert_contains_all(text: str, expected: tuple[str, ...], label: str) -> None:
+    for phrase in expected:
+        assert phrase in text, f"{label} missing phrase: {phrase}"
+
+
+def test_ks_what_is_helpful_uses_neutral_hybrid_retrieval() -> None:
+    text = skill_text(REPO_ROOT / "skills/ks-what-is-helpful/SKILL.md")
+    assert_contains_all(
+        text,
+        (
+            "Form neutral anchors",
+            "Do not add lifecycle stage, perspective, status, support/oppose",
+            "Hybrid candidate matching",
+            "scripts/ks.py query --project <slug> --query <neutral-query> --include-background",
+            "SQLite FTS",
+            "vector index status",
+            "bounded expansion",
+        ),
+        "ks-what-is-helpful",
+    )
+
+
+def test_ks_what_is_helpful_keeps_classification_agent_owned() -> None:
+    text = skill_text(REPO_ROOT / "skills/ks-what-is-helpful/SKILL.md")
+    assert_contains_all(
+        text,
+        (
+            "Scripts must not decide semantic relevance, authority, polarity, conflict, materiality, truth confidence, or blocker status.",
+            "Agents own this classification",
+            "users resolve material conflicts",
+            "A retrieval policy is caller intent for later classification, not a discovery-stage filter.",
+            "Treat `--target` as `policy_hint`; do not use it to hide discovery candidates.",
+        ),
+        "ks-what-is-helpful",
+    )
+
+
+def test_keep_summarizing_artifacts_forbid_jsonl_exploration() -> None:
+    artifacts = {
+        "workflow": REPO_ROOT / "references/assets/keep-summarizing/workflow.md",
+        "ks-what-is-helpful": REPO_ROOT / "skills/ks-what-is-helpful/SKILL.md",
+        "ks-write-knowledge": REPO_ROOT / "skills/ks-write-knowledge/SKILL.md",
+        "ks-extract-valuable-points": REPO_ROOT
+        / "skills/ks-extract-valuable-points/SKILL.md",
+    }
+    for label, path in artifacts.items():
+        text = skill_text(path)
+        assert "JSONL" in text, label
+        assert "not broad JSONL browsing" in text or "Do not browse JSONL indexes as the exploration" in text or "must not browse `document-registry.jsonl`" in text, label
+
+
+def test_ks_maintain_indexes_reports_vector_status() -> None:
+    skill = skill_text(REPO_ROOT / "skills/ks-maintain-indexes/SKILL.md")
+    rule = skill_text(REPO_ROOT / "rules/keep-summarizing/ks-index-maintenance.md")
+    assert_contains_all(
+        skill,
+        (
+            "document registry",
+            "chunk registry",
+            "SQLite FTS",
+            "vector index artifacts",
+            "embedding manifest",
+            "open-question registry",
+            "rebuilt",
+            "unavailable",
+            "skipped",
+            "failed",
+        ),
+        "ks-maintain-indexes",
+    )
+    assert_contains_all(
+        rule,
+        (
+            "`indexes/document-registry.jsonl`",
+            "`indexes/chunk-registry.jsonl`",
+            "`indexes/embedding-manifest.json`",
+            "`indexes/knowledge.sqlite`",
+            "vector tables or vector-sidecar artifacts",
+            "`indexes/open-question-registry.jsonl`",
+            "rebuilt",
+            "unavailable",
+            "skipped",
+            "failed",
+        ),
+        "ks-index-maintenance",
+    )
+
+
+def test_ks_note_authority_surfaces_opposing_and_constraining_evidence() -> None:
+    text = skill_text(REPO_ROOT / "rules/keep-summarizing/ks-note-state-authority.md")
+    assert_contains_all(
+        text,
+        (
+            "neutral artifact, feature, functionality, component, file, API, schema, workflow, or explicit-name anchors",
+            "mechanical candidate metadata only",
+            "agents classify relevance, authority, polarity, materiality, and blocker status",
+            "supporting opposing constraining irrelevant-with-reason",
+            "material opposing or constraining evidence is surfaced",
+            "prefilter relevant discovery candidates by retrieval policy target, vector distance, FTS rank, perspective, or status",
+        ),
+        "ks-note-state-authority",
+    )

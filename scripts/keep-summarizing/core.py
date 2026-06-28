@@ -121,6 +121,27 @@ EVIDENCE_RELATIONS = {"confirms", "implements", "derives_from", "validates", "su
 AUTHORITY_STATUSES = {"confirmed", "implemented", "current"}
 NON_AUTHORITY_STATUSES = {"draft", "proposed", "superseded", "deprecated", "rejected"}
 BLOCKED_STATUSES = {"superseded", "deprecated", "rejected"}
+RETRIEVAL_POLICY_HINTS = {
+    "implementation_spec",
+    "implementation_plan",
+    "execution",
+    "customer_spec",
+    "bidding",
+    "deployment",
+    "operation",
+}
+FORBIDDEN_SCRIPT_SEMANTIC_FIELDS = {
+    "supports_current_purpose",
+    "opposes_current_purpose",
+    "conflict",
+    "semantic_relevance",
+    "authority_decision",
+    "truth_confidence",
+    "recommended_action",
+    "should_block",
+}
+VECTOR_INDEX_STATUS_FILE = "vector-index-status.json"
+VECTOR_INDEX_ARTIFACT_FILE = "vector-index.jsonl"
 
 V3_PERSPECTIVES_BY_LIFECYCLE = {
     "tender": {"background", "requirements", "constraints", "deliverables", "glossary"},
@@ -630,4 +651,3 @@ def yaml_list_field(name: str, values: object) -> str:
     if not isinstance(values, list) or not values:
         return f"{name}: []"
     return f"{name}:\n" + "\n".join(f"  - {item}" for item in values)
-

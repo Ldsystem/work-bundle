@@ -96,11 +96,11 @@ If a cited rule path is missing or unreadable, stop and report a rule-load block
 5. Assign each point to the most specific leaf perspective path.
 6. For each point, propose target path and update-existing vs create-new.
 7. Extract domain semantics from implementation/interface-shaped material into domain/workflow/data targets.
-8. Mark duplicates as `duplicate-covered` or propose canonical note plus linked stub.
+8. Mark duplicates as `duplicate-covered` or propose canonical note plus linked stub after duplicate/conflict discovery through approved neutral query surfaces, not broad JSONL browsing.
 9. Decompose context-pack material into atomic notes; do not preserve packs as durable units unless explicitly requested.
 10. Use separate `open-questions/<lifecycle-stage>/<perspective>` targets for open questions.
 11. Persist approved durable points before ending when the user asked for extraction.
-12. Redirect prepared breakdown to `ks-write-knowledge` and rebuild indexes.
+12. Redirect prepared breakdown to `ks-write-knowledge` and rebuild indexes with vector-inclusive derived index status when relevant.
 
 ### Candidate table shape
 

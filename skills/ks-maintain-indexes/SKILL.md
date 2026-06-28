@@ -40,14 +40,16 @@ Indexes are already current and no Markdown changed.
 
 1. Run `scripts/ks.py index --project <slug>` after note changes.
 2. Run `scripts/ks.py index-open-questions --project <slug>` after open-question changes.
-3. Report duplicates, broken links, and missing metadata.
+3. Report derived index status for document registry, chunk registry, SQLite FTS, vector index artifacts, embedding manifest or chunk hashes, and open-question registry when relevant.
+4. Report duplicates, broken links, missing metadata, vector unavailability, and any other mechanical rebuild issue before claiming completion.
 
 Index completion and maintenance policy: follow `ks-index-maintenance`.
 
 ## Return
 
 - commands run
-- issues found (duplicates, broken links, missing metadata)
+- index status, including vector index status (`rebuilt`, `unavailable`, `skipped`, or `failed`)
+- issues found (duplicates, broken links, missing metadata, vector unavailability, failed rebuilds)
 
 ## Runtime Rules
 

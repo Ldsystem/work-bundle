@@ -198,6 +198,24 @@
       "prompt": "Create an implementation specification from a long optimization request with supplied screenshots and reference files.",
       "expected_output": "Selects create-specification, creates the active specification shell before long evidence gathering, records Initial User Purpose Evidence only from the current request and visible supplied artifacts, adds Draft Requirement Breakdown, then revises the draft after bounded evidence gathering without silently replacing the original purpose.",
       "files": []
+    },
+    {
+      "id": 34,
+      "prompt": "Create an implementation specification when relevant notes outside the implementation_spec lifecycle match the requested feature.",
+      "expected_output": "Selects create-specification, uses neutral cross-stage discovery through ks-what-is-helpful, treats implementation_spec only as classification and output-grouping intent, records neutral anchors and candidate sources or retrieval gaps, and does not discovery-filter candidates to implementation_spec lifecycle partitions before authority classification.",
+      "files": []
+    },
+    {
+      "id": 35,
+      "prompt": "Create an implementation specification when current authority evidence materially opposes the user's requested workflow change.",
+      "expected_output": "Selects create-specification, surfaces the opposing or constraining evidence as agent-classified conflict or open-question input, keeps non-authority evidence non-shaping unless user resolution or promoted authority changes it, and blocks the quality gate until the material conflict is resolved.",
+      "files": []
+    },
+    {
+      "id": 36,
+      "prompt": "Execute downstream plan tasks from a verified specification that already carries accepted knowledge context.",
+      "expected_output": "Selects execute-plan, uses context carried by the specification, plan, phase, task, and declared handoffs, does not run durable knowledge retrieval, does not read .work-bundle/knowledge/**, and does not require downstream knowledge-base lookup.",
+      "files": []
     }
   ],
   "v4_evals": [

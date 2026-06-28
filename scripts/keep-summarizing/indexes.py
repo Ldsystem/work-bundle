@@ -1,5 +1,73 @@
 from core import *
 
+VECTOR_DIMENSIONS = 64
+SQLITE_VEC_PACKAGE = "sqlite-vec"
+SQLITE_VEC_IMPORT = "sqlite_vec"
+
+
+def install_sqlite_vec() -> tuple[object | None, str | None]:
+    try:
+        return __import__(SQLITE_VEC_IMPORT), None
+    except ImportError:
+        pass
+
+    commands = [
+        [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", SQLITE_VEC_PACKAGE],
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--index-url",
+            "https://pypi.org/simple",
+            SQLITE_VEC_PACKAGE,
+        ],
+    ]
+    errors: list[str] = []
+    for command in commands:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            try:
+                return __import__(SQLITE_VEC_IMPORT), None
+            except ImportError as exc:
+                errors.append(f"{command!r}: installed but import failed: {exc}")
+        else:
+            detail = (result.stderr or result.stdout).strip()
+            errors.append(f"{command!r}: {detail}")
+    return None, "sqlite-vec install failed: " + " | ".join(errors)
+
+
+def load_sqlite_vec(conn: sqlite3.Connection) -> tuple[object | None, str | None]:
+    sqlite_vec, error = install_sqlite_vec()
+    if sqlite_vec is None:
+        return None, error
+    try:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        return sqlite_vec, None
+    except Exception as exc:
+        return None, f"sqlite-vec load failed: {exc}"
+    finally:
+        try:
+            conn.enable_load_extension(False)
+        except Exception:
+            pass
+
+
+def local_text_vector(text: str) -> list[float]:
+    vector = [0.0] * VECTOR_DIMENSIONS
+    terms = [term for term in re.split(r"\W+", text.lower()) if term]
+    for term in terms:
+        digest = hashlib.sha256(term.encode("utf-8")).digest()
+        index = int.from_bytes(digest[:2], "big") % VECTOR_DIMENSIONS
+        sign = 1.0 if digest[2] % 2 == 0 else -1.0
+        vector[index] += sign
+    magnitude = sum(value * value for value in vector) ** 0.5
+    if not magnitude:
+        return vector
+    return [value / magnitude for value in vector]
+
 def markdown_files(root: Path) -> list[Path]:
     candidates = list((root / "notes").glob("**/*.md")) + list((root / "context-packs").glob("*.md"))
     return sorted(path for path in candidates if path.is_file())
@@ -129,6 +197,102 @@ def build_sqlite_index(root: Path, docs: list[dict[str, object]]) -> None:
         conn.close()
 
 
+def build_vector_index_status(root: Path, chunks: list[dict[str, object]], project: str, *, install_missing: bool = True) -> dict[str, object]:
+    indexes = root / "indexes"
+    artifact_path = indexes / VECTOR_INDEX_ARTIFACT_FILE
+    db_path = indexes / "knowledge.sqlite"
+    base_status = {
+        "generated_at": now_ts(),
+        "project": project,
+        "artifact": VECTOR_INDEX_ARTIFACT_FILE,
+        "chunks_considered": len(chunks),
+        "backend": "sqlite-local-vector",
+    }
+
+    if not install_missing:
+        status = {
+            **base_status,
+            "status": "unavailable",
+            "chunks_indexed": 0,
+            "reason": "sqlite-vec install disabled",
+            "fallback": "sqlite_fts",
+        }
+        artifact_path.write_text("", encoding="utf-8")
+        (indexes / VECTOR_INDEX_STATUS_FILE).write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return status
+
+    conn = sqlite3.connect(db_path)
+    try:
+        sqlite_vec, error = load_sqlite_vec(conn)
+        if sqlite_vec is None:
+            status = {
+                **base_status,
+                "status": "unavailable",
+                "chunks_indexed": 0,
+                "reason": error or "sqlite-vec unavailable",
+                "fallback": "sqlite_fts",
+            }
+            artifact_path.write_text("", encoding="utf-8")
+        else:
+            conn.execute("DROP TABLE IF EXISTS knowledge_chunk_vec")
+            conn.execute(
+                f"""
+                CREATE VIRTUAL TABLE knowledge_chunk_vec USING vec0(
+                  chunk_id TEXT,
+                  document_id TEXT,
+                  path TEXT,
+                  embedding FLOAT[{VECTOR_DIMENSIONS}]
+                )
+                """
+            )
+            rows: list[dict[str, object]] = []
+            for chunk in chunks:
+                note = conn.execute(
+                    "SELECT title, summary, body, tags FROM knowledge_note WHERE id = ?",
+                    [chunk["document_id"]],
+                ).fetchone()
+                source_text = " ".join(str(value or "") for value in (note or ()))
+                embedding = local_text_vector(source_text)
+                conn.execute(
+                    "INSERT INTO knowledge_chunk_vec(chunk_id, document_id, path, embedding) VALUES (?, ?, ?, ?)",
+                    (
+                        chunk["chunk_id"],
+                        chunk["document_id"],
+                        chunk["path"],
+                        sqlite_vec.serialize_float32(embedding),
+                    ),
+                )
+                rows.append(
+                    {
+                        "chunk_id": chunk["chunk_id"],
+                        "document_id": chunk["document_id"],
+                        "path": chunk["path"],
+                        "backend": "sqlite-vec",
+                        "dimensions": VECTOR_DIMENSIONS,
+                    }
+                )
+            conn.commit()
+            artifact_path.write_text(
+                "\n".join(json.dumps(item, ensure_ascii=False) for item in rows) + ("\n" if rows else ""),
+                encoding="utf-8",
+            )
+            version = conn.execute("SELECT vec_version()").fetchone()[0]
+            status = {
+                **base_status,
+                "status": "rebuilt",
+                "chunks_indexed": len(rows),
+                "extension": "sqlite-vec",
+                "extension_version": version,
+                "dimensions": VECTOR_DIMENSIONS,
+                "table": "knowledge_chunk_vec",
+            }
+    finally:
+        conn.close()
+
+    (indexes / VECTOR_INDEX_STATUS_FILE).write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return status
+
+
 def cmd_index(args: argparse.Namespace) -> None:
     root = project_dir(args.project, args)
     config = project_config(root)
@@ -184,8 +348,25 @@ def cmd_index(args: argparse.Namespace) -> None:
     (indexes / "embedding-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (indexes / "backlink-map.json").write_text("{}\n", encoding="utf-8")
     build_sqlite_index(root, docs)
-    build_open_question_index(root, args.project)
-    print(f"indexed {len(docs)} documents")
+    vector_status = build_vector_index_status(root, chunks, args.project)
+    open_questions = build_open_question_index(root, args.project)
+    index_status = {
+        "index_status": {
+            "document_registry": "rebuilt",
+            "chunk_registry": "rebuilt",
+            "sqlite_fts": "rebuilt",
+            "vector_index": vector_status["status"],
+            "open_question_registry": "rebuilt",
+            "blockers": [],
+        },
+        "counts": {
+            "documents": len(docs),
+            "chunks": len(chunks),
+            "open_questions": len(open_questions),
+        },
+        "vector_status": vector_status,
+    }
+    print(json.dumps(index_status, ensure_ascii=False))
 
 
 def build_open_question_index(root: Path, project: str) -> list[dict[str, object]]:
@@ -237,4 +418,3 @@ def cmd_index_open_questions(args: argparse.Namespace) -> None:
     root = project_dir(args.project, args)
     rows = build_open_question_index(root, args.project)
     print(f"indexed {len(rows)} open questions")
-

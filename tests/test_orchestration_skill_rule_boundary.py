@@ -91,6 +91,28 @@ def test_create_specification_keeps_quality_gate_terms_and_rule_loading() -> Non
     assert "Design Interrogation" in skill
 
 
+def test_create_specification_requires_neutral_cross_stage_gateway() -> None:
+    skill = skill_text(REPO_ROOT / "skills/orch-create-specification/SKILL.md")
+
+    assert "polarity-neutral and stage/perspective/status-neutral query anchors" in skill
+    assert "Implementation specification work uses `implementation_spec` only as classification and output-grouping intent" in skill
+    assert "must not discovery-filter candidates to that lifecycle stage before authority classification" in skill
+    assert "cross-stage discovery evidence" in skill
+    assert "supporting, opposing, constraining, unresolved/open-question" in skill
+    assert "does not require downstream agents to read `.work-bundle/knowledge/`" in skill
+
+
+def test_orchestration_gateway_rule_keeps_policy_as_intent_not_filter() -> None:
+    rule = skill_text(REPO_ROOT / "rules/orchestration/orch-knowledge-gateway.md")
+
+    assert "Discover relevant candidates across allowed lifecycle partitions" in rule
+    assert "classification and output-grouping intent" in rule
+    assert "not as a discovery-stage lifecycle filter" in rule
+    assert "Treat a directive retrieval policy such as `implementation_spec` as a stage-gated discovery filter" in rule
+    assert "future knowledge-base lookup" in rule
+    assert "retrieval policy did not stage-gate candidate discovery" in rule
+
+
 def test_orch_doctor_declares_full_quality_gate_and_forbidden_dependency_checks() -> None:
     skill = skill_text(REPO_ROOT / "skills/orch-doctor/SKILL.md")
 

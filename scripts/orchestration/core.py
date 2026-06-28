@@ -16,6 +16,8 @@ PLAN_STATUSES = {"Planned", "In progress", "Completed", "Deprecated", "On Hold"}
 HANDOFF_STATUSES = {"active", "reviewed", "archived", "superseded"}
 HANDOFF_TYPES = {"orchestration", "executor-result"}
 RETRIEVAL_ROLES = {"authority", "candidate", "background", "blocked"}
+# Directive policies describe classification/output intent only. Knowledge
+# discovery remains neutral and cross-stage before agent authority classification.
 DIRECTIVE_POLICY_MAP = {
     "create-specification": "implementation_spec",
     "create-implementation-plan": "implementation_plan",
@@ -169,6 +171,15 @@ def policy_for_directive(name: str) -> str:
     return DIRECTIVE_POLICY_MAP[name]
 
 
+def retrieval_policy_intent(name: str) -> dict[str, str]:
+    return {
+        "directive": name,
+        "policy": policy_for_directive(name),
+        "discovery": "neutral-cross-stage",
+        "usage": "classification-output-intent",
+    }
+
+
 def artifact_mentions_retrieval_without_roles(path: Path) -> bool:
     text = path.read_text(encoding="utf-8")
     if "retrieval" not in text.lower():
@@ -182,5 +193,4 @@ def repository_root() -> Path:
 
 def keep_summarizing_root() -> Path:
     return repository_root() / "keep-summarizing"
-
 

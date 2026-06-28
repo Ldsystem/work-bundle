@@ -42,23 +42,28 @@ source_type: discussion | tender_doc | investigation_note | design_doc | bid_doc
 
 Front matter `evidence` is required when evidence affects status, retrieval authority, validation, or promotion. Body evidence may explain rationale, but it does not replace front matter evidence for promoted statuses.
 
-SQLite FTS is derived from Markdown. It may retrieve notes across lifecycle stages and statuses, but results must be classified as `authority`, `candidate`, `background`, or `blocked` before use. Use the rule: discover fully, load minimally, classify explicitly, use authority narrowly, and return selectively.
+SQLite FTS and vector artifacts are derived from Markdown. FTS handles exact identifiers, rule names, file names, API/schema/table names, and explicit references. Vector retrieval improves semantic recall around note chunks, artifact names, feature/functionality anchors, and summaries. Both are disposable query mechanics, not canonical knowledge.
+
+Retrieval queries must be polarity-neutral and stage/perspective/status-neutral unless those terms are the explicit subject. Build anchors from the requested artifact, feature, functionality, component, file, API, schema, workflow, or explicit name. Scripts return mechanical candidates and metadata such as anchors, source paths, lifecycle/status metadata, FTS rank, vector status or distance, fusion rank, and bounded-expansion paths. Agents classify relevance, authority, polarity, materiality, and blockers; users resolve material conflicts that evidence cannot settle.
+
+JSONL indexes remain maintained machine-readable derived outputs. Agents must not browse `document-registry.jsonl`, `chunk-registry.jsonl`, or `open-question-registry.jsonl` as the primary exploration surface.
 
 Gateway retrieval uses this pipeline:
 
 ```text
-task query
-  -> full candidate discovery across allowed lifecycle partitions
+neutral task query
+  -> hybrid candidate discovery through approved query surfaces
+     (SQLite FTS + vector status/candidates + bounded mechanical expansion when available)
   -> visibility, sensitivity, and scope filtering
   -> minimum necessary full-body validation
-  -> lifecycle + status + work-target classification
-  -> authority | candidate | background | blocked
+  -> agent classification for relevance + authority + polarity + materiality + blocker status
+  -> authority | candidate | background | blocked | supporting | opposing | constraining | watch context
   -> smallest useful classified result
 ```
 
-Lifecycle limits authority and durable write ownership for the work target; lifecycle does not hide relevant discovery candidates. FTS rank, recency, and lifecycle proximity may help discovery or ranking, but they cannot override retrieval-role authority. Only `authority` results may directly shape requirements, executable tasks, implementation decisions, or review conclusions. Relevant `candidate`, `background`, and `blocked` results remain visible with their uncertainty or incompatibility explained.
+Lifecycle limits authority and durable write ownership for the work target; lifecycle does not hide relevant discovery candidates. FTS rank, vector distance, fusion rank, recency, and lifecycle proximity may help discovery or ranking, but they cannot override agent-classified authority. Only `authority` results may directly shape requirements, executable tasks, implementation decisions, or review conclusions. Relevant `candidate`, `background`, `blocked`, opposing, and constraining results remain visible with their uncertainty or incompatibility explained.
 
-For orchestration gateway use, run `scripts/ks.py query --target <retrieval-policy>`. Valid policies are `implementation_spec`, `implementation_plan`, `execution`, `customer_spec`, `bidding`, `deployment`, and `operation`.
+For orchestration gateway use, run `scripts/ks.py query --project <slug> --query <neutral-query> --include-background`. When a caller supplies a policy, pass `--target <retrieval-policy>` as a policy hint for later agent classification, not as a discovery-stage filter. Valid policies are `implementation_spec`, `implementation_plan`, `execution`, `customer_spec`, `bidding`, `deployment`, and `operation`.
 
 Orchestration must retrieve durable knowledge through `ks-what-is-helpful` gateway mode and must not browse `.work-bundle/knowledge/**` directly. `orch-execute-plan` remains a no-retrieval stage: execution consumes carried spec, plan, phase, task, declared handoff, and task-scoped source/test context only, and must not invoke the gateway.
 
@@ -104,7 +109,7 @@ Before any write, the agent must complete all checks below:
 4. The perspective is a lifecycle-aware leaf path from `references/assets/keep-summarizing/perspectives.md`.
 5. The content excludes raw chat logs, secrets, credentials, personal data, temporary command output, and one-off debugging details.
 6. Lifecycle stage, status, source type, and evidence are valid and justified.
-7. Existing related notes were checked for duplicate or conflicting knowledge.
+7. Existing related notes were checked for duplicate or conflicting knowledge through approved neutral query surfaces rather than broad JSONL browsing.
 8. Required front matter is present before completion.
 
 If any check fails, do not write. Return `Waiting for your direction` with the failed check and concrete next options.
@@ -181,7 +186,7 @@ Do not use a plain `Open Questions` section in curated notes unless the question
 
 ## Open Question Watch Context
 
-When `keep-summarizing` is active for a project, agents should load `indexes/open-question-registry.jsonl` when it exists.
+When `keep-summarizing` is active for a project, the maintained open-question registry may be used as watch-context metadata. It is not the primary exploration surface and must not replace the approved query surface or material body validation.
 
 Open questions are watch context:
 
@@ -250,7 +255,7 @@ For save/update work, align execution with current ks skills:
 For retrieval work, use `ks-what-is-helpful`:
 
 - standard mode for user-facing discovery and explanation
-- gateway mode for orchestrator-facing full candidate discovery followed by explicit authority, candidate, background, and blocked classification
+- gateway mode for orchestrator-facing neutral hybrid candidate discovery followed by explicit authority, candidate, background, blocked, polarity, materiality, and blocker classification
 - in either mode, load full note bodies only for materially relevant candidates and return the smallest useful result set
 
 For ambiguous work:
@@ -439,10 +444,12 @@ indexes/document-registry.jsonl
 indexes/chunk-registry.jsonl
 indexes/backlink-map.json
 indexes/embedding-manifest.json
+indexes/knowledge.sqlite
+indexes/<vector-sidecar-artifacts when used>
 indexes/open-question-registry.jsonl
 ```
 
-Indexes are disposable and must be reproducible from Markdown.
+Indexes are disposable and must be reproducible from Markdown. Vector index artifacts and embedding manifests are derived status/output only; they are not canonical knowledge and do not decide authority, truth, conflict, or blockers.
 
 Completion is not valid after a note or open-question write until the relevant index command has been run and any reported issue has been surfaced.
 

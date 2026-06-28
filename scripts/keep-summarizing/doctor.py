@@ -81,10 +81,16 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     doc_registry = root / "indexes" / "document-registry.jsonl"
     oq_registry = root / "indexes" / "open-question-registry.jsonl"
     sqlite_registry = root / "indexes" / "knowledge.sqlite"
+    vector_status = root / "indexes" / VECTOR_INDEX_STATUS_FILE
+    vector_artifact = root / "indexes" / VECTOR_INDEX_ARTIFACT_FILE
     if markdown_files(root) and (not doc_registry.exists() or any(path.stat().st_mtime > doc_registry.stat().st_mtime for path in markdown_files(root))):
         issues.append("stale or missing document indexes")
     if markdown_files(root) and (not sqlite_registry.exists() or any(path.stat().st_mtime > sqlite_registry.stat().st_mtime for path in markdown_files(root))):
         issues.append("stale or missing SQLite FTS index")
+    if markdown_files(root) and (not vector_status.exists() or not vector_artifact.exists()):
+        issues.append("stale or missing vector index status")
+    elif markdown_files(root) and any(path.stat().st_mtime > vector_status.stat().st_mtime for path in markdown_files(root)):
+        issues.append("stale or missing vector index status")
     if open_question_files(root) and (not oq_registry.exists() or any(path.stat().st_mtime > oq_registry.stat().st_mtime for path in open_question_files(root))):
         issues.append("stale or missing open-question indexes")
     if issues:
@@ -94,4 +100,3 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     if not project_registry_entry(args.project, args):
         print(f"warning: project is not registered: {args.project}")
     print("ok")
-

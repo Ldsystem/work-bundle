@@ -17,29 +17,34 @@ Define the retrieval and persistence authority contract for lifecycle-aware know
 
 - discover relevant candidates across allowed lifecycle partitions before authority classification
 - run gateway retrieval in this order: discover fully, load minimally, classify explicitly, use authority narrowly, and return selectively
+- formulate retrieval with neutral artifact, feature, functionality, component, file, API, schema, workflow, or explicit-name anchors before authority classification
+- treat script output as mechanical candidate metadata only; agents classify relevance, authority, polarity, materiality, and blocker status
 - apply visibility, sensitivity, and scope filtering before minimum necessary full-body validation
 - load full note bodies only for materially relevant candidates and only to the minimum extent needed for classification
-- classify validated candidates as authority candidate background or blocked for the work target
+- classify validated candidates as authority candidate background blocked supporting opposing constraining irrelevant-with-reason or watch context for the work target
 - use only authority to shape requirements tasks decisions or review conclusions
-- surface relevant non-authority results with uncertainty or incompatibility
+- surface relevant non-authority opposing constraining or unresolved results with uncertainty or incompatibility
 - preserve lifecycle-aware durable write ownership
 
 ## Must Not
 
 - prefilter relevant discovery candidates by authority lifecycle or note status
+- prefilter relevant discovery candidates by retrieval policy target, vector distance, FTS rank, perspective, or status
 - skip explicit classification after candidate discovery and minimal validation
 - load broad note bodies before candidate relevance justifies full-body validation
 - promote non-authority notes to stable facts silently
-- let FTS rank recency or lifecycle proximity override authority
+- let FTS rank vector distance fusion rank recency or lifecycle proximity override authority
+- let scripts decide semantic relevance polarity authority conflict materiality truth confidence or blocker status
 - hide note-state uncertainty inside assumptions
 
 ## Validation
 
 - retrieval discovers relevant cross-lifecycle candidates before authority narrowing
-- retrieval output separates authority candidate background blocked context
-- gateway flow shows minimal full-body loading before lifecycle and status classification
+- retrieval output separates authority candidate background blocked supporting opposing constraining irrelevant and watch context when applicable
+- gateway flow shows neutral anchors mechanical candidate discovery and minimal full-body loading before agent classification
 - only authority shapes downstream work
 - uncertain helpful notes are surfaced as uncertainty
+- material opposing or constraining evidence is surfaced instead of hidden by policy or index mechanics
 - durable write decisions preserve lifecycle-aware ownership instead of treating retrieval visibility as write authority
 
 ## On Violation

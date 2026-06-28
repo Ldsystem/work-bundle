@@ -65,32 +65,35 @@ Run the directive workflow in **Retrieval Workflow (skill-owned)**.
 ## Retrieval Workflow (skill-owned)
 
 1. **Clarify the ask** — restate goal and success criteria; infer likely leaf perspectives from `references/assets/keep-summarizing/perspectives.md`.
-2. **Greedy candidate matching** — discover across every allowed lifecycle partition, registry item, perspective index, atomic note, and open-question watchpoint; do not pre-exclude by lifecycle stage or FTS rank; keep output selective (typically 3–12 items).
-3. **Minimum necessary loading** — `project.yaml`, `indexes/document-registry.jsonl`, `indexes/open-question-registry.jsonl`, perspective indexes; follow loaded `ks-context-pack-policy` for context-pack handling.
-4. **Validate candidates** — read bodies that may materially affect the task; drop weak metadata matches; flag domain rules trapped in implementation notes as extraction gaps.
-5. **Classify and rank** — apply loaded `ks-note-state-authority`; score by relevance, actionability, authority/trust, and specificity.
-6. **Filter noise** — open questions are watch context, not facts; respect visibility and sensitivity per loaded rules.
-7. **Surface gaps** — distinguish “no note found” from weak evidence; suggest `ks-extract-valuable-points`, `ks-breakdown-design`, or `ks-track-open-questions` when appropriate.
-8. **Offer next steps** — annotated reading order; optional gateway mode when caller supplies retrieval policy.
+2. **Form neutral anchors** — derive query terms from the requested artifact, feature, functionality, component, file, API, schema, workflow, or explicit name. Do not add lifecycle stage, perspective, status, support/oppose, maturity, or policy words unless those words are the subject being changed.
+3. **Hybrid candidate matching** — use the approved query surface (`scripts/ks.py query --project <slug> --query <neutral-query> --include-background`) to collect mechanical candidates from SQLite FTS, vector index status, and any bounded expansion that the script exposes. Do not browse JSONL indexes as the exploration surface, and do not pre-exclude by lifecycle stage, status, policy target, vector distance, or FTS rank.
+4. **Minimum necessary loading** — use script output, `project.yaml`, and targeted candidate bodies only as needed; follow loaded `ks-context-pack-policy` for context-pack handling. JSONL registries remain maintained derived indexes, not broad agent reading material.
+5. **Validate candidates** — read bodies that may materially affect the task; drop weak mechanical matches; flag domain rules trapped in implementation notes as extraction gaps.
+6. **Classify and rank** — apply loaded `ks-note-state-authority`; agents classify relevance, authority, polarity, materiality, blocker status, actionability, and specificity. Treat script scores, policy hints, vector status, and trace fields as retrieval mechanics only.
+7. **Filter noise** — open questions are watch context, not facts; respect visibility and sensitivity per loaded rules.
+8. **Surface gaps** — distinguish “no note found” from weak evidence; suggest `ks-extract-valuable-points`, `ks-breakdown-design`, or `ks-track-open-questions` when appropriate.
+9. **Offer next steps** — annotated reading order; optional gateway mode when caller supplies retrieval policy.
 
 ### Gateway mode
 
 When called by orchestration or when the caller provides a retrieval policy:
 
 1. Resolve the project; rebuild `indexes/knowledge.sqlite` with `scripts/ks.py index --project <slug>` if stale.
-2. Discover candidates across all allowed lifecycle partitions; do not prefilter to policy authority stages.
-3. Apply filters; load bodies only for material candidates.
-4. Run `scripts/ks.py query --project <slug> --target <retrieval-policy> --query <query> --include-background`; classify by lifecycle, status, and work target per loaded `ks-note-state-authority`; use `retrieval_role` exactly.
-5. Group by `retrieval_role`; return policy, query, grouped results, material omitted or blocked rationale, and watchpoints.
-6. Label material candidate, background, blocked, or watchpoint evidence that may affect requirements, architecture, workflow, API, persistence, validation, execution behavior, or user-purpose conflict so orchestration callers can surface it as rationale, traceability, conflict evidence, or open-question input.
-7. Mark non-material unsettled results as omitted or non-blocking rationale; do not require orchestration callers to resolve them during `create-specification`.
-8. Do not convert non-authority results into requirements, tasks, decisions, or review conclusions.
+2. Build a neutral query from artifact, feature, functionality, component, file, API, schema, workflow, or explicit-name anchors. A retrieval policy is caller intent for later classification, not a discovery-stage filter.
+3. Run `scripts/ks.py query --project <slug> --target <retrieval-policy> --query <neutral-query> --include-background` when a policy is supplied, or omit `--target` in standard discovery. Treat `--target` as `policy_hint`; do not use it to hide discovery candidates.
+4. Use the script output only as mechanical candidate and trace evidence: anchors, source paths, lifecycle/status metadata, FTS rank, vector status or distance, fusion rank, and bounded-expansion paths when present. Scripts must not decide semantic relevance, authority, polarity, conflict, materiality, truth confidence, or blocker status.
+5. Apply visibility, sensitivity, and scope filters; load bodies only for material candidates.
+6. Classify candidates per loaded `ks-note-state-authority` into authority, candidate, background, blocked, supporting, opposing, constraining, irrelevant-with-reason, or watch context as applicable. Agents own this classification; users resolve material conflicts that cannot distinguish stale knowledge from changed intent.
+7. Return policy hint, neutral query, mechanical trace summary, agent-grouped results, material omitted or blocked rationale, and watchpoints.
+8. Label material candidate, background, blocked, opposing, constraining, or watchpoint evidence that may affect requirements, architecture, workflow, API, persistence, validation, execution behavior, or user-purpose conflict so orchestration callers can surface it as rationale, traceability, conflict evidence, or open-question input.
+9. Mark non-material unsettled results as omitted or non-blocking rationale; do not require orchestration callers to resolve them during `create-specification`.
+10. Do not convert non-authority results into requirements, tasks, decisions, or review conclusions.
 
 Orchestration callers must use this gateway instead of browsing `.work-bundle/knowledge/**` directly. `orch-execute-plan` is a no-retrieval stage and must not invoke this gateway during execution.
 
 ### Ranked shortlist output
 
-Structured result with: task summary; recommended knowledge (path, summary, why useful, confidence, retrieval role, status); related watchpoints (labeled watch context); optional topic map; gaps; 2–4 next options.
+Structured result with: task summary; recommended knowledge (path, summary, why useful, agent classification, mechanical trace summary, status); related watchpoints (labeled watch context); optional topic map; gaps; 2–4 next options.
 
 ## Return
 

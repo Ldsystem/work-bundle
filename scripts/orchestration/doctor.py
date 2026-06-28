@@ -172,6 +172,21 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         if skill_name == "orch-execute-plan":
             if "must not run v3 retrieval" not in text and "must not invoke retrieval" not in text:
                 issues.append("orch-execute-plan lacks explicit no-retrieval rule")
+        elif skill_name == "orch-create-specification":
+            required_terms = [
+                "polarity-neutral and stage/perspective/status-neutral query anchors",
+                "implementation_spec` only as classification and output-grouping intent",
+                "must not discovery-filter candidates to that lifecycle stage",
+                "cross-stage discovery evidence",
+                "supporting, opposing, constraining, unresolved/open-question",
+                "does not require downstream agents to read `.work-bundle/knowledge/`",
+            ]
+            for required in required_terms:
+                if required not in text:
+                    issues.append(
+                        "orch-create-specification missing no-stage-gate contract term: "
+                        f"{required}"
+                    )
         elif policy not in text and "Knowledge Gateway" in text:
             issues.append(f"orch skill does not mention mapped retrieval policy {policy}: {skill_name}")
     ks_what_is_helpful_skill = skill_root / "ks-what-is-helpful" / "SKILL.md"
@@ -179,7 +194,17 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         issues.append("missing ks-what-is-helpful skill file")
     else:
         text = ks_what_is_helpful_skill.read_text(encoding="utf-8")
-        for required in ["Gateway mode", "ks.py query", "retrieval_role", "authority", "candidate", "background", "blocked"]:
+        for required in [
+            "Gateway mode",
+            "ks.py query",
+            "policy_hint",
+            "mechanical candidate and trace evidence",
+            "semantic relevance, authority, polarity, conflict, materiality",
+            "authority",
+            "candidate",
+            "background",
+            "blocked",
+        ]:
             if required not in text:
                 issues.append(f"ks-what-is-helpful missing gateway contract term: {required}")
     for path in [bundle_root / "references" / "assets" / "keep-summarizing" / "workflow.md"]:
@@ -223,15 +248,51 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         (
             bundle_root / "references" / "assets" / "keep-summarizing" / "workflow.md",
             "keep-summarizing workflow",
-            ["full candidate discovery followed by explicit authority, candidate, background, and blocked classification"],
+            [
+                "neutral hybrid candidate discovery followed by explicit authority, candidate, background, blocked, polarity, materiality, and blocker classification",
+            ],
         ),
         (
             skill_root / "orch-create-specification" / "SKILL.md",
             "orch-create-specification skill",
             [
                 "authority`, `candidate`, `background`, and `blocked",
+                "neutral anchors",
+                "cross-stage discovery evidence",
+                "classification and output-grouping intent",
                 "Extra evidence loop",
                 "Quality gate: verified|blocked",
+            ],
+        ),
+        (
+            bundle_root / "rules" / "orchestration" / "orch-knowledge-gateway.md",
+            "orch-knowledge-gateway rule",
+            [
+                "Discover relevant candidates across allowed lifecycle partitions",
+                "classification and output-grouping intent",
+                "not as a discovery-stage lifecycle filter",
+                "Treat a directive retrieval policy such as `implementation_spec` as a stage-gated discovery filter",
+                "retrieval policy did not stage-gate candidate discovery",
+                "future knowledge-base lookup",
+            ],
+        ),
+        (
+            bundle_root / "references" / "assets" / "orchestration" / "contract" / "specification-v1.md",
+            "specification contract",
+            [
+                "neutral and cross-stage",
+                "classification/output intent rather than a discovery-stage filter",
+                "supporting, opposing, constraining, unresolved/open-question",
+                "downstream planning and execution do not need to read `.work-bundle/knowledge/`",
+            ],
+        ),
+        (
+            bundle_root / "scripts" / "orchestration" / "core.py",
+            "orchestration core policy helper",
+            [
+                "Directive policies describe classification/output intent only",
+                '"discovery": "neutral-cross-stage"',
+                '"usage": "classification-output-intent"',
             ],
         ),
         (
@@ -260,9 +321,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             ks_what_is_helpful_skill,
             "ks-what-is-helpful skill",
             [
-                "discover across every allowed lifecycle partition",
+                "A retrieval policy is caller intent for later classification, not a discovery-stage filter",
                 "Classify and rank",
-                "use `retrieval_role` exactly",
+                "Scripts must not decide semantic relevance, authority, polarity, conflict, materiality",
                 "Do not convert non-authority results into requirements, tasks, decisions, or review conclusions",
             ],
         ),
@@ -276,6 +337,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             "orchestration evals",
             [
                 "material candidate knowledge conflicts with the user purpose",
+                "outside the implementation_spec lifecycle",
+                "classification and output-grouping intent",
+                "does not require downstream knowledge-base lookup",
                 "quality gate is verified",
                 "repairs the task-scoped gap and repeats verification before handoff",
                 "target repository has no .codegraph directory",

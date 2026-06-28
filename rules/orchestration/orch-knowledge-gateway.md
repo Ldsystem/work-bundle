@@ -21,10 +21,11 @@ Route orchestration access to durable project knowledge through the approved `ks
 
 - Retrieve durable project knowledge through `keep-summarizing` with `what-is-helpful` gateway mode before using knowledge context in orchestration directives covered by this rule.
 - Discover relevant candidates across allowed lifecycle partitions before lifecycle and status authority classification.
-- Classify retrieved notes as `authority`, `candidate`, `background`, or `blocked`.
+- Use polarity-neutral and stage/perspective/status-neutral query anchors derived from artifacts, features, functionality, components, files, APIs, schemas, workflows, and explicit names.
+- Classify retrieved notes as `authority`, `candidate`, `background`, or `blocked`, and surface material supporting, opposing, constraining, unresolved/open-question, obsolete/replaced, or irrelevant-with-reason evidence when applicable.
 - Use only `authority` results to shape requirements, executable tasks, decisions, or review conclusions.
 - Keep gateway output to the smallest useful classified result set.
-- Apply retrieval policy per directive:
+- Apply retrieval policy per directive as classification and output-grouping intent, not as a discovery-stage lifecycle filter:
 
 | Directive | Policy |
 | --- | --- |
@@ -43,6 +44,7 @@ Route orchestration access to durable project knowledge through the approved `ks
 ## Must Not
 
 - Browse `.work-bundle/knowledge/` directly as a shortcut from orchestration directives covered by this rule.
+- Treat a directive retrieval policy such as `implementation_spec` as a stage-gated discovery filter.
 - Prefilter discovery to authority lifecycle stages before full candidate discovery completes.
 - Let `candidate`, `background`, or `blocked` results directly shape requirements, tasks, decisions, or review conclusions.
 - Convert material or non-material non-authority context into requirements, constraints, acceptance criteria, tasks, decisions, or review conclusions without explicit resolution or accepted authority.
@@ -53,7 +55,8 @@ Route orchestration access to durable project knowledge through the approved `ks
 
 ## Validation
 
-- Confirm retrieval used the approved gateway and named retrieval policy for the active directive.
+- Confirm retrieval used the approved gateway with neutral anchors and the named retrieval policy only as classification/output intent for the active directive.
+- Confirm retrieval policy did not stage-gate candidate discovery.
 - Confirm classification labels appear when retrieved notes shape orchestration work.
 - Confirm only authority context shaped requirements, tasks, or review conclusions.
 - Confirm no direct `.work-bundle/knowledge/` browsing occurred from the active orchestration directive.
