@@ -1,0 +1,22 @@
+statuses:
+  - active
+  - archived
+actions:
+  - dismiss
+  - completed
+severities:
+  - p0
+  - p1
+  - p2
+  - p3
+  - p4
+  - p5
+  - p6
+  - p7
+  - p8
+  - p9
+  - p10
+filename:
+  prefix: evidence
+  date_format: yyyyMMdd
+  slug_pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"

@@ -257,3 +257,13 @@ rules:
     enforcement: must
     load: conditional
     requires: []
+  - id: wb-violation-evidence
+    path: work-bundle/wb-violation-evidence.md
+    applies_when:
+      - agent observes a contradiction between work-bundle rules, skills, scripts, orchestration contracts, handoff contracts, or workflow references
+      - user interrupts a work-bundle skill execution and explicitly corrects toolkit process behavior
+      - user explicitly requests a work-bundle skill and provides appendix restrictions or corrections that may require skill or rule enrichment
+      - a work-bundle document or orchestration artifact violates a loaded work-bundle rule or skill contract
+    enforcement: must
+    load: always
+    requires: []

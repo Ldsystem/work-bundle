@@ -12,6 +12,13 @@ from project import cmd_doctor_project, cmd_init_project, cmd_migrate_project, c
 from role_context import cmd_role_context
 from rules import cmd_create_rules, cmd_validate_rules
 from skill_registry import cmd_registry
+from violations import (
+    cmd_violation_archive_evidence,
+    cmd_violation_build_index,
+    cmd_violation_create_evidence,
+    cmd_violation_ensure_store,
+    cmd_violation_write_index,
+)
 
 
 def main() -> int:
@@ -61,6 +68,16 @@ def main() -> int:
         return cmd_create_rules(parsed.args)
     if command == 'validate-rules':
         return cmd_validate_rules(parsed.args)
+    if command == 'violation-ensure-store':
+        return cmd_violation_ensure_store(parsed.args)
+    if command == 'violation-create-evidence':
+        return cmd_violation_create_evidence(parsed.args)
+    if command == 'violation-build-index':
+        return cmd_violation_build_index(parsed.args)
+    if command == 'violation-write-index':
+        return cmd_violation_write_index(parsed.args)
+    if command == 'violation-archive-evidence':
+        return cmd_violation_archive_evidence(parsed.args)
     if command in {'doctor', 'repository-health', 'validate-directive-wiring', 'validate-skill-registry', 'validate-work-bundle-rules'}:
         return cmd_doctor(parsed.args)
     if command == 'render-doctor-report':
