@@ -24,13 +24,22 @@ tags: [Optional: List of relevant tags or categories, e.g., `infrastructure`, `p
 
 [List and define all acronyms, abbreviations, and domain-specific terms used in this specification.]
 
-## 3. Source Context
+## 3. Initial Shell
+
+Before any long evidence gathering, create the specification shell with front matter and these required placeholders:
+
+- `Initial User Purpose Evidence`
+- `Draft Requirement Breakdown`
+
+`Initial User Purpose Evidence` must be derived only from the current user request and visible supplied artifacts. `Draft Requirement Breakdown` is provisional and must be revised after bounded evidence gathering; it must not be silently replaced.
+
+## 4. Source Context
 
 [Record the evidence used before drafting. Include durable knowledge gateway results grouped by `authority`, `candidate`, `background`, and `blocked`, plus current repository evidence with path, role, and relevance. Only `authority` durable knowledge may shape requirements, constraints, acceptance criteria, or downstream tasks.]
 
 When no supporting authority note exists for the user purpose, record the retrieval gap and analyze the purpose from user input and repository evidence. Use Design Interrogation only for unresolved design intent that cannot be answered from current evidence.
 
-### 3.1 Design Interrogation
+### 4.1 Design Interrogation
 
 [Required when user intent is under-specified, repository evidence conflicts, or no supporting note exists and the purpose cannot be resolved from current evidence.]
 
@@ -40,7 +49,7 @@ When no supporting authority note exists for the user purpose, record the retrie
 - **User resolution**: Record accepted answer or unresolved.
 - **Evidence conclusion**: Record any accepted conclusion as specification evidence.
 
-## 4. Requirements, Constraints & Guidelines
+## 5. Requirements, Constraints & Guidelines
 
 [Explicitly list all requirements, constraints, rules, and guidelines. Use bullet points or tables for clarity.]
 
@@ -50,20 +59,25 @@ When no supporting authority note exists for the user purpose, record the retrie
 - **CON-001**: Constraint 1
 - **GUD-001**: Guideline 1
 - **PAT-001**: Pattern to follow 1
+- **REQ-SHELL-001**: Create the specification shell before extended evidence gathering, and keep `Initial User Purpose Evidence` and `Draft Requirement Breakdown` visible in the generated artifact.
+- **REQ-SHELL-002**: Derive initial user-purpose evidence only from the current user request and visible supplied artifacts.
+- **REQ-SHELL-003**: Revise draft requirements after bounded evidence gathering instead of silently replacing them.
 
-## 5. Interfaces & Data Contracts
+## 6. Interfaces & Data Contracts
 
 [Describe the interfaces, APIs, data contracts, or integration points. Use tables or code blocks for schemas and examples.]
 
-## 6. Acceptance Criteria
+## 7. Acceptance Criteria
 
 [Define clear, testable acceptance criteria for each requirement using Given-When-Then format where appropriate.]
 
 - **AC-001**: Given [context], When [action], Then [expected outcome]
 - **AC-002**: The system shall [specific behavior] when [condition]
 - **AC-003**: [Additional acceptance criteria as needed]
+- **AC-SHELL-001**: Given a new specification request, when the artifact is created, then the shell exists first with front matter plus `Initial User Purpose Evidence` and `Draft Requirement Breakdown`.
+- **AC-SHELL-002**: Given bounded evidence gathering completes, when the draft is updated, then the original draft requirement breakdown is revised rather than erased without trace.
 
-## 7. Test Automation Strategy
+## 8. Test Automation Strategy
 
 [Define the testing approach, frameworks, and automation requirements.]
 
@@ -74,11 +88,11 @@ When no supporting authority note exists for the user purpose, record the retrie
 - **Coverage Requirements**: [minimum code coverage thresholds]
 - **Performance Testing**: [approach for load and performance testing]
 
-## 8. Rationale & Context
+## 9. Rationale & Context
 
 [Explain the reasoning behind the requirements, constraints, and guidelines. Provide context for design decisions.]
 
-## 9. Dependencies & External Integrations
+## 10. Dependencies & External Integrations
 
 [Define the external systems, services, and architectural dependencies required for this specification. Focus on **what** is needed rather than **how** it's implemented. Avoid specific package or library versions unless they represent architectural constraints.]
 
@@ -102,7 +116,7 @@ When no supporting authority note exists for the user purpose, record the retrie
 
 **Note**: This section should focus on architectural and business dependencies, not specific package implementations. For example, specify "OAuth 2.0 authentication library" rather than "Microsoft.AspNetCore.Authentication.JwtBearer v6.0.1".
 
-## 10. Open Questions
+## 11. Open Questions
 
 [List unresolved decisions, uncertainty, conflicts, and material non-authority evidence that affects requirements, architecture, workflow, API, persistence, validation, execution behavior, or user purpose.]
 
@@ -120,7 +134,7 @@ Every open question must include:
 
 Candidate, background, blocked, draft, proposed, stale, or otherwise non-authority durable knowledge must not become requirement text. When material, record it as rationale, traceability, conflict evidence, or blocking open-question input.
 
-## 11. Knowledge Base Update
+## 12. Knowledge Base Update
 
 [Record whether this specification is expected to produce durable project knowledge without instructing agents to write durable notes directly.]
 
@@ -135,17 +149,22 @@ Candidate, background, blocked, draft, proposed, stale, or otherwise non-authori
 
 Set disposition to `required` when accepted Design Interrogation conclusions establish new durable orchestration policy, workflow design, or reusable process behavior.
 
-## 12. Examples & Edge Cases
+## 13. Examples & Edge Cases
 
     ```code
     // Code snippet or data example demonstrating the correct application of the guidelines, including edge cases
     ```
 
-## 13. Validation Criteria
+## 14. Validation Criteria
 
 [List the criteria or tests that must be satisfied for compliance with this specification.]
 
-## 14. Quality Gate
+- The generated specification includes front matter and a shell created before extended evidence gathering.
+- The generated specification includes `Initial User Purpose Evidence` sourced from the current user request and visible supplied artifacts only.
+- The generated specification includes `Draft Requirement Breakdown` and revises it after bounded evidence gathering.
+- The specification remains self-contained and does not require broad repository exploration before the shell exists.
+
+## 15. Quality Gate
 
 Quality gate: verified|blocked
 
@@ -170,7 +189,7 @@ Final result: verified|blocked
 
 Run another evidence round whenever a round changes, fixes, adds, removes, or reclassifies material evidence. If any round records a blocking open question, the quality gate remains `blocked` until the question is resolved and the loop runs again.
 
-## 15. Related Specifications / Further Reading
+## 16. Related Specifications / Further Reading
 
 [Link to related spec 1]
 [Link to relevant external documentation]

@@ -247,7 +247,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 "every target source repository",
                 "Block when no target repository resolves or any Git-backed target reports `dirty`",
                 "related specification, root plan, parent phase, and assigned task before handoff",
-                "Do not fail only because visible delegation support is missing",
+                "Do not fail only because multi-agent subagent delegation support is missing",
                 "internal_spawn_used_for_task_delegation: false",
             ],
         ),

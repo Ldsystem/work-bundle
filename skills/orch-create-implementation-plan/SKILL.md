@@ -37,7 +37,7 @@ Downstream executors may read only the related spec, root plan, relevant phase, 
 
 - Convert the spec into deterministic phases, tasks, dependencies, affected files/modules, validation, completion criteria, and handoff requirements.
 - Carry required execution context from spec into the root plan, each phase, and each task by referencing stable spec IDs and adding only task-specific execution detail.
-- Carry the source spec `Knowledge Base Update` disposition, expected durable conclusions, evidence-source expectations, and follow-up path into the root plan, final task or review criteria, and executor-result handoff requirements.
+- Carry the source spec `Knowledge Base Update` disposition, evidence-source expectations, and review follow-up path into the root plan, final task or review criteria, and executor-result handoff requirements.
 - After generating the root plan, phase files, and task files, run a generated-plan verification pass against the source specification before reporting completion.
 - The generated-plan verification pass must check exact artifact paths, source-spec ID coverage, dependencies, safe parallelization opportunities, task write scopes, validation commands, and `create-handoff` completion requirements.
 - Repair generated-artifact drift, missing coverage, dependency mistakes, unsafe parallelization, validation gaps, handoff gaps, and internal consistency problems in the same planning turn, then repeat verification until no generated-artifact gap remains or a source-spec defect blocks progress.
@@ -45,6 +45,34 @@ Downstream executors may read only the related spec, root plan, relevant phase, 
 - Use explicit IDs, paths, statuses, dependencies, commands, validation rules, and completion criteria.
 - Do not create handoff files directly; require `create-handoff`.
 - Do not store plans under `.work-bundle/knowledge/`.
+
+## How to make tasks parallel
+
+Use this guidance only for task boundaries; keep the pattern names and rationale out of executor-facing prose unless they are needed as task-fit evidence.
+
+- Create or confirm a stable boundary artifact before branching parallel tasks. If no boundary artifact exists, keep the work serialized.
+- Use the smallest boundary artifact that separates responsibility cleanly:
+  - `api-contract-first` for API shape shared between caller and implementation.
+  - `port-interface-first` for core behavior behind a stable port before adapters or implementations branch.
+  - `repository-contract-first` for persistence ownership split behind a repository interface or query contract.
+  - `DTO/schema-first` for request, response, persistence, event, or pipeline data shape.
+  - `event-schema-first` for producers and consumers that can branch after the emitted event payload is stable.
+  - `facade-first` for callers and implementation internals separated by a narrow facade.
+  - `strategy/rule-matrix-first` for behavior variants that can branch after the decision table is stable.
+  - `command-contract-first` for command handlers, CLI actions, jobs, or workflow steps with a stable input/output contract.
+  - `pipeline-stage-contract-first` for adjacent pipeline stages separated by stage input/output contracts.
+  - `state-table-first` for stateful workflows whose branches can depend on an agreed state and transition table.
+  - `branch-by-abstraction` for replacing behavior while old and new implementations coexist behind an abstraction.
+  - `expand-and-contract` for staged schema or API changes that require compatible expansion before cleanup.
+  - `schema-contract-first` for general schema-shaped artifacts when the more specific DTO, event, command, or pipeline strategy does not fit.
+  - `interface-stub-first` for core logic behind a simple interface stub when no richer boundary is needed.
+  - `fixture-contract-first` for contract tests, golden data, or shared mock inputs.
+  - `adapter-boundary-first` for a split between core logic and concrete adapters.
+  - `documentation-or-reference-first` for a short reference, example, or other shared guidance artifact.
+  - `validation-convergence` for the final integration task that proves branches still fit together.
+- Give each parallel task exact source files, target files, dependencies, allowed and forbidden files, and validation.
+- Reject parallelization when tasks share target files, unresolved decisions, migration ordering, or validation ownership.
+- Require a convergence task any time separately built branches must be integrated and validated.
 
 ## Role Separation
 
@@ -106,7 +134,7 @@ Root plan:
 
 - related specification;
 - carried execution context as a compact spec-ID map, not duplicated spec prose;
-- a carried `Knowledge Base Update` summary with disposition, expected durable conclusions, evidence sources, and required follow-up path from the source specification;
+- a carried `Knowledge Base Update` summary with disposition, evidence sources, and required review follow-up path from the source specification;
 - requirements, constraints, source references, alternatives, open questions, risks by ID and execution impact;
 - phase index;
 - desired files/modules;
@@ -124,7 +152,7 @@ Each task:
 
 - exact self-contained execution context based on cited spec IDs;
 - goals, dependencies, source files, target files, target symbols;
-- implementation instructions, validation, completion criteria, and executor-result handoff requirements that carry any expected durable conclusions or explicit `none`.
+- implementation instructions, validation, completion criteria, and executor-result handoff requirements that carry compact continuation and review evidence.
 - generated-artifact integrity expectations for exact files, dependencies, validation, handoff requirements, and required same-turn repair when the task artifact is incomplete or inconsistent.
 - no copied spec sections beyond short one-line summaries.
 
@@ -150,8 +178,11 @@ Required boundaries:
 
 Each completion criteria section must include a `DONE-HANDOFF-*` item naming `create-handoff`, type `executor-result`, and scope `task`, `phase`, or `plan`.
 
-Pass available plan id/path, phase id/path, task id/path, related spec path, status, completed work, changed files/symbols, tests, deviations, unresolved issues, suggested durable conclusions, and recommended next actions to `create-handoff`.
-If the source spec `Knowledge Base Update` section says no durable update is expected, require handoffs to report explicit `none` for suggested durable conclusions and cite the evidence that supports that outcome.
+Require compact sparse YAML executor-result handoffs by applicability. Include only continuation and review evidence needed for the completed or blocked scope: related spec/plan/phase/task identity, result state, concise summary, changed or inspected files/symbols, validation commands and results, unresolved blockers when present, `task_fit_check` or phase/plan fit evidence, repository/preflight evidence, compact CodeGraph evidence when applicable, and `delegation_evidence` when ownership was delegated or fallback proof is required.
+
+Carry `Knowledge Base Update` disposition only as review evidence for `orch-review-plan` resolution through approved `ks-*` skills. Do not make executors provide durable-knowledge advice or direct knowledge writes in handoff payloads. If the source spec says no durable update is expected, carry that disposition and the supporting source-spec evidence as review disposition evidence.
+
+Omit empty sections and forbidden executor-result advice fields. Use `unresolved` and fit-check findings for remaining issues, and keep durable knowledge persistence decisions in the review stage.
 
 ## Contracts
 
@@ -163,7 +194,7 @@ Load only when creating or validating:
 
 ## Validation
 
-Confirm required front matter and sections exist, the source specification includes `Knowledge Base Update`, paths and dependencies are explicit, execution context is carried forward through spec-ID references plus concrete file-level instructions, no executor is required to read `.work-bundle/knowledge/`, blockers become leading clarification/spec-repair tasks, no phase or task targets `.work-bundle/knowledge/**`, indexes are updated, and every plan/phase/task has mandatory `executor-result` handoff criteria that carry suggested durable conclusions or explicit `none`.
+Confirm required front matter and sections exist, the source specification includes `Knowledge Base Update`, paths and dependencies are explicit, execution context is carried forward through spec-ID references plus concrete file-level instructions, no executor is required to read `.work-bundle/knowledge/`, blockers become leading clarification/spec-repair tasks, no phase or task targets `.work-bundle/knowledge/**`, indexes are updated, and every plan/phase/task has mandatory compact sparse YAML `executor-result` handoff criteria using only applicable continuation and review evidence.
 
 Run generated-plan verification before reporting completion:
 

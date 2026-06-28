@@ -91,6 +91,8 @@ Use a compact source-spec ID map. Do not paste long specification sections into 
 
 Record the verification pass performed after generating the root plan, phases, and tasks.
 
+How to make tasks parallel: create or confirm a stable boundary artifact before branching work, then assign parallel tasks only when dependencies are satisfied and write scopes are disjoint. Use concrete plan evidence such as API contracts, port interfaces, repository contracts, DTO/schema contracts, event schemas, facades, command contracts, pipeline stage contracts, state tables, rule matrices, branch-by-abstraction, or expand-and-contract boundaries. Keep pattern rationale in the planning artifact; generated executor tasks should receive exact objectives, input/output artifacts, allowed and forbidden files, validation, convergence checks, and integration dependencies.
+
 | ID | Check | Scope | Result | Repair |
 |---|---|---|---|---|
 | VERIFY-001 | source-spec ID coverage maps every implemented requirement, constraint, resolved alternative, and resolved open question to plan/phase/task artifacts. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |

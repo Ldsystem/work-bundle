@@ -13,6 +13,16 @@ Create AI-ready implementation specifications under orchestration spec roots.
 
 Use `references/assets/orchestration/workflow.md` as the shared workflow authority.
 
+## Spec Shell First
+
+Before any long evidence gathering, create the specification artifact shell first.
+
+- Include the front matter required by the specification contract.
+- Add `Initial User Purpose Evidence` and `Draft Requirement Breakdown` sections immediately in the initial shell.
+- Populate `Initial User Purpose Evidence` only from the current user request and visible supplied artifacts.
+- Treat `Draft Requirement Breakdown` as provisional. Revise it after bounded evidence gathering; do not silently replace it.
+- Do not begin broad repository exploration until the shell exists.
+
 ## Knowledge Gateway
 
 Before drafting from durable project knowledge, use `keep-summarizing` with `what-is-helpful` gateway mode. Do not directly browse `.work-bundle/knowledge/`.
@@ -35,6 +45,7 @@ It must carry enough accepted context for planning and execution without future 
 
 - Use precise, explicit, unambiguous language.
 - Distinguish requirements, constraints, assumptions, alternatives, and open questions.
+- Create the specification shell before extended evidence gathering so the artifact always has front matter plus `Initial User Purpose Evidence` and `Draft Requirement Breakdown`.
 - Inspect relevant note states and open-question watchpoints through the approved knowledge gateway when durable knowledge affects the scope.
 - Surface relevant draft, proposed, conflicting, stale, or missing-evidence context as uncertainty; do not convert it into requirements.
 - Include an `Open Questions` section. If relevant uncertainty exists, list ID, question or uncertainty, related scope, source, blocking yes/no, required resolution, and at least one feasible advised option. If none exists, state `None for this specification scope.`

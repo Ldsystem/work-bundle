@@ -291,13 +291,16 @@ def test_orchestration_evals_cover_preflight_and_review_delegation_regressions()
 def test_specification_contract_requires_quality_gate_source_context_and_evidence_loop() -> None:
     contract = text("references/assets/orchestration/contract/specification-v1.md")
 
-    assert "## 3. Source Context" in contract
+    assert "## 3. Initial Shell" in contract
+    assert "## 4. Source Context" in contract
+    assert "Initial User Purpose Evidence" in contract
+    assert "Draft Requirement Breakdown" in contract
     assert "Design Interrogation" in contract
     assert "`authority`, `candidate`, `background`, and `blocked`" in contract
     assert "material non-authority evidence" in contract
-    assert "## 10. Open Questions" in contract
+    assert "## 11. Open Questions" in contract
     assert "Advised options" in contract
-    assert "## 11. Knowledge Base Update" in contract
+    assert "## 12. Knowledge Base Update" in contract
     assert "Quality gate: verified|blocked" in contract
     assert "Extra evidence loop" in contract
     assert "Run another evidence round whenever a round changes" in contract
@@ -306,11 +309,11 @@ def test_specification_contract_requires_quality_gate_source_context_and_evidenc
 def test_orchestration_workflow_requires_verified_specification_gate_before_planning() -> None:
     workflow = text("references/assets/orchestration/workflow.md")
 
-    assert "missing supporting authority notes do not automatically block authoring" in workflow
+    assert "Missing supporting authority notes do not automatically block authoring" in workflow
     assert "Material non-authority evidence stays visible" in workflow
     assert "Quality gate: verified|blocked" in workflow
-    assert "blocked quality gate prevents implementation planning" in workflow
-    assert "verified quality gate is required before `orch-create-implementation-plan`" in workflow
+    assert "blocked quality gate prevents implementation planning" in workflow.lower()
+    assert "verified quality gate is required before `orch-create-implementation-plan`" in workflow.lower()
 
 
 def test_create_implementation_plan_requires_generated_artifact_verification_and_repair() -> None:
@@ -365,8 +368,8 @@ def test_execute_plan_requires_executor_drift_gap_verification_and_preserves_fal
 
     assert "related specification, root plan, parent phase, and assigned task before handoff" in skill
     assert "repair every task-scoped drift or gap" in skill.lower()
-    assert "record explicit drift/gap verification evidence" in skill
-    assert "Do not fail only because visible delegation support is missing" in skill
+    assert "Record explicit drift/gap verification evidence" in skill
+    assert "Do not fail only because multi-agent subagent delegation support is missing" in skill
     assert "single-agent fallback" in skill
     assert "Never allow `prefer_subagent` to bypass visible delegation safety" in skill
 
@@ -388,7 +391,7 @@ def test_execute_plan_requires_codegraph_preflight_and_no_index_fallback_contrac
     assert "target_kind=local-project" in skill
     assert "Do not reject an explicitly resolved non-Git local project root solely as `not-git`" in skill
     assert "git status --porcelain=v1 --untracked-files=all" in skill
-    assert "does not fabricate Git cleanliness evidence for local-project targets" in skill
+    assert "Do not fabricate Git cleanliness evidence for local-project targets" in skill
 
     assert "If the target root has no `.codegraph/`, record CodeGraph as skipped with reason `no-index`" in skill
     assert "Do not initialize CodeGraph and do not run `codegraph sync`" in skill
@@ -416,16 +419,16 @@ def test_execute_plan_requires_visible_delegation_and_allows_helpers_only() -> N
     handoff_contract = text("references/assets/orchestration/contract/handoff-executor-result-v1.md")
     review_skill = text("skills/orch-review-plan/SKILL.md")
 
-    assert "visible thread/worktree delegation" in skill
-    assert "delegated plan, phase, or task ownership will run in a user-visible thread" in skill
+    assert "multi-agent subagent delegation" in skill
+    assert "Delegate each task in the wave to a separate visible multi-agent subagent" in skill
     assert "Do not silently delegate to invisible internal spawn work" in skill
-    assert "Invisible internal spawn workers must not own delegated plan, phase, or task implementation work" in skill
+    assert "Invisible internal spawn workers and cross-conversation delegation must not own delegated plan, phase, or task implementation work" in skill
     assert "Internal workers may be used only for bounded helper analysis" in skill
-    assert "does not replace visible thread/worktree task delegation" in skill
+    assert "does not replace multi-agent subagent task delegation" in skill
     assert "internal_spawn_used_for_task_delegation: false" in skill
 
-    assert "delegate only to visible thread/worktree workers" in workflow
-    assert "Invisible internal spawn work must not own delegated implementation work" in workflow
+    assert "delegate only to visible multi-agent subagents" in workflow
+    assert "Invisible internal spawn work and cross-conversation delegation must not own delegated implementation work" in workflow
     assert "Internal helper workers remain allowed for bounded analysis" in workflow
 
     assert "`delegation_evidence` only as proof of task ownership delegation" in handoff_rule
@@ -480,8 +483,25 @@ def test_orchestration_evals_cover_delegated_executor_verification_and_fallback(
     expected = "\n".join(str(case["expected_output"]) for case in cases)
 
     assert "delegated sub-agent" in prompts
+    assert "visible multi-agent subagents" in prompts
+    assert "cross-conversation delegation" in expected
     assert "repairs the task-scoped gap and repeats verification before handoff" in expected
     assert "preserves single-agent fallback" in expected
+
+
+def test_orchestration_evals_cover_parallelization_and_spec_shell_first() -> None:
+    cases = evals("references/evals/orchestration/evals.json")
+    prompts = "\n".join(str(case["prompt"]) for case in cases)
+    expected = "\n".join(str(case["expected_output"]) for case in cases)
+
+    assert "backend and frontend work can run in parallel" in prompts
+    assert "long optimization request with supplied screenshots and reference files" in prompts
+    assert "boundary artifact first" in expected
+    assert "api-contract-first" in expected
+    assert "convergence validation task" in expected
+    assert "Initial User Purpose Evidence" in expected
+    assert "Draft Requirement Breakdown" in expected
+    assert "before long evidence gathering" in expected
 
 
 def test_orchestration_evals_cover_sparse_yaml_and_retired_active_handoffs() -> None:

@@ -171,8 +171,8 @@
     },
     {
       "id": 29,
-      "prompt": "Execute a scheduler wave with visible thread delegation available and safe disjoint task scopes.",
-      "expected_output": "Delegates task ownership only to visible threads or worktrees, records compact delegation_evidence with each visible_reference when provided, sets internal_spawn_used_for_task_delegation to false, validates sparse executor-result handoffs, and preserves preflight and scope gates.",
+      "prompt": "Execute a scheduler wave with visible multi-agent subagents available and safe disjoint task scopes.",
+      "expected_output": "Delegates task ownership only to visible multi-agent subagents, records compact delegation_evidence with each visible_reference when provided, sets internal_spawn_used_for_task_delegation to false, validates sparse executor-result handoffs, rejects cross-conversation delegation as a task ownership vehicle, and preserves preflight and scope gates.",
       "files": []
     },
     {
@@ -184,7 +184,19 @@
     {
       "id": 31,
       "prompt": "Execute a delegated task while an internal helper worker is used only for bounded snippet comparison.",
-      "expected_output": "Allows the helper-worker support because visible thread or worktree ownership remains intact, records internal helper usage in compact delegation_evidence, keeps internal_spawn_used_for_task_delegation false, and requires the visible executor handoff to own validation and task_fit_check evidence.",
+      "expected_output": "Allows the helper-worker support because visible multi-agent subagent ownership remains intact, records internal helper usage in compact delegation_evidence, keeps internal_spawn_used_for_task_delegation false, and requires the visible executor handoff to own validation and task_fit_check evidence.",
+      "files": []
+    },
+    {
+      "id": 32,
+      "prompt": "Create an implementation plan where backend and frontend work can run in parallel after an API boundary is stable.",
+      "expected_output": "Selects create-implementation-plan, creates or confirms a boundary artifact first, uses api-contract-first or another suitable decoupling strategy, assigns parallel tasks only with disjoint write scopes and explicit dependencies, rejects unsafe overlap, and adds a convergence validation task for the branch group.",
+      "files": []
+    },
+    {
+      "id": 33,
+      "prompt": "Create an implementation specification from a long optimization request with supplied screenshots and reference files.",
+      "expected_output": "Selects create-specification, creates the active specification shell before long evidence gathering, records Initial User Purpose Evidence only from the current request and visible supplied artifacts, adds Draft Requirement Breakdown, then revises the draft after bounded evidence gathering without silently replacing the original purpose.",
       "files": []
     }
   ],

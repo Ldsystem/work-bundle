@@ -72,6 +72,8 @@ def test_execute_and_doctor_skills_own_constraints() -> None:
     doctor = skill_text(REPO_ROOT / "skills/orch-doctor/SKILL.md")
 
     assert "## Execution Constraints (skill-owned)" in execute
+    assert "## Scheduler-Owned Constraints" in execute
+    assert "## Executor-Owned Constraints" in execute
     assert "repository preflight" in execute.lower() or "clean-worktree preflight" in execute.lower()
     assert "## Read-Only Constraints (skill-owned)" in doctor
     assert "Files changed: none" in doctor

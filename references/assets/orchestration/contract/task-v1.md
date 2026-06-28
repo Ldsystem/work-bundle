@@ -75,10 +75,12 @@ When source-code inspection or edits are in scope, include concise task-level Co
 
 When task ownership may be delegated, include concise delegation evidence expectations:
 
-- require visible thread/worktree delegation when delegation is used;
+- require visible multi-agent subagent delegation when delegation is used in Codex app contexts;
 - require a `delegation_evidence:` block in the executor-result handoff;
 - require `visible_reference` when the environment provides one;
+- require `surface: multi-agent-subagent` for delegated task ownership in this environment, or `single-agent-fallback` when visible delegation is unavailable or unsafe;
 - require `internal_spawn_used_for_task_delegation: false`;
+- require cross-conversation delegation and invisible internal spawn workers not to own task execution;
 - allow internal helper workers only when they do not own delegated task execution.
 
 ## 6. Validation
