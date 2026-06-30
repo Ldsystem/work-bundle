@@ -45,7 +45,7 @@ Rules can be discovered from three rule-store scopes:
 
 Rule loading must be index-first and condition-driven.
 
-Before selecting rules, the agent must decompose the user request into rule-matching signals.
+After receiving a user request, the agent must decompose it into rule-matching signals, then check discovered rule metadata to find applicable rules.
 
 Rule metadata has separate meanings:
 
@@ -62,7 +62,7 @@ must:
 - block rule loading when duplicate rule ids appear across enabled rule-store scopes; report every conflicting scope and path
 - block rule loading when `requires` dependencies are missing or cyclic
 - load `load: always` rule bodies immediately and unconditionally after their owning index is discovered
-- decompose the current user request before rule selection
+- decompose the current user request into task signals, then check all discovered rule metadata against those signals
 - identify the task purpose, expected artifact, operation type, target source, file scope, repository scope, lifecycle stage, and tool-relevant conditions when applicable
 - treat codebase browsing, code inspection, implementation planning, repair, refactor, migration, review, and editing as distinct operation signals
 - treat symbol lookup, dependency tracing, call-chain analysis, module-boundary analysis, and impact-radius analysis as source/condition signals
@@ -73,7 +73,7 @@ must:
 - load rule dependencies declared in `requires` after the parent rule has been selected
 - apply every applicable rule according to `enforcement`: `must` means strict compliance; `should` means advice that must be reported when materially deviated from
 - load only Markdown rule files referenced by discovered index metadata or dependency resolution
-- when diagnostic mode is requested, report discovered scopes, missing optional scopes, selected rules, always-loaded rules, skipped rules, dependency-loaded rules, conflicts, and the reason for each decision
+- when diagnostic mode is requested, report discovered scopes, missing optional scopes, applicable rules, loaded rules, always-loaded rules, skipped rules, dependency-loaded rules, conflicts, and the reason for each decision
 
 must_not:
 - do not load all rule bodies eagerly

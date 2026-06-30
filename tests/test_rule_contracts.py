@@ -225,7 +225,10 @@ def test_agents_template_load_always_is_unconditional_and_three_scopes_are_named
     assert "$work_bundle_config_root/rules/index.yaml" in text
     assert "$project_root/.work-bundle/rules/index.yaml" in text
     assert "load `load: always` rule bodies immediately and unconditionally" in text
+    assert "decompose it into rule-matching signals, then check discovered rule metadata" in text
+    assert "decompose the current user request into task signals, then check all discovered rule metadata" in text
     assert "load `load: always` rules only when their scope is relevant" not in text
+    assert "decompose the current user request before rule selection" not in text
 
 
 def test_validate_rules_rejects_nested_scope_index(tmp_path: Path) -> None:

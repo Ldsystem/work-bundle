@@ -222,6 +222,23 @@ applies_when:
 
 Scripts will **not** judge `applies_when` meaning or reject vague tokens. That responsibility belongs to the agent via this skill.
 
+## Trigger Clarity Principle
+
+Rule trigger prose must name the user-visible or workflow-visible signal that causes rule consideration before describing rule lookup, selection, or application. Do not make activation depend on the agent first realizing that it is in a "rule selection" step; an agent that has not recognized a rule need may never enter that step.
+
+Prefer trigger constructions that start from observable work:
+
+- "When a user request is received, decompose it into task signals, then check discovered rules."
+- "When a user asks to create or edit a rule, load `wb-create-rule`."
+- "When decomposed task signals include source inspection, check CodeGraph applicability."
+
+Reject unclear trigger constructions:
+
+- `before rule selection`
+- `when selecting rules` as the only trigger
+- `when needed`, `when relevant`, `when appropriate`
+- any instruction where the agent must already know a rule is relevant before the instruction explains how to detect relevance
+
 ## `source_authority` and `enforcement: should`
 
 - Do not use `source_authority` in front matter. Extract enforceable requirements into `## Must`, `## Must Not`, and `## Validation` so the rule body is self-contained.
@@ -240,6 +257,7 @@ Scripts will **not** judge `applies_when` meaning or reject vague tokens. That r
 - Prefer `load: conditional` unless startup loading is explicitly required.
 - Run `validate-rules --scope <toolkit|global|project>` or explicit-root compatibility mode after rule work; never on area subdirectories.
 - Inspect `applies_when` semantically before completing registration.
+- Apply the Trigger Clarity Principle to `applies_when` and rule prose: name the observable trigger before rule lookup, selection, or application language.
 
 ## Must Not
 
@@ -252,6 +270,7 @@ Scripts will **not** judge `applies_when` meaning or reject vague tokens. That r
 - Do not run `create-rules` or `validate-rules` against scope subdirectories such as `rules/work-bundle/`.
 - Do not mutate toolkit rules when `$project_root != $work_bundle_root`.
 - Do not rely on scripts to judge `applies_when` semantics.
+- Do not use `before rule selection` or `when selecting rules` as the only trigger for rule consideration.
 
 ## Validation
 
@@ -260,6 +279,7 @@ Scripts will **not** judge `applies_when` meaning or reject vague tokens. That r
 - Confirm correct path (scoped vs cross-cutting) per prefix map.
 - Confirm front matter and body sections match this contract.
 - Confirm `applies_when` conditions are concrete (no vague tokens).
+- Confirm trigger prose names an observable user or workflow signal before rule lookup, selection, or application language.
 - Confirm index entry mirrors front matter.
 - Confirm no prohibited legacy fields are present.
 

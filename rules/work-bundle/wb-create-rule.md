@@ -31,6 +31,7 @@ Summarize the enforceable contract for creating, migrating, and validating work-
 - Enforce the toolkit write boundary: do not mutate `$work_bundle_root/rules/**` unless `$project_root == $work_bundle_root`.
 - Never pass area subdirectories such as `rules/work-bundle/` to `create-rules` or `validate-rules`.
 - Inspect `applies_when` semantically for concrete, actionable conditions before registration.
+- Apply the Trigger Clarity Principle to rule triggers and rule prose: name the user-visible or workflow-visible signal before describing rule lookup, selection, applicability, or application.
 - Load mechanical catalogs from `references/wb-create-rule-validation.yaml` when verifying placement and fields.
 
 ## Must Not
@@ -42,11 +43,14 @@ Summarize the enforceable contract for creating, migrating, and validating work-
 - Do not create, edit, delete, migrate, or index toolkit rules from a non-toolkit project root.
 - Do not rely on scripts to judge `applies_when` meaning; scripts check presence and format only.
 - Do not register documentation-only notes as enforceable rules.
+- Do not use `before rule selection`, `when selecting rules`, `when needed`, `when relevant`, or similar phrasing as the only trigger for rule consideration.
+- Do not write instructions that require the agent to already know a rule is relevant before the instruction explains the observable signal used to detect relevance.
 
 ## Validation
 
 - Verify path placement against `references/wb-create-rule-validation.yaml` `id_prefix_scope_map` and `path_rules`.
 - Agent rejects vague `applies_when` tokens (`when relevant`, `if needed`, `as appropriate`, and similar).
+- Agent confirms trigger prose names an observable user or workflow signal before rule lookup, selection, applicability, or application language.
 - Mechanical validation via `python3 scripts/wb.py validate-rules --scope <toolkit|global|project>` or explicit-root compatibility mode confirms required keys, prohibited fields, index sync, and line limits.
 
 ## On Violation
