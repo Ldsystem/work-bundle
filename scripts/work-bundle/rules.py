@@ -24,6 +24,7 @@ _DEFAULT_ID_PREFIX_SCOPE_MAP = {
     "rule-integrity-check-": "integrity-check",
 }
 _DEFAULT_FORBIDDEN_PATH_PREFIXES = ["global"]
+_RULE_STORE_SCOPES = {"toolkit", "global", "project"}
 
 _VALIDATION_MANIFEST_CACHE: dict[str, object] | None = None
 
@@ -159,6 +160,208 @@ def scoped_rules_root_error(root: Path) -> str:
         f"{root}:scoped_rules_root_not_allowed:"
         f"use canonical rules root {canonical} instead of scope directory {root.name}/"
     )
+
+
+def _resolve_project_root(value: str | None = None) -> Path:
+    return Path(value).expanduser().resolve() if value else Path.cwd().resolve()
+
+
+def resolve_rule_store_root(scope: str, project_root: Path | None = None) -> Path:
+    if scope == "toolkit":
+        root = resolve_work_bundle_root()
+        if root is None:
+            raise ValueError("work_bundle_root_unresolved")
+        return root / "rules"
+    if scope == "global":
+        return work_bundle_config_root() / "rules"
+    if scope == "project":
+        if project_root is None:
+            raise ValueError("project_root_required")
+        return project_root / ".work-bundle" / "rules"
+    raise ValueError(f"unsupported_rule_store_scope:{scope}")
+
+
+def _parse_rules_command_args(args: list[str], prog: str) -> tuple[Path, str, Path | None, list[str] | None]:
+    parser = argparse.ArgumentParser(prog=prog)
+    parser.add_argument("rules_root", nargs="?")
+    parser.add_argument("--scope", choices=sorted(_RULE_STORE_SCOPES))
+    parser.add_argument("--project-root")
+    parsed = parser.parse_args(args)
+    if parsed.rules_root and parsed.scope:
+        return Path(parsed.rules_root), "explicit", None, ["rules_root_and_scope_are_mutually_exclusive"]
+    if parsed.scope:
+        project_root = _resolve_project_root(parsed.project_root)
+        try:
+            return resolve_rule_store_root(parsed.scope, project_root), parsed.scope, project_root, None
+        except ValueError as exc:
+            return Path("."), parsed.scope, project_root, [str(exc)]
+    if parsed.rules_root:
+        return Path(parsed.rules_root), "explicit", _resolve_project_root(parsed.project_root), None
+    return Path("."), "explicit", None, ["rules_root_or_scope_required"]
+
+
+def validate_toolkit_write_boundary(scope: str, project_root: Path | None) -> list[str]:
+    if scope != "toolkit":
+        return []
+    work_bundle_root = resolve_work_bundle_root()
+    if work_bundle_root is None:
+        return ["toolkit_scope:work_bundle_root_unresolved"]
+    effective_project_root = (project_root or Path.cwd()).resolve()
+    if effective_project_root != work_bundle_root.resolve():
+        return [
+            "toolkit_scope_write_forbidden:"
+            f"project_root:{effective_project_root}:work_bundle_root:{work_bundle_root.resolve()}"
+        ]
+    return []
+
+
+def rule_store_sources(project_root: Path | None = None) -> list[dict[str, object]]:
+    resolved_project_root = project_root or Path.cwd().resolve()
+    sources: list[dict[str, object]] = []
+    toolkit_root = resolve_work_bundle_root()
+    if toolkit_root is not None:
+        sources.append({
+            "scope": "toolkit",
+            "rules_root": toolkit_root / "rules",
+            "index_path": toolkit_root / "rules" / "index.yaml",
+            "required": True,
+        })
+    else:
+        sources.append({
+            "scope": "toolkit",
+            "rules_root": None,
+            "index_path": None,
+            "required": True,
+        })
+    sources.append({
+        "scope": "global",
+        "rules_root": work_bundle_config_root() / "rules",
+        "index_path": work_bundle_config_root() / "rules" / "index.yaml",
+        "required": False,
+    })
+    sources.append({
+        "scope": "project",
+        "rules_root": resolved_project_root / ".work-bundle" / "rules",
+        "index_path": resolved_project_root / ".work-bundle" / "rules" / "index.yaml",
+        "required": False,
+    })
+    return sources
+
+
+def _parse_rule_index(index_path: Path, store_scope: str, rules_root: Path) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    current_list: str | None = None
+    for raw in read(index_path).splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped == "rules:":
+            continue
+        if stripped.startswith("- id:"):
+            if current:
+                entries.append(current)
+            current = {
+                "id": stripped.split(":", 1)[1].strip(),
+                "store_scope": store_scope,
+                "index_path": str(index_path),
+                "rules_root": str(rules_root),
+                "requires": [],
+                "applies_when": [],
+            }
+            current_list = None
+            continue
+        if current is None:
+            continue
+        if stripped in {"applies_when:", "requires:"}:
+            current_list = stripped[:-1]
+            continue
+        if stripped.startswith("- ") and current_list:
+            current.setdefault(current_list, []).append(stripped[2:].strip())
+            continue
+        if ":" in stripped:
+            key, value = stripped.split(":", 1)
+            normalized_key = key.strip()
+            normalized_value = value.strip()
+            if normalized_key in {"applies_when", "requires"} and normalized_value == "[]":
+                current[normalized_key] = []
+            else:
+                current[normalized_key] = normalized_value
+            current_list = None
+    if current:
+        entries.append(current)
+    for entry in entries:
+        path = str(entry.get("path", "")).strip()
+        entry["body_path"] = str((rules_root / path).resolve()) if path else None
+    return entries
+
+
+def build_effective_rule_registry(project_root: Path | None = None) -> dict[str, object]:
+    failures: list[str] = []
+    missing_optional: list[str] = []
+    discovered: list[dict[str, str]] = []
+    entries: list[dict[str, object]] = []
+
+    for source in rule_store_sources(project_root):
+        scope = str(source["scope"])
+        rules_root = source.get("rules_root")
+        index_path = source.get("index_path")
+        required = bool(source["required"])
+        if not isinstance(rules_root, Path) or not isinstance(index_path, Path):
+            failures.append(f"{scope}:rules_root_unresolved")
+            continue
+        discovered.append({"scope": scope, "rules_root": str(rules_root), "index_path": str(index_path)})
+        if not index_path.exists():
+            if required:
+                failures.append(f"{scope}:index_missing:{index_path}")
+            else:
+                missing_optional.append(scope)
+            continue
+        entries.extend(_parse_rule_index(index_path, scope, rules_root))
+
+    by_id: dict[str, list[dict[str, object]]] = {}
+    for entry in entries:
+        by_id.setdefault(str(entry["id"]), []).append(entry)
+    for rule_id, matching in sorted(by_id.items()):
+        if len(matching) > 1:
+            locations = ",".join(f"{item['store_scope']}:{item.get('body_path')}" for item in matching)
+            failures.append(f"duplicate_rule_id:{rule_id}:{locations}")
+
+    known_ids = set(by_id)
+    graph: dict[str, list[str]] = {}
+    for entry in entries:
+        rule_id = str(entry["id"])
+        requires = [str(item) for item in yaml_list(entry.get("requires"))]
+        graph[rule_id] = requires
+        for required_id in requires:
+            if required_id not in known_ids:
+                failures.append(f"missing_required_rule:{rule_id}:{required_id}")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(rule_id: str, path: list[str]) -> None:
+        if rule_id in visiting:
+            cycle = "->".join(path + [rule_id])
+            failures.append(f"dependency_cycle:{cycle}")
+            return
+        if rule_id in visited:
+            return
+        visiting.add(rule_id)
+        for required_id in graph.get(rule_id, []):
+            if required_id in graph:
+                visit(required_id, path + [rule_id])
+        visiting.remove(rule_id)
+        visited.add(rule_id)
+
+    for rule_id in sorted(graph):
+        visit(rule_id, [])
+
+    return {
+        "status": "passed" if not failures else "issues-found",
+        "discovered": discovered,
+        "missing_optional": missing_optional,
+        "rules": entries,
+        "failures": sorted(set(failures)),
+    }
 
 
 def parse_yaml_like(text: str) -> dict[str, object]:
@@ -336,12 +539,16 @@ def sync_index(root: Path) -> list[dict[str, object]]:
 
 
 def cmd_create_rules(args: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="wb.py create-rules")
-    parser.add_argument("rules_root")
-    parsed = parser.parse_args(args)
-    root = Path(parsed.rules_root)
+    root, scope, project_root, parse_failures = _parse_rules_command_args(args, "wb.py create-rules")
+    if parse_failures:
+        out({"status": "issues-found", "scope": scope, "rules_root": str(root), "failures": parse_failures})
+        return 1
+    boundary_failures = validate_toolkit_write_boundary(scope, project_root)
+    if boundary_failures:
+        out({"status": "blocked", "scope": scope, "rules_root": str(root), "failures": boundary_failures})
+        return 1
     if is_scoped_rules_subdirectory(root):
-        out({"status": "issues-found", "failures": [scoped_rules_root_error(root)]})
+        out({"status": "issues-found", "scope": scope, "rules_root": str(root), "failures": [scoped_rules_root_error(root)]})
         return 1
     root.mkdir(parents=True, exist_ok=True)
     migrated = []
@@ -352,7 +559,7 @@ def cmd_create_rules(args: list[str]) -> int:
         if migrated_path:
             migrated.append(str(migrated_path))
     entries = sync_index(root)
-    out({"status": "passed", "migrated": migrated, "rules": [entry["id"] for entry in entries]})
+    out({"status": "passed", "scope": scope, "rules_root": str(root.resolve()), "migrated": migrated, "rules": [entry["id"] for entry in entries]})
     return 0
 
 
@@ -459,12 +666,12 @@ def validate_index(root: Path) -> list[str]:
 
 
 def cmd_validate_rules(args: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="wb.py validate-rules")
-    parser.add_argument("rules_root")
-    parsed = parser.parse_args(args)
-    root = Path(parsed.rules_root)
+    root, scope, _project_root, parse_failures = _parse_rules_command_args(args, "wb.py validate-rules")
+    if parse_failures:
+        out({"status": "issues-found", "scope": scope, "rules_root": str(root), "failures": parse_failures})
+        return 1
     if is_scoped_rules_subdirectory(root):
-        out({"status": "issues-found", "failures": [scoped_rules_root_error(root)]})
+        out({"status": "issues-found", "scope": scope, "rules_root": str(root), "failures": [scoped_rules_root_error(root)]})
         return 1
     failures: list[str] = []
     if list(root.glob("**/*.mdc")):
@@ -476,5 +683,5 @@ def cmd_validate_rules(args: list[str]) -> int:
         failures.extend(validate_rule_file(root, path))
     failures.extend(validate_no_scoped_indexes(root))
     failures.extend(validate_index(root))
-    out({"status": "passed" if not failures else "issues-found", "failures": failures})
+    out({"status": "passed" if not failures else "issues-found", "scope": scope, "rules_root": str(root.resolve()), "failures": failures})
     return 0 if not failures else 1

@@ -11,19 +11,36 @@ This skill is the primary agent authority for rule creation. It is self-containe
 
 ## Authority Boundary
 
-Git-tracked authority for rule work is limited to:
+Authority for rule work is limited to:
 
-- `skills/wb-create-rule/SKILL.md` — this skill (primary agent contract)
-- `rules/` — runtime rules and `rules/index.yaml`
+- `skills/wb-create-rule/SKILL.md` — this skill (primary agent contract).
+- `$work_bundle_root/rules/` — toolkit runtime rules and `index.yaml` when rule-store scope is `toolkit`.
+- `$work_bundle_config_root/rules/` — global user runtime rules and `index.yaml` when rule-store scope is `global`.
+- `$project_root/.work-bundle/rules/` — project runtime rules and `index.yaml` when rule-store scope is `project`.
 - `references/wb-create-rule-validation.yaml` — mechanical validation catalogs
 - `scripts/wb.py` — dispatcher for `create-rules` and `validate-rules`
 
-**Must not** cite paths outside the git repository as authority. Offline or untracked material (for example paths under a local `design/` tree) may inform human spec authoring only; agents must not load or reference them when creating, migrating, or validating rules.
+**Must not** cite paths outside the selected rule-store root, this skill, the validation catalog, or the dispatcher as rule authority. Offline or untracked material outside those selected authority paths may inform human spec authoring only; agents must not load or reference it when creating, migrating, or validating rules.
+
+## Rule Store Scopes
+
+Rule-store scope chooses which rules root is created, synced, or validated:
+
+| Rule-store scope | Rules root | Use |
+|---|---|---|
+| `toolkit` | `$work_bundle_root/rules/` | Built-in WorkBundle rules. |
+| `global` | `$work_bundle_config_root/rules/` | User-customized global rules. |
+| `project` | `$project_root/.work-bundle/rules/` | Project-local rules. |
+| `explicit` | user-supplied `<rules-root>` | Backward-compatible direct root mode. |
+
+Rule-store scope is not the same as a rule area directory. Area directories inside any rules root remain `work-bundle/`, `keep-summarizing/`, `orchestration/`, and `integrity-check/`.
+
+**Toolkit write boundary:** agents must not create, edit, delete, migrate, or index `$work_bundle_root/rules/**` unless `$project_root == $work_bundle_root`. If the active project root is different from the toolkit root, stop with a boundary blocker instead of mutating toolkit rules.
 
 ## Rule Layout
 
 ```text
-rules/
+<rules-root>/
   index.yaml
   <cross-cutting-rule>.md          # cross-cutting rules at repo root level
   work-bundle/
@@ -38,10 +55,10 @@ rules/
 
 | Rule kind | Location | When to use |
 |---|---|---|
-| **Scoped** | `rules/<scope>/<rule-id>.md` | Rule owned by a skill area; id uses an area prefix |
-| **Cross-cutting** | `rules/<rule-id>.md` directly under `rules/` | Rule applies across areas without a single owner prefix |
+| **Scoped** | `<rules-root>/<scope>/<rule-id>.md` | Rule owned by a skill area; id uses an area prefix |
+| **Cross-cutting** | `<rules-root>/<rule-id>.md` directly under the rules root | Rule applies across areas without a single owner prefix |
 
-There is **no** `rules/global/` directory. Cross-cutting rules belong at `rules/` root, not under a `global/` subdirectory.
+There is **no** `global/` area directory inside a rules root. Global rules use rule-store scope `global` and still place cross-cutting rules directly at `$work_bundle_config_root/rules/`.
 
 ### Scope and id prefix map
 
@@ -51,7 +68,7 @@ There is **no** `rules/global/` directory. Cross-cutting rules belong at `rules/
 | `ks-` | `rules/keep-summarizing/` |
 | `orch-` | `rules/orchestration/` |
 | `rule-integrity-check-` | `rules/integrity-check/` |
-| no area prefix / cross-cutting | `rules/` (root) |
+| no area prefix / cross-cutting | `<rules-root>/` |
 
 Allowed scope directory names are enumerated in `references/wb-create-rule-validation.yaml` under `allowed_scopes`. Mechanical path placement checks use `id_prefix_scope_map` and `path_rules` from that manifest.
 
@@ -90,12 +107,12 @@ requires: []
 
 ### Index entry (canonical)
 
-Every registered rule appears in `rules/index.yaml`:
+Every registered rule appears in the owning rules root's `index.yaml`:
 
 ```yaml
 rules:
   - id: <rule-id>
-    path: rules/<scope-or-root>/<file>.md
+    path: <scope-or-root>/<file>.md
     applies_when:
       - <concrete condition>
     enforcement: must|should
@@ -119,22 +136,29 @@ Scripts load this manifest for mechanical checks. Agents use it when verifying p
 
 ## Commands and Index Workflow
 
-Use the unified work-bundle dispatcher:
+Use the unified work-bundle dispatcher. Prefer scoped commands:
 
 | Command | Behavior |
 |---|---|
-| `python3 scripts/wb.py create-rules <rules-root>` | Migrate legacy YAML rules to Markdown where applicable; sync `index.yaml` for discovered rules |
-| `python3 scripts/wb.py validate-rules <rules-root>` | Mechanical validation; non-zero exit on failures |
+| `python3 scripts/wb.py create-rules --scope toolkit` | Sync toolkit rules; allowed only when `$project_root == $work_bundle_root`. |
+| `python3 scripts/wb.py create-rules --scope global` | Sync global user rules under `$work_bundle_config_root/rules/`. |
+| `python3 scripts/wb.py create-rules --scope project --project-root <project-root>` | Sync project rules under `<project-root>/.work-bundle/rules/`. |
+| `python3 scripts/wb.py validate-rules --scope toolkit` | Validate toolkit rules. |
+| `python3 scripts/wb.py validate-rules --scope global` | Validate global user rules. |
+| `python3 scripts/wb.py validate-rules --scope project --project-root <project-root>` | Validate project rules. |
+| `python3 scripts/wb.py create-rules <rules-root>` | Backward-compatible explicit-root mode. |
+| `python3 scripts/wb.py validate-rules <rules-root>` | Backward-compatible explicit-root mode. |
 
-`<rules-root>` must be the canonical `rules/` directory. Do not pass scope subdirectories such as `rules/work-bundle/`; those create incorrect nested indexes and are rejected by the scripts.
+The selected rules root must be the canonical root for that rule-store scope. Do not pass area subdirectories such as `rules/work-bundle/`; those create incorrect nested indexes and are rejected by the scripts.
 
 Typical workflow:
 
-1. Create or update the rule Markdown file at the correct scoped or root path.
-2. Ensure front matter and body sections match this contract.
-3. Run agent semantic checks on `applies_when` (see below).
-4. Run `python3 scripts/wb.py create-rules <rules-root>` to refresh the index for touched paths.
-5. Run `python3 scripts/wb.py validate-rules <rules-root>` on touched paths for mechanical confirmation.
+1. Resolve rule-store scope (`toolkit`, `global`, `project`, or explicit root) and confirm toolkit writes are allowed when scope is `toolkit`.
+2. Create or update the rule Markdown file at the correct scoped or root path.
+3. Ensure front matter and body sections match this contract.
+4. Run agent semantic checks on `applies_when` (see below).
+5. Run `python3 scripts/wb.py create-rules --scope <scope>` or explicit-root compatibility mode to refresh the index for touched paths.
+6. Run `python3 scripts/wb.py validate-rules --scope <scope>` or explicit-root compatibility mode for mechanical confirmation.
 
 Prefer validating only paths you changed; full-tree validation may fail until legacy corpus migration completes.
 
@@ -158,7 +182,7 @@ After migration:
 
 - Place the file using the scope/id prefix map above.
 - Remove the legacy `.yaml` source once the Markdown rule is verified.
-- Run `create-rules` then `validate-rules` on the affected rules root.
+- Run `create-rules` then `validate-rules` on the affected rule-store scope or explicit rules root.
 
 `create-rules` can mechanically convert legacy YAML when an `id` field is present; agents still own semantic review of migrated `applies_when` and body prose.
 
@@ -214,7 +238,7 @@ Scripts will **not** judge `applies_when` meaning or reject vague tokens. That r
 - Place scoped rules under the correct `rules/<scope>/` directory per the prefix map.
 - Place cross-cutting rules at `rules/<rule-id>.md` (root), never under `rules/global/`.
 - Prefer `load: conditional` unless startup loading is explicitly required.
-- Run `validate-rules` on the canonical `rules/` root after rule work; never on scope subdirectories.
+- Run `validate-rules --scope <toolkit|global|project>` or explicit-root compatibility mode after rule work; never on area subdirectories.
 - Inspect `applies_when` semantically before completing registration.
 
 ## Must Not
@@ -223,9 +247,10 @@ Scripts will **not** judge `applies_when` meaning or reject vague tokens. That r
 - Do not register documentation-only notes as rules.
 - Do not create broad rules that require agents to read unrelated source documents.
 - Do not create `.mdc` rule files.
-- Do not cite non-git paths as authority.
-- Do not create or document a `rules/global/` directory.
+- Do not cite paths outside the selected rule-store root, this skill, the validation catalog, or the dispatcher as rule authority.
+- Do not create or document a `global/` area directory inside any rules root.
 - Do not run `create-rules` or `validate-rules` against scope subdirectories such as `rules/work-bundle/`.
+- Do not mutate toolkit rules when `$project_root != $work_bundle_root`.
 - Do not rely on scripts to judge `applies_when` semantics.
 
 ## Validation
@@ -241,7 +266,7 @@ Scripts will **not** judge `applies_when` meaning or reject vague tokens. That r
 **Mechanical (script):**
 
 ```bash
-python3 scripts/wb.py validate-rules <rules-root>
+python3 scripts/wb.py validate-rules --scope <toolkit|global|project>
 ```
 
 ## On Violation

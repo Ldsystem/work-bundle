@@ -8,6 +8,12 @@ Command examples:
 
 ```bash
 python3 scripts/wb.py initialize-project <project-root>
+python3 scripts/wb.py create-rules --scope toolkit
+python3 scripts/wb.py create-rules --scope global
+python3 scripts/wb.py create-rules --scope project --project-root <project-root>
+python3 scripts/wb.py validate-rules --scope toolkit
+python3 scripts/wb.py validate-rules --scope global
+python3 scripts/wb.py validate-rules --scope project --project-root <project-root>
 python3 scripts/wb.py create-rules rules
 python3 scripts/wb.py validate-rules rules
 python3 scripts/wb.py violation-ensure-store
@@ -18,4 +24,4 @@ python3 scripts/wb.py violation-archive-evidence <evidence-id-or-path> --action 
 python3 scripts/wb.py integrity-check-report new --template references/integrity-check/integrity-check-template.md --output-root /tmp/reports --title check
 ```
 
-Use the canonical `rules/` directory for `create-rules` and `validate-rules`. Scope subdirectories such as `rules/work-bundle/` are rejected because they create incorrect nested indexes.
+Prefer `--scope` for `create-rules` and `validate-rules`: `toolkit` resolves to `$work_bundle_root/rules/`, `global` resolves to `$work_bundle_config_root/rules/`, and `project` resolves to `<project-root>/.work-bundle/rules/`. Explicit `<rules-root>` remains available for compatibility. Area subdirectories such as `rules/work-bundle/` are rejected because they create incorrect nested indexes.

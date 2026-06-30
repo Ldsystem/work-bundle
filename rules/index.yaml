@@ -225,6 +225,7 @@ rules:
       - user requests creation, update, migration, or validation of work-bundle runtime rules
       - agent creates or edits Markdown rule files under rules/
       - agent registers or syncs rules in rules/index.yaml
+      - agent creates, validates, registers, or syncs toolkit, global user, or project rule-store scopes
     enforcement: must
     load: conditional
     requires: []

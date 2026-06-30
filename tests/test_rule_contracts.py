@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,10 +10,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_wb(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run_wb(*args: str, cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    command_env = os.environ.copy()
+    if env:
+        command_env.update(env)
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/wb.py"), *args],
         cwd=cwd or REPO_ROOT,
+        env=command_env,
         check=False,
         capture_output=True,
         text=True,
@@ -91,6 +96,7 @@ def test_validate_rules_rejects_scoped_rules_root(tmp_path: Path) -> None:
     assert result.returncode == 1
     failures = json.loads(result.stdout)["failures"]
     assert any("scoped_rules_root_not_allowed" in failure for failure in failures)
+    assert json.loads(result.stdout)["scope"] == "explicit"
 
 
 def test_create_rules_rejects_scoped_rules_root(tmp_path: Path) -> None:
@@ -103,6 +109,123 @@ def test_create_rules_rejects_scoped_rules_root(tmp_path: Path) -> None:
     failures = json.loads(result.stdout)["failures"]
     assert any("scoped_rules_root_not_allowed" in failure for failure in failures)
     assert not (root / "index.yaml").exists()
+
+
+def test_scoped_validate_rules_resolves_toolkit_root(tmp_path: Path) -> None:
+    toolkit = tmp_path / "toolkit"
+    root = toolkit / "rules"
+    scope = root / "work-bundle"
+    scope.mkdir(parents=True)
+    (scope / "wb-valid-rule.md").write_text(valid_rule_md("wb-valid-rule"), encoding="utf-8")
+    created = run_wb("create-rules", str(root), env={"WB_WORK_BUNDLE_ROOT": str(toolkit)})
+    assert created.returncode == 0, created.stdout + created.stderr
+
+    result = run_wb(
+        "validate-rules",
+        "--scope",
+        "toolkit",
+        "--project-root",
+        str(toolkit),
+        env={"WB_WORK_BUNDLE_ROOT": str(toolkit)},
+    )
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert payload["scope"] == "toolkit"
+    assert Path(payload["rules_root"]) == root.resolve()
+
+
+def test_scoped_validate_rules_resolves_global_and_project_roots(tmp_path: Path) -> None:
+    config = tmp_path / "config"
+    global_root = config / "rules"
+    project = tmp_path / "project"
+    project_root = project / ".work-bundle" / "rules"
+    for root, rule_id in [(global_root, "global-cross-cutting"), (project_root, "project-cross-cutting")]:
+        root.mkdir(parents=True)
+        (root / f"{rule_id}.md").write_text(valid_rule_md(rule_id), encoding="utf-8")
+        assert run_wb("create-rules", str(root), env={"WB_CONFIG_ROOT": str(config)}).returncode == 0
+
+    global_result = run_wb("validate-rules", "--scope", "global", env={"WB_CONFIG_ROOT": str(config)})
+    global_payload = json.loads(global_result.stdout)
+    assert global_result.returncode == 0, global_result.stdout + global_result.stderr
+    assert global_payload["scope"] == "global"
+    assert Path(global_payload["rules_root"]) == global_root.resolve()
+
+    project_result = run_wb(
+        "validate-rules",
+        "--scope",
+        "project",
+        "--project-root",
+        str(project),
+        env={"WB_CONFIG_ROOT": str(config)},
+    )
+    project_payload = json.loads(project_result.stdout)
+    assert project_result.returncode == 0, project_result.stdout + project_result.stderr
+    assert project_payload["scope"] == "project"
+    assert Path(project_payload["rules_root"]) == project_root.resolve()
+
+
+def test_toolkit_create_rules_blocks_when_project_root_differs_from_work_bundle_root(tmp_path: Path) -> None:
+    toolkit = tmp_path / "toolkit"
+    (toolkit / "rules").mkdir(parents=True)
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = run_wb(
+        "create-rules",
+        "--scope",
+        "toolkit",
+        "--project-root",
+        str(project),
+        env={"WB_WORK_BUNDLE_ROOT": str(toolkit)},
+    )
+    payload = json.loads(result.stdout)
+    assert result.returncode == 1
+    assert payload["status"] == "blocked"
+    assert any("toolkit_scope_write_forbidden" in failure for failure in payload["failures"])
+
+
+def test_effective_rule_registry_reports_optional_missing_and_duplicate_ids(tmp_path: Path) -> None:
+    sys.path.insert(0, str(REPO_ROOT / "scripts" / "work-bundle"))
+    old_root = os.environ.get("WB_WORK_BUNDLE_ROOT")
+    old_config = os.environ.get("WB_CONFIG_ROOT")
+    try:
+        os.environ["WB_WORK_BUNDLE_ROOT"] = str(tmp_path / "toolkit")
+        os.environ["WB_CONFIG_ROOT"] = str(tmp_path / "config")
+        sys.modules.pop("rules", None)
+        import rules as rules_module
+
+        toolkit_root = tmp_path / "toolkit" / "rules"
+        project = tmp_path / "project"
+        project_rules = project / ".work-bundle" / "rules"
+        for root in [toolkit_root, project_rules]:
+            (root / "work-bundle").mkdir(parents=True)
+            (root / "work-bundle" / "wb-duplicate.md").write_text(valid_rule_md("wb-duplicate"), encoding="utf-8")
+            rules_module.sync_index(root)
+
+        registry = rules_module.build_effective_rule_registry(project)
+        assert registry["status"] == "issues-found"
+        assert "global" in registry["missing_optional"]
+        assert any(str(failure).startswith("duplicate_rule_id:wb-duplicate:") for failure in registry["failures"])
+    finally:
+        if old_root is None:
+            os.environ.pop("WB_WORK_BUNDLE_ROOT", None)
+        else:
+            os.environ["WB_WORK_BUNDLE_ROOT"] = old_root
+        if old_config is None:
+            os.environ.pop("WB_CONFIG_ROOT", None)
+        else:
+            os.environ["WB_CONFIG_ROOT"] = old_config
+        if sys.path and sys.path[0] == str(REPO_ROOT / "scripts" / "work-bundle"):
+            sys.path.pop(0)
+
+
+def test_agents_template_load_always_is_unconditional_and_three_scopes_are_named() -> None:
+    text = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
+    assert "$work_bundle_root/rules/index.yaml" in text
+    assert "$work_bundle_config_root/rules/index.yaml" in text
+    assert "$project_root/.work-bundle/rules/index.yaml" in text
+    assert "load `load: always` rule bodies immediately and unconditionally" in text
+    assert "load `load: always` rules only when their scope is relevant" not in text
 
 
 def test_validate_rules_rejects_nested_scope_index(tmp_path: Path) -> None:
