@@ -3,6 +3,12 @@ authority: canonical
 project_root: <absolute-path-to-project-root>
 industry: <industry-or-domain>
 prefer_subagent: false
+agents_sync:
+  managed_section: work-bundle-rule
+  template_path: references/assets/template/AGENTS.md
+  template_checksum_sha256: ""
+  last_synced_at: ""
+  status: never-synced
 language:
   - <runtime-or-framework>
 git:

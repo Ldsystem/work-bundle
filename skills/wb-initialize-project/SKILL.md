@@ -38,11 +38,11 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 
 `initialize-project` remains a compatibility alias for `init-project`; prefer `init-project` in new instructions.
 
-**Preserve behavior (default):** commands preserve existing non-empty files. Re-running `init-project` on a healthy project reports `changed_files: []`.
+**Preserve behavior (default):** commands preserve existing non-empty files and user-authored `AGENTS.md` content outside the WorkBundle managed section. Re-running `init-project` on a healthy project reports `changed_files: []`.
 
-**`init-project --force`:** may overwrite init-managed template files only: `AGENTS.md`, `.work-bundle/project.yaml`, `rules/index.yaml`, `.work-bundle/knowledge/project.yaml`.
+**`init-project --force`:** may overwrite init-managed template files only: `.work-bundle/project.yaml`, `rules/index.yaml`, `.work-bundle/knowledge/project.yaml`. For `AGENTS.md`, force refreshes only the WorkBundle managed section from `references/assets/template/AGENTS.md` and preserves user-authored content outside that section.
 
-**`migrate-project --force`:** narrower migration-only repair subset; overwrites `.work-bundle/project.yaml` only. Does not overwrite general init-managed files such as `AGENTS.md`.
+**`migrate-project --force`:** narrower migration-only repair subset; overwrites `.work-bundle/project.yaml` only. For `AGENTS.md`, migration may convert legacy whole-file template content or stale managed sections to the current marker-bounded managed section without taking ownership of the whole file.
 
 **`init-project --dry-run` / `validate-project --dry-run`:** inspect and report mechanical failures without writing project files.
 
@@ -80,7 +80,9 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 - Directory membership is driven by `references/wb-initialize-project-default-work-bundle-tree.yaml`.
 - Render `.work-bundle/project.yaml` from `references/assets/template/project.yaml`.
 - Render `.work-bundle/project.yaml` with a `prefer_subagent: false` default unless a future template version explicitly changes the default.
-- Create or preserve `AGENTS.md` from `references/assets/template/AGENTS.md` and required `.gitignore` entries.
+- Render `.work-bundle/project.yaml` with an `agents_sync` section that owns WorkBundle `AGENTS.md` checksum and sync-status state.
+- Create, append, or refresh `AGENTS.md` with the WorkBundle managed section from `references/assets/template/AGENTS.md`; do not overwrite user-authored content outside the managed section.
+- Create or preserve required `.gitignore` entries.
 - Initialize `.work-bundle/knowledge` as its own Git repository and create its initial deterministic commit when needed.
 - Bind registry IO to `references/assets/template/projects.yaml`.
 - Fail mechanically when a required reference asset is missing; do not invent fallback content.
@@ -93,7 +95,7 @@ Use `doctor-project` as the canonical doctor command.
 
 - `doctor-project` without `--repair`: inspect and report mechanical failures only.
 - `doctor-project --repair`: repair deterministic structure defects; default repair preserves existing non-empty user content.
-- `doctor-project --repair --force`: repair with init-scoped template overwrite permission.
+- `doctor-project --repair --force`: repair with init-scoped template overwrite permission, while limiting `AGENTS.md` changes to the WorkBundle managed section.
 - Do not rewrite user-authored project content without explicit `--force`.
 - Do not migrate registry identity without preserving the old slug mapping or reporting the required user decision.
 
@@ -104,6 +106,7 @@ Use `migrate-project` for legacy layout upgrades.
 - Detect legacy `.work-bundle` layout, missing registry fields, obsolete template sections, retired bootstrap artifacts, legacy `rules/contract.yaml`, and moved template paths.
 - Preserve existing knowledge notes, open questions, orchestration artifacts, Git history, and project identity.
 - Add missing current files and directories without deleting unknown files.
+- Convert legacy whole-file WorkBundle `AGENTS.md` template content to the current managed section when needed, preserving content outside managed sections.
 - Write a migration report under `.work-bundle/orchestration/docs/migration-report-YYYY-MM-DD.md`.
 - When retired legacy bootstrap artifacts are present, archive evidence under `.work-bundle/orchestration/docs/legacy-bootstrap-archive-YYYY-MM-DD/`, remove active legacy bootstrap paths, and list retired artifacts in the migration report.
 - When legacy `rules/contract.yaml` is present, archive it under `.work-bundle/orchestration/docs/legacy-rules-contract-archive-YYYY-MM-DD/` and remove the active file.
@@ -122,7 +125,7 @@ Use `migrate-project` for legacy layout upgrades.
 
 - Initialized, doctored, validated, registered, or migrated project workspace.
 - Updated bootstrap-resolved `projects.yaml` registry entry when registration runs.
-- JSON command output with `status`, `failures`, `registry_path`, `registry_entry` or `registry_status`, and `changed_files` where applicable.
+- JSON command output with `status`, `failures`, `registry_path`, `registry_entry` or `registry_status`, `agents_status` or equivalent AGENTS sync evidence, and `changed_files` where applicable.
 - For `set-prefer-subagent`, JSON command output with `status`, `scope`, `prefer_subagent`, `target_path`, `changed_files`, and `effective_prefer_subagent`.
 - Migration report and optional legacy-bootstrap archive paths under `.work-bundle/orchestration/docs/` when migration retires legacy artifacts.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 import subprocess
 
@@ -14,6 +15,18 @@ INIT_RULE_INDEX = 'references/wb-initialize-project-default-rule-index.yaml'
 INIT_PROJECT_TEMPLATE = 'references/assets/template/project.yaml'
 INIT_AGENTS_TEMPLATE = 'references/assets/template/AGENTS.md'
 PROJECT_REGISTRY_TEMPLATE = 'references/assets/template/projects.yaml'
+AGENTS_SYNC_MANAGED_SECTION = 'work-bundle-rule'
+AGENTS_SYNC_TEMPLATE_PATH = INIT_AGENTS_TEMPLATE
+AGENTS_RULE_START_MARKER = '\n'.join([
+    '# ========================',
+    '# Work Bundle RULE START',
+    '# ========================',
+])
+AGENTS_RULE_END_MARKER = '\n'.join([
+    '# ========================',
+    '# Work Bundle RULE END',
+    '# ========================',
+])
 REQUIRED_PROJECT_GITIGNORE = ['.work-bundle/', 'AGENTS.md']
 PROJECT_METADATA_REQUIRED_FIELDS = [
     'metadata_version',
@@ -117,6 +130,199 @@ def _render_project_metadata(project_root: Path, name: str | None = None) -> str
     for key, value in replacements.items():
         rendered = rendered.replace(key, value)
     return rendered.rstrip() + '\n'
+
+
+def _normalize_agents_template(text: str) -> str:
+    return text.replace('\r\n', '\n').replace('\r', '\n').rstrip('\n') + '\n'
+
+
+def _agents_template_text() -> str:
+    return _normalize_agents_template(_require_reference_text(INIT_AGENTS_TEMPLATE))
+
+
+def _agents_template_checksum(template_text: str | None = None) -> str:
+    text = template_text if template_text is not None else _agents_template_text()
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def _render_agents_managed_block(template_text: str | None = None) -> str:
+    body = template_text if template_text is not None else _agents_template_text()
+    return f'{AGENTS_RULE_START_MARKER}\n{body}{AGENTS_RULE_END_MARKER}\n'
+
+
+def _managed_agents_sections(text: str) -> list[tuple[int, int, str]]:
+    sections: list[tuple[int, int, str]] = []
+    search_from = 0
+    while True:
+        start = text.find(AGENTS_RULE_START_MARKER, search_from)
+        if start < 0:
+            break
+        body_start = start + len(AGENTS_RULE_START_MARKER)
+        if text.startswith('\n', body_start):
+            body_start += 1
+        end_marker_start = text.find(AGENTS_RULE_END_MARKER, body_start)
+        if end_marker_start < 0:
+            break
+        body = text[body_start:end_marker_start]
+        end = end_marker_start + len(AGENTS_RULE_END_MARKER)
+        if text.startswith('\n', end):
+            end += 1
+        sections.append((start, end, body))
+        search_from = end
+    return sections
+
+
+def _replace_managed_agents_sections(text: str, block: str) -> str:
+    sections = _managed_agents_sections(text)
+    if not sections:
+        return text
+    rendered: list[str] = []
+    previous = 0
+    for index, (start, end, _) in enumerate(sections):
+        rendered.append(text[previous:start])
+        if index == 0:
+            rendered.append(block)
+        previous = end
+    rendered.append(text[previous:])
+    return ''.join(rendered).rstrip('\n') + '\n'
+
+
+def _append_managed_agents_section(text: str, block: str) -> str:
+    if not text:
+        return block
+    return text.rstrip('\n') + '\n\n' + block
+
+
+def _replace_legacy_agents_template(text: str, template_text: str, block: str) -> tuple[str, bool]:
+    if _normalize_agents_template(text) == template_text:
+        return block, True
+    legacy_body = template_text.rstrip('\n')
+    start = text.find(legacy_body)
+    if start < 0:
+        return text, False
+    before = text[:start].rstrip('\n')
+    after = text[start + len(legacy_body):].lstrip('\n')
+    parts = []
+    if before:
+        parts.append(before)
+    parts.append(block.rstrip('\n'))
+    if after.strip():
+        parts.append(after.rstrip('\n'))
+    return '\n\n'.join(parts).rstrip('\n') + '\n', True
+
+
+def _yaml_block_bounds(lines: list[str], key: str) -> tuple[int, int] | None:
+    prefix = f'{key}:'
+    start: int | None = None
+    for index, line in enumerate(lines):
+        if line.startswith(prefix):
+            start = index
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line and not line.startswith(' ') and not line.startswith('\t'):
+            end = index
+            break
+    return start, end
+
+
+def _agents_sync_metadata_lines(checksum: str, status: str, synced_at: str) -> list[str]:
+    return [
+        'agents_sync:',
+        f'  managed_section: {AGENTS_SYNC_MANAGED_SECTION}',
+        f'  template_path: {AGENTS_SYNC_TEMPLATE_PATH}',
+        f'  template_checksum_sha256: "{checksum}"',
+        f'  last_synced_at: "{synced_at}"',
+        f'  status: {status}',
+    ]
+
+
+def _metadata_agents_checksum(path: Path) -> str:
+    lines = read(path).splitlines()
+    bounds = _yaml_block_bounds(lines, 'agents_sync')
+    if not bounds:
+        return ''
+    start, end = bounds
+    for line in lines[start + 1:end]:
+        stripped = line.strip()
+        if stripped.startswith('template_checksum_sha256:'):
+            return stripped.split(':', 1)[1].strip().strip('"').strip("'")
+    return ''
+
+
+def _update_project_agents_sync(project_root: Path, checksum: str, status: str) -> bool:
+    path = project_root / '.work-bundle/project.yaml'
+    synced_at = utc_now_rfc3339()
+    replacement = _agents_sync_metadata_lines(checksum, status, synced_at)
+    lines = read(path).splitlines()
+    bounds = _yaml_block_bounds(lines, 'agents_sync')
+    if bounds:
+        start, end = bounds
+        rendered_lines = lines[:start] + replacement + lines[end:]
+    else:
+        rendered_lines = lines + replacement
+    return write(path, '\n'.join(rendered_lines).rstrip() + '\n')
+
+
+def sync_agents_managed_section(project_root: Path, dry_run: bool = False, force: bool = False) -> dict[str, object]:
+    agents_path = project_root / 'AGENTS.md'
+    metadata_path = project_root / '.work-bundle/project.yaml'
+    template_text = _agents_template_text()
+    checksum = _agents_template_checksum(template_text)
+    block = _render_agents_managed_block(template_text)
+    existing = read(agents_path)
+    sections = _managed_agents_sections(existing)
+    changed_files: list[str] = []
+    warnings: list[str] = []
+    failures: list[str] = []
+
+    if not existing:
+        next_text = block
+        agents_status = 'created'
+    elif not sections:
+        next_text, converted_legacy = _replace_legacy_agents_template(existing, template_text, block)
+        if converted_legacy:
+            warnings.append('legacy-template-wrapped')
+        else:
+            next_text = _append_managed_agents_section(existing, block)
+        agents_status = 'updated'
+    else:
+        section_current = len(sections) == 1 and _normalize_agents_template(sections[0][2]) == template_text
+        metadata_current = _metadata_agents_checksum(metadata_path) == checksum
+        if section_current and metadata_current and not force:
+            next_text = existing
+            agents_status = 'unchanged'
+        else:
+            next_text = _replace_managed_agents_sections(existing, block)
+            agents_status = 'updated'
+        if len(sections) > 1:
+            warnings.append('multiple-managed-sections-consolidated')
+
+    agents_changed = next_text != existing
+    metadata_changed = agents_status != 'unchanged' or _metadata_agents_checksum(metadata_path) != checksum
+    if agents_changed:
+        changed_files.append(str(agents_path))
+    if metadata_changed:
+        changed_files.append(str(metadata_path))
+    if not dry_run:
+        if agents_changed:
+            write(agents_path, next_text)
+        if metadata_changed:
+            _update_project_agents_sync(project_root, checksum, 'current')
+
+    return {
+        'agents_status': agents_status,
+        'template_checksum_sha256': checksum,
+        'changed_files': sorted(set(changed_files)),
+        'warnings': warnings,
+        'failures': failures,
+        'dry_run': dry_run,
+    }
+
+
 def _ensure_lines(path: Path, lines: list[str]) -> bool:
     current = read(path).splitlines()
     changed = False
@@ -307,7 +513,8 @@ def apply_project(
     name: str | None = None,
     force: bool = False,
     scope: str = 'init',
-) -> list[str]:
+    return_details: bool = False,
+) -> list[str] | tuple[list[str], dict[str, object]]:
     wb = project_root / '.work-bundle'
     knowledge = wb / 'knowledge'
     changed: list[str] = []
@@ -315,10 +522,6 @@ def apply_project(
     gitignore_patterns = _init_gitignore_patterns()
     if _ensure_lines(project_root / '.gitignore', REQUIRED_PROJECT_GITIGNORE):
         changed.append(str(project_root / '.gitignore'))
-    agents_path = project_root / 'AGENTS.md'
-    agents_template = _require_reference_text(INIT_AGENTS_TEMPLATE)
-    if write(agents_path, agents_template, overwrite=_template_overwrite(project_root, agents_path, force, scope)):
-        changed.append(str(agents_path))
     for directory in tree_roots:
         path = project_root / directory
         if not path.exists():
@@ -368,6 +571,8 @@ def apply_project(
         overwrite=_template_overwrite(project_root, project_metadata_path, force, scope),
     ):
         changed.append(str(project_metadata_path))
+    agents_result = sync_agents_managed_section(project_root, force=force)
+    changed.extend(str(path) for path in agents_result.get('changed_files', []))
     if create_override:
         path = wb / 'orchestration/skill-registry.override.yaml'
         if write(path, 'id: project-skill-registry-override\nstatus: current\noverrides: {}\n', overwrite=False):
@@ -386,11 +591,20 @@ def apply_project(
         if has_staged:
             if subprocess.run(['git', '-C', str(project_root), 'commit', '-m', 'chore: initialize work-bundle project'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
                 changed.append(str(project_root / '.git/work-bundle-initialization-commit'))
-    return sorted(set(changed))
+    changed = sorted(set(changed))
+    if return_details:
+        return changed, agents_result
+    return changed
 
 
-def repair_project(project_root: Path, force: bool = False) -> list[str]:
-    changed = apply_project(project_root, init_git=False, force=force, scope='init' if force else 'migrate')
+def repair_project(project_root: Path, force: bool = False, return_details: bool = False) -> list[str] | tuple[list[str], dict[str, object]]:
+    changed, agents_result = apply_project(
+        project_root,
+        init_git=False,
+        force=force,
+        scope='init' if force else 'migrate',
+        return_details=True,
+    )
     data = inspect_project(project_root)
     metadata_path = project_root / '.work-bundle/project.yaml'
     if data.get('project_metadata_required_fields_missing') and (force or not read(metadata_path).strip()):
@@ -402,7 +616,10 @@ def repair_project(project_root: Path, force: bool = False) -> list[str]:
     if force:
         bootstrap_changed, _, _ = _cleanup_retired_bootstrap(project_root)
         changed.extend(bootstrap_changed)
-    return sorted(set(changed))
+    changed = sorted(set(changed))
+    if return_details:
+        return changed, agents_result
+    return changed
 
 
 def _slug_from_root(project_root: Path, name: str | None = None) -> str:
@@ -756,6 +973,160 @@ def _reference_failure_payload(exc: ReferenceAssetError, command: str) -> dict[s
     }
 
 
+def _agents_sync_output(result: dict[str, object]) -> dict[str, object]:
+    return {
+        'status': result.get('agents_status'),
+        'template_checksum_sha256': result.get('template_checksum_sha256'),
+        'changed_files': result.get('changed_files', []),
+        'warnings': result.get('warnings', []),
+        'failures': result.get('failures', []),
+        'dry_run': result.get('dry_run', False),
+    }
+
+
+def _session_start_warning(reason: str, project_root: Path) -> str:
+    return f'{reason}; run wb-initialize-project migrate for current workspace: {project_root}'
+
+
+def _session_start_payload(project_root: Path) -> dict[str, object]:
+    runtime = resolve_bootstrap_runtime()
+    bootstrap_path = Path(str(runtime.get('global_bootstrap_path')))
+    work_bundle_root = runtime.get('resolved_work_bundle_root')
+    registry_path = project_registry_path() if bootstrap_path.is_file() else work_bundle_config_root() / 'registry/projects.yaml'
+    metadata_path = project_root / '.work-bundle/project.yaml'
+    agents_path = project_root / 'AGENTS.md'
+    return {
+        'command': 'session-start',
+        'status': 'skipped',
+        'project_root': str(project_root),
+        'bootstrap_path': str(bootstrap_path),
+        'work_bundle_root': work_bundle_root,
+        'registry_path': str(registry_path),
+        'registry_status': 'missing' if not registry_path.is_file() else 'not-registered',
+        'project_metadata_path': str(metadata_path),
+        'project_metadata_status': 'present' if metadata_path.is_file() else 'missing',
+        'project_agents_checksum': 'missing',
+        'agents_path': str(agents_path),
+        'agents_status': 'skipped',
+        'changed_files': [],
+        'warnings': [],
+        'failures': [],
+        'dry_run': False,
+    }
+
+
+def _session_start_metadata_warnings(project_root: Path) -> list[str]:
+    metadata_path = project_root / '.work-bundle/project.yaml'
+    metadata = read(metadata_path)
+    missing = [field for field in PROJECT_METADATA_REQUIRED_FIELDS if f'{field}:' not in metadata]
+    if not missing:
+        return []
+    return [_session_start_warning(f'project metadata missing required fields: {", ".join(missing)}', project_root)]
+
+
+def cmd_session_start(args: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog='wb.py session-start')
+    parser.add_argument('--project-root', default='.')
+    parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--json', action='store_true')
+    parser.add_argument('--input-warning', action='append', default=[], help=argparse.SUPPRESS)
+    parsed = parser.parse_args(args)
+    project_root = Path(parsed.project_root).expanduser().resolve()
+    data = _session_start_payload(project_root)
+    data['dry_run'] = parsed.dry_run
+    warnings = list(parsed.input_warning)
+
+    bootstrap_path = Path(str(data['bootstrap_path']))
+    if not bootstrap_path.is_file():
+        warnings.append(_session_start_warning('bootstrap missing', project_root))
+        data['warnings'] = warnings
+        if parsed.json:
+            out(data)
+        else:
+            print(f"session-start skipped: {'; '.join(warnings)}")
+        return 0
+
+    registry_path = Path(str(data['registry_path']))
+    if not registry_path.is_file():
+        data['registry_status'] = 'missing'
+        warnings.append(_session_start_warning('project registry missing', project_root))
+        data['warnings'] = warnings
+        if parsed.json:
+            out(data)
+        else:
+            print(f"session-start skipped: {'; '.join(warnings)}")
+        return 0
+
+    metadata_path = Path(str(data['project_metadata_path']))
+    if not metadata_path.is_file():
+        warnings.append(_session_start_warning('project metadata missing', project_root))
+        data['warnings'] = warnings
+        if parsed.json:
+            out(data)
+        else:
+            print(f"session-start skipped: {'; '.join(warnings)}")
+        return 0
+
+    metadata_warnings = _session_start_metadata_warnings(project_root)
+    if metadata_warnings:
+        warnings.extend(metadata_warnings)
+        data['warnings'] = warnings
+        if parsed.json:
+            out(data)
+        else:
+            print(f"session-start skipped: {'; '.join(warnings)}")
+        return 0
+
+    entry, registry = find_registry_entry(project_root)
+    data['registry_path'] = str(registry)
+    data['registry_status'] = 'registered' if entry else 'not-registered'
+    if entry is None:
+        warnings.append(_session_start_warning('project registry entry missing', project_root))
+        data['warnings'] = warnings
+        if parsed.json:
+            out(data)
+        else:
+            print(f"session-start skipped: {'; '.join(warnings)}")
+        return 0
+
+    try:
+        agents_result = sync_agents_managed_section(project_root, dry_run=parsed.dry_run)
+    except ReferenceAssetError as exc:
+        data['status'] = 'issues-found'
+        data['failures'] = [exc.code]
+        data['missing_reference'] = exc.path
+        warnings.append(_session_start_warning('reference asset missing', project_root))
+        data['warnings'] = warnings
+        if parsed.json:
+            out(data)
+        else:
+            print(f"session-start issues-found: {'; '.join(warnings)}")
+        return 0
+
+    checksum = str(agents_result.get('template_checksum_sha256') or '')
+    data.update({
+        'status': 'passed',
+        'registry_status': 'registered',
+        'registry_entry': entry,
+        'project_metadata_status': 'present',
+        'project_agents_checksum': f'sha256:{checksum}' if checksum and _metadata_agents_checksum(metadata_path) == checksum else 'stale',
+        'agents_status': agents_result.get('agents_status'),
+        'changed_files': agents_result.get('changed_files', []),
+        'warnings': warnings + list(agents_result.get('warnings', [])),
+        'failures': agents_result.get('failures', []),
+        'agents_sync': _agents_sync_output(agents_result),
+    })
+    if data['agents_status'] in {'created', 'updated'}:
+        data['status'] = 'issues-found'
+    if parsed.dry_run:
+        data['project_agents_checksum'] = f'sha256:{checksum}' if checksum and _metadata_agents_checksum(metadata_path) == checksum else 'stale'
+    if parsed.json:
+        out(data)
+    else:
+        print(f"session-start {data['status']}: agents {data['agents_status']}")
+    return 0
+
+
 def cmd_init_project(args: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="wb.py init-project")
     parser.add_argument("project_root")
@@ -767,15 +1138,24 @@ def cmd_init_project(args: list[str]) -> int:
     parsed = parser.parse_args(args)
     project_root = Path(parsed.project_root).expanduser().resolve()
     changed: list[str] | str = "none"
+    agents_result: dict[str, object] = {
+        'agents_status': 'skipped-dry-run' if parsed.dry_run else 'skipped',
+        'template_checksum_sha256': '',
+        'changed_files': [],
+        'warnings': [],
+        'failures': [],
+        'dry_run': parsed.dry_run,
+    }
     if not parsed.dry_run:
         try:
-            changed = apply_project(
+            changed, agents_result = apply_project(
                 project_root,
                 init_git=not parsed.disable_work_bundle_git,
                 create_override=parsed.create_project_skill_override,
                 name=parsed.name,
                 force=parsed.force,
                 scope='init',
+                return_details=True,
             )
         except ReferenceAssetError as exc:
             out(_reference_failure_payload(exc, 'init-project'))
@@ -794,6 +1174,8 @@ def cmd_init_project(args: list[str]) -> int:
         "registry_entry": entry,
         "status": "passed" if not failures else "issues-found",
         "failures": failures,
+        "agents_status": agents_result.get('agents_status'),
+        "agents_sync": _agents_sync_output(agents_result),
     })
     if parsed.dry_run:
         data["dry_run"] = True
@@ -889,12 +1271,13 @@ def cmd_migrate_project(args: list[str]) -> int:
     project_root = Path(parsed.project_root).expanduser().resolve()
     before = inspect_project(project_root)
     try:
-        changed = apply_project(
+        changed, agents_result = apply_project(
             project_root,
             init_git=False,
             name=parsed.name,
             force=parsed.force,
             scope='migrate',
+            return_details=True,
         )
     except ReferenceAssetError as exc:
         out(_reference_failure_payload(exc, 'migrate-project'))
@@ -929,6 +1312,8 @@ def cmd_migrate_project(args: list[str]) -> int:
         "status": "passed" if not failures else "issues-found",
         "failures": failures,
         "changed_files": sorted(set(changed)),
+        "agents_status": agents_result.get('agents_status'),
+        "agents_sync": _agents_sync_output(agents_result),
         "migration_report": str(report),
         "retired_bootstrap": {
             "archive_root": archive_root,
@@ -953,9 +1338,17 @@ def cmd_doctor_project(args: list[str]) -> int:
     parsed = parser.parse_args(args)
     project_root = Path(parsed.project_root).expanduser().resolve()
     changed: list[str] = []
+    agents_result: dict[str, object] = {
+        'agents_status': 'not-run',
+        'template_checksum_sha256': '',
+        'changed_files': [],
+        'warnings': [],
+        'failures': [],
+        'dry_run': False,
+    }
     if parsed.repair:
         try:
-            changed = repair_project(project_root, force=parsed.force)
+            changed, agents_result = repair_project(project_root, force=parsed.force, return_details=True)
         except ReferenceAssetError as exc:
             out(_reference_failure_payload(exc, 'doctor-project'))
             return 1
@@ -966,6 +1359,8 @@ def cmd_doctor_project(args: list[str]) -> int:
         'status': 'passed' if not failures else 'issues-found',
         'failures': failures,
         'changed_files': sorted(set(changed)),
+        'agents_status': agents_result.get('agents_status'),
+        'agents_sync': _agents_sync_output(agents_result),
     })
     out(data)
     return 0 if not failures else 1

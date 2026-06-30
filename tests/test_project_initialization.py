@@ -307,14 +307,18 @@ def test_init_force_overwrites_init_managed_templates_only(tmp_path: Path) -> No
 
     without_force = run_wb(config_root, "init-project", str(project), "--name", "demo")
     assert without_force.returncode == 0, without_force.stdout + without_force.stderr
-    assert agents_path.read_text(encoding="utf-8") == custom_agents
+    assert agents_path.read_text(encoding="utf-8").startswith(custom_agents.rstrip() + "\n\n")
     assert role_path.read_text(encoding="utf-8") == custom_role
 
+    agents_path.write_text(custom_agents, encoding="utf-8")
     with_force = run_wb(config_root, "init-project", str(project), "--name", "demo", "--force")
     assert with_force.returncode == 0, with_force.stdout + with_force.stderr
     force_data = json.loads(with_force.stdout)
     assert str(agents_path) in force_data["changed_files"]
-    assert agents_path.read_text(encoding="utf-8") != custom_agents
+    assert force_data["agents_status"] == "updated"
+    assert force_data["agents_sync"]["template_checksum_sha256"]
+    assert force_data["agents_sync"]["changed_files"] == [str(project / ".work-bundle/project.yaml"), str(agents_path)]
+    assert agents_path.read_text(encoding="utf-8").startswith(custom_agents.rstrip() + "\n\n")
     assert role_path.read_text(encoding="utf-8") == custom_role
 
 
@@ -365,7 +369,9 @@ def test_init_created_files_contain_no_legacy_bootstrap_pointers(tmp_path: Path)
 def test_registry_parser_tracks_projects_template_schema(tmp_path: Path) -> None:
     template_path = REPO_ROOT / "references/assets/template/projects.yaml"
     template_text = template_path.read_text(encoding="utf-8")
-    assert template_text.strip() == "projects: []"
+    assert template_text.startswith("projects:")
+    for field in PROJECT_REGISTRY_ENTRY_FIELDS:
+        assert field in template_text
 
     wb_project = _import_wb_project()
     try:
@@ -437,12 +443,69 @@ def test_migrate_force_does_not_overwrite_agents_md(tmp_path: Path) -> None:
     migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo", "--force")
     assert migrated.returncode == 0, migrated.stdout + migrated.stderr
     migrate_data = json.loads(migrated.stdout)
-    assert agents_path.read_text(encoding="utf-8") == custom_agents
+    assert agents_path.read_text(encoding="utf-8").startswith(custom_agents.rstrip() + "\n\n")
+    assert migrate_data["agents_status"] == "updated"
+    assert migrate_data["agents_sync"]["template_checksum_sha256"]
+    assert str(agents_path) in migrate_data["agents_sync"]["changed_files"]
     assert not bootstrap_dir.exists()
     assert any("legacy-bootstrap-archive" in path for path in migrate_data["changed_files"])
     report_text = Path(migrate_data["migration_report"]).read_text(encoding="utf-8")
     assert "## Retired Legacy Bootstrap Artifacts" in report_text
     assert migrate_data["retired_bootstrap"]["archive_root"] in report_text
+
+
+def test_migrate_force_wraps_legacy_agents_template_without_duplicate(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    agents_path = project / "AGENTS.md"
+    template = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
+    agents_path.write_text(template, encoding="utf-8")
+
+    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo", "--force")
+    assert migrated.returncode == 0, migrated.stdout + migrated.stderr
+    data = json.loads(migrated.stdout)
+    text = agents_path.read_text(encoding="utf-8")
+
+    assert data["agents_status"] == "updated"
+    assert data["agents_sync"]["warnings"] == ["legacy-template-wrapped"]
+    assert text.count("# Work Bundle RULE START") == 1
+    assert text.count("# Work Bundle RULE END") == 1
+    assert text.startswith("# ========================\n# Work Bundle RULE START")
+
+
+def test_doctor_repair_refreshes_agents_section_and_preserves_user_content(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    agents_path = project / "AGENTS.md"
+    agents_path.write_text(
+        "\n".join(
+            [
+                "# User Rules",
+                "keep this before",
+                "# ========================",
+                "# Work Bundle RULE START",
+                "# ========================",
+                "stale managed body",
+                "# ========================",
+                "# Work Bundle RULE END",
+                "# ========================",
+                "keep this after",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    repaired = run_wb(config_root, "doctor-project", str(project), "--repair")
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    data = json.loads(repaired.stdout)
+    text = agents_path.read_text(encoding="utf-8")
+
+    assert data["agents_status"] == "updated"
+    assert data["agents_sync"]["template_checksum_sha256"]
+    assert str(agents_path) in data["agents_sync"]["changed_files"]
+    assert "stale managed body" not in text
+    assert "keep this before" in text
+    assert "keep this after" in text
+    assert text.count("# Work Bundle RULE START") == 1
 
 
 def test_migrate_project_retires_legacy_rules_contract(tmp_path: Path) -> None:
@@ -565,6 +628,9 @@ def test_templates_include_layered_prefer_subagent_defaults() -> None:
 
     assert "prefer_subagent: false" in bootstrap_text
     assert "prefer_subagent: false" in project_text
+    assert "agents_sync:" in project_text
+    assert "template_checksum_sha256: \"\"" in project_text
+    assert "status: never-synced" in project_text
     assert ".work-bundle/project.yaml` -> `prefer_subagent`" in agents_text
     assert "then `$work_bundle_config_root/bootstrap.yaml` -> `prefer_subagent`, then `false`" in agents_text
     assert "bypass repository preflight" in agents_text
@@ -600,6 +666,147 @@ def test_resolve_effective_prefer_subagent_uses_project_global_default_order(tmp
         if sys.path and sys.path[0] == str(REPO_ROOT / "scripts" / "work-bundle"):
             sys.path.pop(0)
         sys.modules.pop("core", None)
+
+
+def test_agents_sync_creates_missing_agents_md_and_updates_metadata(tmp_path: Path) -> None:
+    wb_project = _import_wb_project()
+    try:
+        project = tmp_path / "project"
+        metadata = project / ".work-bundle/project.yaml"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text(wb_project._render_project_metadata(project), encoding="utf-8")
+
+        result = wb_project.sync_agents_managed_section(project)
+        agents_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+        metadata_text = metadata.read_text(encoding="utf-8")
+
+        assert result["agents_status"] == "created"
+        assert wb_project.AGENTS_RULE_START_MARKER in agents_text
+        assert wb_project.AGENTS_RULE_END_MARKER in agents_text
+        managed = agents_text.split(wb_project.AGENTS_RULE_START_MARKER, 1)[1].split(
+            wb_project.AGENTS_RULE_END_MARKER, 1
+        )[0]
+        assert "checksum" not in managed.lower()
+        assert f'template_checksum_sha256: "{result["template_checksum_sha256"]}"' in metadata_text
+        assert "status: current" in metadata_text
+    finally:
+        _cleanup_wb_project_modules()
+
+
+def test_agents_sync_appends_to_existing_agents_without_section(tmp_path: Path) -> None:
+    wb_project = _import_wb_project()
+    try:
+        project = tmp_path / "project"
+        metadata = project / ".work-bundle/project.yaml"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text(wb_project._render_project_metadata(project), encoding="utf-8")
+        agents = project / "AGENTS.md"
+        agents.write_text("# User Rules\nkeep this\n", encoding="utf-8")
+
+        result = wb_project.sync_agents_managed_section(project)
+        text = agents.read_text(encoding="utf-8")
+
+        assert result["agents_status"] == "updated"
+        assert text.startswith("# User Rules\nkeep this\n\n")
+        assert text.count(wb_project.AGENTS_RULE_START_MARKER) == 1
+    finally:
+        _cleanup_wb_project_modules()
+
+
+def test_agents_sync_replaces_stale_managed_section(tmp_path: Path) -> None:
+    wb_project = _import_wb_project()
+    try:
+        project = tmp_path / "project"
+        metadata = project / ".work-bundle/project.yaml"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text(wb_project._render_project_metadata(project), encoding="utf-8")
+        stale_block = (
+            f"{wb_project.AGENTS_RULE_START_MARKER}\n"
+            "old managed body\n"
+            f"{wb_project.AGENTS_RULE_END_MARKER}\n"
+        )
+        agents = project / "AGENTS.md"
+        agents.write_text(f"# User\n{stale_block}tail\n", encoding="utf-8")
+
+        result = wb_project.sync_agents_managed_section(project)
+        text = agents.read_text(encoding="utf-8")
+
+        assert result["agents_status"] == "updated"
+        assert "old managed body" not in text
+        assert text.startswith("# User\n")
+        assert text.endswith("tail\n")
+        assert result["template_checksum_sha256"] in metadata.read_text(encoding="utf-8")
+    finally:
+        _cleanup_wb_project_modules()
+
+
+def test_agents_sync_current_section_is_idempotent(tmp_path: Path) -> None:
+    wb_project = _import_wb_project()
+    try:
+        project = tmp_path / "project"
+        metadata = project / ".work-bundle/project.yaml"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text(wb_project._render_project_metadata(project), encoding="utf-8")
+
+        first = wb_project.sync_agents_managed_section(project)
+        agents_before = (project / "AGENTS.md").read_text(encoding="utf-8")
+        metadata_before = metadata.read_text(encoding="utf-8")
+        second = wb_project.sync_agents_managed_section(project)
+
+        assert first["agents_status"] == "created"
+        assert second["agents_status"] == "unchanged"
+        assert second["changed_files"] == []
+        assert (project / "AGENTS.md").read_text(encoding="utf-8") == agents_before
+        assert metadata.read_text(encoding="utf-8") == metadata_before
+    finally:
+        _cleanup_wb_project_modules()
+
+
+def test_agents_sync_consolidates_multiple_managed_sections(tmp_path: Path) -> None:
+    wb_project = _import_wb_project()
+    try:
+        project = tmp_path / "project"
+        metadata = project / ".work-bundle/project.yaml"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text(wb_project._render_project_metadata(project), encoding="utf-8")
+        block = (
+            f"{wb_project.AGENTS_RULE_START_MARKER}\n"
+            "old managed body\n"
+            f"{wb_project.AGENTS_RULE_END_MARKER}\n"
+        )
+        agents = project / "AGENTS.md"
+        agents.write_text(f"top\n{block}middle\n{block}bottom\n", encoding="utf-8")
+
+        result = wb_project.sync_agents_managed_section(project)
+        text = agents.read_text(encoding="utf-8")
+
+        assert result["agents_status"] == "updated"
+        assert result["warnings"] == ["multiple-managed-sections-consolidated"]
+        assert text.count(wb_project.AGENTS_RULE_START_MARKER) == 1
+        assert "top\n" in text
+        assert "middle\n" in text
+        assert "bottom\n" in text
+    finally:
+        _cleanup_wb_project_modules()
+
+
+def test_init_project_metadata_records_agents_sync_checksum(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    metadata = project / ".work-bundle/project.yaml"
+    agents_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    metadata_text = metadata.read_text(encoding="utf-8")
+
+    assert "agents_sync:" in metadata_text
+    assert "status: current" in metadata_text
+    assert "template_checksum_sha256: \"\"" not in metadata_text
+    assert "# Work Bundle RULE START" in agents_text
+    assert "# Work Bundle RULE END" in agents_text
+    managed = agents_text.split("# Work Bundle RULE START", 1)[1].split("# Work Bundle RULE END", 1)[0]
+    assert "checksum" not in managed.lower()
+
+    rerun = run_wb(config_root, "init-project", str(project), "--name", "demo")
+    assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+    assert json.loads(rerun.stdout)["changed_files"] == []
 
 
 def test_set_prefer_subagent_updates_global_bootstrap(tmp_path: Path) -> None:
