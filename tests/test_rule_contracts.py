@@ -427,3 +427,61 @@ def test_index_entry_paths_relative_to_rules_root(tmp_path: Path) -> None:
     finally:
         if sys.path and sys.path[0] == str(REPO_ROOT / "scripts" / "work-bundle"):
             sys.path.pop(0)
+
+
+def test_violation_evaluation_rule_has_relaxed_trigger_and_routing_contract() -> None:
+    rule = (REPO_ROOT / "rules/work-bundle/wb-violation-evaluation.md").read_text(encoding="utf-8")
+    index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
+
+    relaxed_trigger = (
+        "a conflict, violation, error, failed validation, contradictory workflow behavior, "
+        "user interruption, or user correction occurs during WorkBundle-guided work"
+    )
+    assert relaxed_trigger in rule
+    assert relaxed_trigger in index
+    assert "work-bundle-scoped`, `project-scoped`, `mixed`, or `undetermined" in rule
+    assert "Create or update minimal violation evidence for `work-bundle-scoped` and `mixed`" in rule
+    assert "Report `project-scoped` findings as project blockers" in rule
+    assert "Block for resolution when an `undetermined` finding affects authority" in rule
+
+
+def test_violation_evaluation_stops_at_visible_workbundle_relatedness() -> None:
+    rule = (REPO_ROOT / "rules/work-bundle/wb-violation-evaluation.md").read_text(encoding="utf-8")
+
+    assert "Use visible evidence first" in rule
+    assert "stop evaluation and proceed to the matching action" in rule
+    assert "Stop tracing as soon as visible evidence establishes" in rule
+    assert "Do not require full root-cause tracing after WorkBundle toolkit relatedness is visible" in rule
+    assert "instruction -> plan -> plan skill -> source specification -> specification skill" in rule
+    assert "mandatory chain-of-thought output" in rule
+
+
+def test_violation_evidence_depends_on_evaluation_and_keeps_storage_boundary() -> None:
+    evidence = (REPO_ROOT / "rules/work-bundle/wb-violation-evidence.md").read_text(encoding="utf-8")
+    index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
+
+    assert "requires:\n  - wb-violation-evaluation" in evidence
+    assert "requires:\n      - wb-violation-evaluation" in index
+    assert "classifies the first-observed finding as `work-bundle-scoped` or `mixed`" in evidence
+    assert "Do not expand evidence capture into evaluation, root-cause investigation, or exhaustive workflow-chain tracing" in evidence
+    assert "project-scoped findings from `wb-violation-evaluation` as blockers" in evidence
+    assert "undetermined findings that affect authority, target scope, validation, or continuation as resolution blockers" in evidence
+
+
+def test_initialize_project_guidance_matches_create_rule_project_scope() -> None:
+    initialize = (REPO_ROOT / "skills/wb-initialize-project/SKILL.md").read_text(encoding="utf-8")
+    create_rule = (REPO_ROOT / "skills/wb-create-rule/SKILL.md").read_text(encoding="utf-8")
+
+    assert "$project_root/.work-bundle/rules/" in create_rule
+    assert ".work-bundle/rules/index.yaml" in initialize
+    assert "root `rules/index.yaml` is legacy-only" in initialize
+    assert "preserve it as a legacy artifact only" in initialize
+
+    legacy_root_mentions = [
+        line.strip()
+        for line in initialize.splitlines()
+        if "rules/index.yaml" in line and ".work-bundle/rules/index.yaml" not in line
+    ]
+    assert legacy_root_mentions
+    assert all(("legacy" in line.lower() or "migration" in line.lower()) for line in legacy_root_mentions)
+    assert "`.work-bundle/project.yaml`, `rules/index.yaml`" not in initialize

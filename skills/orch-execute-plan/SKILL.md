@@ -126,6 +126,10 @@ Accepted Baseline evidence must come only from validated executor-result handoff
 - Verify the implementation against the related specification, root plan, parent phase, and assigned task before handoff.
 - Repair every task-scoped drift or gap and recheck until clean.
 - Record explicit drift/gap verification evidence in `task_fit_check`, including the artifacts checked and final recheck result.
+- Treat newly discovered upstream/downstream conflicts, validation failures, failed validation commands, missing validation/test artifacts, and user corrections as task-fit drift/gap evidence.
+- Trigger `wb-violation-evaluation` when execution-time conflicts, violations, errors, failed validations, contradictory workflow behavior, user interruptions, or user corrections make WorkBundle process responsibility plausible.
+- `wb-violation-evaluation` is a bounded relatedness check: stop once visible evidence shows WorkBundle skill, rule, script, specification, plan, handoff, or workflow-contract relevance; do not require chain-of-thought output, exhaustive root-cause tracing, or treating example workflow chains as mandatory fix patterns.
+- Executor-result handoffs for source-code or toolkit-contract work must state whether new upstream/downstream impact evidence or validation/test evidence was found during execution and whether it was repaired, blocked, or out of scope.
 - Run declared validation when possible and record skip reasons when not.
 - Validation failures, unresolved blockers, unavailable required capabilities, or missing files block completion until repaired or explicitly documented.
 - Create a sparse YAML executor-result handoff before exit with applicable changed files, validation, task-fit, repository/preflight or accepted-baseline evidence, compact CodeGraph evidence, and `delegation_evidence` when delegation occurred.

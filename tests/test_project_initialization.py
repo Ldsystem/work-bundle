@@ -85,7 +85,13 @@ def bootstrap_config(tmp_path: Path, work_bundle_root: Path | None = None) -> Pa
 
 
 def _import_wb_project():
-    sys.path.insert(0, str(REPO_ROOT / "scripts" / "work-bundle"))
+    script_root = REPO_ROOT / "scripts" / "work-bundle"
+    for module_name in ("project", "bootstrap_config", "core"):
+        module = sys.modules.get(module_name)
+        module_file = Path(getattr(module, "__file__", "")) if module is not None else None
+        if module_file is not None and script_root not in module_file.parents:
+            sys.modules.pop(module_name, None)
+    sys.path.insert(0, str(script_root))
     import project as wb_project  # type: ignore[import-not-found]
 
     return wb_project
@@ -104,11 +110,26 @@ def _init_managed_text_files(project: Path) -> list[Path]:
         project / "AGENTS.md",
         project / ".work-bundle/project.yaml",
         project / ".work-bundle/knowledge/project.yaml",
-        project / "rules/index.yaml",
+        project / ".work-bundle/rules/index.yaml",
         project / ".work-bundle/.gitignore",
     ]
     candidates.extend(sorted(project.glob("roles/*.yaml")))
     return [path for path in candidates if path.is_file()]
+
+
+def test_init_managed_text_files_track_current_rule_store(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    current_rule_index = project / ".work-bundle/rules/index.yaml"
+    legacy_rule_index = project / "rules/index.yaml"
+    current_rule_index.parent.mkdir(parents=True)
+    legacy_rule_index.parent.mkdir(parents=True)
+    current_rule_index.write_text("rules: []\n", encoding="utf-8")
+    legacy_rule_index.write_text("rules: []\n", encoding="utf-8")
+
+    managed_files = _init_managed_text_files(project)
+
+    assert current_rule_index in managed_files
+    assert legacy_rule_index not in managed_files
 
 
 def _minimal_work_bundle_root(tmp_path: Path, *, include_project_template: bool = True) -> Path:
@@ -156,12 +177,18 @@ def test_init_project_creates_structure_commits_and_is_idempotent(tmp_path: Path
         assert (project / relative).is_dir()
 
     assert not (project / "rules/contract.yaml").exists()
+    assert (project / ".work-bundle/rules/index.yaml").is_file()
+    assert not (project / "rules/index.yaml").exists()
     assert "initialize work-bundle project" in git(project, "log", "--oneline")
     assert "initialize work-bundle knowledge" in git(project / ".work-bundle/knowledge", "log", "--oneline")
 
     validate = run_wb(config_root, "validate-project", str(project))
     assert validate.returncode == 0, validate.stdout + validate.stderr
-    assert json.loads(validate.stdout)["status"] == "passed"
+    validate_data = json.loads(validate.stdout)
+    assert validate_data["status"] == "passed"
+    assert validate_data["rules_root_authority"] == ".work-bundle/rules"
+    assert validate_data["rule_index"] is True
+    assert validate_data["legacy_rule_index"] is False
 
     rerun = run_wb(config_root, "init-project", str(project), "--name", "demo")
     assert rerun.returncode == 0, rerun.stdout + rerun.stderr
@@ -294,6 +321,45 @@ def test_doctor_project_routed_and_returns_mechanical_json(tmp_path: Path) -> No
     assert "status" in data
     assert "failures" in data
     assert "changed_files" in data
+
+
+def test_validate_project_uses_current_work_bundle_rules_without_root_rules(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    root_rules = project / "rules"
+    if root_rules.exists():
+        for path in sorted(root_rules.rglob("*"), reverse=True):
+            if path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                path.rmdir()
+        root_rules.rmdir()
+
+    result = run_wb(config_root, "validate-project", str(project))
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "passed"
+    assert data["rules_root"] is True
+    assert data["rule_index"] is True
+    assert data["rules_root_authority"] == ".work-bundle/rules"
+    assert data["legacy_rules_root"] is False
+    assert "rules_root" not in data["failures"]
+    assert "rule_index" not in data["failures"]
+
+
+def test_doctor_repair_does_not_restore_legacy_root_rule_index(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    legacy_rule_index = project / "rules/index.yaml"
+    assert not legacy_rule_index.exists()
+
+    repaired = run_wb(config_root, "doctor-project", str(project), "--repair")
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    data = json.loads(repaired.stdout)
+
+    assert data["status"] == "passed"
+    assert data["rule_index"] is True
+    assert data["rules_root_authority"] == ".work-bundle/rules"
+    assert data["legacy_rule_index"] is False
+    assert not legacy_rule_index.exists()
 
 
 def test_init_force_overwrites_init_managed_templates_only(tmp_path: Path) -> None:
@@ -532,6 +598,30 @@ def test_migrate_project_retires_legacy_rules_contract(tmp_path: Path) -> None:
     assert "rules/contract.yaml" in report_text
 
 
+def test_migrate_project_preserves_legacy_root_rule_index_as_non_authority(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    legacy_rule_index = project / "rules/index.yaml"
+    legacy_rule_index.parent.mkdir(parents=True, exist_ok=True)
+    legacy_text = "id: legacy-root-rule-index\nrules: []\n"
+    legacy_rule_index.write_text(legacy_text, encoding="utf-8")
+    current_rule_index = project / ".work-bundle/rules/index.yaml"
+    current_text = current_rule_index.read_text(encoding="utf-8")
+
+    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo")
+    assert migrated.returncode == 0, migrated.stdout + migrated.stderr
+
+    assert legacy_rule_index.read_text(encoding="utf-8") == legacy_text
+    assert current_rule_index.read_text(encoding="utf-8") == current_text
+
+    validate = run_wb(config_root, "validate-project", str(project))
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+    data = json.loads(validate.stdout)
+    assert data["status"] == "passed"
+    assert data["rules_root_authority"] == ".work-bundle/rules"
+    assert data["legacy_rules_authority"] == "legacy-artifact"
+    assert data["legacy_rule_index"] is True
+
+
 def test_validate_project_omits_pointer_diagnostics(tmp_path: Path) -> None:
     config_root, project = _init_fixture_project(tmp_path)
     result = run_wb(config_root, "validate-project", str(project))
@@ -637,7 +727,12 @@ def test_templates_include_layered_prefer_subagent_defaults() -> None:
 
 
 def test_resolve_effective_prefer_subagent_uses_project_global_default_order(tmp_path: Path, monkeypatch) -> None:
-    sys.path.insert(0, str(REPO_ROOT / "scripts" / "work-bundle"))
+    script_root = REPO_ROOT / "scripts" / "work-bundle"
+    module = sys.modules.get("core")
+    module_file = Path(getattr(module, "__file__", "")) if module is not None else None
+    if module_file is not None and script_root not in module_file.parents:
+        sys.modules.pop("core", None)
+    sys.path.insert(0, str(script_root))
     try:
         import core  # type: ignore[import-not-found]
 

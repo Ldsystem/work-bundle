@@ -37,7 +37,7 @@ PROJECT_METADATA_REQUIRED_FIELDS = [
 INIT_FORCE_REL_PATHS = frozenset({
     'AGENTS.md',
     '.work-bundle/project.yaml',
-    'rules/index.yaml',
+    '.work-bundle/rules/index.yaml',
     '.work-bundle/knowledge/project.yaml',
 })
 MIGRATE_FORCE_REL_PATHS = frozenset({
@@ -344,6 +344,10 @@ def _rel_project_path(project_root: Path, path: Path) -> str:
     return str(path.relative_to(project_root)).replace('\\', '/')
 
 
+def _project_rule_store_root(project_root: Path) -> Path:
+    return project_root / '.work-bundle' / 'rules'
+
+
 def _template_overwrite(project_root: Path, path: Path, force: bool, scope: str) -> bool:
     if not force:
         return False
@@ -442,7 +446,8 @@ def _render_rules_contract_retirement_report_section(
 
 def inspect_project(project_root: Path) -> dict:
     wb = project_root / '.work-bundle'
-    rules = project_root / 'rules'
+    rules = _project_rule_store_root(project_root)
+    legacy_rules = project_root / 'rules'
     roles = project_root / 'roles'
     pgi = read(project_root / '.gitignore').splitlines()
     wbi = read(wb / '.gitignore').splitlines()
@@ -470,8 +475,13 @@ def inspect_project(project_root: Path) -> dict:
         'project_metadata_valid': not project_metadata_missing,
         'project_metadata_authority': '.work-bundle/project.yaml',
         'rules_root': rules.exists(),
+        'rules_root_authority': '.work-bundle/rules',
         'rule_files': len(list(rules.glob('*.yaml'))) if rules.exists() else 0,
         'rule_index': (rules / 'index.yaml').exists(),
+        'legacy_rules_root': legacy_rules.exists(),
+        'legacy_rule_files': len(list(legacy_rules.glob('*.yaml'))) if legacy_rules.exists() else 0,
+        'legacy_rule_index': (legacy_rules / 'index.yaml').exists(),
+        'legacy_rules_authority': 'legacy-artifact',
         'roles_root': roles.exists(),
         'role_files': len(list(roles.glob('*.yaml'))) if roles.exists() else 0,
         'role_profiles': all((roles / f'{r}.yaml').exists() for r in ROLE_NAMES),
@@ -523,6 +533,8 @@ def apply_project(
     if _ensure_lines(project_root / '.gitignore', REQUIRED_PROJECT_GITIGNORE):
         changed.append(str(project_root / '.gitignore'))
     for directory in tree_roots:
+        if directory == 'rules':
+            directory = '.work-bundle/rules'
         path = project_root / directory
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
@@ -555,7 +567,7 @@ def apply_project(
     if init_git and not (knowledge / '.git').exists():
         subprocess.run(['git', 'init', str(knowledge)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         changed.append(str(knowledge / '.git'))
-    rule_index_path = project_root / 'rules/index.yaml'
+    rule_index_path = _project_rule_store_root(project_root) / 'index.yaml'
     rule_index = _require_reference_text(INIT_RULE_INDEX).rstrip() + '\n'
     if write(
         rule_index_path,

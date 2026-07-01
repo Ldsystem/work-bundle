@@ -38,6 +38,8 @@ Downstream executors may read only the related spec, root plan, relevant phase, 
 - Convert the spec into deterministic phases, tasks, dependencies, affected files/modules, validation, completion criteria, and handoff requirements.
 - Carry required execution context from spec into the root plan, each phase, and each task by referencing stable spec IDs and adding only task-specific execution detail.
 - Carry the source spec `Knowledge Base Update` disposition, evidence-source expectations, and review follow-up path into the root plan, final task or review criteria, and executor-result handoff requirements.
+- Carry source-spec impact-radius evidence forward by mapping affected upstream components, downstream components, and validation/test artifacts into exact phase and task source files, target files, validation commands, dependencies, and convergence checks.
+- Reject planning and require source-spec repair when a source-code, script, skill, rule, workflow, API, data-contract, or validation-affecting change lacks impact-radius evidence for upstream/downstream components or validation/test artifacts.
 - After generating the root plan, phase files, and task files, run a generated-plan verification pass against the source specification before reporting completion.
 - The generated-plan verification pass must check exact artifact paths, source-spec ID coverage, dependencies, safe parallelization opportunities, task write scopes, validation commands, and `create-handoff` completion requirements.
 - Repair generated-artifact drift, missing coverage, dependency mistakes, unsafe parallelization, validation gaps, handoff gaps, and internal consistency problems in the same planning turn, then repeat verification until no generated-artifact gap remains or a source-spec defect blocks progress.
@@ -107,6 +109,7 @@ These rules are mandatory:
 - Do not make executor tasks depend on future knowledge retrieval.
 - Do not hide uncertainty inside task instructions; create clarification/spec-repair tasks first.
 - Do not infer answers silently, pick an unresolved alternative, downgrade blocking questions, or create a partial plan for unresolved scope.
+- Do not create a plan from a material change specification that is missing required source-spec impact-radius evidence; repair the specification first instead of inventing upstream/downstream or validation/test scope during planning.
 - Do not create tasks without dependencies, validation, completion criteria, and handoff requirement.
 - Do not create tasks that duplicate specification prose instead of citing spec IDs.
 - Do not create phases or tasks without exact source files, target files, target symbols, validation instructions, and relevant spec-ID references.
@@ -199,6 +202,7 @@ Confirm required front matter and sections exist, the source specification inclu
 Run generated-plan verification before reporting completion:
 
 - compare the root plan, every phase, and every task back to the source specification's stable IDs, resolved alternatives, open-question decisions, constraints, affected files, validation expectations, and handoff requirements;
+- confirm source-spec impact-radius evidence is carried into exact upstream/downstream component scopes, validation/test artifacts, dependencies, validation commands, and convergence checks;
 - confirm exact paths, dependencies, task ordering, safe parallelization flags, source files, target files, target symbols, validation commands, and completion criteria are internally consistent across root plan, phases, and tasks;
 - repair generated-artifact drift, missing coverage, duplicate spec prose, invalid dependencies, unsafe or missing parallelization notes, validation gaps, and handoff gaps in the same turn;
 - stop for specification repair instead of patching around the issue when the source specification itself has unresolved questions, missing stable IDs, missing evidence, or contradictory instructions.

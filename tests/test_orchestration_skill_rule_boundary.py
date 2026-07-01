@@ -102,6 +102,19 @@ def test_create_specification_requires_neutral_cross_stage_gateway() -> None:
     assert "does not require downstream agents to read `.work-bundle/knowledge/`" in skill
 
 
+def test_orchestration_skill_boundary_carries_impact_radius_and_violation_terms() -> None:
+    create_spec = skill_text(REPO_ROOT / "skills/orch-create-specification/SKILL.md")
+    create_plan = skill_text(REPO_ROOT / "skills/orch-create-implementation-plan/SKILL.md")
+    execute = skill_text(REPO_ROOT / "skills/orch-execute-plan/SKILL.md")
+
+    assert "upstream/downstream" in create_spec
+    assert "validation/test impact-radius evidence" in create_spec
+    assert "source-spec impact-radius evidence" in create_plan
+    assert "upstream/downstream or validation/test scope" in create_plan
+    assert "`wb-violation-evaluation`" in execute
+    assert "chain-of-thought" in execute
+
+
 def test_orchestration_gateway_rule_keeps_policy_as_intent_not_filter() -> None:
     rule = skill_text(REPO_ROOT / "rules/orchestration/orch-knowledge-gateway.md")
 

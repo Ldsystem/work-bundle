@@ -299,3 +299,14 @@ def test_violation_catalog_is_read_from_reference(tmp_path: Path) -> None:
     assert result.returncode == 1
     payload = json.loads(result.stdout)
     assert "invalid severity: p3" in payload["error"]
+
+
+def test_violation_evidence_rule_remains_minimal_storage_after_evaluation() -> None:
+    rule = (REPO_ROOT / "rules/work-bundle/wb-violation-evidence.md").read_text(encoding="utf-8")
+
+    assert "Record only the minimal first-observed evidence" in rule
+    assert "Record only files, artifacts, UI output, terminal output, or runtime surfaces already visible" in rule
+    assert "Do not perform additional file search, repository browsing, historical tracing, or contract exploration" in rule
+    assert "Do not delay or widen plan execution to enrich a violation record" in rule
+    assert "Do not record project business logic, project implementation" in rule
+    assert "Do not expand evidence capture into evaluation, root-cause investigation, or exhaustive workflow-chain tracing" in rule

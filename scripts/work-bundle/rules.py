@@ -8,7 +8,20 @@ wording); agents own that via ``wb-create-rule`` skill instructions.
 
 from __future__ import annotations
 
-from core import *
+import importlib.util as _importlib_util
+from pathlib import Path as _Path
+
+
+_CORE_PATH = _Path(__file__).with_name("core.py")
+_CORE_SPEC = _importlib_util.spec_from_file_location("_work_bundle_core_for_rules", _CORE_PATH)
+if _CORE_SPEC is None or _CORE_SPEC.loader is None:
+    raise ImportError(f"Unable to load WorkBundle core module from {_CORE_PATH}")
+_CORE_MODULE = _importlib_util.module_from_spec(_CORE_SPEC)
+_CORE_SPEC.loader.exec_module(_CORE_MODULE)
+for _CORE_NAME in dir(_CORE_MODULE):
+    if not _CORE_NAME.startswith("_"):
+        globals()[_CORE_NAME] = getattr(_CORE_MODULE, _CORE_NAME)
+del _CORE_NAME, _CORE_MODULE, _CORE_PATH, _CORE_SPEC, _importlib_util, _Path
 
 
 VALIDATION_MANIFEST_REL = "references/wb-create-rule-validation.yaml"

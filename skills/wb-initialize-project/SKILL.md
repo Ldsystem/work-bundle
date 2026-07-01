@@ -40,7 +40,7 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 
 **Preserve behavior (default):** commands preserve existing non-empty files and user-authored `AGENTS.md` content outside the WorkBundle managed section. Re-running `init-project` on a healthy project reports `changed_files: []`.
 
-**`init-project --force`:** may overwrite init-managed template files only: `.work-bundle/project.yaml`, `rules/index.yaml`, `.work-bundle/knowledge/project.yaml`. For `AGENTS.md`, force refreshes only the WorkBundle managed section from `references/assets/template/AGENTS.md` and preserves user-authored content outside that section.
+**`init-project --force`:** may overwrite init-managed template files only: `.work-bundle/project.yaml`, `.work-bundle/rules/index.yaml`, `.work-bundle/knowledge/project.yaml`. For `AGENTS.md`, force refreshes only the WorkBundle managed section from `references/assets/template/AGENTS.md` and preserves user-authored content outside that section.
 
 **`migrate-project --force`:** narrower migration-only repair subset; overwrites `.work-bundle/project.yaml` only. For `AGENTS.md`, migration may convert legacy whole-file template content or stale managed sections to the current marker-bounded managed section without taking ownership of the whole file.
 
@@ -83,6 +83,7 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 - Render `.work-bundle/project.yaml` with an `agents_sync` section that owns WorkBundle `AGENTS.md` checksum and sync-status state.
 - Create, append, or refresh `AGENTS.md` with the WorkBundle managed section from `references/assets/template/AGENTS.md`; do not overwrite user-authored content outside the managed section.
 - Create or preserve required `.gitignore` entries.
+- Create or preserve the current project rule-store index at `.work-bundle/rules/index.yaml`; root `rules/index.yaml` is legacy-only and is not current project rule authority.
 - Initialize `.work-bundle/knowledge` as its own Git repository and create its initial deterministic commit when needed.
 - Bind registry IO to `references/assets/template/projects.yaml`.
 - Fail mechanically when a required reference asset is missing; do not invent fallback content.
@@ -110,6 +111,7 @@ Use `migrate-project` for legacy layout upgrades.
 - Write a migration report under `.work-bundle/orchestration/docs/migration-report-YYYY-MM-DD.md`.
 - When retired legacy bootstrap artifacts are present, archive evidence under `.work-bundle/orchestration/docs/legacy-bootstrap-archive-YYYY-MM-DD/`, remove active legacy bootstrap paths, and list retired artifacts in the migration report.
 - When legacy `rules/contract.yaml` is present, archive it under `.work-bundle/orchestration/docs/legacy-rules-contract-archive-YYYY-MM-DD/` and remove the active file.
+- When legacy root `rules/index.yaml` is present, preserve it as a legacy artifact only; do not restore, overwrite, or validate it as current project rule authority.
 - `migrate-project --force` applies migration-only structural repair; it does not broaden overwrite to general init-managed files.
 
 ## Must Not

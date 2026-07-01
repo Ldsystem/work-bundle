@@ -388,6 +388,24 @@ def test_create_implementation_plan_requires_generated_artifact_verification_and
     assert "task-scoped `executor-result` handoff" in task_contract
 
 
+def test_orchestration_skills_require_impact_radius_propagation() -> None:
+    create_spec = text("skills/orch-create-specification/SKILL.md")
+    create_plan = text("skills/orch-create-implementation-plan/SKILL.md")
+
+    assert "recursive impact-radius traversal" in create_spec
+    assert "component cursor through upstream components" in create_spec
+    assert "downstream components that consume or validate it" in create_spec
+    assert "validation/test artifacts in impact-radius traversal" in create_spec
+    assert "Record impact-radius evidence compactly" in create_spec
+    assert "blocking open question instead of silently narrowing scope" in create_spec
+
+    assert "Carry source-spec impact-radius evidence forward" in create_plan
+    assert "affected upstream components, downstream components, and validation/test artifacts" in create_plan
+    assert "exact phase and task source files, target files, validation commands, dependencies, and convergence checks" in create_plan
+    assert "Reject planning and require source-spec repair" in create_plan
+    assert "missing required source-spec impact-radius evidence" in create_plan
+
+
 def test_orchestration_evals_cover_create_specification_quality_gate_cases() -> None:
     cases = evals("references/evals/orchestration/evals.json")
     prompts = "\n".join(str(case["prompt"]) for case in cases)
@@ -433,6 +451,19 @@ def test_execute_plan_requires_executor_drift_gap_verification_and_preserves_fal
     assert "task_fit_check:" in contract
     assert "artifacts_checked:" in contract
     assert "result: clean | repaired | unresolved | skipped" in contract
+
+
+def test_execute_plan_triggers_violation_evaluation_without_chain_of_thought_requirement() -> None:
+    skill = text("skills/orch-execute-plan/SKILL.md")
+
+    assert "Trigger `wb-violation-evaluation`" in skill
+    assert "execution-time conflicts, violations, errors, failed validations" in skill
+    assert "user interruptions, or user corrections" in skill
+    assert "WorkBundle process responsibility plausible" in skill
+    assert "stop once visible evidence shows WorkBundle" in skill
+    assert "do not require chain-of-thought output" in skill
+    assert "exhaustive root-cause tracing" in skill
+    assert "new upstream/downstream impact evidence or validation/test evidence" in skill
 
 
 def test_execute_plan_requires_codegraph_preflight_and_no_index_fallback_contract() -> None:

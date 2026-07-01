@@ -60,6 +60,10 @@ It must carry enough accepted context for planning and execution without future 
 - Record only disposition and follow-up path in `Knowledge Base Update`; do not instruct agents to write durable notes from the specification.
 - Define domain terms and acronyms.
 - Include affected modules, files, APIs, schemas, data flows, workflows, compatibility, migration, deployment, testing, and operational constraints when relevant.
+- For source-code, script, skill, rule, workflow, API, data-contract, or validation-affecting changes, perform recursive impact-radius traversal before finalizing: move a component cursor through upstream components the current component refers to and downstream components that consume or validate it until no discovered component can block, contradict, or require additional updates.
+- Include validation/test artifacts in impact-radius traversal when applicable, including unit tests, contract tests, validators, golden fixtures, rule contract tests, workflow tests, and other referring validation consumers.
+- Record impact-radius evidence compactly in source context with current component, upstream components, downstream components, validation/test artifacts, evidence paths, blocking status, and required update classification.
+- If recursive upstream/downstream or validation/test impact-radius evidence is inaccessible, ambiguous, or incomplete for a material change, record a blocking open question instead of silently narrowing scope.
 - Include examples, edge cases, fallback decisions, and validation expectations when useful.
 - Record missing or uncertain context as assumptions or open questions.
 - Do not store specifications under `.work-bundle/knowledge/`.
@@ -73,6 +77,7 @@ Each round must check:
 1. Drift against the user purpose and resolved user decisions. If drift exists, repair the specification.
 2. Gaps in required context, affected files, decisions, constraints, validation, or open questions. If evidence is available, repair the gap.
 3. Evidence support for all user requirements. If support is missing but more evidence exists through the approved knowledge gateway or current repository context, collect it through that approved path and update the specification. If no more evidence exists, record the unsupported requirement or decision as a blocking open question.
+4. Impact-radius completeness for each changed component: confirm upstream traversal, downstream traversal, and validation/test artifact coverage have reached a non-blocking stopping point, or record the remaining component cursor as a blocking open question.
 
 Use the simple change-driven loop:
 
