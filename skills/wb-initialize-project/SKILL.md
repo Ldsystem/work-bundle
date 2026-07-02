@@ -21,6 +21,8 @@ Initialize, doctor, validate, register, inspect, or migrate a project as a work-
   - `references/assets/template/projects.yaml`
   - `references/assets/template/AGENTS.md`
   - `references/wb-initialize-project-default-work-bundle-tree.yaml`
+- Git CLI for mechanical repository capability, branch, and HEAD-commit inspection when the project root is Git-backed.
+- Optional `.codegraph/` marker under each source repository; absence means CodeGraph is unsupported for that repository and must be reported as `no-index`, not initialized.
 
 ## Must
 
@@ -66,7 +68,22 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 - Register every initialized project to `projects.yaml` as a new workspace slug or an existing workspace slug.
 - Derive the workspace slug from `--name` when provided; otherwise from the project root directory name (normalized lowercase alphanumeric with hyphens).
 - On slug or project-root match, merge registry entries and preserve existing `aliases` and `source_repositories` unless explicitly replaced.
+- Keep the registry locator-oriented. Registry `source_repositories` entries contain only stable `id`, `path`, `work_dir`, `remote`, and `git_repository`; they do not own `working_branch`, `last_commit_id`, `baseline_status`, `operation_policy`, or CodeGraph sync state.
+- When registering a new repository to an existing workspace slug, update both the bootstrap-resolved registry and the workspace `.work-bundle/project.yaml`: append the locator to registry `source_repositories`, then add or refresh the corresponding project metadata `source_repositories[]` entry with mechanical Git and CodeGraph state.
+- Carry a short role description in both registry output/templates and project metadata: the registry is locator-only; project metadata is the working-state authority for branch baseline, commit baseline, operation policy, and CodeGraph state.
 - Ask for the workspace slug decision only when it is missing and blocking.
+
+**Project metadata v2:**
+
+- Render `.work-bundle/project.yaml` with `metadata_version: 2`.
+- Keep `.work-bundle/project.yaml` as the project-local authority for operation policy, source repository working state, branch policy, Git baseline, and CodeGraph state.
+- Render `source_repository_roles` describing the registry locator role and project metadata working-state authority role.
+- Render `operation_policy.project_files` with non-destructive file operations and `operation_policy.git` with allowed read operations, permissive stage/commit/pull operations, and forbidden destructive operations including `reset --hard`, `clean -fd`, and `push --force`.
+- Render `source_repositories[]` with stable `id`, absolute `path`, `work_dir`, `remote`, `git_repository`, `working_branch`, `branch_required`, `branch_check.required_before`, `branch_check.on_mismatch: stop`, `last_commit_id`, `baseline_status`, and nested `codegraph`.
+- For Git-backed repositories, mechanically record current `working_branch` and `last_commit_id` when HEAD exists. Empty newly initialized repositories may use an empty `last_commit_id` with `baseline_status: unborn` until a later metadata refresh records a concrete commit.
+- For non-Git repositories, set `git_repository: false`, `branch_required: false`, empty `last_commit_id`, and `baseline_status: not-git`.
+- For repositories without `.codegraph/`, set `codegraph.supported: false`, `codegraph.index_present: false`, `codegraph.status: not-indexed`, and `codegraph.reason: no-index`. Do not run `codegraph init` or `codegraph sync`.
+- For repositories with `.codegraph/`, report marker presence only; synchronization remains owned by orchestration review behavior, not initialization.
 
 **Initialization structure:**
 
@@ -79,16 +96,17 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
   - `orchestration/{docs,principles,templates,reviews,execution-state}`
 - Directory membership is driven by `references/wb-initialize-project-default-work-bundle-tree.yaml`.
 - Render `.work-bundle/project.yaml` from `references/assets/template/project.yaml`.
+- Render `.work-bundle/project.yaml` with metadata v2 repository state from mechanical Git and `.codegraph/` inspection.
 - Render `.work-bundle/project.yaml` with a `prefer_subagent: false` default unless a future template version explicitly changes the default.
 - Render `.work-bundle/project.yaml` with an `agents_sync` section that owns WorkBundle `AGENTS.md` checksum and sync-status state.
 - Create, append, or refresh `AGENTS.md` with the WorkBundle managed section from `references/assets/template/AGENTS.md`; do not overwrite user-authored content outside the managed section.
 - Create or preserve required `.gitignore` entries.
 - Create or preserve the current project rule-store index at `.work-bundle/rules/index.yaml`; root `rules/index.yaml` is legacy-only and is not current project rule authority.
 - Initialize `.work-bundle/knowledge` as its own Git repository and create its initial deterministic commit when needed.
-- Bind registry IO to `references/assets/template/projects.yaml`.
+- Bind registry IO to `references/assets/template/projects.yaml`; registry entries remain locators and project metadata owns working-state fields.
 - Fail mechanically when a required reference asset is missing; do not invent fallback content.
 
-**Validation scope:** mechanical checks only — file presence, directory structure, schema keys, registry status, and Git status. No semantic prose or bootstrap-artifact checks.
+**Validation scope:** mechanical checks only — file presence, directory structure, schema keys, registry status, metadata version, source repository fields, branch mismatch, stale baseline commit, registry/project repository ID mismatch, operation policy shape, CodeGraph metadata shape, and Git status. No semantic prose or bootstrap-artifact checks.
 
 ## Doctor Mode
 
@@ -97,6 +115,7 @@ Use `doctor-project` as the canonical doctor command.
 - `doctor-project` without `--repair`: inspect and report mechanical failures only.
 - `doctor-project --repair`: repair deterministic structure defects; default repair preserves existing non-empty user content.
 - `doctor-project --repair --force`: repair with init-scoped template overwrite permission, while limiting `AGENTS.md` changes to the WorkBundle managed section.
+- Report metadata v2 failures using machine-readable failure keys such as stale metadata version, missing repository state, branch mismatch, stale baseline, registry/project mismatch, invalid operation policy, and invalid CodeGraph shape.
 - Do not rewrite user-authored project content without explicit `--force`.
 - Do not migrate registry identity without preserving the old slug mapping or reporting the required user decision.
 
@@ -107,6 +126,7 @@ Use `migrate-project` for legacy layout upgrades.
 - Detect legacy `.work-bundle` layout, missing registry fields, obsolete template sections, retired bootstrap artifacts, legacy `rules/contract.yaml`, and moved template paths.
 - Preserve existing knowledge notes, open questions, orchestration artifacts, Git history, and project identity.
 - Add missing current files and directories without deleting unknown files.
+- Upgrade legacy `metadata_version: 1` project metadata to `metadata_version: 2` by adding missing `operation_policy`, `source_repositories`, branch/commit baseline fields, and CodeGraph state while preserving unknown user fields.
 - Convert legacy whole-file WorkBundle `AGENTS.md` template content to the current managed section when needed, preserving content outside managed sections.
 - Write a migration report under `.work-bundle/orchestration/docs/migration-report-YYYY-MM-DD.md`.
 - When retired legacy bootstrap artifacts are present, archive evidence under `.work-bundle/orchestration/docs/legacy-bootstrap-archive-YYYY-MM-DD/`, remove active legacy bootstrap paths, and list retired artifacts in the migration report.
@@ -127,12 +147,12 @@ Use `migrate-project` for legacy layout upgrades.
 
 - Initialized, doctored, validated, registered, or migrated project workspace.
 - Updated bootstrap-resolved `projects.yaml` registry entry when registration runs.
-- JSON command output with `status`, `failures`, `registry_path`, `registry_entry` or `registry_status`, `agents_status` or equivalent AGENTS sync evidence, and `changed_files` where applicable.
+- JSON command output with `status`, `failures`, `registry_path`, `registry_entry` or `registry_status`, metadata v2 evidence such as `project_metadata_version`, `project_source_repositories`, `project_metadata_v2_failures`, `agents_status` or equivalent AGENTS sync evidence, and `changed_files` where applicable.
 - For `set-prefer-subagent`, JSON command output with `status`, `scope`, `prefer_subagent`, `target_path`, `changed_files`, and `effective_prefer_subagent`.
 - Migration report and optional legacy-bootstrap archive paths under `.work-bundle/orchestration/docs/` when migration retires legacy artifacts.
 
 ## On Failure
 
 - Stop before destructive changes.
-- Report the blocking file, missing reference asset, registry entry, or slug decision from command JSON `failures`.
+- Report the blocking file, missing reference asset, registry entry, slug decision, metadata v2 schema defect, branch mismatch, stale baseline, registry/project mismatch, or CodeGraph metadata inconsistency from command JSON `failures`.
 - Ask at most one blocking question when slug or registry identity is unresolved.

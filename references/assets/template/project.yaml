@@ -1,20 +1,59 @@
-metadata_version: 1
+metadata_version: 2
 authority: canonical
 project_root: <absolute-path-to-project-root>
 industry: <industry-or-domain>
 prefer_subagent: false
+
 agents_sync:
   managed_section: work-bundle-rule
   template_path: references/assets/template/AGENTS.md
   template_checksum_sha256: ""
   last_synced_at: ""
   status: never-synced
+
 language:
   - <runtime-or-framework>
-git:
-  allow_operations: <commit|stage|pull>
-  permissive_operations: <push>
-  forbid_operations: <reset --hard>
+
+operation_policy:
+  project_files:
+    allow: [read, create, update]
+    forbid: [delete_unknown_files, overwrite_non_empty_without_force]
+  git:
+    allow_operations: [status, diff, log, branch --show-current, rev-parse HEAD]
+    permissive_operations: [stage, commit, pull]
+    forbid_operations: [reset --hard, clean -fd, push --force]
+
+source_repository_roles:
+  registry: "Locator only: stable repository id, path, work_dir, remote, and Git capability."
+  project_metadata: "Working-state authority: branch baseline, commit baseline, operation policy, and CodeGraph state."
+
+source_repositories:
+  - id: <stable-repository-id>
+    path: <absolute-path-to-source-repository>
+    work_dir: true
+    remote: ""
+    git_repository: true
+    working_branch: <required-working-branch>
+    branch_required: true
+    branch_check:
+      required_before:
+        - specification_evidence
+        - implementation_planning
+        - execution
+        - review
+        - project_scope_update
+      on_mismatch: stop
+    last_commit_id: <git-head-commit-or-empty-for-non-git>
+    baseline_status: current
+    codegraph:
+      supported: false
+      index_present: false
+      root: <absolute-path-to-source-repository>
+      status: not-indexed
+      synced_commit_id: ""
+      last_synced_at: ""
+      reason: no-index
+
 migration:
   authority_owner: /wb-initialize-project
   compatibility_window: none

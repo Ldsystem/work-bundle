@@ -87,6 +87,22 @@ def test_codegraph_rule_stays_index_gated_and_preserves_fallback() -> None:
     assert "record the concrete fallback reason before continuing" in rule
 
 
+def test_project_context_preflight_rule_is_indexed_and_metadata_backed() -> None:
+    rule = (REPO_ROOT / "rules/work-bundle/wb-project-context-preflight.md").read_text(encoding="utf-8")
+    index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
+
+    assert "id: wb-project-context-preflight" in rule
+    assert "id: wb-project-context-preflight" in index
+    assert "path: work-bundle/wb-project-context-preflight.md" in index
+    assert "$project_root/.work-bundle/project.yaml" in rule
+    assert "$work_bundle_config_root/registry/projects.yaml" in rule
+    assert "working_branch" in rule
+    assert "last_commit_id" in rule
+    assert "accepted executor-result handoffs" in rule
+    assert "record `no-index` or `not-indexed` fallback" in rule
+    assert "do not initialize CodeGraph or run `codegraph sync`" in rule
+
+
 def test_validate_rules_rejects_scoped_rules_root(tmp_path: Path) -> None:
     root = tmp_path / "rules" / "work-bundle"
     root.mkdir(parents=True)

@@ -69,6 +69,15 @@ repository:
     preflight_kind: git-clean-worktree | local-project
     baseline: initial | accepted-handoff
     status: clean | blocked
+    metadata:
+      repository_id: null
+      expected_branch: null
+      actual_branch: null
+      branch_status: matched | mismatch | not-applicable | unknown
+      expected_commit: null
+      actual_commit: null
+      commit_status: matched | stale | missing | unborn | not-applicable | unknown
+      baseline_status: current | stale | unborn | not-git | unknown
 
 codegraph:
   - root: /absolute/path
@@ -83,6 +92,16 @@ delegation_evidence:
   internal_spawn_used_for_task_delegation: false
   internal_workers_used_for_support: false
   fallback_reason: null
+
+allocation_evidence:
+  allocated_rules:
+    - id: rule-id
+      status: loaded | condition-evaluated | skipped | unavailable
+      reason: null
+  allocated_skills:
+    - name: skill-name
+      status: used | acknowledged | skipped | unavailable
+      reason: null
 ```
 
 ## Required By Applicability
@@ -93,8 +112,10 @@ delegation_evidence:
 - `unresolved` is included only when blockers or issues remain.
 - `task_fit_check` is required for completed and partial task results. It records the assigned task, result `clean|repaired|unresolved|skipped`, artifacts checked, and meaningful findings.
 - `repository` is required when repository preflight, accepted baseline, changed paths, or blocker state matters for continuation.
+- `repository[].metadata` is required when project metadata baseline was used for target resolution, branch checks, commit checks, or CodeGraph policy decisions.
 - `codegraph` is required when source-code inspection or edits were in scope. Keep it compact: `root`, `applicable`, `up_to_date`, and required fallback or blocker facts are enough unless a failure needs detail.
 - `delegation_evidence` is required when task, phase, or plan ownership was delegated or when the execution path needs proof that invisible internal spawn did not own delegation.
+- `allocation_evidence` is required when allocated_rules or allocated_skills materially shaped execution or when an allocated rule/skill was unavailable, skipped, stale, or inapplicable.
 
 ## Forbidden Executor-Result Fields
 
@@ -118,6 +139,7 @@ Use `delegation_evidence` for compact delegation proof. Use `unresolved` and `ta
 Compact handoffs must not weaken safety gates:
 
 - Repository evidence must preserve root, target kind, preflight kind, baseline, and clean or blocked result when applicable.
+- Metadata evidence must preserve repository id, expected and actual branch, expected and actual commit, branch status, commit status, and baseline status when project metadata preflight applies.
 - CodeGraph evidence must preserve no-index fallback, sync-failed, stale, or blocker facts when applicable.
 - Delegation evidence must preserve visible surface, visible reference when available, and `internal_spawn_used_for_task_delegation: false`.
 - Validation evidence must list exact commands or inspections and their result.

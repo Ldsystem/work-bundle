@@ -34,6 +34,13 @@ PROJECT_REGISTRY_ENTRY_FIELDS = (
     "status",
     "updated_at",
 )
+PROJECT_REGISTRY_SOURCE_FIELDS = (
+    "id",
+    "path",
+    "work_dir",
+    "remote",
+    "git_repository",
+)
 
 
 def run_wb(config_root: Path, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -248,16 +255,58 @@ def test_registry_upsert_preserves_aliases_and_sources(tmp_path: Path) -> None:
     first = run_wb(config_root, "register-project", str(project), "--name", "demo")
     assert first.returncode == 0, first.stdout + first.stderr
     first_data = json.loads(first.stdout)
-    assert first_data["status"] == "skipped"
+    assert first_data["status"] in {"skipped", "updated"}
     entry = first_data["project"]
     assert entry["aliases"] == ["demo", "sample"]
-    assert entry["updated_at"] == "2026-01-01"
     assert len(entry["source_repositories"]) == 1
     assert entry["source_repositories"][0]["path"] == str(resolved)
 
     text = registry_path.read_text(encoding="utf-8")
     assert "sample" in text
-    assert "updated_at: 2026-01-01" in text
+    assert "id: demo-main" in text
+    assert "git_repository:" in text
+
+
+def test_register_project_adds_repository_to_registry_and_project_metadata(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    extra_repo = tmp_path / "library"
+    extra_repo.mkdir()
+    git(extra_repo, "init", "-q", "-b", "main")
+    git(extra_repo, "config", "user.email", "test@example.com")
+    git(extra_repo, "config", "user.name", "Test")
+    (extra_repo / "README.md").write_text("# Library\n", encoding="utf-8")
+    git(extra_repo, "add", "README.md")
+    git(extra_repo, "commit", "-m", "chore: seed library")
+
+    registered = run_wb(config_root, "register-project", str(extra_repo), "--name", "demo")
+    assert registered.returncode == 0, registered.stdout + registered.stderr
+    data = json.loads(registered.stdout)
+
+    assert data["status"] == "updated"
+    assert data["project_metadata_status"] == "updated"
+    assert data["source_repository_roles"]["registry"].startswith("Locator only")
+    assert data["source_repository_roles"]["project_metadata"].startswith("Working-state authority")
+    assert str(config_root / "registry/projects.yaml") in data["changed_files"]
+    assert str(project / ".work-bundle/project.yaml") in data["changed_files"]
+    assert [source["id"] for source in data["registry_entry"]["source_repositories"]] == ["demo-main", "demo-library"]
+
+    registry_text = (config_root / "registry/projects.yaml").read_text(encoding="utf-8")
+    assert "source_repository_roles:" in registry_text
+    assert f"path: {extra_repo.resolve()}" in registry_text
+
+    metadata_text = (project / ".work-bundle/project.yaml").read_text(encoding="utf-8")
+    wb_project = _import_wb_project()
+    try:
+        repositories = wb_project._metadata_source_repositories(metadata_text)
+    finally:
+        _cleanup_wb_project_modules()
+
+    assert "source_repository_roles:" in metadata_text
+    assert [repo["path"] for repo in repositories] == [str(project.resolve()), str(extra_repo.resolve())]
+    assert repositories[1]["git_repository"] is True
+    assert repositories[1]["working_branch"] == "main"
+    assert repositories[1]["last_commit_id"] == git(extra_repo, "rev-parse", "HEAD")
+    assert repositories[1]["codegraph"]["reason"] == "no-index"
 
 
 def test_registry_upsert_replaces_aliases_when_explicit(tmp_path: Path) -> None:
@@ -435,7 +484,10 @@ def test_init_created_files_contain_no_legacy_bootstrap_pointers(tmp_path: Path)
 def test_registry_parser_tracks_projects_template_schema(tmp_path: Path) -> None:
     template_path = REPO_ROOT / "references/assets/template/projects.yaml"
     template_text = template_path.read_text(encoding="utf-8")
-    assert template_text.startswith("projects:")
+    assert "source_repository_roles:" in template_text
+    assert "Locator only" in template_text
+    assert "Working-state authority" in template_text
+    assert "projects:" in template_text
     for field in PROJECT_REGISTRY_ENTRY_FIELDS:
         assert field in template_text
 
@@ -448,13 +500,14 @@ def test_registry_parser_tracks_projects_template_schema(tmp_path: Path) -> None
             "knowledge_root": "/tmp/project/.work-bundle/knowledge",
             "aliases": ["demo", "sample"],
             "source_repositories": [
-                {"path": "/tmp/project", "work_dir": True, "remote": "origin"},
+                {"id": "demo-main", "path": "/tmp/project", "work_dir": True, "remote": "origin", "git_repository": True},
             ],
             "status": "active",
             "updated_at": "2026-06-11",
         }
         rendered = wb_project._render_projects([sample])
-        assert rendered.startswith("projects:\n")
+        assert rendered.startswith("source_repository_roles:\n")
+        assert "\nprojects:\n" in rendered
         registry_file = tmp_path / "projects.yaml"
         registry_file.write_text(rendered, encoding="utf-8")
         parsed = wb_project._project_blocks(registry_file)
@@ -462,6 +515,8 @@ def test_registry_parser_tracks_projects_template_schema(tmp_path: Path) -> None
         entry = parsed[0]
         for field in PROJECT_REGISTRY_ENTRY_FIELDS:
             assert field in entry
+        for field in PROJECT_REGISTRY_SOURCE_FIELDS:
+            assert field in entry["source_repositories"][0]
         assert entry["slug"] == sample["slug"]
         assert entry["aliases"] == sample["aliases"]
         assert entry["source_repositories"] == sample["source_repositories"]
@@ -724,6 +779,175 @@ def test_templates_include_layered_prefer_subagent_defaults() -> None:
     assert ".work-bundle/project.yaml` -> `prefer_subagent`" in agents_text
     assert "then `$work_bundle_config_root/bootstrap.yaml` -> `prefer_subagent`, then `false`" in agents_text
     assert "bypass repository preflight" in agents_text
+
+
+def test_project_metadata_v2_records_git_and_codegraph_state(tmp_path: Path) -> None:
+    wb_project = _import_wb_project()
+    try:
+        project = tmp_path / "project"
+        project.mkdir()
+        git(project, "init", "-q", "-b", "main")
+        git(project, "config", "user.email", "test@example.com")
+        git(project, "config", "user.name", "Test")
+        (project / "README.md").write_text("# Demo\n", encoding="utf-8")
+        git(project, "add", "README.md")
+        git(project, "commit", "-m", "chore: seed")
+        head = git(project, "rev-parse", "HEAD")
+
+        rendered = wb_project._render_project_metadata(project, "demo")
+        metadata = wb_project._metadata_source_repositories(rendered)
+
+        assert "metadata_version: 2" in rendered
+        assert "operation_policy:" in rendered
+        assert metadata[0]["id"] == "demo-main"
+        assert metadata[0]["git_repository"] is True
+        assert metadata[0]["working_branch"] == "main"
+        assert metadata[0]["last_commit_id"] == head
+        assert metadata[0]["baseline_status"] == "current"
+        assert metadata[0]["codegraph"]["status"] == "not-indexed"
+        assert metadata[0]["codegraph"]["reason"] == "no-index"
+    finally:
+        _cleanup_wb_project_modules()
+
+
+def test_validate_project_reports_metadata_branch_mismatch(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    metadata_path = project / ".work-bundle/project.yaml"
+    metadata_path.write_text(
+        metadata_path.read_text(encoding="utf-8").replace("working_branch: main", "working_branch: wrong-branch"),
+        encoding="utf-8",
+    )
+
+    result = run_wb(config_root, "validate-project", str(project))
+    assert result.returncode == 1, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+
+    assert data["status"] == "issues-found"
+    assert "WB_PROJECT_METADATA_INVALID" in data["failures"]
+    assert "source_repositories[0].branch_mismatch" in data["failures"]
+
+
+def test_validate_project_reports_stale_metadata_baseline(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    metadata_path = project / ".work-bundle/project.yaml"
+    current_head = git(project, "rev-parse", "HEAD")
+    metadata_path.write_text(
+        metadata_path.read_text(encoding="utf-8")
+        .replace("last_commit_id:", f"last_commit_id: {current_head}")
+        .replace("baseline_status: unborn", "baseline_status: current"),
+        encoding="utf-8",
+    )
+    git(project, "add", "-f", ".work-bundle/project.yaml")
+    git(project, "commit", "-m", "chore: refresh metadata baseline")
+    refreshed_head = git(project, "rev-parse", "HEAD")
+    metadata_path.write_text(
+        metadata_path.read_text(encoding="utf-8").replace(current_head, refreshed_head),
+        encoding="utf-8",
+    )
+    (project / "README.md").write_text("# Later change\n", encoding="utf-8")
+    git(project, "add", "README.md")
+    git(project, "commit", "-m", "chore: later change")
+
+    result = run_wb(config_root, "validate-project", str(project))
+    assert result.returncode == 1, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+
+    assert "WB_PROJECT_METADATA_INVALID" in data["failures"]
+    assert "source_repositories[0].baseline_status_stale" in data["failures"]
+
+
+def test_migrate_project_upgrades_v1_metadata_and_preserves_unknown_fields(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    metadata_path = project / ".work-bundle/project.yaml"
+    metadata_path.write_text(
+        "\n".join(
+            [
+                "metadata_version: 1",
+                "authority: canonical",
+                f"project_root: {project.resolve()}",
+                "industry: legacy",
+                "custom_user_field: keep-me",
+                "migration:",
+                "  authority_owner: /wb-initialize-project",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo")
+    assert migrated.returncode == 0, migrated.stdout + migrated.stderr
+    text = metadata_path.read_text(encoding="utf-8")
+
+    assert "metadata_version: 2" in text
+    assert "custom_user_field: keep-me" in text
+    assert "operation_policy:" in text
+    assert "source_repositories:" in text
+
+
+def test_migrate_project_sources_repositories_from_registry(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    extra_repo = tmp_path / "library"
+    extra_repo.mkdir()
+    git(extra_repo, "init", "-q", "-b", "main")
+    resolved_project = project.resolve()
+    resolved_extra = extra_repo.resolve()
+    registry_path = config_root / "registry" / "projects.yaml"
+    registry_path.write_text(
+        "\n".join(
+            [
+                "projects:",
+                "  - slug: demo",
+                "    name: demo",
+                f"    work_bundle_root: {resolved_project / '.work-bundle'}",
+                f"    knowledge_root: {resolved_project / '.work-bundle' / 'knowledge'}",
+                "    aliases: []",
+                "    source_repositories:",
+                "      - id: demo-main",
+                f"        path: {resolved_project}",
+                "        work_dir: true",
+                '        remote: ""',
+                "        git_repository: true",
+                "      - id: demo-library",
+                f"        path: {resolved_extra}",
+                "        work_dir: false",
+                '        remote: ""',
+                "        git_repository: true",
+                "    status: active",
+                "    updated_at: 2026-01-01",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    metadata_path = project / ".work-bundle/project.yaml"
+    metadata_path.write_text(
+        "\n".join(
+            [
+                "metadata_version: 1",
+                "authority: canonical",
+                f"project_root: {resolved_project}",
+                "industry: legacy",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo")
+    assert migrated.returncode == 0, migrated.stdout + migrated.stderr
+    text = metadata_path.read_text(encoding="utf-8")
+    wb_project = _import_wb_project()
+    try:
+        repositories = wb_project._metadata_source_repositories(text)
+    finally:
+        _cleanup_wb_project_modules()
+
+    assert [repo["id"] for repo in repositories] == ["demo-main", "demo-library"]
+    assert [repo["path"] for repo in repositories] == [str(resolved_project), str(resolved_extra)]
+    assert repositories[0]["work_dir"] is True
+    assert repositories[1]["work_dir"] is False
+    assert "source_repositories[1].registry_project_mismatch" not in json.loads(migrated.stdout)["failures"]
 
 
 def test_resolve_effective_prefer_subagent_uses_project_global_default_order(tmp_path: Path, monkeypatch) -> None:

@@ -33,9 +33,24 @@ Before any long evidence gathering, create the specification shell with front ma
 
 `Initial User Purpose Evidence` must be derived only from the current user request and visible supplied artifacts. `Draft Requirement Breakdown` is provisional and must be revised after bounded evidence gathering; it must not be silently replaced.
 
+## 3.1 Project Metadata Preflight
+
+After the initial shell exists and before broad repository evidence gathering, record project metadata preflight for each target source repository that can affect the specification.
+
+Required evidence:
+
+- `.work-bundle/project.yaml` availability and `metadata_version`.
+- Source repository `id`, path, Git capability, expected `working_branch`, actual branch, expected `last_commit_id`, actual HEAD commit, branch status, and commit/baseline status when Git-backed.
+- Registry locator consistency when the bootstrap-resolved project registry is used.
+- CodeGraph support, `.codegraph/` marker presence, index status, synced commit when available, and `no-index` or `not-indexed` fallback when absent.
+
+If metadata is missing, inaccessible, contradictory, stale in a way that affects evidence trust, branch mismatched, or CodeGraph metadata is inconsistent, add a blocking open question before collecting extended evidence.
+
 ## 4. Source Context
 
 [Record the evidence used before drafting. Include durable knowledge gateway results grouped by `authority`, `candidate`, `background`, and `blocked`, plus current repository evidence with path, role, and relevance. Durable knowledge discovery for specification creation must be neutral and cross-stage: record neutral query anchors, candidate sources or retrieval gaps, and the active retrieval policy as classification/output intent rather than a discovery-stage filter. Only `authority` durable knowledge may shape requirements, constraints, acceptance criteria, or downstream tasks.]
+
+Source Context must include project metadata preflight evidence or a blocking open question that explains why metadata preflight could not establish a trustworthy branch, commit, registry, and CodeGraph baseline.
 
 When no supporting authority note exists for the user purpose, record the retrieval gap and analyze the purpose from user input and repository evidence. Use Design Interrogation only for unresolved design intent that cannot be answered from current evidence.
 
@@ -64,6 +79,7 @@ When material non-authority evidence appears, record agent-owned polarity and ma
 - **REQ-SHELL-001**: Create the specification shell before extended evidence gathering, and keep `Initial User Purpose Evidence` and `Draft Requirement Breakdown` visible in the generated artifact.
 - **REQ-SHELL-002**: Derive initial user-purpose evidence only from the current user request and visible supplied artifacts.
 - **REQ-SHELL-003**: Revise draft requirements after bounded evidence gathering instead of silently replacing them.
+- **REQ-META-001**: Run project metadata preflight after shell creation and before broad repository evidence gathering; block on missing metadata, branch mismatch, stale baseline affecting evidence trust, registry contradiction, or inconsistent CodeGraph state.
 
 ## 6. Interfaces & Data Contracts
 
@@ -167,6 +183,7 @@ Set disposition to `required` when accepted Design Interrogation conclusions est
 - The specification remains self-contained and does not require broad repository exploration before the shell exists.
 - The source context records neutral cross-stage retrieval anchors or a retrieval gap, and any named retrieval policy is used only for classification/output grouping.
 - The specification carries accepted authority context forward so downstream planning and execution do not need to read `.work-bundle/knowledge/`.
+- The specification records project metadata preflight evidence including `working_branch`, `last_commit_id`, branch status, baseline status, and CodeGraph no-index fallback when applicable.
 
 ## 15. Quality Gate
 

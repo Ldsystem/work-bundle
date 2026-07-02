@@ -34,6 +34,38 @@ def repository(tmp_path: Path, name: str = "repo") -> Path:
     return path
 
 
+def write_project_metadata(project: Path, repo: Path, *, branch: str = "main", commit: str | None = None) -> None:
+    head = commit if commit is not None else git(repo, "rev-parse", "HEAD")
+    (project / ".work-bundle").mkdir(parents=True, exist_ok=True)
+    (project / ".work-bundle" / "project.yaml").write_text(
+        "\n".join(
+            [
+                "metadata_version: 2",
+                "source_repositories:",
+                "  - id: repo-main",
+                f"    path: {repo.resolve()}",
+                "    work_dir: true",
+                '    remote: ""',
+                "    git_repository: true",
+                f"    working_branch: {branch}",
+                "    branch_required: true",
+                "    last_commit_id: " + head,
+                "    baseline_status: current",
+                "    codegraph:",
+                "      supported: false",
+                "      index_present: false",
+                f"      root: {repo.resolve()}",
+                "      status: not-indexed",
+                '      synced_commit_id: ""',
+                '      last_synced_at: ""',
+                "      reason: no-index",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_clean_repository_passes(tmp_path: Path) -> None:
     repo = repository(tmp_path)
     result = inspect_repository_state(repo)
@@ -173,10 +205,7 @@ def test_resolution_prefers_task_write_scopes_then_metadata(tmp_path: Path) -> N
     project.mkdir()
     target = repository(tmp_path, "target")
     fallback = repository(tmp_path, "fallback")
-    (project / ".work-bundle").mkdir()
-    (project / ".work-bundle" / "project.yaml").write_text(
-        f"source_repositories:\n  - path: {fallback}\n", encoding="utf-8"
-    )
+    write_project_metadata(project, fallback)
     task = project / "task.md"
     task.write_text(f"---\ntarget_files:\n  - {target / 'new.py'}\nsource_files:\n  - .work-bundle/project.yaml\n---\n", encoding="utf-8")
 
@@ -184,8 +213,80 @@ def test_resolution_prefers_task_write_scopes_then_metadata(tmp_path: Path) -> N
         {"path": str(target.resolve()), "source": "task-write-scope"}
     ]
     assert resolve_target_repositories(project) == [
-        {"path": str(fallback.resolve()), "source": "project-metadata"}
+        {
+            "path": str(fallback.resolve()),
+            "source": "project-metadata",
+            "metadata": {
+                "id": "repo-main",
+                "path": str(fallback.resolve()),
+                "work_dir": True,
+                "remote": "",
+                "git_repository": True,
+                "working_branch": "main",
+                "branch_required": True,
+                "last_commit_id": git(fallback, "rev-parse", "HEAD"),
+                "baseline_status": "current",
+                "codegraph": {
+                    "supported": False,
+                    "index_present": False,
+                    "root": str(fallback.resolve()),
+                    "status": "not-indexed",
+                    "synced_commit_id": "",
+                    "last_synced_at": "",
+                    "reason": "no-index",
+                },
+            },
+        }
     ]
+
+
+def test_metadata_preflight_reports_branch_commit_and_codegraph_no_index(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    repo = repository(tmp_path)
+    write_project_metadata(project, repo)
+
+    result = repository_preflight(resolve_target_repositories(project))
+
+    payload = result["repository_preflight"]
+    assert payload["status"] == "passed"
+    row = payload["repositories"][0]
+    assert row["metadata"]["repository_id"] == "repo-main"
+    assert row["metadata"]["branch_status"] == "matched"
+    assert row["metadata"]["commit_status"] == "matched"
+    assert row["metadata"]["codegraph"]["actual_index_present"] is False
+    assert row["metadata"]["codegraph"]["reason"] == "no-index"
+
+
+def test_metadata_preflight_blocks_branch_mismatch(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    repo = repository(tmp_path)
+    write_project_metadata(project, repo, branch="wrong")
+
+    result = repository_preflight(resolve_target_repositories(project))
+    row = result["repository_preflight"]["repositories"][0]
+
+    assert result["repository_preflight"]["status"] == "blocked"
+    assert row["status"] == "branch-mismatch"
+    assert row["metadata"]["branch_status"] == "mismatch"
+
+
+def test_metadata_preflight_blocks_stale_commit(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    repo = repository(tmp_path)
+    old_head = git(repo, "rev-parse", "HEAD")
+    (repo / "tracked.txt").write_text("later\n", encoding="utf-8")
+    git(repo, "commit", "-am", "later")
+    write_project_metadata(project, repo, commit=old_head)
+
+    result = repository_preflight(resolve_target_repositories(project))
+    row = result["repository_preflight"]["repositories"][0]
+
+    assert result["repository_preflight"]["status"] == "blocked"
+    assert row["status"] == "stale-baseline"
+    assert row["metadata"]["commit_status"] == "stale"
 
 
 def test_resolution_excludes_orchestration_artifacts_and_falls_through_to_source(

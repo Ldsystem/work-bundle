@@ -18,6 +18,20 @@ target_symbols:
   - [class/function/module/interface name]
 completion_criteria:
   - [measurable completion criterion]
+allocated_rules:
+  - id: [rule-id]
+    source: AGENTS.md|work-bundle-toolkit|work-bundle-global|work-bundle-project|builtin|plugin|other
+    path: [file path when file-backed, otherwise source label]
+    applies_when: [observable task condition]
+    load_timing: before_task_work|before_source_inspection|before_script_edit|before_rule_edit|before_validation
+    enforcement: must|should
+allocated_skills:
+  - name: [skill-name]
+    source: work-bundle|agents-skills|codex-skills|builtin|plugin|other
+    path: [file path when file-backed, otherwise source label]
+    applies_when: [observable task condition]
+    use_timing: before_task_work|task_execution|validation
+    required_for: [why this executor must use or be aware of the skill]
 ---
 
 # TASK-001: [Task Name]
@@ -64,6 +78,8 @@ List the exact source-spec IDs this task implements or validates. Do not paste f
 
 Instructions must be concrete file-level execution steps. Do not restate the full source specification. Use the spec references above for requirement meaning.
 
+Before implementation, the executor must load, use, acknowledge, or condition-evaluate every task-level `allocated_rules` entry and every task-level `allocated_skills` entry according to its source, `load_timing`, `use_timing`, enforcement, and required-for reason. File-backed entries use `path`; non-file-backed entries use `source` as the authority label. If an allocated rule or skill is unavailable, stale, or inapplicable, record the concrete reason in the executor-result handoff.
+
 When source-code inspection or edits are in scope, include concise task-level CodeGraph expectations:
 
 - identify each target repository or local project root when known;
@@ -94,6 +110,7 @@ Before reporting planning complete, verify this generated task artifact against 
 
 - relevant source-spec IDs are cited and only task-specific execution detail is added;
 - source files, target files, target symbols, dependencies, implementation instructions, validation commands, and completion criteria are exact and internally consistent;
+- allocated rules and allocated skills from any agent-visible source cover the task's material operation signals and are scoped to what the executor must know before work;
 - task write scope supports the parent phase's safe parallelization decision;
 - the task requires `create-handoff` and a task-scoped `executor-result` handoff before completed or blocked status is reported.
 

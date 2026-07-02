@@ -1,3 +1,7 @@
+source_repository_roles:
+  registry: "Locator only: stable repository id, path, work_dir, remote, and Git capability."
+  project_metadata: "Working-state authority: branch baseline, commit baseline, operation policy, and CodeGraph state."
+
 projects:
   - slug: <project-slug>
     name: <project-name>
@@ -5,8 +9,10 @@ projects:
     knowledge_root: <path to the knowledge base of the project, default to `$project_root/.work-bundle/knowledge/`>
     aliases: []
     source_repositories:
-      - path: <path to source repository 1>
+      - id: <stable-repository-id>
+        path: <path to source repository 1>
         work_dir: <boolean type, indicates, whether the repository is work directory>
         remote: ""
+        git_repository: <boolean type, indicates whether the source repository is Git-backed>
     status: active
     updated_at: 2026-05-18

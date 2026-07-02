@@ -291,6 +291,7 @@ def test_orchestration_evals_cover_preflight_and_review_delegation_regressions()
 
 def test_specification_contract_requires_quality_gate_source_context_and_evidence_loop() -> None:
     contract = text("references/assets/orchestration/contract/specification-v1.md")
+    skill = text("skills/orch-create-specification/SKILL.md")
 
     assert "## 3. Initial Shell" in contract
     assert "## 4. Source Context" in contract
@@ -305,6 +306,13 @@ def test_specification_contract_requires_quality_gate_source_context_and_evidenc
     assert "Quality gate: verified|blocked" in contract
     assert "Extra evidence loop" in contract
     assert "Run another evidence round whenever a round changes" in contract
+    assert "Project Metadata Preflight" in skill
+    assert "Run project metadata preflight after shell creation" in skill
+    assert "## 3.1 Project Metadata Preflight" in contract
+    assert "working_branch" in contract
+    assert "last_commit_id" in contract
+    assert "branch mismatched" in contract
+    assert "no-index` or `not-indexed` fallback" in contract
 
 
 def test_orchestration_workflow_requires_verified_specification_gate_before_planning() -> None:
@@ -315,6 +323,69 @@ def test_orchestration_workflow_requires_verified_specification_gate_before_plan
     assert "Quality gate: verified|blocked" in workflow
     assert "blocked quality gate prevents implementation planning" in workflow.lower()
     assert "verified quality gate is required before `orch-create-implementation-plan`" in workflow.lower()
+
+
+def test_planning_skill_and_contracts_require_rule_skill_allocation() -> None:
+    skill = text("skills/orch-create-implementation-plan/SKILL.md")
+    plan = text("references/assets/orchestration/contract/plan-v1.md")
+    phase = text("references/assets/orchestration/contract/phase-v1.md")
+    task = text("references/assets/orchestration/contract/task-v1.md")
+
+    assert "Allocate applicable runtime rules and skills" in skill
+    assert "rule/skill allocation coverage" in skill
+    for artifact in (plan, phase, task):
+        assert "allocated_rules:" in artifact
+        assert "allocated_skills:" in artifact
+        assert "source:" in artifact
+        assert "file-backed" in artifact
+        assert "applies_when:" in artifact
+    assert "VERIFY-005" in plan
+    assert "VERIFY-004" in phase
+    assert "not limited to `$work_bundle_root/skills` or `$work_bundle_root/rules`" in skill
+    assert "AGENTS.md" in skill
+    assert ".agents/skills" in skill
+    assert ".codex/skills" in skill
+    assert "non-WorkBundle rule/skill sources" in skill
+    assert "Before implementation, the executor must load, use, acknowledge, or condition-evaluate" in task
+
+
+def test_execution_skill_consumes_metadata_baseline_and_allocated_context() -> None:
+    skill = text("skills/orch-execute-plan/SKILL.md")
+    workflow = text("references/assets/orchestration/workflow.md")
+    handoff = text("references/assets/orchestration/contract/handoff-executor-result-v1.md")
+
+    assert "read allocated rules and skills from the selected task, parent phase, and root plan" in skill
+    assert "Give every visible delegated worker the allocated rules and skills" in skill
+    assert "working_branch" in skill
+    assert "last_commit_id" in skill
+    assert "metadata baseline evidence" in skill
+    assert "allocated_rules and allocated_skills" in workflow
+    assert "Do not assume allocated skills come only from `$work_bundle_root/skills`" in skill
+    assert "allocated rules come only from WorkBundle rule indexes" in skill
+    assert "according to their declared source" in workflow
+    assert "branch mismatch" in workflow
+    assert "stale metadata baseline" in workflow
+    assert "allocation_evidence:" in handoff
+    assert "repository[].metadata" in handoff
+    assert "branch_status:" in handoff
+    assert "commit_status:" in handoff
+
+
+def test_review_skill_gates_archive_on_commit_codegraph_and_metadata_update() -> None:
+    skill = text("skills/orch-review-plan/SKILL.md")
+    workflow = text("references/assets/orchestration/workflow.md")
+
+    assert "operation_policy.git" in skill
+    assert "create an allowed Git commit" in skill
+    assert "post-review CodeGraph sync" in skill
+    assert "update `.work-bundle/project.yaml` source repository state" in skill
+    assert "block archive when a required commit, applicable CodeGraph sync, or project metadata update fails" in skill
+    assert "Knowledge update disposition: completed|not-needed" in skill
+    assert "Review commit/sync/update gates" in workflow
+    assert "project metadata `codegraph.supported: true`" in workflow
+    assert "working_branch" in workflow
+    assert "last_commit_id" in workflow
+    assert "Knowledge update disposition evidence" in workflow
 
 
 def test_orchestration_gateway_policy_is_not_discovery_stage_gate() -> None:

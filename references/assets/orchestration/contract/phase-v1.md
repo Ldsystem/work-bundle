@@ -21,6 +21,20 @@ task_index:
     path: .work-bundle/orchestration/plan/active/[plan-id]/phase-001-[slug]/task-001-[slug].md
     status: Planned
     depends_on: []
+allocated_rules:
+  - id: [rule-id]
+    source: AGENTS.md|work-bundle-toolkit|work-bundle-global|work-bundle-project|builtin|plugin|other
+    path: [file path when file-backed, otherwise source label]
+    applies_when: [observable phase condition]
+    load_timing: before_task_work|before_rule_edit|before_script_edit|before_validation
+    enforcement: must|should
+allocated_skills:
+  - name: [skill-name]
+    source: work-bundle|agents-skills|codex-skills|builtin|plugin|other
+    path: [file path when file-backed, otherwise source label]
+    applies_when: [observable phase condition]
+    use_timing: task_execution|phase_validation
+    required_for: [why child executors need this skill context]
 completion_criteria:
   - [measurable completion criterion]
 ---
@@ -92,8 +106,9 @@ Record phase-level verification against the source specification and root plan.
 | VERIFY-001 | Phase requirements cite the relevant source-spec IDs and do not duplicate long specification prose. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-002 | Task map paths, dependencies, ordering, and safe parallelization flags match exact task write scopes and root-plan sequencing. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-003 | Phase tests, completion criteria, and compact phase-scoped `executor-result` handoff requirement are present and consistent with child tasks. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-004 | Phase `allocated_rules` and `allocated_skills` cover phase-wide signals and are carried into child tasks where executors need them. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 
-Repair generated phase or child-task drift, missing spec-ID alignment, dependency mistakes, unsafe parallelization, validation gaps, and handoff gaps in the same planning turn. Stop for specification repair when the source spec cannot support a deterministic phase.
+Repair generated phase or child-task drift, missing spec-ID alignment, dependency mistakes, unsafe parallelization, validation gaps, allocation gaps, and handoff gaps in the same planning turn. Stop for specification repair when the source spec cannot support a deterministic phase.
 
 ## 6. Completion Criteria
 

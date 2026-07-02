@@ -32,7 +32,22 @@ PROJECT_METADATA_REQUIRED_FIELDS = [
     'metadata_version',
     'authority',
     'project_root',
+    'source_repository_roles',
+    'operation_policy',
+    'source_repositories',
     'migration',
+]
+PROJECT_METADATA_VERSION = '2'
+SOURCE_REPOSITORY_ROLES = {
+    'registry': 'Locator only: stable repository id, path, work_dir, remote, and Git capability.',
+    'project_metadata': 'Working-state authority: branch baseline, commit baseline, operation policy, and CodeGraph state.',
+}
+BRANCH_CHECK_REQUIRED_BEFORE = [
+    'specification_evidence',
+    'implementation_planning',
+    'execution',
+    'review',
+    'project_scope_update',
 ]
 INIT_FORCE_REL_PATHS = frozenset({
     'AGENTS.md',
@@ -115,13 +130,114 @@ def _init_gitignore_patterns() -> list[str]:
     return lines
 
 
-def _render_project_metadata(project_root: Path, name: str | None = None) -> str:
+def _yaml_string(value: object) -> str:
+    text = str(value or '')
+    if not text:
+        return '""'
+    if re.search(r'[\s:#\[\]{},&*?|\-<>=!%@`"\']', text):
+        return '"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    return text
+
+
+def _source_repository_state_from_locator(locator: dict[str, object], fallback_slug: str) -> dict[str, object]:
+    raw_path = locator.get('path')
+    resolved = Path(str(raw_path)).expanduser().resolve() if raw_path else Path.cwd().resolve()
+    state = _source_repository_state(resolved, fallback_slug)
+    source_id = str(locator.get('id') or state['id'])
+    state['id'] = source_id
+    state['work_dir'] = bool(locator.get('work_dir', False))
+    locator_remote = str(locator.get('remote') or '')
+    if locator_remote:
+        state['remote'] = locator_remote
+    return state
+
+
+def _registry_source_repository_states(project_root: Path, name: str | None, registry_entry_data: dict[str, object] | None) -> list[dict[str, object]]:
+    slug = _slug_from_root(project_root, name)
+    if not registry_entry_data:
+        return [_source_repository_state(project_root, slug)]
+    sources = registry_entry_data.get('source_repositories')
+    if not isinstance(sources, list) or not sources:
+        return [_source_repository_state(project_root, slug)]
+    states: list[dict[str, object]] = []
+    for index, source in enumerate(sources):
+        if not isinstance(source, dict):
+            continue
+        states.append(_source_repository_state_from_locator(source, f'{slug}-{index + 1}'))
+    return states or [_source_repository_state(project_root, slug)]
+
+
+def _source_repositories_block(repositories: list[dict[str, object]]) -> str:
+    lines = ['source_repositories:']
+    for repo in repositories:
+        codegraph = repo.get('codegraph') if isinstance(repo.get('codegraph'), dict) else {}
+        lines.extend([
+            f"  - id: {_yaml_string(repo.get('id'))}",
+            f"    path: {_yaml_string(repo.get('path'))}",
+            f"    work_dir: {str(bool(repo.get('work_dir'))).lower()}",
+            f"    remote: {_yaml_string(repo.get('remote'))}",
+            f"    git_repository: {str(bool(repo.get('git_repository'))).lower()}",
+            f"    working_branch: {_yaml_string(repo.get('working_branch'))}",
+            f"    branch_required: {str(bool(repo.get('branch_required'))).lower()}",
+            "    branch_check:",
+            "      required_before:",
+        ])
+        for item in BRANCH_CHECK_REQUIRED_BEFORE:
+            lines.append(f"        - {item}")
+        lines.extend([
+            "      on_mismatch: stop",
+            f"    last_commit_id: {_yaml_string(repo.get('last_commit_id'))}",
+            f"    baseline_status: {repo.get('baseline_status', 'current')}",
+            "    codegraph:",
+            f"      supported: {str(bool(codegraph.get('supported'))).lower()}",
+            f"      index_present: {str(bool(codegraph.get('index_present'))).lower()}",
+            f"      root: {_yaml_string(codegraph.get('root') or repo.get('path'))}",
+            f"      status: {codegraph.get('status', 'not-indexed')}",
+            f"      synced_commit_id: {_yaml_string(codegraph.get('synced_commit_id'))}",
+            f"      last_synced_at: {_yaml_string(codegraph.get('last_synced_at'))}",
+            f"      reason: {_yaml_string(codegraph.get('reason'))}",
+        ])
+    return '\n'.join(lines)
+
+
+def _source_repository_roles_block() -> str:
+    return '\n'.join([
+        'source_repository_roles:',
+        f"  registry: {_yaml_string(SOURCE_REPOSITORY_ROLES['registry'])}",
+        f"  project_metadata: {_yaml_string(SOURCE_REPOSITORY_ROLES['project_metadata'])}",
+    ])
+
+
+def _replace_top_level_block(lines: list[str], block: str, key: str) -> tuple[list[str], bool]:
+    replacement = block.splitlines()
+    bounds = _yaml_block_bounds(lines, key)
+    if not bounds:
+        if lines and lines[-1] != '':
+            lines.append('')
+        return lines + replacement, True
+    start, end = bounds
+    if lines[start:end] == replacement:
+        return lines, False
+    return lines[:start] + replacement + lines[end:], True
+
+
+def _render_project_metadata(
+    project_root: Path,
+    name: str | None = None,
+    registry_entry_data: dict[str, object] | None = None,
+) -> str:
     template = _require_reference_text(INIT_PROJECT_TEMPLATE)
     slug = _slug_from_root(project_root, name)
+    repositories = _registry_source_repository_states(project_root, name, registry_entry_data)
+    repo = repositories[0]
     replacements = {
         '<absolute-path-to-project-root>': str(project_root.resolve()),
         '<industry-or-domain>': name or slug,
         '<runtime-or-framework>': 'unspecified',
+        '<stable-repository-id>': repo['id'],
+        '<absolute-path-to-source-repository>': repo['path'],
+        '<required-working-branch>': repo['working_branch'],
+        '<git-head-commit-or-empty-for-non-git>': repo['last_commit_id'],
         '<commit|stage|pull>': 'commit,stage,pull',
         '<push>': 'push',
         '<reset --hard>': 'reset --hard',
@@ -129,7 +245,94 @@ def _render_project_metadata(project_root: Path, name: str | None = None) -> str
     rendered = template
     for key, value in replacements.items():
         rendered = rendered.replace(key, value)
+    rendered_lines, _ = _replace_top_level_block(
+        rendered.splitlines(),
+        _source_repositories_block(repositories),
+        'source_repositories',
+    )
+    rendered_lines, _ = _replace_top_level_block(
+        rendered_lines,
+        _source_repository_roles_block(),
+        'source_repository_roles',
+    )
+    rendered = '\n'.join(rendered_lines)
     return rendered.rstrip() + '\n'
+
+
+def _git_value(project_root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ['git', '-C', str(project_root), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ''
+
+
+def _is_git_repository(project_root: Path) -> bool:
+    return _git_value(project_root, 'rev-parse', '--is-inside-work-tree') == 'true'
+
+
+def _git_branch(project_root: Path) -> str:
+    return _git_value(project_root, 'branch', '--show-current')
+
+
+def _git_head(project_root: Path) -> str:
+    return _git_value(project_root, 'rev-parse', 'HEAD')
+
+
+def _git_remote(project_root: Path) -> str:
+    return _git_value(project_root, 'remote', 'get-url', 'origin')
+
+
+def _git_command_ok(project_root: Path, *args: str) -> bool:
+    return subprocess.run(
+        ['git', '-C', str(project_root), *args],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ).returncode == 0
+
+
+def _metadata_commit_drift_allowed(project_root: Path, expected: str, actual: str) -> bool:
+    if not expected or not actual or expected == actual:
+        return True
+    if not _git_command_ok(project_root, 'merge-base', '--is-ancestor', expected, actual):
+        return False
+    return _git_value(project_root, 'log', '-1', '--format=%s') == 'chore: initialize work-bundle project'
+
+
+def _source_repository_id(slug: str) -> str:
+    return f'{slug}-main'
+
+
+def _source_repository_state(project_root: Path, slug: str | None = None) -> dict[str, object]:
+    resolved = project_root.expanduser().resolve()
+    repo_slug = slug or _slug_from_root(resolved)
+    git_repository = _is_git_repository(resolved)
+    branch = _git_branch(resolved) if git_repository else ''
+    head = _git_head(resolved) if git_repository else ''
+    codegraph_present = (resolved / '.codegraph').is_dir()
+    return {
+        'id': _source_repository_id(repo_slug),
+        'path': str(resolved),
+        'work_dir': True,
+        'remote': _git_remote(resolved) if git_repository else '',
+        'git_repository': git_repository,
+        'working_branch': branch,
+        'branch_required': git_repository,
+        'last_commit_id': head,
+        'baseline_status': 'current' if git_repository and branch and head else ('unborn' if git_repository else 'not-git'),
+        'codegraph': {
+            'supported': codegraph_present,
+            'index_present': codegraph_present,
+            'root': str(resolved),
+            'status': 'unknown' if codegraph_present else 'not-indexed',
+            'synced_commit_id': '',
+            'last_synced_at': '',
+            'reason': '' if codegraph_present else 'no-index',
+        },
+    }
 
 
 def _normalize_agents_template(text: str) -> str:
@@ -265,6 +468,310 @@ def _update_project_agents_sync(project_root: Path, checksum: str, status: str) 
     else:
         rendered_lines = lines + replacement
     return write(path, '\n'.join(rendered_lines).rstrip() + '\n')
+
+
+def _yaml_scalar(text: str, key: str) -> str:
+    match = re.search(rf'^{re.escape(key)}:\s*(.*)$', text, re.MULTILINE)
+    return match.group(1).strip().strip('"').strip("'") if match else ''
+
+
+def _yaml_section_lines(text: str, key: str) -> list[str]:
+    lines = text.splitlines()
+    bounds = _yaml_block_bounds(lines, key)
+    if not bounds:
+        return []
+    start, end = bounds
+    return lines[start:end]
+
+
+def _metadata_source_repositories(text: str) -> list[dict[str, object]]:
+    section = _yaml_section_lines(text, 'source_repositories')
+    repositories: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    current_nested: dict[str, object] | None = None
+    nested_key: str | None = None
+    current_list_key: str | None = None
+    for raw in section[1:]:
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if line.startswith('  - '):
+            if current is not None:
+                repositories.append(current)
+            current = {}
+            current_nested = None
+            nested_key = None
+            current_list_key = None
+            item = stripped[2:]
+            if ':' in item:
+                key, value = item.split(':', 1)
+                current[key.strip()] = _parse_yaml_value(value.strip())
+            continue
+        if current is None:
+            continue
+        if line.startswith('    ') and not line.startswith('      '):
+            key, value = stripped.split(':', 1)
+            key = key.strip()
+            value = value.strip()
+            current_nested = None
+            nested_key = None
+            current_list_key = None
+            if value == '':
+                if key in {'branch_check', 'codegraph'}:
+                    current[key] = {}
+                    current_nested = current[key]  # type: ignore[assignment]
+                    nested_key = key
+                elif key in {'last_commit_id', 'working_branch', 'remote'}:
+                    current[key] = ''
+                else:
+                    current[key] = []
+                    current_list_key = key
+            else:
+                current[key] = _parse_yaml_value(value)
+            continue
+        if line.startswith('      - ') and current_list_key:
+            target = current.get(current_list_key)
+            if isinstance(target, list):
+                target.append(stripped[2:].strip())
+            continue
+        if line.startswith('      ') and current_nested is not None and ':' in stripped:
+            key, value = stripped.split(':', 1)
+            value = value.strip()
+            if value == '':
+                current_nested[key.strip()] = []
+                current_list_key = f'{nested_key}.{key.strip()}'
+            else:
+                current_nested[key.strip()] = _parse_yaml_value(value)
+            continue
+        if line.startswith('        - ') and nested_key == 'branch_check':
+            branch_check = current.get('branch_check')
+            if isinstance(branch_check, dict):
+                values = branch_check.setdefault('required_before', [])
+                if isinstance(values, list):
+                    values.append(stripped[2:].strip())
+    if current is not None:
+        repositories.append(current)
+    return repositories
+
+
+def _parse_yaml_value(value: str) -> object:
+    value = value.strip().strip('"').strip("'")
+    if value == 'true':
+        return True
+    if value == 'false':
+        return False
+    return value
+
+
+def _metadata_operation_policy_valid(text: str) -> bool:
+    section = '\n'.join(_yaml_section_lines(text, 'operation_policy'))
+    return all(
+        token in section
+        for token in [
+            'project_files:',
+            'git:',
+            'allow_operations:',
+            'permissive_operations:',
+            'forbid_operations:',
+            'reset --hard',
+            'clean -fd',
+            'push --force',
+        ]
+    )
+
+
+def _metadata_v2_failures(project_root: Path, metadata_text: str, registry_entry_data: dict[str, object] | None) -> list[str]:
+    failures: list[str] = []
+    if _yaml_scalar(metadata_text, 'metadata_version') != PROJECT_METADATA_VERSION:
+        failures.append('project_metadata_version_stale')
+    if not _metadata_operation_policy_valid(metadata_text):
+        failures.append('operation_policy_invalid')
+    repositories = _metadata_source_repositories(metadata_text)
+    if not repositories:
+        failures.append('source_repositories_missing')
+        return failures
+    registry_ids: set[str] = set()
+    if registry_entry_data is not None:
+        sources = registry_entry_data.get('source_repositories')
+        if isinstance(sources, list):
+            for source in sources:
+                if isinstance(source, dict) and source.get('id'):
+                    registry_ids.add(str(source.get('id')))
+    for index, repo in enumerate(repositories):
+        prefix = f'source_repositories[{index}]'
+        repo_path = Path(str(repo.get('path') or project_root)).expanduser().resolve()
+        git_repository = bool(repo.get('git_repository'))
+        actual_git = _is_git_repository(repo_path)
+        if repo.get('id') in {'', None}:
+            failures.append(f'{prefix}.id_missing')
+        if registry_ids and str(repo.get('id')) not in registry_ids:
+            failures.append(f'{prefix}.registry_project_mismatch')
+        if git_repository != actual_git:
+            failures.append(f'{prefix}.git_repository_mismatch')
+        if git_repository:
+            working_branch = str(repo.get('working_branch') or '')
+            last_commit_id = str(repo.get('last_commit_id') or '')
+            baseline_status = str(repo.get('baseline_status') or '')
+            actual_branch = _git_branch(repo_path)
+            actual_head = _git_head(repo_path)
+            if not working_branch:
+                failures.append(f'{prefix}.working_branch_missing')
+            if not last_commit_id and actual_head and baseline_status != 'unborn':
+                failures.append(f'{prefix}.last_commit_id_missing')
+            if last_commit_id and actual_head and not _metadata_commit_drift_allowed(repo_path, last_commit_id, actual_head):
+                failures.append(f'{prefix}.baseline_status_stale')
+            if working_branch and actual_branch and working_branch != actual_branch:
+                failures.append(f'{prefix}.branch_mismatch')
+            if repo.get('branch_required') is not True:
+                failures.append(f'{prefix}.branch_required_missing')
+            branch_check = repo.get('branch_check')
+            if not isinstance(branch_check, dict):
+                failures.append(f'{prefix}.branch_check_missing')
+            else:
+                required_before = branch_check.get('required_before')
+                if not isinstance(required_before, list) or any(item not in required_before for item in BRANCH_CHECK_REQUIRED_BEFORE):
+                    failures.append(f'{prefix}.branch_check_required_before_invalid')
+                if branch_check.get('on_mismatch') != 'stop':
+                    failures.append(f'{prefix}.branch_check_on_mismatch_invalid')
+        codegraph = repo.get('codegraph')
+        if not isinstance(codegraph, dict):
+            failures.append(f'{prefix}.codegraph_missing')
+            continue
+        marker_present = (repo_path / '.codegraph').is_dir()
+        if bool(codegraph.get('index_present')) != marker_present:
+            failures.append(f'{prefix}.codegraph_index_present_mismatch')
+        for key in ('supported', 'index_present', 'root', 'status', 'synced_commit_id', 'last_synced_at', 'reason'):
+            if key not in codegraph:
+                failures.append(f'{prefix}.codegraph_{key}_missing')
+        if not marker_present and (codegraph.get('status') != 'not-indexed' or codegraph.get('reason') != 'no-index'):
+            failures.append(f'{prefix}.codegraph_no_index_invalid')
+    return failures
+
+
+def _top_level_block_text(text: str, key: str) -> str:
+    lines = text.splitlines()
+    bounds = _yaml_block_bounds(lines, key)
+    if not bounds:
+        return ''
+    start, end = bounds
+    return '\n'.join(lines[start:end]).rstrip()
+
+
+def _replace_or_append_scalar(lines: list[str], key: str, value: str) -> tuple[list[str], bool]:
+    rendered: list[str] = []
+    replaced = False
+    changed = False
+    new_line = f'{key}: {value}'
+    for line in lines:
+        if line.startswith(f'{key}:'):
+            rendered.append(new_line)
+            replaced = True
+            changed = changed or line != new_line
+        else:
+            rendered.append(line)
+    if not replaced:
+        rendered.append(new_line)
+        changed = True
+    return rendered, changed
+
+
+def _append_missing_top_level_block(lines: list[str], current_text: str, rendered_template: str, key: str) -> tuple[list[str], bool]:
+    if _yaml_block_bounds(lines, key):
+        return lines, False
+    block = _top_level_block_text(rendered_template, key)
+    if not block:
+        return lines, False
+    if lines and lines[-1] != '':
+        lines.append('')
+    lines.extend(block.splitlines())
+    return lines, True
+
+
+def migrate_project_metadata_v2(
+    project_root: Path,
+    name: str | None = None,
+    registry_entry_data: dict[str, object] | None = None,
+) -> bool:
+    metadata_path = project_root / '.work-bundle/project.yaml'
+    if not metadata_path.is_file():
+        return False
+    current = read(metadata_path)
+    rendered = _render_project_metadata(project_root, name, registry_entry_data)
+    lines = current.splitlines()
+    changed = False
+    current_version = _yaml_scalar(current, 'metadata_version')
+    for key, value in [
+        ('metadata_version', PROJECT_METADATA_VERSION),
+        ('authority', 'canonical'),
+        ('project_root', str(project_root.resolve())),
+    ]:
+        lines, scalar_changed = _replace_or_append_scalar(lines, key, value)
+        changed = changed or scalar_changed
+    if not _yaml_scalar('\n'.join(lines), 'industry'):
+        lines, scalar_changed = _replace_or_append_scalar(lines, 'industry', name or _slug_from_root(project_root, name))
+        changed = changed or scalar_changed
+    next_text = '\n'.join(lines)
+    for key in ('source_repository_roles', 'operation_policy', 'source_repositories', 'migration'):
+        lines, block_changed = _append_missing_top_level_block(lines, next_text, rendered, key)
+        if block_changed:
+            changed = True
+            next_text = '\n'.join(lines)
+    if registry_entry_data is not None and current_version != PROJECT_METADATA_VERSION:
+        lines, block_changed = _replace_top_level_block(lines, _top_level_block_text(rendered, 'source_repositories'), 'source_repositories')
+        changed = changed or block_changed
+    if changed:
+        return write(metadata_path, '\n'.join(lines).rstrip() + '\n')
+    return False
+
+
+def _workspace_root_from_registry_entry(entry: dict[str, object], fallback_root: Path) -> Path:
+    work_bundle_root = str(entry.get('work_bundle_root') or '')
+    if work_bundle_root:
+        root = Path(work_bundle_root).expanduser().resolve()
+        if root.name == '.work-bundle':
+            return root.parent
+    return fallback_root.expanduser().resolve()
+
+
+def _merge_metadata_source_repositories(current: list[dict[str, object]], desired: list[dict[str, object]]) -> list[dict[str, object]]:
+    merged: list[dict[str, object]] = []
+    for desired_repo in desired:
+        matched = next((repo for repo in current if _same_source_repository(repo, desired_repo)), None)
+        if matched is None:
+            merged.append(desired_repo)
+            continue
+        preserved = dict(matched)
+        for key in ('id', 'path', 'work_dir', 'remote', 'git_repository'):
+            preserved[key] = desired_repo.get(key)
+        merged.append(preserved)
+    return merged
+
+
+def sync_project_metadata_from_registry_entry(
+    entry: dict[str, object],
+    name: str | None = None,
+    fallback_root: Path | None = None,
+) -> tuple[bool, Path, str]:
+    workspace_root = _workspace_root_from_registry_entry(entry, fallback_root or Path.cwd())
+    metadata_path = workspace_root / '.work-bundle/project.yaml'
+    if not metadata_path.is_file():
+        return False, metadata_path, 'missing'
+    current_text = read(metadata_path)
+    rendered = _render_project_metadata(workspace_root, name or str(entry.get('name') or entry.get('slug') or ''), entry)
+    current_repositories = _metadata_source_repositories(current_text)
+    desired_repositories = _metadata_source_repositories(rendered)
+    merged_repositories = _merge_metadata_source_repositories(current_repositories, desired_repositories)
+    lines = current_text.splitlines()
+    changed = False
+    lines, roles_changed = _replace_top_level_block(lines, _source_repository_roles_block(), 'source_repository_roles')
+    changed = changed or roles_changed
+    lines, repositories_changed = _replace_top_level_block(lines, _source_repositories_block(merged_repositories), 'source_repositories')
+    changed = changed or repositories_changed
+    if changed:
+        write(metadata_path, '\n'.join(lines).rstrip() + '\n')
+        return True, metadata_path, 'updated'
+    return False, metadata_path, 'current'
 
 
 def sync_agents_managed_section(project_root: Path, dry_run: bool = False, force: bool = False) -> dict[str, object]:
@@ -455,6 +962,9 @@ def inspect_project(project_root: Path) -> dict:
     runtime = resolve_bootstrap_runtime()
     project_metadata_path = project_root / '.work-bundle/project.yaml'
     project_metadata_missing = [field for field in PROJECT_METADATA_REQUIRED_FIELDS if f'{field}:' not in pm]
+    registry_entry_data, registry_path = find_registry_entry(project_root)
+    metadata_v2_failures = _metadata_v2_failures(project_root, pm, registry_entry_data) if project_metadata_path.exists() else []
+    source_repositories = _metadata_source_repositories(pm)
     return {
         'project_root': str(project_root),
         'project_git': (project_root / '.git').exists(),
@@ -472,8 +982,14 @@ def inspect_project(project_root: Path) -> dict:
         'project_metadata_path': str(project_metadata_path),
         'project_metadata_exists': project_metadata_path.exists(),
         'project_metadata_required_fields_missing': project_metadata_missing,
-        'project_metadata_valid': not project_metadata_missing,
+        'project_metadata_version': _yaml_scalar(pm, 'metadata_version'),
+        'project_metadata_v2_failures': metadata_v2_failures,
+        'project_metadata_valid': not project_metadata_missing and not metadata_v2_failures,
         'project_metadata_authority': '.work-bundle/project.yaml',
+        'project_source_repositories': source_repositories,
+        'source_repository_roles': SOURCE_REPOSITORY_ROLES,
+        'registry_project_id_status': 'matched' if registry_entry_data else 'not-registered',
+        'registry_path': str(registry_path),
         'rules_root': rules.exists(),
         'rules_root_authority': '.work-bundle/rules',
         'rule_files': len(list(rules.glob('*.yaml'))) if rules.exists() else 0,
@@ -509,6 +1025,9 @@ def project_failures(data: dict, strict: bool = True, include_roles: bool = Fals
         failures.append(DIAG_PROJECT_METADATA_MISSING)
     if data.get('project_metadata_exists') and data.get('project_metadata_required_fields_missing'):
         failures.append(DIAG_PROJECT_METADATA_INVALID)
+    if data.get('project_metadata_exists') and data.get('project_metadata_v2_failures'):
+        failures.append(DIAG_PROJECT_METADATA_INVALID)
+        failures.extend(str(item) for item in data.get('project_metadata_v2_failures', []))
     if data.get('mdc_rules'):
         failures.append('mdc_rules_present')
     if data.get('global_registry_copied'):
@@ -623,6 +1142,8 @@ def repair_project(project_root: Path, force: bool = False, return_details: bool
         rendered = _render_project_metadata(project_root)
         if write(metadata_path, rendered, overwrite=force):
             changed.append(str(metadata_path))
+    if migrate_project_metadata_v2(project_root):
+        changed.append(str(metadata_path))
     contract_changed, _, _ = _retire_legacy_rules_contract(project_root)
     changed.extend(contract_changed)
     if force:
@@ -747,7 +1268,12 @@ def _project_blocks(path: Path) -> list[dict[str, object]]:
 
 
 def _render_projects(projects: list[dict[str, object]]) -> str:
-    lines = ["projects:"]
+    lines = [
+        'source_repository_roles:',
+        f"  registry: {_yaml_string(SOURCE_REPOSITORY_ROLES['registry'])}",
+        f"  project_metadata: {_yaml_string(SOURCE_REPOSITORY_ROLES['project_metadata'])}",
+        'projects:',
+    ]
     for project in sorted(projects, key=lambda item: str(item.get("slug", ""))):
         lines.append(f"  - slug: {project.get('slug', '')}")
         lines.append(f"    name: {project.get('name', project.get('slug', ''))}")
@@ -765,10 +1291,13 @@ def _render_projects(projects: list[dict[str, object]]) -> str:
         for index, source in enumerate(sources or [{"path": project.get("project_root", ""), "work_dir": True, "remote": ""}]):
             if not isinstance(source, dict):
                 continue
-            lines.append(f"      - path: {source.get('path', '')}")
+            source_id = str(source.get("id", "") or _source_repository_id(str(project.get("slug", "project"))))
+            lines.append(f"      - id: {source_id}")
+            lines.append(f"        path: {source.get('path', '')}")
             lines.append(f"        work_dir: {str(bool(source.get('work_dir', index == 0))).lower()}")
             remote = str(source.get("remote", ""))
             lines.append(f'        remote: "{remote}"' if remote else '        remote: ""')
+            lines.append(f"        git_repository: {str(bool(source.get('git_repository', False))).lower()}")
         lines.append(f"    status: {project.get('status', 'active')}")
         lines.append(f"    updated_at: {project.get('updated_at', utc_now_rfc3339()[:10])}")
     return "\n".join(lines) + "\n"
@@ -789,7 +1318,7 @@ def _normalize_registry_path(value: object) -> str:
     return str(Path(raw).expanduser().resolve())
 
 
-def _normalize_source_repositories(sources: object) -> list[tuple[str, bool, str]]:
+def _normalize_source_repositories(sources: object) -> list[tuple[str, bool, str, str, str]]:
     if not isinstance(sources, list):
         return []
     normalized: list[tuple[str, bool, str]] = []
@@ -798,8 +1327,68 @@ def _normalize_source_repositories(sources: object) -> list[tuple[str, bool, str
             continue
         raw_path = source.get("path")
         path = str(Path(str(raw_path)).expanduser().resolve()) if raw_path else ""
-        normalized.append((path, bool(source.get("work_dir")), str(source.get("remote", ""))))
+        normalized.append((path, bool(source.get("work_dir")), str(source.get("remote", "")), str(source.get("id", "")), str(bool(source.get("git_repository")))))
     return sorted(normalized)
+
+
+def _source_identity(source: dict[str, object]) -> tuple[str, str]:
+    source_id = str(source.get("id", "") or "")
+    raw_path = source.get("path")
+    path = str(Path(str(raw_path)).expanduser().resolve()) if raw_path else ""
+    return source_id, path
+
+
+def _same_source_repository(left: dict[str, object], right: dict[str, object]) -> bool:
+    left_id, left_path = _source_identity(left)
+    right_id, right_path = _source_identity(right)
+    if left_path and right_path:
+        return left_path == right_path
+    return bool(left_id and right_id and left_id == right_id)
+
+
+def _registry_source_from_root(project_root: Path, name: str | None) -> dict[str, object]:
+    entry = registry_entry(project_root, name)
+    sources = entry.get("source_repositories")
+    if isinstance(sources, list) and sources and isinstance(sources[0], dict):
+        return sources[0]
+    repo = _source_repository_state(project_root, _slug_from_root(project_root, name))
+    return {
+        "id": repo["id"],
+        "path": repo["path"],
+        "work_dir": True,
+        "remote": repo["remote"],
+        "git_repository": repo["git_repository"],
+    }
+
+
+def _unique_source_repository_id(slug: str, source: dict[str, object], used_ids: set[str]) -> str:
+    source_id = str(source.get("id") or "")
+    if source_id and source_id not in used_ids:
+        return source_id
+    raw_path = str(source.get("path") or "")
+    path_name = Path(raw_path).expanduser().name if raw_path else "repository"
+    base = f"{slug}-{_slug_from_root(Path(path_name))}"
+    candidate = base
+    index = 2
+    while candidate in used_ids:
+        candidate = f"{base}-{index}"
+        index += 1
+    return candidate
+
+
+def _merge_registry_source_lists(existing_sources: object, incoming_sources: object, slug: str) -> list[dict[str, object]]:
+    merged: list[dict[str, object]] = []
+    if isinstance(existing_sources, list):
+        merged.extend(source for source in existing_sources if isinstance(source, dict))
+    incoming = [source for source in incoming_sources if isinstance(source, dict)] if isinstance(incoming_sources, list) else []
+    for source in incoming:
+        if any(_same_source_repository(existing, source) for existing in merged):
+            continue
+        next_source = dict(source)
+        used_ids = {str(existing.get("id") or "") for existing in merged}
+        next_source["id"] = _unique_source_repository_id(slug, next_source, used_ids)
+        merged.append(next_source)
+    return merged
 
 
 def _registry_entries_equivalent(left: dict[str, object], right: dict[str, object]) -> bool:
@@ -828,8 +1417,8 @@ def _merge_registry_entry(
     merged: dict[str, object] = {
         "slug": incoming.get("slug", existing.get("slug")),
         "name": incoming.get("name", existing.get("name")),
-        "work_bundle_root": incoming.get("work_bundle_root", existing.get("work_bundle_root")),
-        "knowledge_root": incoming.get("knowledge_root", existing.get("knowledge_root")),
+        "work_bundle_root": existing.get("work_bundle_root", incoming.get("work_bundle_root")),
+        "knowledge_root": existing.get("knowledge_root", incoming.get("knowledge_root")),
         "status": existing.get("status", incoming.get("status", "active")),
         "updated_at": existing.get("updated_at", incoming.get("updated_at")),
     }
@@ -840,10 +1429,11 @@ def _merge_registry_entry(
         merged["aliases"] = aliases
     if source_repositories is None:
         existing_sources = existing.get("source_repositories")
-        if isinstance(existing_sources, list) and existing_sources:
-            merged["source_repositories"] = existing_sources
-        else:
-            merged["source_repositories"] = incoming.get("source_repositories", [])
+        merged["source_repositories"] = _merge_registry_source_lists(
+            existing_sources,
+            incoming.get("source_repositories", []),
+            str(merged.get("slug") or "project"),
+        )
     else:
         merged["source_repositories"] = source_repositories
     changed = not _registry_entries_equivalent(existing, merged)
@@ -855,13 +1445,20 @@ def _merge_registry_entry(
 def registry_entry(project_root: Path, name: str | None = None, aliases: list[str] | None = None) -> dict[str, object]:
     resolved = project_root.expanduser().resolve()
     slug = _slug_from_root(resolved, name)
+    repo = _source_repository_state(resolved, slug)
     return {
         "slug": slug,
         "name": name or slug,
         "work_bundle_root": str(resolved / ".work-bundle"),
         "knowledge_root": str(resolved / ".work-bundle" / "knowledge"),
         "aliases": aliases if aliases is not None else [],
-        "source_repositories": [{"path": str(resolved), "work_dir": True, "remote": ""}],
+        "source_repositories": [{
+            "id": repo["id"],
+            "path": str(resolved),
+            "work_dir": True,
+            "remote": repo["remote"],
+            "git_repository": repo["git_repository"],
+        }],
         "status": "active",
         "updated_at": utc_now_rfc3339()[:10],
     }
@@ -1203,8 +1800,24 @@ def cmd_register_project_command(args: list[str]) -> int:
     parser.add_argument("--name")
     parsed = parser.parse_args(args)
     project_root = Path(parsed.project_root).expanduser().resolve()
-    entry, changed, registry = upsert_project_registry(project_root, parsed.name)
-    out({"command": "register-project", "status": "updated" if changed else "skipped", "registry_path": str(registry), "project": entry})
+    entry, registry_changed, registry = upsert_project_registry(project_root, parsed.name)
+    metadata_changed, metadata_path, metadata_status = sync_project_metadata_from_registry_entry(entry, parsed.name, project_root)
+    changed_files: list[str] = []
+    if registry_changed:
+        changed_files.append(str(registry))
+    if metadata_changed:
+        changed_files.append(str(metadata_path))
+    out({
+        "command": "register-project",
+        "status": "updated" if changed_files else "skipped",
+        "registry_path": str(registry),
+        "registry_entry": entry,
+        "project": entry,
+        "project_metadata_path": str(metadata_path),
+        "project_metadata_status": metadata_status,
+        "source_repository_roles": SOURCE_REPOSITORY_ROLES,
+        "changed_files": sorted(changed_files),
+    })
     return 0
 
 
@@ -1294,13 +1907,15 @@ def cmd_migrate_project(args: list[str]) -> int:
     except ReferenceAssetError as exc:
         out(_reference_failure_payload(exc, 'migrate-project'))
         return 1
+    entry, registry_changed, registry = upsert_project_registry(project_root, parsed.name)
+    if registry_changed:
+        changed.append(str(registry))
+    if migrate_project_metadata_v2(project_root, parsed.name, entry):
+        changed.append(str(project_root / '.work-bundle/project.yaml'))
     contract_changed, retired_rules_contract, rules_contract_archive = _retire_legacy_rules_contract(project_root)
     changed.extend(contract_changed)
     bootstrap_changed, retired_artifacts, archive_root = _cleanup_retired_bootstrap(project_root)
     changed.extend(bootstrap_changed)
-    entry, registry_changed, registry = upsert_project_registry(project_root, parsed.name)
-    if registry_changed:
-        changed.append(str(registry))
     after = inspect_project(project_root)
     failures = project_failures(after, strict=True, include_roles=False)
     report = project_root / ".work-bundle" / "orchestration" / "docs" / f"migration-report-{utc_now_rfc3339()[:10]}.md"

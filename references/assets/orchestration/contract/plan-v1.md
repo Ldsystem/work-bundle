@@ -21,6 +21,20 @@ phase_index:
     status: Planned
     depends_on: []
     parallelizable: true
+allocated_rules:
+  - id: [rule-id]
+    source: AGENTS.md|work-bundle-toolkit|work-bundle-global|work-bundle-project|builtin|plugin|other
+    path: [file path when file-backed, otherwise source label]
+    applies_when: [observable plan-wide condition]
+    load_timing: before_planning|before_task_work|before_validation
+    enforcement: must|should
+allocated_skills:
+  - name: [skill-name]
+    source: work-bundle|agents-skills|codex-skills|builtin|plugin|other
+    path: [file path when file-backed, otherwise source label]
+    applies_when: [observable plan-wide condition]
+    use_timing: planning|task_execution|review
+    required_for: [why executors need this skill context]
 ---
 
 # Implementation Plan: [Plan Goal]
@@ -99,8 +113,9 @@ How to make tasks parallel: create or confirm a stable boundary artifact before 
 | VERIFY-002 | Exact artifact paths, source files, target files, dependencies, task ordering, validation commands, and completion criteria are internally consistent. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-003 | Safe parallelization is exposed where dependencies and write scopes allow, and unsafe parallelization is explicitly blocked by dependency or scope evidence. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-004 | Every task, phase, and plan completion path requires `create-handoff` with a compact, sparse YAML `executor-result` handoff whose body stays applicability-based. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-005 | `allocated_rules` and `allocated_skills` cover all material rule/skill conditions from the source specification, affected files, operation type, CodeGraph/Git needs, validation tasks, and any non-WorkBundle rule/skill sources already visible to the agent. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 
-If any generated artifact drifts from the source specification, omits required spec-ID coverage, contains inconsistent paths or dependencies, lacks validation, or lacks handoff criteria, repair the generated artifacts in the same planning turn and repeat this verification. If the source specification itself has unresolved questions, missing stable IDs, missing evidence, or contradictory instructions, stop for specification repair instead of inventing plan content.
+If any generated artifact drifts from the source specification, omits required spec-ID coverage, contains inconsistent paths or dependencies, lacks validation, lacks allocated rule/skill coverage, or lacks handoff criteria, repair the generated artifacts in the same planning turn and repeat this verification. If the source specification itself has unresolved questions, missing stable IDs, missing evidence, or contradictory instructions, stop for specification repair instead of inventing plan content.
 
 ## 9. Completion Criteria
 

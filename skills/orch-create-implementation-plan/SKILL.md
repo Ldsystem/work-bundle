@@ -37,11 +37,15 @@ Downstream executors may read only the related spec, root plan, relevant phase, 
 
 - Convert the spec into deterministic phases, tasks, dependencies, affected files/modules, validation, completion criteria, and handoff requirements.
 - Carry required execution context from spec into the root plan, each phase, and each task by referencing stable spec IDs and adding only task-specific execution detail.
+- Allocate applicable runtime rules and skills in the root plan, each phase, and each task. Allocation is not limited to `$work_bundle_root/skills` or `$work_bundle_root/rules`: it may include any agent-aware rule or skill source, including `AGENTS.md`, WorkBundle toolkit/global/project rule scopes, builtin rules, `.agents/skills`, `.codex/skills`, plugin skills, or other visible rule/skill instructions. Allocation must include rule IDs or names, skill names, source, file path when file-backed, observable trigger conditions, load/use timing, enforcement or required-for reason, and executor-facing instructions.
+- Evaluate task signals against discovered rule metadata, loaded `AGENTS.md` instructions, selected skill purposes, and other agent-visible rule/skill sources during planning; do not defer first-pass rule/skill condition evaluation to execution workers.
+- Carry only task-relevant allocated rules and skills into task files, while keeping broader phase/root allocations visible at their own scope.
 - Carry the source spec `Knowledge Base Update` disposition, evidence-source expectations, and review follow-up path into the root plan, final task or review criteria, and executor-result handoff requirements.
 - Carry source-spec impact-radius evidence forward by mapping affected upstream components, downstream components, and validation/test artifacts into exact phase and task source files, target files, validation commands, dependencies, and convergence checks.
 - Reject planning and require source-spec repair when a source-code, script, skill, rule, workflow, API, data-contract, or validation-affecting change lacks impact-radius evidence for upstream/downstream components or validation/test artifacts.
 - After generating the root plan, phase files, and task files, run a generated-plan verification pass against the source specification before reporting completion.
 - The generated-plan verification pass must check exact artifact paths, source-spec ID coverage, dependencies, safe parallelization opportunities, task write scopes, validation commands, and `create-handoff` completion requirements.
+- The generated-plan verification pass must check rule/skill allocation coverage for every material task signal, including source-code inspection, metadata preflight, script edits, rule edits, skill edits, workflow edits, contract edits, validation edits, Git operations, CodeGraph use, orchestration artifact updates, and non-WorkBundle rule/skill sources already visible to the agent.
 - Repair generated-artifact drift, missing coverage, dependency mistakes, unsafe parallelization, validation gaps, handoff gaps, and internal consistency problems in the same planning turn, then repeat verification until no generated-artifact gap remains or a source-spec defect blocks progress.
 - Add leading clarification or spec-repair tasks only when the source specification has no unresolved open questions but still lacks stable IDs, paths, validation details, or file-level execution context.
 - Use explicit IDs, paths, statuses, dependencies, commands, validation rules, and completion criteria.
@@ -111,6 +115,7 @@ These rules are mandatory:
 - Do not infer answers silently, pick an unresolved alternative, downgrade blocking questions, or create a partial plan for unresolved scope.
 - Do not create a plan from a material change specification that is missing required source-spec impact-radius evidence; repair the specification first instead of inventing upstream/downstream or validation/test scope during planning.
 - Do not create tasks without dependencies, validation, completion criteria, and handoff requirement.
+- Do not create plans, phases, or tasks without allocated rule/skill evaluation when the scope touches rules, skills, scripts, source code, workflow references, orchestration contracts, Git operations, CodeGraph, metadata preflight, or validation behavior.
 - Do not create tasks that duplicate specification prose instead of citing spec IDs.
 - Do not create phases or tasks without exact source files, target files, target symbols, validation instructions, and relevant spec-ID references.
 - Do not report planning completion while generated plan, phase, or task artifacts still drift from the source specification, omit required spec IDs, contain inconsistent paths or dependencies, lack safe parallelization notes, or lack validation and handoff requirements.
@@ -137,6 +142,7 @@ Root plan:
 
 - related specification;
 - carried execution context as a compact spec-ID map, not duplicated spec prose;
+- root-level `allocated_rules` and `allocated_skills` covering plan-wide signals and cross-phase execution requirements from any agent-visible source, not only WorkBundle-owned paths;
 - a carried `Knowledge Base Update` summary with disposition, evidence sources, and required review follow-up path from the source specification;
 - requirements, constraints, source references, alternatives, open questions, risks by ID and execution impact;
 - phase index;
@@ -148,6 +154,7 @@ Each phase:
 
 - subset of spec IDs required for the phase;
 - phase-specific decisions, dependencies, task index, tests, completion criteria.
+- phase-level `allocated_rules` and `allocated_skills` that apply across one or more child tasks, including non-WorkBundle sources when relevant.
 - phase-level generated-artifact verification expectations for spec-ID alignment, dependencies, task ordering, safe parallelization, validation, and handoff requirements.
 - no copied spec sections beyond short one-line summaries.
 
@@ -155,6 +162,7 @@ Each task:
 
 - exact self-contained execution context based on cited spec IDs;
 - goals, dependencies, source files, target files, target symbols;
+- task-specific `allocated_rules` and `allocated_skills` with concrete source, load/use timing, and executor-facing applicability.
 - implementation instructions, validation, completion criteria, and executor-result handoff requirements that carry compact continuation and review evidence.
 - generated-artifact integrity expectations for exact files, dependencies, validation, handoff requirements, and required same-turn repair when the task artifact is incomplete or inconsistent.
 - no copied spec sections beyond short one-line summaries.
@@ -203,6 +211,7 @@ Run generated-plan verification before reporting completion:
 
 - compare the root plan, every phase, and every task back to the source specification's stable IDs, resolved alternatives, open-question decisions, constraints, affected files, validation expectations, and handoff requirements;
 - confirm source-spec impact-radius evidence is carried into exact upstream/downstream component scopes, validation/test artifacts, dependencies, validation commands, and convergence checks;
+- confirm allocated rules and skills from all agent-visible sources cover each material task signal and are scoped to the root plan, phase, or task where executors need them;
 - confirm exact paths, dependencies, task ordering, safe parallelization flags, source files, target files, target symbols, validation commands, and completion criteria are internally consistent across root plan, phases, and tasks;
 - repair generated-artifact drift, missing coverage, duplicate spec prose, invalid dependencies, unsafe or missing parallelization notes, validation gaps, and handoff gaps in the same turn;
 - stop for specification repair instead of patching around the issue when the source specification itself has unresolved questions, missing stable IDs, missing evidence, or contradictory instructions.

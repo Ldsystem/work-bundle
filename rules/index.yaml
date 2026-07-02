@@ -239,6 +239,15 @@ rules:
     enforcement: must
     load: conditional
     requires: []
+  - id: wb-project-context-preflight
+    path: work-bundle/wb-project-context-preflight.md
+    applies_when:
+      - orchestration workflow resolves project metadata before specification evidence, implementation planning, execution, review, or project scope updates
+      - repository preflight evaluates source repositories from `.work-bundle/project.yaml`
+      - agent checks branch baseline, commit baseline, registry locator, or CodeGraph support for a source repository
+    enforcement: must
+    load: conditional
+    requires: []
   - id: wb-script-instruction
     path: work-bundle/wb-script-instruction.md
     applies_when:

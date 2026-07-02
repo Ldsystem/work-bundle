@@ -23,6 +23,17 @@ Before any long evidence gathering, create the specification artifact shell firs
 - Treat `Draft Requirement Breakdown` as provisional. Revise it after bounded evidence gathering; do not silently replace it.
 - Do not begin broad repository exploration until the shell exists.
 
+## Project Metadata Preflight
+
+After the specification shell exists and before durable-knowledge retrieval, broad repository evidence gathering, CodeGraph use, or source inspection, perform project metadata preflight for every target source repository that could affect the specification.
+
+- Read `$project_root/.work-bundle/project.yaml` and identify applicable `source_repositories[]`.
+- Use the bootstrap-resolved project registry only as locator evidence; do not treat it as working-state authority.
+- For Git-backed repositories, compare actual `working_branch` and actual HEAD commit against metadata `working_branch` and `last_commit_id` using non-mutating Git commands.
+- Record CodeGraph support from metadata and `.codegraph/` marker presence. If `.codegraph/` is absent, record `no-index` or `not-indexed` and do not initialize CodeGraph or run `codegraph sync`.
+- Stop before extended evidence gathering and add a blocking open question when project metadata is inaccessible, missing required repository fields, contradictory with the registry, stale in a way that affects evidence trust, branch mismatched, or CodeGraph metadata is inconsistent.
+- When metadata is valid or a no-index fallback is applicable, carry compact preflight evidence into Source Context so planning and execution can trust the baseline without re-inferring it from conversation memory.
+
 ## Knowledge Gateway
 
 Before drafting from durable project knowledge, use `keep-summarizing` with `what-is-helpful` gateway mode. Do not directly browse `.work-bundle/knowledge/`.
@@ -48,6 +59,7 @@ It must carry enough accepted context for planning and execution without future 
 - Use precise, explicit, unambiguous language.
 - Distinguish requirements, constraints, assumptions, alternatives, and open questions.
 - Create the specification shell before extended evidence gathering so the artifact always has front matter plus `Initial User Purpose Evidence` and `Draft Requirement Breakdown`.
+- Run project metadata preflight after shell creation and before broad repository evidence gathering; record branch baseline, commit baseline, registry locator, and CodeGraph no-index evidence in Source Context when applicable.
 - Inspect relevant note states and open-question watchpoints through the approved knowledge gateway when durable knowledge affects the scope.
 - Surface relevant draft, proposed, conflicting, stale, or missing-evidence context as uncertainty; do not convert it into requirements.
 - Include an `Open Questions` section. If relevant uncertainty exists, list ID, question or uncertainty, related scope, source, blocking yes/no, required resolution, and at least one feasible advised option. If none exists, state `None for this specification scope.`
@@ -109,6 +121,7 @@ Ask one question at a time, include the agent's recommended answer, and record t
 ## Hard Rules
 
 - Stop if the spec cannot be self-contained enough for planning.
+- Stop before extended evidence gathering when project metadata preflight reports missing required metadata, branch mismatch, stale baseline that affects evidence trust, registry contradiction, inaccessible target repository, or inconsistent CodeGraph state.
 - Stop if durable knowledge is needed but was not retrieved through `keep-summarizing`.
 - Stop before downstream implementation planning when `Quality gate: blocked` is recorded.
 - Do not implement source changes, edit application/test files, run migrations, apply patches, or execute plan tasks while creating a specification.
@@ -183,7 +196,7 @@ Final result: verified|blocked
 
 ## Validation
 
-Confirm the spec is self-contained, cites role-labeled source context, carries execution-relevant authority knowledge and repository evidence into the body, surfaces material non-authority context without letting it shape requirements, records assumptions/open questions with advised options, includes Design interrogation evidence when unsupported or under-specified purpose required it, includes the required `Knowledge Base Update` section and no-update wording when applicable, records `Quality gate: verified|blocked` in the body, follows naming/location rules, and does not require downstream agents to read `.work-bundle/knowledge/`.
+Confirm the spec is self-contained, cites role-labeled source context, carries execution-relevant authority knowledge and repository evidence into the body, records project metadata preflight evidence or a blocking open question, surfaces material non-authority context without letting it shape requirements, records assumptions/open questions with advised options, includes Design interrogation evidence when unsupported or under-specified purpose required it, includes the required `Knowledge Base Update` section and no-update wording when applicable, records `Quality gate: verified|blocked` in the body, follows naming/location rules, and does not require downstream agents to read `.work-bundle/knowledge/`.
 
 ## Runtime Rules
 

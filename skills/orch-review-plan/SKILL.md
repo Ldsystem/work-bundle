@@ -62,6 +62,7 @@ Validate:
 9. the source specification `Knowledge Base Update` section is reflected in the final review state, including expected durable conclusions, evidence, and follow-up path;
 10. validated implementation and review evidence is assessed for structural updates;
 11. the final knowledge-update disposition is one of `completed`, `not-needed`, `blocked`, or `required`, with evidence for that outcome.
+12. reviewed source repository state is ready for archive: required commit, applicable CodeGraph sync, and project metadata update gates have completed or are explicitly not applicable with reason.
 
 Reject review when a compact executor-result handoff omits applicable safety evidence or marks it inapplicable without a concrete reason. Required-by-applicability checks include:
 
@@ -114,6 +115,11 @@ The repair specification must be actionable without raw chat history.
 
 If all review checks pass and the knowledge update disposition is `completed` or `not-needed`:
 
+- inspect `.work-bundle/project.yaml` `operation_policy.git` before any Git stage or commit action;
+- create an allowed Git commit for reviewed source changes when commit is permitted and there are staged or stageable reviewed changes; do not commit unrelated or unexplained changes;
+- run or require post-review CodeGraph sync only for changed source repositories whose project metadata has `codegraph.supported: true`, `codegraph.index_present: true`, and an actual `.codegraph/` marker; do not run `codegraph sync` for no-index repositories;
+- update `.work-bundle/project.yaml` source repository state after successful review commit and applicable CodeGraph sync, including `working_branch`, `last_commit_id`, `baseline_status`, and CodeGraph `status`/`synced_commit_id` when applicable;
+- block archive when a required commit, applicable CodeGraph sync, or project metadata update fails, unless the operation is not allowed or not applicable and the review output records the concrete reason;
 - mark related executor-result handoffs `reviewed`, then archive them;
 - archive linked legacy orchestration handoffs only when they are part of the reviewed artifact set;
 - archive the related source specification;
@@ -123,7 +129,7 @@ If all review checks pass and the knowledge update disposition is `completed` or
 
 Archival means moving files from `active/` to the corresponding `archived/` directory. Do not delete files.
 
-Do not archive when the knowledge update disposition is `required` or when it is `blocked` without an actionable blocker path. Those outcomes are blocked or failed review states, not success states.
+Do not archive when the knowledge update disposition is `required`, when it is `blocked` without an actionable blocker path, or when required commit, CodeGraph sync, or project metadata update gates are incomplete. Those outcomes are blocked or failed review states, not success states.
 
 ## Helper Commands
 
@@ -183,7 +189,7 @@ Knowledge update disposition: completed|not-needed
 
 ## Validation
 
-Confirm reviewed artifacts match the requested plan, durable knowledge was accessed only through `keep-summarizing` if needed, project file checks are limited to referenced files, compact executor-result fields are validated by applicability rather than fixed Markdown sections, validation/blocker/task-fit/repository evidence is present when applicable, applicable CodeGraph evidence is present and consistent or carries an accepted inapplicable/fallback reason, delegated work carries `delegation_evidence` with `visible_reference` when available and `internal_spawn_used_for_task_delegation: false`, active orchestration handoff input is not required, failures create a repair specification instead of modifying implementation files, structural updates invoke the delegate-return-resume protocol, delegation returns written or updated paths or an evidence-backed no-write rationale plus index rebuild status, success/archive is allowed only for `Knowledge update disposition: completed` or `Knowledge update disposition: not-needed`, unavailable or incomplete delegation blocks archive with an actionable `ks-extract-valuable-points` next action, review may invoke an approved `ks-*` owner but must not write durable knowledge directly, indexes are refreshed, no files are deleted, and no artifact is written under `.work-bundle/knowledge/`.
+Confirm reviewed artifacts match the requested plan, durable knowledge was accessed only through `keep-summarizing` if needed, project file checks are limited to referenced files, compact executor-result fields are validated by applicability rather than fixed Markdown sections, validation/blocker/task-fit/repository evidence is present when applicable, applicable CodeGraph evidence is present and consistent or carries an accepted inapplicable/fallback reason, delegated work carries `delegation_evidence` with `visible_reference` when available and `internal_spawn_used_for_task_delegation: false`, active orchestration handoff input is not required, failures create a repair specification instead of modifying implementation files, structural updates invoke the delegate-return-resume protocol, delegation returns written or updated paths or an evidence-backed no-write rationale plus index rebuild status, allowed commit, applicable CodeGraph sync, and project metadata update gates are complete or explicitly not applicable before archive, success/archive is allowed only for `Knowledge update disposition: completed` or `Knowledge update disposition: not-needed`, unavailable or incomplete delegation blocks archive with an actionable `ks-extract-valuable-points` next action, review may invoke an approved `ks-*` owner but must not write durable knowledge directly, indexes are refreshed, no files are deleted, and no artifact is written under `.work-bundle/knowledge/`.
 
 ## Runtime Rules
 

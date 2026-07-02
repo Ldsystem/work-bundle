@@ -63,12 +63,24 @@ def _front_matter_lists(path: Path) -> dict[str, list[str]]:
     return result
 
 
-def _metadata_repositories(root: Path) -> list[Path]:
+def _parse_value(value: str) -> object:
+    value = value.strip().strip("'\"")
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    return value
+
+
+def _metadata_repository_entries(root: Path) -> list[dict[str, object]]:
     metadata = root / ".work-bundle" / "project.yaml"
     if not metadata.exists():
         return []
-    repositories: list[Path] = []
+    repositories: list[dict[str, object]] = []
     in_source_repositories = False
+    current: dict[str, object] | None = None
+    current_nested: dict[str, object] | None = None
+    nested_key: str | None = None
     for line in metadata.read_text(encoding="utf-8").splitlines():
         if line == "source_repositories:":
             in_source_repositories = True
@@ -76,10 +88,67 @@ def _metadata_repositories(root: Path) -> list[Path]:
         if in_source_repositories and line and not line.startswith(" "):
             break
         stripped = line.strip()
-        if in_source_repositories and stripped.startswith("- path:"):
-            raw = stripped.split(":", 1)[1].strip().strip("'\"")
-            repositories.append(Path(raw).expanduser().resolve())
+        if not in_source_repositories or not stripped:
+            continue
+        if line.startswith("  - "):
+            if current is not None:
+                repositories.append(current)
+            current = {}
+            current_nested = None
+            nested_key = None
+            item = stripped[2:]
+            if ":" in item:
+                key, value = item.split(":", 1)
+                current[key.strip()] = _parse_value(value)
+            continue
+        if current is None:
+            continue
+        if line.startswith("    ") and not line.startswith("      ") and ":" in stripped:
+            key, value = stripped.split(":", 1)
+            key = key.strip()
+            value = value.strip()
+            current_nested = None
+            nested_key = None
+            if value == "" and key in {"branch_check", "codegraph"}:
+                current[key] = {}
+                current_nested = current[key]  # type: ignore[assignment]
+                nested_key = key
+            else:
+                current[key] = _parse_value(value)
+            continue
+        if line.startswith("      ") and current_nested is not None and ":" in stripped:
+            key, value = stripped.split(":", 1)
+            current_nested[key.strip()] = _parse_value(value)
+            continue
+    if current is not None:
+        repositories.append(current)
     return repositories
+
+
+def _metadata_repositories(root: Path) -> list[Path]:
+    repositories: list[Path] = []
+    for entry in _metadata_repository_entries(root):
+        raw = entry.get("path")
+        if raw:
+            repositories.append(Path(str(raw)).expanduser().resolve())
+    return repositories
+
+
+def _enrich_with_metadata(root: Path, targets: list[dict[str, str]]) -> list[dict[str, object]]:
+    entries: dict[str, dict[str, object]] = {}
+    for entry in _metadata_repository_entries(root):
+        raw = entry.get("path")
+        if raw:
+            entries[str(Path(str(raw)).expanduser().resolve())] = entry
+    enriched: list[dict[str, object]] = []
+    for target in targets:
+        row: dict[str, object] = dict(target)
+        metadata = entries.get(str(Path(target["path"]).resolve()))
+        if metadata:
+            row["metadata"] = metadata
+            row["source"] = "project-metadata" if target["source"] == "project-metadata" else target["source"]
+        enriched.append(row)
+    return enriched
 
 
 def _is_orchestration_artifact(root: Path, path: Path) -> bool:
@@ -110,12 +179,12 @@ def resolve_target_repositories(
     task_files: Iterable[Path] = (),
     referenced_files: Iterable[Path] = (),
     repositories: Iterable[Path] = (),
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     """Resolve exact repository targets without changing filesystem or Git state."""
     root = root.resolve()
     explicit = [(path, "explicit-repository") for path in repositories]
     if explicit:
-        return _resolve_candidates(root, explicit)
+        return _enrich_with_metadata(root, _resolve_candidates(root, explicit))
 
     write_scopes: list[tuple[Path, str]] = []
     references: list[tuple[Path, str]] = [
@@ -139,11 +208,14 @@ def resolve_target_repositories(
 
     resolved = _resolve_candidates(root, write_scopes)
     if resolved:
-        return resolved
+        return _enrich_with_metadata(root, resolved)
     resolved = _resolve_candidates(root, references)
     if resolved:
-        return resolved
-    return _resolve_candidates(root, ((path, "project-metadata") for path in _metadata_repositories(root)))
+        return _enrich_with_metadata(root, resolved)
+    return _enrich_with_metadata(
+        root,
+        _resolve_candidates(root, ((path, "project-metadata") for path in _metadata_repositories(root))),
+    )
 
 
 def _classify_changes(changes: list[str]) -> dict[str, list[str]]:
@@ -172,6 +244,7 @@ def inspect_repository_state(
     repository: Path,
     *,
     source: str = "explicit-repository",
+    metadata: dict[str, object] | None = None,
     accepted_changes: Iterable[str] | None = None,
     allow_local_project: bool = False,
 ) -> dict[str, object]:
@@ -212,6 +285,48 @@ def inspect_repository_state(
         result["error"] = status.stderr.strip()
         return result
 
+    if metadata:
+        actual_branch = _run_git(path, "branch", "--show-current").stdout.strip()
+        actual_head = _run_git(path, "rev-parse", "HEAD").stdout.strip()
+        expected_branch = str(metadata.get("working_branch") or "")
+        expected_head = str(metadata.get("last_commit_id") or "")
+        branch_status = "not-applicable"
+        commit_status = "not-applicable"
+        if bool(metadata.get("git_repository")):
+            branch_status = "matched" if expected_branch == actual_branch else "mismatch"
+            if expected_head:
+                commit_status = "matched" if expected_head == actual_head else "stale"
+            elif str(metadata.get("baseline_status") or "") == "unborn":
+                commit_status = "unborn"
+            else:
+                commit_status = "missing"
+        codegraph_metadata = metadata.get("codegraph") if isinstance(metadata.get("codegraph"), dict) else {}
+        codegraph_index_present = (path / ".codegraph").is_dir()
+        result["metadata"] = {
+            "repository_id": metadata.get("id"),
+            "expected_branch": expected_branch or None,
+            "actual_branch": actual_branch or None,
+            "branch_status": branch_status,
+            "expected_commit": expected_head or None,
+            "actual_commit": actual_head or None,
+            "commit_status": commit_status,
+            "baseline_status": metadata.get("baseline_status"),
+            "codegraph": {
+                "supported": bool(codegraph_metadata.get("supported")),
+                "index_present": bool(codegraph_metadata.get("index_present")),
+                "actual_index_present": codegraph_index_present,
+                "status": codegraph_metadata.get("status") or ("indexed" if codegraph_index_present else "not-indexed"),
+                "synced_commit_id": codegraph_metadata.get("synced_commit_id") or "",
+                "reason": codegraph_metadata.get("reason") or ("" if codegraph_index_present else "no-index"),
+            },
+        }
+        if branch_status == "mismatch":
+            result["status"] = "branch-mismatch"
+            return result
+        if commit_status in {"stale", "missing"}:
+            result["status"] = "stale-baseline"
+            return result
+
     changes = sorted(line for line in status.stdout.splitlines() if line)
     result["changes"] = changes
     result.update(_classify_changes(changes))
@@ -229,15 +344,16 @@ def inspect_repository_state(
 
 
 def repository_preflight(
-    targets: Iterable[dict[str, str]],
+    targets: Iterable[dict[str, object]],
     accepted_baselines: dict[str, list[str]] | None = None,
 ) -> dict[str, object]:
     accepted_baselines = accepted_baselines or {}
     repositories = [
         inspect_repository_state(
-            Path(target["path"]),
-            source=target["source"],
-            accepted_changes=accepted_baselines.get(target["path"]),
+            Path(str(target["path"])),
+            source=str(target["source"]),
+            metadata=target.get("metadata") if isinstance(target.get("metadata"), dict) else None,
+            accepted_changes=accepted_baselines.get(str(target["path"])),
             allow_local_project=True,
         )
         for target in targets
