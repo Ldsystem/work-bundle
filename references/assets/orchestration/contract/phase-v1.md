@@ -82,6 +82,16 @@ List only the source-spec IDs this phase implements or validates. Do not paste f
 |---|---|---|---|
 | task-002 | task-001 | output|decision|file|test | [Why this dependency exists.] |
 
+### 2.5 Barrier Participants
+
+Include this table when the phase contains contract-decoupled parallel tasks.
+
+| Barrier | Contract Group | Participants | Readiness Criteria | Release Condition | Convergence Task |
+|---|---|---|---|---|---|
+| BAR-001 | CG-001 | task-002, task-003 | each participant completes or blocks with executor-result handoff | all participants reached barrier | task-004 |
+
+Participants validate against the common contract group, accepted prior handoffs, and their task-local files. They must not validate against sibling in-progress files or classify sibling work as stale before the convergence task.
+
 ## 3. Task Map
 
 Resolve alternatives and open questions as leading tasks before implementation tasks.
@@ -107,6 +117,7 @@ Record phase-level verification against the source specification and root plan.
 | VERIFY-002 | Task map paths, dependencies, ordering, and safe parallelization flags match exact task write scopes and root-plan sequencing. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-003 | Phase tests, completion criteria, and compact phase-scoped `executor-result` handoff requirement are present and consistent with child tasks. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-004 | Phase `allocated_rules` and `allocated_skills` cover phase-wide signals and are carried into child tasks where executors need them. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-005 | Barrier participant maps, post-barrier convergence dependencies, and contract-only validation boundaries are present when parallel tasks share a contract. | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 
 Repair generated phase or child-task drift, missing spec-ID alignment, dependency mistakes, unsafe parallelization, validation gaps, allocation gaps, and handoff gaps in the same planning turn. Stop for specification repair when the source spec cannot support a deterministic phase.
 
@@ -116,6 +127,7 @@ Repair generated phase or child-task drift, missing spec-ID alignment, dependenc
 - **DONE-CON-001**: [Constraint validation result and evidence.]
 - **DONE-TEST-001**: [Test result summary.]
 - **DONE-ACH-001**: [Phase achievement summary.]
+- **DONE-BARRIER-001**: [Barrier readiness and convergence result when applicable.]
 - **DONE-VERIFY-001**: Phase and child task artifacts were verified against source-spec IDs, dependencies, safe parallelization, validation, and handoff requirements before completion.
 - **DONE-HANDOFF-001**: Executor invokes `create-handoff` and creates a compact phase-scoped `executor-result` handoff under `.work-bundle/orchestration/handoff/executor/active/` before reporting this phase as completed or blocked.
 

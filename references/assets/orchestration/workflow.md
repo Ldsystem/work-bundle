@@ -38,6 +38,22 @@ spec -> plan -> phase -> task -> execute -> handoff
 
 Downstream executors may read only the related spec, root plan, relevant phase, relevant task, declared prior handoffs, and task-scoped source or test files. They must not read `.work-bundle/knowledge/` directly.
 
+## Contract-Decoupled Parallelism
+
+Plans may split work into parallel branches only after a stable common contract is established. The common contract can be an API/interface, schema, command contract, workflow reference, rule matrix, fixture, or other boundary artifact that all participants can validate against without reading sibling in-progress work.
+
+Contract-decoupled plans record:
+
+| Field | Meaning |
+| --- | --- |
+| Contract group | Shared contract artifact paths and the task that establishes them. |
+| Participants | Parallel tasks that depend on the contract group. |
+| Isolation rule | Participants validate against the common contract, accepted prior handoffs, and task-local files only. |
+| Barrier | Synchronization point that waits for all participants to complete or block with handoffs. |
+| Convergence owner | Post-barrier task that runs joint debug, integration checks, or cross-branch validation. |
+
+Parallel workers must not classify sibling in-progress branch output as stale, missing, or required unless the plan declares an accepted handoff dependency or assigns the check to a post-barrier convergence task. Barriers do not bypass repository preflight, dependency checks, disjoint write-scope checks, validation, or executor-result handoff requirements.
+
 ## Skill Authority
 
 Per-role agent instructions live in self-contained orch skills under `skills/orch-*/SKILL.md`:
@@ -73,11 +89,13 @@ These policies are classification and output-grouping hints. They are not stage-
 
 Classify retrieved notes as `authority`, `candidate`, `background`, or `blocked`, and surface material supporting, opposing, constraining, unresolved/open-question, obsolete/replaced, and irrelevant-with-reason evidence when applicable. Only `authority` context may shape requirements and executable tasks.
 
+Repository metadata preflight blockers may stop broad repository inspection, impact traversal, planning, or execution trust. They do not stop bounded `ks-what-is-helpful` retrieval when the knowledge base and gateway are accessible; retrieved material still requires agent-owned authority, polarity, and materiality classification before use.
+
 For `orch-create-specification`, create the specification shell first under `spec/active/`, record `Initial User Purpose Evidence`, and add draft requirements derived from the user purpose before extended evidence gathering. Missing supporting authority notes do not automatically block authoring. The agent records neutral anchors, cross-stage retrieval evidence or retrieval gaps, analyzes the user purpose from the prompt and current repository evidence, and uses Design Interrogation only for unresolved intent that evidence cannot answer. Material non-authority evidence stays visible as rationale, traceability, conflict evidence, or open-question input; it must not become requirement text unless resolved by the user or later accepted authority.
 
 Specifications must record source context, the change-driven Extra evidence loop, Open Questions with advised options, Knowledge Base Update disposition, and a body-level `Quality gate: verified|blocked`. A blocked quality gate prevents implementation planning until blocking questions are resolved and the specification is repaired. A verified quality gate is required before `orch-create-implementation-plan` derives root plan, phase, or task artifacts.
 
-After `orch-create-implementation-plan` generates the root plan, phase files, and task files, it runs generated-plan verification against the source specification before completion. The verification checks source-spec ID coverage, exact artifact paths, dependencies, task write scopes, safe parallelization decisions, validation commands, allocated_rules, allocated_skills, and `create-handoff` requirements. Rule and skill allocation is source-agnostic: entries may come from AGENTS.md, WorkBundle toolkit/global/project rule scopes, builtin rules, `.agents/skills`, `.codex/skills`, plugin skills, or other rule/skill instructions already visible to the agent; file paths are required only for file-backed entries. Generated-artifact drift, missing coverage, dependency mistakes, unsafe parallelization, allocation gaps, validation gaps, handoff gaps, and internal consistency problems are repaired in the same planning turn and then rechecked. Unresolved source-spec defects still stop planning for specification repair instead of being patched over in generated plan artifacts.
+After `orch-create-implementation-plan` generates the root plan, phase files, and task files, it runs generated-plan verification against the source specification before completion. The verification checks source-spec ID coverage, exact artifact paths, dependencies, task write scopes, safe parallelization decisions, contract groups, barrier release rules, convergence ownership, validation commands, allocated_rules, allocated_skills, and `create-handoff` requirements. Rule and skill allocation is source-agnostic: entries may come from AGENTS.md, WorkBundle toolkit/global/project rule scopes, builtin rules, `.agents/skills`, `.codex/skills`, plugin skills, or other rule/skill instructions already visible to the agent; file paths are required only for file-backed entries. Generated-artifact drift, missing coverage, dependency mistakes, unsafe parallelization, allocation gaps, validation gaps, handoff gaps, and internal consistency problems are repaired in the same planning turn and then rechecked. Unresolved source-spec defects still stop planning for specification repair instead of being patched over in generated plan artifacts.
 
 ## Execution Modes
 
@@ -99,11 +117,13 @@ If multi-agent subagent delegation is unavailable, unsafe, or unsupported, execu
 
 Unrelated or unexplained changes block the next wave or task. Execution remains a no-retrieval stage: `orch-execute-plan` does not browse durable knowledge, retrieve knowledge context, or archive specs, plans, or handoffs. Completion of a task, phase, or plan requires an applicability-based compact executor-result handoff and status updates before `orch-review-plan`; continuation state comes from active specifications, plans, phases, tasks, indexes, and executor-result handoffs rather than orchestration handoff artifacts under active continuation.
 
+When a wave contains contract-decoupled participants, execution accepts each worker only against its declared task scope, common contract group, accepted prior handoffs, and task-local validation. The scheduler releases convergence work only after all barrier participants have completed or blocked with executor-result handoffs.
+
 ## Review and Archive
 
 Only `orch-review-plan` may archive completed specification, plan, and handoff artifacts. It assesses validated implementation and review evidence for structural updates before archival. Mixed structural evidence must be delegated to `ks-extract-valuable-points`; design-file-only structural evidence may be delegated to `ks-breakdown-design`. Orchestration may invoke, schedule, or hand off to the approved `ks-*` owner and consume its result, but it must never directly create, edit, promote, delete, or index durable knowledge.
 
-Review provides the target project, reviewed specification and plan, relevant executor-result handoffs, validation evidence, changed files or symbols, structural-update summary, and Knowledge Base Update disposition carried from the source specification or root plan. The delegated `ks-*` owner returns its structural-value result, written or updated durable paths or an evidence-backed no-write rationale, index rebuild status, blockers, and completion state. Review validates that return, resumes disposition evaluation, and keeps archive blocked if delegation is unavailable or evidence is incomplete. On failure it creates a repair specification instead of editing source files. On success, and only when Knowledge Base Update disposition is `completed` or `not-needed`, review first completes required commit, applicable CodeGraph sync, and project metadata update gates, then archives related active artifacts and refreshes orchestration indexes.
+Review provides the target project, reviewed specification and plan, relevant executor-result handoffs, validation evidence, changed files or symbols, structural-update summary, specification-carried violation evidence, unsettled evidence, and Knowledge Base Update disposition carried from the source specification or root plan. The delegated `ks-*` owner returns its structural-value result, written or updated durable paths or an evidence-backed no-write rationale, index rebuild status, blockers, and completion state. Review validates that return, resumes disposition evaluation, and keeps archive blocked if delegation is unavailable or evidence is incomplete. Review also settles specification-carried unsettled material, closes resolved specification-included violations through approved lifecycle operations, and keeps archive blocked when settlement or violation closure evidence is incomplete. On failure it creates a repair specification instead of editing source files. On success, and only when Knowledge Base Update disposition is `completed` or `not-needed`, review first completes required commit, applicable CodeGraph sync, and project metadata update gates, then archives related active artifacts and refreshes orchestration indexes.
 
 Review commit/sync/update gates are non-destructive and metadata-driven:
 

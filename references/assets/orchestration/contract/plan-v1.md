@@ -74,6 +74,10 @@ Use a compact source-spec ID map. Do not paste long specification sections into 
 |---|---|---|---|---|---|---|
 | phase-001 | [Phase Name] | `.work-bundle/orchestration/plan/active/[plan-id]/phase-001-[slug].md` | Planned | - | true | [Measurable completion gate.] |
 
+## 3.1 Compactness Check
+
+Plans must use the fewest phases and tasks that preserve complete requirement coverage, exact dependencies, disjoint write scopes, validation ownership, handoff requirements, and review gates. Do not split phases or tasks only to mirror template sections, lifecycle labels, or repeated prose.
+
 ## 4. Desired Files
 
 | ID | File Type | Path | Purpose | Operation | Related Phase |
@@ -101,6 +105,21 @@ Use a compact source-spec ID map. Do not paste long specification sections into 
 |---|---|---|---|---|---|---|
 | TEST-001 | unit|integration|model-behavior|manual | `[file/module/function/API]` | phase-001 | - | `[command if applicable]` | [Measurable result.] |
 
+## 7.1 Contract Groups, Barriers, And Convergence
+
+Use this section when parallel tasks share a stable common contract.
+
+| ID | Common Contract | Establishing Task | Participants | Barrier | Convergence Owner |
+|---|---|---|---|---|---|
+| CG-001 | `[contract artifact paths]` | task-001 | task-002, task-003 | BAR-001 releases after participants complete or block with handoffs | task-004 |
+
+Required rules:
+
+- Parallel participants depend on the common contract group and accepted prior handoffs, not sibling in-progress implementation.
+- The barrier identifies participant tasks, readiness criteria, release condition, and post-barrier validation owner.
+- Joint debug, integration tests, cross-branch behavior checks, and stale-peer classification belong to the convergence owner after barrier release.
+- Contract groups and barriers must not bypass repository preflight, dependency checks, disjoint write-scope checks, validation, or handoff creation.
+
 ## 8. Generated Artifact Verification
 
 Record the verification pass performed after generating the root plan, phases, and tasks.
@@ -114,6 +133,7 @@ How to make tasks parallel: create or confirm a stable boundary artifact before 
 | VERIFY-003 | Safe parallelization is exposed where dependencies and write scopes allow, and unsafe parallelization is explicitly blocked by dependency or scope evidence. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-004 | Every task, phase, and plan completion path requires `create-handoff` with a compact, sparse YAML `executor-result` handoff whose body stays applicability-based. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-005 | `allocated_rules` and `allocated_skills` cover all material rule/skill conditions from the source specification, affected files, operation type, CodeGraph/Git needs, validation tasks, and any non-WorkBundle rule/skill sources already visible to the agent. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-006 | Compactness, contract group clarity, barrier correctness, co-worker isolation, convergence validation, and contract-only handoff criteria are present where parallel branches share a contract. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 
 If any generated artifact drifts from the source specification, omits required spec-ID coverage, contains inconsistent paths or dependencies, lacks validation, lacks allocated rule/skill coverage, or lacks handoff criteria, repair the generated artifacts in the same planning turn and repeat this verification. If the source specification itself has unresolved questions, missing stable IDs, missing evidence, or contradictory instructions, stop for specification repair instead of inventing plan content.
 

@@ -19,6 +19,8 @@ Keep the WorkBundle violation workflow visible whenever the Work Bundle rule is 
 - Treat any conflict, confliction, violation, contradiction, or user correction as a `wb-violation-evidence` trigger when the Work Bundle rule is visible in `AGENTS.md`.
 - When a trigger appears, immediately call `wb-violation-evaluation` to classify whether the finding is `work-bundle-scoped`, `project-scoped`, `mixed`, or `undetermined`.
 - Exit the violation evidence workflow without recording evidence when `wb-violation-evaluation` confirms the finding is not WorkBundle-related and does not affect authority, target scope, validation, or continuation.
+- Exit the violation evidence workflow without recording a new evidence file when `wb-violation-evaluation` returns `same-scope specification-owned` handling for exact current WorkBundle specification work.
+- When `same-scope specification-owned` handling applies, rely on the active specification source context, Open Questions, or review evidence to carry the issue and its settlement path.
 - Record a violation evidence file only when `wb-violation-evaluation` classifies the first-observed finding as `work-bundle-scoped` or `mixed`.
 - Record only the minimal first-observed evidence needed to preserve the WorkBundle-scoped or mixed deviation after evaluation.
 - Keep evidence narrow to the deviation, occurrence condition, visible first evidence artifacts, current status, action taken when any, and severity.
@@ -33,6 +35,7 @@ Keep the WorkBundle violation workflow visible whenever the Work Bundle rule is 
 ## Must Not
 
 - Do not record project business logic, project implementation, project spec or plan execution, or durable project-knowledge semantic deviations in the work-bundle violation store.
+- Do not record a separate violation evidence file for exact current WorkBundle specification-owned work when evaluation explicitly says evidence persistence is not required.
 - Do not wait for a user to explicitly request violation recording before considering the violation workflow.
 - Do not expand evidence capture into evaluation, root-cause investigation, or exhaustive workflow-chain tracing.
 - Do not perform additional file search, repository browsing, historical tracing, or contract exploration solely to find more evidence when the already-visible artifact is sufficient to record the violation.
@@ -45,6 +48,7 @@ Keep the WorkBundle violation workflow visible whenever the Work Bundle rule is 
 
 - Confirm `wb-violation-evidence` is loaded as the always-visible entry point for conflict, confliction, violation, contradiction, and user-correction signals when the Work Bundle rule is visible in `AGENTS.md`.
 - Confirm possible violation signals are routed first from `wb-violation-evidence` to `wb-violation-evaluation`.
+- Confirm `same-scope specification-owned` evaluation results do not create new violation evidence and are carried by the active specification or review evidence instead.
 - Confirm every recorded violation was classified by `wb-violation-evaluation` as `work-bundle-scoped` or `mixed` and cites only visible first evidence artifacts or runtime surfaces.
 - Confirm the agent did not perform further exploration solely to enrich the violation evidence record.
 - Confirm project-scope deviations are reported as blockers and are not written to the violation store.
@@ -54,4 +58,4 @@ Keep the WorkBundle violation workflow visible whenever the Work Bundle rule is 
 
 ## On Violation
 
-Stop unsafe continuation, call `wb-violation-evaluation`, and either record minimal evidence for `work-bundle-scoped` or `mixed` findings, report or exit for non-WorkBundle findings, or block when `undetermined` affects authority, target scope, validation, or continuation.
+Stop unsafe continuation, call `wb-violation-evaluation`, and either record minimal evidence for `work-bundle-scoped` or `mixed` findings, exit without persistence for `same-scope specification-owned` handling, report or exit for non-WorkBundle findings, or block when `undetermined` affects authority, target scope, validation, or continuation.

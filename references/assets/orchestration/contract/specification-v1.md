@@ -44,7 +44,9 @@ Required evidence:
 - Registry locator consistency when the bootstrap-resolved project registry is used.
 - CodeGraph support, `.codegraph/` marker presence, index status, synced commit when available, and `no-index` or `not-indexed` fallback when absent.
 
-If metadata is missing, inaccessible, contradictory, stale in a way that affects evidence trust, branch mismatched, or CodeGraph metadata is inconsistent, add a blocking open question before collecting extended evidence.
+If metadata is missing, inaccessible, contradictory, stale in a way that affects evidence trust, branch mismatched, or CodeGraph metadata is inconsistent, add a blocking open question before collecting extended repository evidence.
+
+Metadata blockers may block source inspection, impact traversal, planning, or execution trust. They must not block bounded durable-knowledge gateway retrieval when the knowledge base and gateway tooling are accessible; record that retrieval as classification-only until repository trust is restored.
 
 ## 4. Source Context
 
@@ -52,9 +54,11 @@ If metadata is missing, inaccessible, contradictory, stale in a way that affects
 
 Source Context must include project metadata preflight evidence or a blocking open question that explains why metadata preflight could not establish a trustworthy branch, commit, registry, and CodeGraph baseline.
 
+For WorkBundle project specifications, Source Context must include related active violation registry evidence when the current scope matches active violations. Each included violation records ID, severity, deviation summary, related scope, required resolution, and expected review closure. Exact-current-work conflicts may be specification-owned instead of requiring separate new violation evidence.
+
 When no supporting authority note exists for the user purpose, record the retrieval gap and analyze the purpose from user input and repository evidence. Use Design Interrogation only for unresolved design intent that cannot be answered from current evidence.
 
-When material non-authority evidence appears, record agent-owned polarity and materiality classification as supporting, opposing, constraining, unresolved/open-question, obsolete/replaced, or irrelevant-with-reason evidence. Candidate, background, and blocked evidence must remain non-shaping unless resolved by the user or promoted by accepted authority.
+When material non-authority evidence appears, record agent-owned polarity and materiality classification as supporting, opposing, constraining, unresolved/open-question, obsolete/replaced, or irrelevant-with-reason evidence. Candidate, background, blocked, opposing, stale, draft, or proposed evidence must remain non-shaping unless resolved by the user or promoted by accepted authority. Blocking status depends on unresolved impact to requirements, architecture, workflow, policy, API, persistence, validation, execution behavior, or user-purpose safety.
 
 ### 4.1 Design Interrogation
 
@@ -80,6 +84,8 @@ When material non-authority evidence appears, record agent-owned polarity and ma
 - **REQ-SHELL-002**: Derive initial user-purpose evidence only from the current user request and visible supplied artifacts.
 - **REQ-SHELL-003**: Revise draft requirements after bounded evidence gathering instead of silently replacing them.
 - **REQ-META-001**: Run project metadata preflight after shell creation and before broad repository evidence gathering; block on missing metadata, branch mismatch, stale baseline affecting evidence trust, registry contradiction, or inconsistent CodeGraph state.
+- **REQ-KG-001**: Run bounded durable-knowledge gateway retrieval for material new findings or requests even when repository metadata blockers prevent source inspection, provided the gateway is accessible.
+- **REQ-VIOL-001**: For WorkBundle project scopes, inspect related active violation registry evidence and carry matching violations into Source Context or Open Questions with review closure expectations.
 
 ## 6. Interfaces & Data Contracts
 
@@ -150,7 +156,7 @@ Every open question must include:
 | Required resolution | yes |
 | Advised options | yes |
 
-Candidate, background, blocked, draft, proposed, stale, or otherwise non-authority durable knowledge must not become requirement text. When material, record it as rationale, traceability, conflict evidence, or blocking open-question input.
+Candidate, background, blocked, draft, proposed, stale, opposing, or otherwise non-authority durable knowledge must not become requirement text. When material, record it as rationale, traceability, conflict evidence, or open-question input. Related active violations that affect the specification scope are blocking open questions unless the user or accepted evidence resolves them. Non-authority or opposing evidence is blocking only when the unresolved decision affects implementation or review safety.
 
 ## 12. Knowledge Base Update
 
@@ -166,6 +172,8 @@ Candidate, background, blocked, draft, proposed, stale, or otherwise non-authori
 - **Rationale**: [Explain why the disposition applies.]
 
 Set disposition to `required` when accepted Design Interrogation conclusions establish new durable orchestration policy, workflow design, or reusable process behavior.
+
+Do not instruct specification authors or executors to write durable knowledge directly. Review must settle carried unsettled evidence through the approved `ks-*` follow-up path or record an evidence-backed no-write disposition before archive.
 
 ## 13. Examples & Edge Cases
 
@@ -184,6 +192,8 @@ Set disposition to `required` when accepted Design Interrogation conclusions est
 - The source context records neutral cross-stage retrieval anchors or a retrieval gap, and any named retrieval policy is used only for classification/output grouping.
 - The specification carries accepted authority context forward so downstream planning and execution do not need to read `.work-bundle/knowledge/`.
 - The specification records project metadata preflight evidence including `working_branch`, `last_commit_id`, branch status, baseline status, and CodeGraph no-index fallback when applicable.
+- WorkBundle project specifications record related active violations and expected review closure when applicable.
+- Material non-authority or opposing evidence is visible without shaping requirements unless resolved by user decision or accepted authority.
 
 ## 15. Quality Gate
 

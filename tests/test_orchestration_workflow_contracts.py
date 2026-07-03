@@ -412,6 +412,25 @@ def test_orchestration_gateway_policy_is_not_discovery_stage_gate() -> None:
     assert '"usage": "classification-output-intent"' in core
 
 
+def test_task002_owned_rules_capture_retrieval_open_question_and_artifact_policy() -> None:
+    gateway_rule = text("rules/orchestration/orch-knowledge-gateway.md")
+    open_questions_rule = text("rules/orchestration/orch-open-questions.md")
+    authoring_rule = text("rules/orchestration/orch-artifact-authoring.md")
+
+    assert "repository metadata preflight blocks source inspection" in gateway_rule
+    assert "classification-only until source-repository trust is restored" in gateway_rule
+    assert "not as automatic blockers for bounded durable-knowledge discovery" in gateway_rule
+
+    assert "evidence class or polarity alone is not a blocker" in open_questions_rule
+    assert "related active violation registry evidence as blocking Open Questions" in open_questions_rule
+    assert "does not shape requirements and is not marked blocking solely by evidence class or polarity" in open_questions_rule
+
+    assert "Keep generated plans compact" in authoring_rule
+    assert "common contract groups, barrier participant maps" in authoring_rule
+    assert "forbidden peer validation" in authoring_rule
+    assert "common contracts, accepted prior handoffs, and post-barrier convergence" in authoring_rule
+
+
 def test_orchestration_gateway_surfaces_conflicts_without_downstream_lookup() -> None:
     skill = text("skills/orch-create-specification/SKILL.md")
     gateway_rule = text("rules/orchestration/orch-knowledge-gateway.md")

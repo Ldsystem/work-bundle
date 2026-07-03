@@ -102,6 +102,18 @@ def test_create_specification_requires_neutral_cross_stage_gateway() -> None:
     assert "does not require downstream agents to read `.work-bundle/knowledge/`" in skill
 
 
+def test_create_specification_handles_metadata_blockers_violations_and_non_authority() -> None:
+    skill = skill_text(REPO_ROOT / "skills/orch-create-specification/SKILL.md")
+
+    assert "Do not let repository metadata blockers stop bounded durable-knowledge gateway retrieval" in skill
+    assert "classification-only until source repository trust is restored" in skill
+    assert "## WorkBundle Violation Registry" in skill
+    assert "related active violations" in skill
+    assert "violation ID, severity, deviation summary, related scope, required resolution, and expected review closure" in skill
+    assert "Treat exact-current-work WorkBundle conflicts as specification-owned" in skill
+    assert "Evidence class or polarity alone does not make an Open Question blocking" in skill
+
+
 def test_orchestration_skill_boundary_carries_impact_radius_and_violation_terms() -> None:
     create_spec = skill_text(REPO_ROOT / "skills/orch-create-specification/SKILL.md")
     create_plan = skill_text(REPO_ROOT / "skills/orch-create-implementation-plan/SKILL.md")
@@ -124,6 +136,18 @@ def test_orchestration_gateway_rule_keeps_policy_as_intent_not_filter() -> None:
     assert "Treat a directive retrieval policy such as `implementation_spec` as a stage-gated discovery filter" in rule
     assert "future knowledge-base lookup" in rule
     assert "retrieval policy did not stage-gate candidate discovery" in rule
+
+
+def test_planning_skill_requires_contract_decoupled_barriers_and_compactness() -> None:
+    skill = skill_text(REPO_ROOT / "skills/orch-create-implementation-plan/SKILL.md")
+
+    assert "Prefer the fewest phases and tasks" in skill
+    assert "common contract group and accepted prior handoffs, not on sibling in-progress implementation output" in skill
+    assert "barrier ID, readiness evidence, and convergence owner" in skill
+    assert "Create explicit barrier metadata" in skill
+    assert "post-barrier convergence task" in skill
+    assert "Do not make contract-decoupled participant tasks depend on sibling in-progress implementation work" in skill
+    assert "compactness, contract-dependency clarity, barrier correctness" in skill
 
 
 def test_orch_doctor_declares_full_quality_gate_and_forbidden_dependency_checks() -> None:

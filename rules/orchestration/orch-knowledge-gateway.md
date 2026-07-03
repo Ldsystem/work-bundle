@@ -22,6 +22,7 @@ Route orchestration access to durable project knowledge through the approved `ks
 - Retrieve durable project knowledge through `keep-summarizing` with `what-is-helpful` gateway mode before using knowledge context in orchestration directives covered by this rule.
 - Discover relevant candidates across allowed lifecycle partitions before lifecycle and status authority classification.
 - Use polarity-neutral and stage/perspective/status-neutral query anchors derived from artifacts, features, functionality, components, files, APIs, schemas, workflows, and explicit names.
+- Run bounded gateway discovery for material new findings or requests even when repository metadata preflight blocks source inspection, provided the knowledge base and gateway tooling are accessible; mark those results classification-only until source-repository trust is restored.
 - Classify retrieved notes as `authority`, `candidate`, `background`, or `blocked`, and surface material supporting, opposing, constraining, unresolved/open-question, obsolete/replaced, or irrelevant-with-reason evidence when applicable.
 - Use only `authority` results to shape requirements, executable tasks, decisions, or review conclusions.
 - Keep gateway output to the smallest useful classified result set.
@@ -40,6 +41,7 @@ Route orchestration access to durable project knowledge through the approved `ks
 - Treat non-material `candidate`, `background`, or `blocked` context as source context or omit it from the artifact; do not resolve non-material unsettled notes during `create-specification`.
 - Treat `blocked` context as non-shaping evidence that must not drive downstream work; when material, surface it as blocking open-question evidence instead of silently deciding.
 - Carry accepted authority context into orchestration artifacts so downstream executors do not need future knowledge-base lookup.
+- Treat repository metadata preflight blockers as blockers for broad repository evidence gathering, source inspection, impact-radius traversal, downstream implementation planning, and execution trust, not as automatic blockers for bounded durable-knowledge discovery.
 
 ## Must Not
 
@@ -52,6 +54,8 @@ Route orchestration access to durable project knowledge through the approved `ks
 - retrieve durable knowledge during execute-plan; execution agents must not read `.work-bundle/knowledge/` directly.
 - Apply this gateway rule to `execute-plan`, executor-result handoffs created during execution, or any execution-stage retrieval.
 - Defer required execution context to future `.work-bundle/knowledge/` lookup after planning completes.
+- Treat a stale repository commit baseline as proof that durable notes are stale without retrieval classification evidence from note metadata, supersession, current user decisions, or accepted authority.
+- Block bounded gateway retrieval solely because source-repository metadata preflight blocks source inspection, when the gateway and knowledge base are otherwise accessible.
 
 ## Validation
 
@@ -60,6 +64,7 @@ Route orchestration access to durable project knowledge through the approved `ks
 - Confirm classification labels appear when retrieved notes shape orchestration work.
 - Confirm only authority context shaped requirements, tasks, or review conclusions.
 - Confirm no direct `.work-bundle/knowledge/` browsing occurred from the active orchestration directive.
+- Confirm repository metadata blockers stopped only repository-trust-dependent work and did not prevent accessible bounded gateway discovery.
 - Confirm `execute-plan` and execution-completion handoffs did not invoke this gateway.
 
 ## On Violation

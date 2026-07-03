@@ -57,20 +57,29 @@ The scheduler owns target selection, dependency scheduling, delegation safety, v
 - Do not fail only because multi-agent subagent delegation support is missing when single-agent fallback is valid. Record fallback reason in the result and handoff.
 - Never allow `prefer_subagent` to bypass visible delegation safety, repository preflight, accepted-baseline checks, disjoint write scopes, dependency checks, handoff requirements, or the single-agent fallback.
 - Invisible internal spawn workers and cross-conversation delegation must not own delegated plan, phase, or task implementation work. Internal workers may be used only for bounded helper analysis, local summarization, snippet comparison, or other support work that does not own delegated execution and does not replace multi-agent subagent task delegation.
+- Detect contract groups and barriers declared by the root plan, parent phase, selected task, accepted executor-result handoffs, or the shared workflow contract before scheduling a parallel wave.
+- For contract-decoupled waves, treat the common contract group and accepted prior handoffs as the validation baseline. Do not treat sibling in-progress implementation files, sibling unaccepted handoffs, or pre-barrier cross-branch checks as dependencies.
+- Do not classify sibling in-progress branch output as stale, missing, contradictory, or required unless an accepted handoff dependency or a post-barrier convergence task explicitly declares that relationship.
+- Schedule convergence, joint-debug, integration validation, or cross-branch tests only after every participant in the matching barrier has completed or blocked with an executor-result handoff.
 
 ### Delegation and Aggregation
 
 - Build the current execution queue from tasks whose dependencies are satisfied.
 - Partition the queue into waves of independent tasks with disjoint write scopes.
+- Keep contract-decoupled barrier participants in the same safe wave when their write scopes are disjoint and their only shared dependency is the established common contract group.
 - Recheck every target repository for the wave against the initial or accepted-handoff baseline; block the entire wave on any unexplained change.
 - Delegate each task in the wave to a separate visible multi-agent subagent when scopes allow parallel execution. Before assignment, verify that the delegation surface is user-visible; if not, use single-agent fallback or stop with a `delegation-visibility` blocker.
 - Record the visible delegation reference for each task when the environment provides a subagent id, visible label, or other user-visible reference. Record `internal_spawn_used_for_task_delegation: false`.
 - Give every visible delegated worker the assigned task path, relevant spec, plan, and phase paths; allowed source and target files/modules; exact validation required by the task; and the instruction to avoid invisible internal spawn work or cross-conversation delegation.
+- For contract-decoupled tasks, give every visible delegated worker the common contract group id, exact common contract artifact paths, accepted prior handoff ids or paths, forbidden peer validation scope, barrier id, convergence owner, and the instruction to validate only against the common contract, accepted prior handoffs, task-local files, and declared validation commands.
 - Give every visible delegated worker the allocated rules and skills from the task, parent phase, and root plan, including each allocation's source and file path when file-backed, with explicit instruction to load, use, acknowledge, or condition-evaluate them before implementation and to record unavailable or inapplicable allocation in its handoff.
 - Require each visible delegated worker to record `task_fit_check`, `internal_spawn_used_for_task_delegation: false`, its visible reference when available, and a sparse YAML `executor-result` handoff before exit.
 - Wait for all visible delegated workers in the active wave to finish.
 - Validate each executor handoff against the task, parent phase, root plan, and source specification.
 - Accept only compact executor-result handoffs whose fields satisfy applicability rules: assigned task, result summary, changed files or inspected artifacts, validation evidence, unresolved blockers when present, `task_fit_check`, repository/preflight or accepted-baseline evidence when relevant, compact CodeGraph evidence when source-code work was in scope, and `delegation_evidence` when ownership was delegated or fallback proof is required.
+- For contract-decoupled task handoffs, also require `contract_decoupling` evidence with `common_contracts_checked`, `peer_implementation_validation_used: false`, validation scope limited to common contracts, accepted prior handoffs, and task-local files, plus barrier participation readiness when the task is a barrier participant.
+- Reject or mark unresolved any pre-barrier handoff that validates against sibling in-progress source files, sibling unaccepted handoffs, or cross-branch behavior before the declared barrier release.
+- Mark barrier participants ready only after their executor-result handoffs are valid. Release the barrier for convergence work only when all participants have valid completed or blocked handoffs.
 - If a handoff is valid and completion criteria are satisfied, mark the task `Completed`; if partial or blocked, mark `On Hold` or keep `In progress` with the blocker.
 - Refresh task status in the parent phase file and root plan task/phase indexes.
 - Build the next accepted-handoff baseline only from validated handoff evidence, then continue with the next executable wave until the selected task, phase, or plan is complete or blocked.
@@ -80,6 +89,7 @@ The scheduler owns target selection, dependency scheduling, delegation safety, v
 - After valid task handoffs show all tasks in a phase are complete, validate phase completion criteria, update phase status to `Completed`, update the phase status in the root plan file, and invoke `create-handoff` for a phase-scoped `executor-result` handoff.
 - After all phases in a plan are complete, validate plan completion criteria, update plan status to `Completed`, and invoke `create-handoff` for a plan-scoped `executor-result` handoff.
 - Keep phase and plan handoffs compact and applicability-based: completed tasks or phases, changed or inspected artifacts, validation evidence, unresolved blockers when present, repository/CodeGraph/delegation evidence when relevant, and task-fit or phase-fit or plan-fit evidence sufficient for continuation or review.
+- Preserve barrier state in phase and plan handoffs when applicable: common contract group, participant handoff ids, barrier readiness, convergence owner, and whether convergence checks remain pending.
 - Do not archive specs, plans, phases, tasks, or handoffs during execution. Archival belongs only to `review-plan`.
 
 ## Status
@@ -113,6 +123,7 @@ The executor owns task-scoped execution and must not expand into scheduler work.
 - Never alter pre-existing changes to pass preflight. If a required file is missing, unresolved, or inaccessible, stop and report the blocker.
 - After accepting validated executor-result handoffs, build accepted-baseline JSON only from proven prior outputs and block on any unrelated or unexplained current entry.
 - Accepted baselines explain only expected worktree changes. They do not override branch mismatch, inaccessible repositories, missing required metadata, or CodeGraph policy violations.
+- For contract-decoupled parallel work, accepted baselines may include the common contract task handoff and prior validated participant handoffs only. They must not include sibling in-progress work, unaccepted sibling handoffs, raw agent claims, or files outside the assigned validation scope.
 
 ### Allocated Rule and Skill Context
 
@@ -145,6 +156,8 @@ Accepted Baseline evidence must come only from validated executor-result handoff
 - Trigger `wb-violation-evaluation` when execution-time conflicts, violations, errors, failed validations, contradictory workflow behavior, user interruptions, or user corrections make WorkBundle process responsibility plausible.
 - `wb-violation-evaluation` is a bounded relatedness check: stop once visible evidence shows WorkBundle skill, rule, script, specification, plan, handoff, or workflow-contract relevance; do not require chain-of-thought output, exhaustive root-cause tracing, or treating example workflow chains as mandatory fix patterns.
 - Executor-result handoffs for source-code or toolkit-contract work must state whether new upstream/downstream impact evidence or validation/test evidence was found during execution and whether it was repaired, blocked, or out of scope.
+- Contract-decoupled executor-result handoffs must state whether validation used peer implementation output. The required passing value before convergence is `peer_implementation_validation_used: false`.
+- Barrier participant executor-result handoffs must record barrier readiness as `reached` or `blocked`; convergence owners must record that all participant handoffs were completed or blocked before joint validation started.
 - Run declared validation when possible and record skip reasons when not.
 - Validation failures, unresolved blockers, unavailable required capabilities, or missing files block completion until repaired or explicitly documented.
 - Create a sparse YAML executor-result handoff before exit with applicable changed files, validation, task-fit, repository/preflight or accepted-baseline evidence, compact CodeGraph evidence, and `delegation_evidence` when delegation occurred.

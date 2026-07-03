@@ -45,10 +45,12 @@ Downstream executors may read only the related spec, root plan, relevant phase, 
 - Reject planning and require source-spec repair when a source-code, script, skill, rule, workflow, API, data-contract, or validation-affecting change lacks impact-radius evidence for upstream/downstream components or validation/test artifacts.
 - After generating the root plan, phase files, and task files, run a generated-plan verification pass against the source specification before reporting completion.
 - The generated-plan verification pass must check exact artifact paths, source-spec ID coverage, dependencies, safe parallelization opportunities, task write scopes, validation commands, and `create-handoff` completion requirements.
+- The generated-plan verification pass must check compactness, contract group clarity, barrier correctness, co-worker isolation instructions, convergence validation ownership, and contract-only executor-result handoff criteria whenever parallel tasks share a common contract.
 - The generated-plan verification pass must check rule/skill allocation coverage for every material task signal, including source-code inspection, metadata preflight, script edits, rule edits, skill edits, workflow edits, contract edits, validation edits, Git operations, CodeGraph use, orchestration artifact updates, and non-WorkBundle rule/skill sources already visible to the agent.
 - Repair generated-artifact drift, missing coverage, dependency mistakes, unsafe parallelization, validation gaps, handoff gaps, and internal consistency problems in the same planning turn, then repeat verification until no generated-artifact gap remains or a source-spec defect blocks progress.
 - Add leading clarification or spec-repair tasks only when the source specification has no unresolved open questions but still lacks stable IDs, paths, validation details, or file-level execution context.
 - Use explicit IDs, paths, statuses, dependencies, commands, validation rules, and completion criteria.
+- Prefer the fewest phases and tasks that preserve complete source-spec coverage, exact dependencies, disjoint write scopes, validation ownership, handoff requirements, and review gates. Reject artificial splits caused only by template sections, lifecycle labels, or duplicated prose.
 - Do not create handoff files directly; require `create-handoff`.
 - Do not store plans under `.work-bundle/knowledge/`.
 
@@ -57,6 +59,7 @@ Downstream executors may read only the related spec, root plan, relevant phase, 
 Use this guidance only for task boundaries; keep the pattern names and rationale out of executor-facing prose unless they are needed as task-fit evidence.
 
 - Create or confirm a stable boundary artifact before branching parallel tasks. If no boundary artifact exists, keep the work serialized.
+- Represent contract-decoupled branches as depending on the common contract group and accepted prior handoffs, not on sibling in-progress implementation output.
 - Use the smallest boundary artifact that separates responsibility cleanly:
   - `api-contract-first` for API shape shared between caller and implementation.
   - `port-interface-first` for core behavior behind a stable port before adapters or implementations branch.
@@ -77,6 +80,9 @@ Use this guidance only for task boundaries; keep the pattern names and rationale
   - `documentation-or-reference-first` for a short reference, example, or other shared guidance artifact.
   - `validation-convergence` for the final integration task that proves branches still fit together.
 - Give each parallel task exact source files, target files, dependencies, allowed and forbidden files, and validation.
+- For each contract-decoupled participant, include the common contract group ID, exact common contract artifact paths, allowed validation scope, forbidden peer validation scope, barrier ID, readiness evidence, and convergence owner.
+- Create explicit barrier metadata when parallel participants share a common contract and later require joint debug, integration validation, cross-branch behavior checks, or stale-peer classification. The barrier must identify participant tasks, readiness criteria, release condition, and post-barrier validation owner.
+- Assign cross-branch validation, integration tests, joint debug, and sibling-output freshness checks only to the post-barrier convergence task.
 - Reject parallelization when tasks share target files, unresolved decisions, migration ordering, or validation ownership.
 - Require a convergence task any time separately built branches must be integrated and validated.
 
@@ -115,6 +121,9 @@ These rules are mandatory:
 - Do not infer answers silently, pick an unresolved alternative, downgrade blocking questions, or create a partial plan for unresolved scope.
 - Do not create a plan from a material change specification that is missing required source-spec impact-radius evidence; repair the specification first instead of inventing upstream/downstream or validation/test scope during planning.
 - Do not create tasks without dependencies, validation, completion criteria, and handoff requirement.
+- Do not make contract-decoupled participant tasks depend on sibling in-progress implementation work merely to enable validation.
+- Do not omit barrier and convergence ownership when separately built branches sharing a common contract require post-branch joint debug or cross-branch validation.
+- Do not split plans, phases, or tasks merely to mirror templates, lifecycle labels, or repeated prose when a smaller artifact preserves coverage and safety.
 - Do not create plans, phases, or tasks without allocated rule/skill evaluation when the scope touches rules, skills, scripts, source code, workflow references, orchestration contracts, Git operations, CodeGraph, metadata preflight, or validation behavior.
 - Do not create tasks that duplicate specification prose instead of citing spec IDs.
 - Do not create phases or tasks without exact source files, target files, target symbols, validation instructions, and relevant spec-ID references.
@@ -148,6 +157,7 @@ Root plan:
 - phase index;
 - desired files/modules;
 - generated-artifact verification evidence showing source-spec coverage, exact paths, dependencies, safe parallelization, validation, and handoff requirements were checked and repaired before completion;
+- compactness check evidence, and contract group/barrier/convergence metadata when parallel branches share a stable common contract;
 - tests and completion criteria, including the final knowledge-update disposition gate.
 
 Each phase:
@@ -156,6 +166,7 @@ Each phase:
 - phase-specific decisions, dependencies, task index, tests, completion criteria.
 - phase-level `allocated_rules` and `allocated_skills` that apply across one or more child tasks, including non-WorkBundle sources when relevant.
 - phase-level generated-artifact verification expectations for spec-ID alignment, dependencies, task ordering, safe parallelization, validation, and handoff requirements.
+- barrier participant maps when child tasks are contract-decoupled parallel participants, including readiness criteria, release condition, and convergence task.
 - no copied spec sections beyond short one-line summaries.
 
 Each task:
@@ -164,6 +175,7 @@ Each task:
 - goals, dependencies, source files, target files, target symbols;
 - task-specific `allocated_rules` and `allocated_skills` with concrete source, load/use timing, and executor-facing applicability.
 - implementation instructions, validation, completion criteria, and executor-result handoff requirements that carry compact continuation and review evidence.
+- contract-decoupling instructions when applicable: common contract group, exact contract paths, accepted prior handoffs, allowed validation scope, forbidden peer validation, barrier readiness, and convergence owner.
 - generated-artifact integrity expectations for exact files, dependencies, validation, handoff requirements, and required same-turn repair when the task artifact is incomplete or inconsistent.
 - no copied spec sections beyond short one-line summaries.
 
@@ -205,7 +217,7 @@ Load only when creating or validating:
 
 ## Validation
 
-Confirm required front matter and sections exist, the source specification includes `Knowledge Base Update`, paths and dependencies are explicit, execution context is carried forward through spec-ID references plus concrete file-level instructions, no executor is required to read `.work-bundle/knowledge/`, blockers become leading clarification/spec-repair tasks, no phase or task targets `.work-bundle/knowledge/**`, indexes are updated, and every plan/phase/task has mandatory compact sparse YAML `executor-result` handoff criteria using only applicable continuation and review evidence.
+Confirm required front matter and sections exist, the source specification includes `Knowledge Base Update`, paths and dependencies are explicit, execution context is carried forward through spec-ID references plus concrete file-level instructions, no executor is required to read `.work-bundle/knowledge/`, blockers become leading clarification/spec-repair tasks, no phase or task targets `.work-bundle/knowledge/**`, indexes are updated, compactness was checked, contract groups and barriers were represented where parallel branches share a contract, participant dependencies point to common contracts and accepted prior handoffs rather than sibling in-progress work, convergence ownership is explicit, and every plan/phase/task has mandatory compact sparse YAML `executor-result` handoff criteria using only applicable continuation and review evidence.
 
 Run generated-plan verification before reporting completion:
 
@@ -213,6 +225,7 @@ Run generated-plan verification before reporting completion:
 - confirm source-spec impact-radius evidence is carried into exact upstream/downstream component scopes, validation/test artifacts, dependencies, validation commands, and convergence checks;
 - confirm allocated rules and skills from all agent-visible sources cover each material task signal and are scoped to the root plan, phase, or task where executors need them;
 - confirm exact paths, dependencies, task ordering, safe parallelization flags, source files, target files, target symbols, validation commands, and completion criteria are internally consistent across root plan, phases, and tasks;
+- confirm compactness, contract-dependency clarity, barrier correctness, co-worker isolation instructions, convergence validation, and contract-only handoff criteria where contract-decoupled branches exist;
 - repair generated-artifact drift, missing coverage, duplicate spec prose, invalid dependencies, unsafe or missing parallelization notes, validation gaps, and handoff gaps in the same turn;
 - stop for specification repair instead of patching around the issue when the source specification itself has unresolved questions, missing stable IDs, missing evidence, or contradictory instructions.
 
@@ -223,7 +236,7 @@ Reject and repair the plan if:
 - a task lacks exact source files, target files, target symbols, validation, or handoff criteria;
 - the plan blurs specification requirements with execution ordering;
 - an executor would need to infer target files or dependencies from broad prose.
-- generated-plan verification finds artifact drift, coverage gaps, path or dependency inconsistencies, unsafe parallelization, missing validation, or missing handoff requirements.
+- generated-plan verification finds artifact drift, coverage gaps, path or dependency inconsistencies, unsafe parallelization, missing compactness evidence, missing contract group/barrier/convergence metadata, missing validation, or missing handoff requirements.
 
 ## Runtime Rules
 

@@ -25,13 +25,14 @@ Before any long evidence gathering, create the specification artifact shell firs
 
 ## Project Metadata Preflight
 
-After the specification shell exists and before durable-knowledge retrieval, broad repository evidence gathering, CodeGraph use, or source inspection, perform project metadata preflight for every target source repository that could affect the specification.
+After the specification shell exists and before broad repository evidence gathering, CodeGraph use, or source inspection, perform project metadata preflight for every target source repository that could affect the specification.
 
 - Read `$project_root/.work-bundle/project.yaml` and identify applicable `source_repositories[]`.
 - Use the bootstrap-resolved project registry only as locator evidence; do not treat it as working-state authority.
 - For Git-backed repositories, compare actual `working_branch` and actual HEAD commit against metadata `working_branch` and `last_commit_id` using non-mutating Git commands.
 - Record CodeGraph support from metadata and `.codegraph/` marker presence. If `.codegraph/` is absent, record `no-index` or `not-indexed` and do not initialize CodeGraph or run `codegraph sync`.
-- Stop before extended evidence gathering and add a blocking open question when project metadata is inaccessible, missing required repository fields, contradictory with the registry, stale in a way that affects evidence trust, branch mismatched, or CodeGraph metadata is inconsistent.
+- Stop before extended repository evidence gathering and add a blocking open question when project metadata is inaccessible, missing required repository fields, contradictory with the registry, stale in a way that affects source-evidence trust, branch mismatched, or CodeGraph metadata is inconsistent.
+- Do not let repository metadata blockers stop bounded durable-knowledge gateway retrieval when the knowledge base and `ks-what-is-helpful` gateway are accessible. Treat that retrieval as classification-only until source repository trust is restored.
 - When metadata is valid or a no-index fallback is applicable, carry compact preflight evidence into Source Context so planning and execution can trust the baseline without re-inferring it from conversation memory.
 
 ## Knowledge Gateway
@@ -45,6 +46,15 @@ Source context must record the neutral anchors, cross-stage discovery evidence, 
 Material non-authority durable context (`candidate`, `background`, or `blocked`) must stay visible when it relates to the user purpose, architecture, workflow, policy, API, persistence, validation, execution behavior, or a conflict. Record it as rationale, traceability, conflict evidence, or open-question input; do not promote it into a requirement unless the user resolves it or an approved durable-knowledge workflow later makes it authority. Candidate, background, and blocked evidence is non-shaping by default and remains non-shaping unless user resolution or promoted authority explicitly changes that state. Non-material non-authority context may be summarized as outside scope or omitted.
 
 When the gateway returns no notes that support the current user purpose, do not block solely for that absence. Record the query and evidence gap, analyze the user purpose directly, inspect current repository evidence where possible, and use Design interrogation only for unresolved decisions that repository evidence cannot answer.
+
+## WorkBundle Violation Registry
+
+For specifications whose project is `work-bundle` or whose scope updates WorkBundle skills, rules, workflow contracts, scripts, or orchestration behavior, inspect the WorkBundle violation registry for active violations related to the current specification scope after project metadata preflight and before finalizing Source Context.
+
+- Treat violation registry evidence as WorkBundle runtime/process state, not durable project knowledge, and do not use it as a shortcut around the approved durable-knowledge gateway.
+- Include related active violations in Source Context or Open Questions with violation ID, severity, deviation summary, related scope, required resolution, and expected review closure.
+- Treat exact-current-work WorkBundle conflicts as specification-owned when the current specification is already being created or repaired to address that same conflict; do not require separate new violation evidence solely for the same work item.
+- Related active violations are blocking Open Questions unless the user or accepted evidence resolves the violation for this specification scope. Non-related violation registry entries may be listed as irrelevant-with-reason or omitted.
 
 The specification is the first execution-chain artifact:
 
@@ -63,7 +73,8 @@ It must carry enough accepted context for planning and execution without future 
 - Inspect relevant note states and open-question watchpoints through the approved knowledge gateway when durable knowledge affects the scope.
 - Surface relevant draft, proposed, conflicting, stale, or missing-evidence context as uncertainty; do not convert it into requirements.
 - Include an `Open Questions` section. If relevant uncertainty exists, list ID, question or uncertainty, related scope, source, blocking yes/no, required resolution, and at least one feasible advised option. If none exists, state `None for this specification scope.`
-- Treat material unsettled evidence as blocking only when it affects requirements, architecture, workflow, policy, API, persistence, validation, execution behavior, or conflicts with user purpose.
+- Treat material unsettled evidence as blocking only when the unresolved decision affects requirements, architecture, workflow, policy, API, persistence, validation, execution behavior, review closure, or conflicts with user purpose. Evidence class or polarity alone does not make an Open Question blocking.
+- For WorkBundle project specifications, inspect related active violation registry evidence and carry matching violations into Source Context or Open Questions with review closure expectations.
 - Include a `Knowledge Base Update` section in every new or repaired specification.
 - In `Knowledge Base Update`, allow only these dispositions for new specs: `required`, `not-needed`, `blocked`.
 - In `Knowledge Base Update`, require `Expected durable conclusions`, `Evidence sources`, `Responsible follow-up`, `Blocks review/archive`, and `Rationale`.
@@ -121,7 +132,8 @@ Ask one question at a time, include the agent's recommended answer, and record t
 ## Hard Rules
 
 - Stop if the spec cannot be self-contained enough for planning.
-- Stop before extended evidence gathering when project metadata preflight reports missing required metadata, branch mismatch, stale baseline that affects evidence trust, registry contradiction, inaccessible target repository, or inconsistent CodeGraph state.
+- Stop before extended repository evidence gathering when project metadata preflight reports missing required metadata, branch mismatch, stale baseline that affects source-evidence trust, registry contradiction, inaccessible target repository, or inconsistent CodeGraph state.
+- Do not stop bounded durable-knowledge gateway retrieval solely because repository metadata preflight blocks source inspection, provided the gateway and knowledge base are accessible; record retrieval as classification-only until the blocker is resolved.
 - Stop if durable knowledge is needed but was not retrieved through `keep-summarizing`.
 - Stop before downstream implementation planning when `Quality gate: blocked` is recorded.
 - Do not implement source changes, edit application/test files, run migrations, apply patches, or execute plan tasks while creating a specification.
@@ -196,7 +208,7 @@ Final result: verified|blocked
 
 ## Validation
 
-Confirm the spec is self-contained, cites role-labeled source context, carries execution-relevant authority knowledge and repository evidence into the body, records project metadata preflight evidence or a blocking open question, surfaces material non-authority context without letting it shape requirements, records assumptions/open questions with advised options, includes Design interrogation evidence when unsupported or under-specified purpose required it, includes the required `Knowledge Base Update` section and no-update wording when applicable, records `Quality gate: verified|blocked` in the body, follows naming/location rules, and does not require downstream agents to read `.work-bundle/knowledge/`.
+Confirm the spec is self-contained, cites role-labeled source context, carries execution-relevant authority knowledge and repository evidence into the body, records project metadata preflight evidence or a blocking open question, still runs bounded gateway retrieval under repository metadata blockers when accessible, records related WorkBundle active violations when the scope matches them, surfaces material non-authority context without letting it shape requirements or automatically block solely by class/polarity, records assumptions/open questions with advised options, includes Design interrogation evidence when unsupported or under-specified purpose required it, includes the required `Knowledge Base Update` section and no-update wording when applicable, records `Quality gate: verified|blocked` in the body, follows naming/location rules, and does not require downstream agents to read `.work-bundle/knowledge/`.
 
 ## Runtime Rules
 

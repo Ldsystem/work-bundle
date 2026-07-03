@@ -216,6 +216,42 @@
       "prompt": "Execute downstream plan tasks from a verified specification that already carries accepted knowledge context.",
       "expected_output": "Selects execute-plan, uses context carried by the specification, plan, phase, task, and declared handoffs, does not run durable knowledge retrieval, does not read .work-bundle/knowledge/**, and does not require downstream knowledge-base lookup.",
       "files": []
+    },
+    {
+      "id": 37,
+      "prompt": "Execute a contract-decoupled phase where backend and frontend participants share a stable API contract and both participant handoffs have reached BAR-001.",
+      "expected_output": "Releases BAR-001 only after every participant has completed or blocked with executor-result handoffs, schedules the convergence owner after the barrier, validates against the common contract and accepted participant handoffs, records participants_complete_or_blocked true, and does not treat sibling in-progress implementation as pre-barrier validation authority.",
+      "files": []
+    },
+    {
+      "id": 38,
+      "prompt": "Create an implementation plan for a broad workflow change that can be expressed as one compact phase with a shared contract task, two disjoint branch tasks, and one convergence task.",
+      "expected_output": "Selects create-implementation-plan, prefers the compact one-phase structure, proves full spec-ID coverage, preserves exact paths, dependencies, write-scope separation, validation ownership, handoff requirements, common contract group metadata, barrier release criteria, and convergence ownership.",
+      "files": []
+    },
+    {
+      "id": 39,
+      "prompt": "Create a WorkBundle implementation specification for a scope that matches active violation registry entries.",
+      "expected_output": "Selects create-specification, inspects the WorkBundle violation registry without browsing .work-bundle/knowledge/**, includes related active violations as blocking Open Questions with severity, related scope, required resolution, and expected review closure, and treats exact-current-work conflicts as specification-owned when applicable.",
+      "files": []
+    },
+    {
+      "id": 40,
+      "prompt": "Review a completed WorkBundle plan whose source specification included active violation evidence and whose implementation passed unblocked validation.",
+      "expected_output": "Selects review-plan, validates implementation and handoff evidence, closes resolved specification-included violations with the approved lifecycle action before archive, records violation_closure evidence, does not delete evidence files, keeps unrelated violations untouched, and blocks archive if included violation closure cannot be completed.",
+      "files": []
+    },
+    {
+      "id": 41,
+      "prompt": "Create an implementation specification when project source metadata is stale but the durable-knowledge gateway is accessible.",
+      "expected_output": "Selects create-specification, blocks trusted source inspection and downstream planning on the metadata blocker, still runs bounded knowledge gateway retrieval, classifies retrieved supporting, opposing, constraining, candidate, background, blocked, and irrelevant notes before use, keeps retrieval read/classification-only, and does not let the stale source baseline alone imply durable note staleness.",
+      "files": []
+    },
+    {
+      "id": 42,
+      "prompt": "Create and later review a specification that carries material candidate or opposite evidence in Open Questions.",
+      "expected_output": "Records material non-authority or opposite evidence in Open Questions with an explicit blocking yes/no classification, does not convert non-authority evidence into requirements solely because it is relevant, and during review settles each material item as resolved, no longer applicable, delegated through approved ks-* follow-up, still blocked, or explicitly non-blocking with rationale before archive.",
+      "files": []
     }
   ],
   "v4_evals": [

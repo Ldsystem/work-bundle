@@ -50,6 +50,36 @@ validation:
       result: passed | failed | skipped
       note: "Failure reason or skip reason only."
 
+contract_decoupling:
+  common_contract_group: CG-001
+  common_contract_paths:
+    - path/to/contract.md
+  validation_scope:
+    - common-contract
+    - accepted-prior-handoffs
+    - task-local-files
+  forbidden_peer_validation: respected | violated | not-applicable
+  note: "Only include when needed."
+
+barrier:
+  id: BAR-001
+  role: participant | convergence-owner
+  readiness: reached | blocked | not-applicable
+  participants_complete_or_blocked: true | false | null
+  note: "Only include when needed."
+
+convergence:
+  owner: task-id-or-null
+  status: ready | completed | blocked | not-applicable
+  checks:
+    - "exact command or inspection"
+
+violation_closure:
+  status: not-applicable | carried-to-review | completed | blocked
+  evidence:
+    - violation-id-or-path
+  note: "Review-only closure evidence; executors do not delete evidence."
+
 unresolved:
   - "Only include blockers or issues that remain."
 
@@ -109,6 +139,10 @@ allocation_evidence:
 - `id`, `type`, `status`, `project`, `created_at`, `related`, and `result` are always required.
 - `changes.files` is required when files, symbols, artifacts, schemas, commands, or docs changed or were inspected as the task output.
 - `validation.commands` is required when any command, test, lint, inspection, or manual verification was run or intentionally skipped.
+- `contract_decoupling` is required when a task is marked contract-decoupled or depends on a common contract group.
+- `barrier` is required when a task is a barrier participant or convergence owner.
+- `convergence` is required when the task owns post-barrier joint debug, integration checks, or cross-branch validation.
+- `violation_closure` is required when a review task closes or carries specification-included violation evidence.
 - `unresolved` is included only when blockers or issues remain.
 - `task_fit_check` is required for completed and partial task results. It records the assigned task, result `clean|repaired|unresolved|skipped`, artifacts checked, and meaningful findings.
 - `repository` is required when repository preflight, accepted baseline, changed paths, or blocker state matters for continuation.
@@ -145,6 +179,9 @@ Compact handoffs must not weaken safety gates:
 - Validation evidence must list exact commands or inspections and their result.
 - Task-fit evidence must prove the result was checked against the related specification, root plan, parent phase, and assigned task.
 - Executor-result handoffs must not retrieve or write `.work-bundle/knowledge/`.
+- Contract-decoupled handoffs must show validation against the common contract and accepted prior handoffs, not sibling in-progress implementation.
+- Barrier handoffs must show whether the participant reached the barrier or blocked before convergence work is scheduled.
+- Violation closure handoffs must use review-owned lifecycle evidence and must not delete violation evidence files.
 
 ## Format Guidance
 

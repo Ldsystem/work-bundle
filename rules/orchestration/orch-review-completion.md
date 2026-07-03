@@ -22,6 +22,12 @@ Govern final review, knowledge-update disposition, delegate-return-resume for st
 - Validate that executor-result handoffs contain complete and consistent compact CodeGraph evidence when source-code work required it: `root`, `applicable`, `up_to_date`, required fallback or blocker facts, and, for indexed source-code work, index presence, sync/query or explored-symbol evidence, post-change sync when indexed source changed, and final graph impact/up-to-date result.
 - Validate that executor-result handoffs contain complete and consistent `delegation_evidence` when task, phase, or plan ownership was delegated, including delegation surface, `visible_reference` when available, `internal_spawn_used_for_task_delegation: false`, internal helper-worker usage if any, and fallback or blocker reason when visible delegation was unavailable or unsafe.
 - Reject completion when applicable CodeGraph, delegation, validation, blocker, repository/preflight, or task-fit evidence is missing, incomplete, stale, or contradictory to the implementation scope, target repository state, or execution mode.
+- Validate specification-included violation evidence before archive. Close included violations only during passing, unblocked review when the reviewed implementation resolves the behavior and archive is otherwise allowed.
+- Use approved violation lifecycle operations to close resolved specification-included violations as `completed`; do not delete violation evidence files or close unrelated evidence.
+- Keep review blocked or failed when a specification-included blocking violation remains unresolved, cannot be closed, lacks lifecycle evidence, or contradicts the reviewed implementation.
+- Settle specification-carried unsettled notes, opposite evidence, candidate/background evidence, and other material non-authority inputs before archive when they affect requirements, workflow, policy, validation, execution behavior, or durable knowledge disposition.
+- Record one settlement result for each material unsettled item: resolved by implementation, no longer applicable, promoted or delegated through approved `ks-*` follow-up, still blocked, or explicitly non-blocking with rationale.
+- Block archive when material specification-carried unsettled evidence remains unresolved or lacks settlement evidence.
 - Include `Knowledge Base Update` disposition in specifications and carry disposition, expected durable conclusions, evidence sources, and follow-up path into plans, tasks, and handoff criteria.
 - Evaluate `Knowledge Base Update` disposition during review from the specification, plan, implementation evidence, validation evidence, and approved `ks-*` delegate-return evidence; do not require executor-result handoffs to carry durable-knowledge recommendations.
 - assess validated implementation and review evidence for structural updates.
@@ -61,6 +67,9 @@ Delegate-return-resume protocol:
 - Do not treat missing, incomplete, contradictory, or blocked delegation evidence as completed or not-needed.
 - Do not treat missing, incomplete, contradictory, or blocked CodeGraph sync/query/post-change/fallback evidence as completed when the completed task required CodeGraph evidence.
 - Do not treat missing, incomplete, contradictory, or blocked visible delegation evidence as completed when plan, phase, or task ownership was delegated.
+- Do not close specification-included violations before review passes, while review is blocked, or before the implementation evidence shows the included violation is resolved.
+- Do not archive when specification-included violation closure is incomplete or when material specification-carried evidence remains unsettled.
+- Do not delete violation evidence files while closing review-included violations; use lifecycle archive or status operations only.
 - Do not fail compact executor-result handoffs merely because Markdown section headings are absent when the applicable structured evidence is present and consistent.
 - Do not require active orchestration handoffs as review inputs; continuation state comes from active specifications, plans, phases, tasks, indexes, and executor-result handoffs.
 - Do not require or accept executor-result durable-knowledge advice fields such as `suggested_durable_conclusions`, `durable_candidate_facts`, `recommended_orchestration_review`, `recommended_next_actions`, `strategy_advice`, or `knowledge_persistence`.
@@ -78,10 +87,12 @@ Delegate-return-resume protocol:
 - Confirm active orchestration handoff input was not required.
 - Confirm structural updates followed delegate-return-resume and returned complete evidence before archive resumed.
 - Confirm final disposition is one of `completed`, `not-needed`, `blocked`, or `required` with supporting evidence.
+- Confirm specification-included violation evidence is either closed as `completed` through lifecycle evidence during passing unblocked review, or blocks/fails review when unresolved.
+- Confirm material specification-carried unsettled evidence has a settlement result before archive.
 - Confirm archive occurred only on success with disposition `completed` or `not-needed`.
 - Confirm failure paths produced a repair specification and reported blocked or required disposition without archival.
 - Confirm indexes under `.work-bundle/orchestration/spec/`, `plan/`, and `handoff/` were refreshed after successful archive.
 
 ## On Violation
 
-Stop review or archive, report the missing handoff, disposition, CodeGraph evidence, or delegation evidence, keep active artifacts in place, and resume only after the missing or contradictory evidence is repaired, disposition evaluation completes with valid delegated return evidence, or a repair specification path is established.
+Stop review or archive, report the missing handoff, disposition, CodeGraph evidence, delegation evidence, violation closure evidence, or unsettled-evidence settlement, keep active artifacts in place, and resume only after the missing or contradictory evidence is repaired, disposition evaluation completes with valid delegated return evidence, included violations are closed or explicitly blocking, unsettled material is settled, or a repair specification path is established.
