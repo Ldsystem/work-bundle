@@ -472,12 +472,17 @@ def test_violation_evaluation_stops_at_visible_workbundle_relatedness() -> None:
     assert "mandatory chain-of-thought output" in rule
 
 
-def test_violation_evidence_depends_on_evaluation_and_keeps_storage_boundary() -> None:
+def test_violation_evidence_calls_evaluation_and_keeps_storage_boundary() -> None:
     evidence = (REPO_ROOT / "rules/work-bundle/wb-violation-evidence.md").read_text(encoding="utf-8")
     index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
 
-    assert "requires:\n  - wb-violation-evaluation" in evidence
-    assert "requires:\n      - wb-violation-evaluation" in index
+    trigger = "the Work Bundle rule is visible in AGENTS.md and any conflict, confliction, violation, contradiction, or user correction occurs"
+    assert trigger in evidence
+    assert trigger in index
+    assert "requires: []" in evidence
+    assert "requires: []" in index
+    assert "immediately call `wb-violation-evaluation`" in evidence
+    assert "Exit the violation evidence workflow without recording evidence" in evidence
     assert "classifies the first-observed finding as `work-bundle-scoped` or `mixed`" in evidence
     assert "Do not expand evidence capture into evaluation, root-cause investigation, or exhaustive workflow-chain tracing" in evidence
     assert "project-scoped findings from `wb-violation-evaluation` as blockers" in evidence

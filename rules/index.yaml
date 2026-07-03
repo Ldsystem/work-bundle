@@ -283,9 +283,8 @@ rules:
   - id: wb-violation-evidence
     path: work-bundle/wb-violation-evidence.md
     applies_when:
-      - wb-violation-evaluation classifies an observed conflict, violation, error, failed validation, contradictory workflow behavior, user interruption, or user correction as work-bundle-scoped or mixed
-      - visible first-observed evidence must be stored after evaluation identifies a WorkBundle skill, rule, script, workflow, orchestration contract, handoff contract, or toolkit execution surface deviation
+      - the Work Bundle rule is visible in AGENTS.md and any conflict, confliction, violation, contradiction, or user correction occurs
+      - the Work Bundle rule is visible in AGENTS.md and the session needs a visible entry point for violation evaluation and first-observed evidence routing
     enforcement: must
     load: always
-    requires:
-      - wb-violation-evaluation
+    requires: []
