@@ -229,22 +229,26 @@ rules:
     enforcement: must
     load: conditional
     requires: []
+  - id: wb-project-context-preflight
+    path: work-bundle/wb-project-context-preflight.md
+    applies_when:
+      - a user request starts WorkBundle-guided work for a project repository
+      - task requires source-code browsing, inspection, review, planning, repair, refactor, migration, or editing in a WorkBundle-registered project
+      - task requires resolving project source repositories, work directories, project metadata, or repository structure before acting
+      - orchestration workflow resolves project metadata before specification evidence, implementation planning, execution, review, or project scope updates
+      - repository preflight evaluates source repositories from `.work-bundle/project.yaml`
+      - agent checks branch baseline, commit baseline, registry locator, or CodeGraph support for a source repository
+    enforcement: must
+    load: conditional
+    requires: []
   - id: wb-project-registry
     path: work-bundle/wb-project-registry.md
     applies_when:
       - task.registers_project
+      - task.registers_source_repository
       - task.creates_workspace_slug
       - task.resolves_project_location
       - task.resolves_knowledge_base_location
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: wb-project-context-preflight
-    path: work-bundle/wb-project-context-preflight.md
-    applies_when:
-      - orchestration workflow resolves project metadata before specification evidence, implementation planning, execution, review, or project scope updates
-      - repository preflight evaluates source repositories from `.work-bundle/project.yaml`
-      - agent checks branch baseline, commit baseline, registry locator, or CodeGraph support for a source repository
     enforcement: must
     load: conditional
     requires: []

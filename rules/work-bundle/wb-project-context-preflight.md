@@ -1,6 +1,9 @@
 ---
 id: wb-project-context-preflight
 applies_when:
+  - a user request starts WorkBundle-guided work for a project repository
+  - task requires source-code browsing, inspection, review, planning, repair, refactor, migration, or editing in a WorkBundle-registered project
+  - task requires resolving project source repositories, work directories, project metadata, or repository structure before acting
   - orchestration workflow resolves project metadata before specification evidence, implementation planning, execution, review, or project scope updates
   - repository preflight evaluates source repositories from `.work-bundle/project.yaml`
   - agent checks branch baseline, commit baseline, registry locator, or CodeGraph support for a source repository
@@ -13,14 +16,19 @@ requires: []
 
 ## Purpose
 
-Require agents to establish project-local repository context before using repository evidence, modifying source files, delegating execution, or reviewing implementation work.
+Require agents to establish project-local workspace structure and repository state from `$project_root/.work-bundle/project.yaml` before using repository evidence, modifying source files, delegating execution, or reviewing implementation work.
 
 ## Must
 
+- Resolve `work_bundle_config_root` as `~/.work-bundle/`.
+- Read `$work_bundle_config_root/bootstrap.yaml` before resolving registry paths.
 - Resolve the project registry path from `$work_bundle_config_root/bootstrap.yaml` field `project_registry` when registry access is required.
-- Treat `$project_root/.work-bundle/project.yaml` as the authority for source repository working state, operation policy, branch baseline, commit baseline, and CodeGraph state.
-- Treat `$work_bundle_config_root/registry/projects.yaml` as a locator only; it may identify source repository `id`, `path`, `work_dir`, `remote`, and `git_repository`, but must not own `working_branch`, `last_commit_id`, `baseline_status`, `operation_policy`, or CodeGraph sync state.
+- Identify the active project by explicit user target, workspace slug, alias, current project root, or the project metadata file at `$project_root/.work-bundle/project.yaml`.
+- Treat `$project_root/.work-bundle/project.yaml` as the authority for workspace structure, source repository roles, source repository working state, operation policy, branch baseline, commit baseline, and CodeGraph state.
+- Treat `$work_bundle_config_root/registry/projects.yaml` as a locator only; it may identify workspace slug, project location, knowledge root, and source repository `id`, `path`, `work_dir`, `remote`, and `git_repository`, but must not own `working_branch`, `last_commit_id`, `baseline_status`, `operation_policy`, or CodeGraph sync state.
+- Establish a compact project-structure map from project metadata before source inspection, planning, or edits, including top-level directories and task-relevant application, configuration, rule, skill, orchestration, knowledge, or prototype roots.
 - Inspect every applicable `source_repositories[]` entry before specification evidence collection, implementation planning, execution, review, and project-scope metadata updates.
+- Treat each `source_repositories[]` entry as a separate source boundary for preflight, CodeGraph checks, edits, validation, and delegation.
 - For Git-backed repositories, compare actual `git branch --show-current` and `git rev-parse HEAD` evidence against `working_branch` and `last_commit_id` before trusting source evidence or editing files.
 - Block on branch mismatch, missing required repository metadata, stale commit baseline not explained by accepted executor-result handoffs, inaccessible repositories, unresolved Git status, or unexplained dirty status.
 - Preserve accepted-handoff baseline semantics: only validated executor-result handoffs may explain expected dirty worktree changes during plan execution.
@@ -30,7 +38,11 @@ Require agents to establish project-local repository context before using reposi
 ## Must Not
 
 - Do not infer active source repositories from conversation memory when project metadata or the bootstrap-resolved registry is available.
+- Do not treat the shell working directory as the full project boundary when project metadata lists additional source repositories.
+- Do not inspect broad source trees before reading project metadata and establishing the compact project-structure map.
 - Do not store branch baseline, commit baseline, operation policy, or CodeGraph sync state in the global project registry.
+- Do not write project registry state under `work_bundle_root` or `project_root`.
+- Do not load durable knowledge files solely to satisfy project-structure awareness.
 - Do not let `prefer_subagent` bypass project context preflight, branch baseline checks, dependency checks, write-scope checks, validation, handoff, or single-agent fallback rules.
 - Do not run destructive Git operations such as cleanup, reset, stash, or force push to satisfy preflight.
 - Do not initialize CodeGraph for a repository root that lacks `.codegraph/`.
@@ -39,10 +51,11 @@ Require agents to establish project-local repository context before using reposi
 
 - Confirm project metadata was read from `$project_root/.work-bundle/project.yaml` before repository evidence collection, planning, execution, review, or project-scope metadata update.
 - Confirm registry access, when needed, used the bootstrap-resolved `project_registry` path.
+- Confirm the active project, workspace structure, source repository roles, and repository boundaries were identified from project metadata.
 - Confirm Git-backed repositories recorded expected branch, actual branch, expected commit, actual commit, branch status, commit status, and accepted-baseline status.
 - Confirm CodeGraph evidence records indexed or `no-index` state by repository and never initializes missing indexes.
 - Confirm any bypass or fallback records the concrete reason in the task, phase, review, or executor-result handoff.
 
 ## On Violation
 
-Stop before source investigation, file modification, delegation, review archive, or project metadata update. Report the missing metadata, registry mismatch, branch mismatch, stale baseline, dirty worktree, unresolved Git status, inaccessible repository, or CodeGraph policy violation, then rerun preflight after repair.
+Stop before source investigation, file modification, delegation, review archive, or project metadata update. Report the missing metadata, registry mismatch, unresolved project structure, branch mismatch, stale baseline, dirty worktree, unresolved Git status, inaccessible repository, or CodeGraph policy violation, then rerun preflight after repair.
