@@ -7,6 +7,7 @@ design/
 .DS_Store
 
 # IDE / editors
+.air/
 .idea/
 .vscode/
 *.swp
