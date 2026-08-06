@@ -39,9 +39,10 @@ PROJECT_METADATA_REQUIRED_FIELDS = [
 ]
 PROJECT_METADATA_VERSION = '2'
 SOURCE_REPOSITORY_ROLES = {
-    'registry': 'Locator only: stable repository id, path, work_dir, remote, and Git capability.',
-    'project_metadata': 'Working-state authority: branch baseline, commit baseline, operation policy, and CodeGraph state.',
+    'registry': 'Locator only: stable repository id, path, checkout_role, work_dir, remote, and Git capability.',
+    'project_metadata': 'Working-state authority: checkout role, branch baseline, commit baseline, operation policy, and CodeGraph state.',
 }
+CHECKOUT_ROLES = frozenset({'truth', 'development', 'auxiliary'})
 BRANCH_CHECK_REQUIRED_BEFORE = [
     'specification_evidence',
     'implementation_planning',
@@ -146,10 +147,21 @@ def _source_repository_state_from_locator(locator: dict[str, object], fallback_s
     source_id = str(locator.get('id') or state['id'])
     state['id'] = source_id
     state['work_dir'] = bool(locator.get('work_dir', False))
+    state['checkout_role'] = _checkout_role(locator, source_id)
     locator_remote = str(locator.get('remote') or '')
     if locator_remote:
         state['remote'] = locator_remote
     return state
+
+
+def _checkout_role(source: dict[str, object], source_id: str = '') -> str:
+    explicit = str(source.get('checkout_role') or '')
+    if explicit:
+        return explicit
+    resolved_id = source_id or str(source.get('id') or '')
+    if resolved_id.endswith('-main'):
+        return 'truth'
+    return 'development' if bool(source.get('work_dir')) else 'auxiliary'
 
 
 def _registry_source_repository_states(project_root: Path, name: str | None, registry_entry_data: dict[str, object] | None) -> list[dict[str, object]]:
@@ -174,6 +186,7 @@ def _source_repositories_block(repositories: list[dict[str, object]]) -> str:
         lines.extend([
             f"  - id: {_yaml_string(repo.get('id'))}",
             f"    path: {_yaml_string(repo.get('path'))}",
+            f"    checkout_role: {_yaml_string(repo.get('checkout_role') or _checkout_role(repo))}",
             f"    work_dir: {str(bool(repo.get('work_dir'))).lower()}",
             f"    remote: {_yaml_string(repo.get('remote'))}",
             f"    git_repository: {str(bool(repo.get('git_repository'))).lower()}",
@@ -316,6 +329,7 @@ def _source_repository_state(project_root: Path, slug: str | None = None) -> dic
     return {
         'id': _source_repository_id(repo_slug),
         'path': str(resolved),
+        'checkout_role': 'truth',
         'work_dir': True,
         'remote': _git_remote(resolved) if git_repository else '',
         'git_repository': git_repository,
@@ -605,6 +619,9 @@ def _metadata_v2_failures(project_root: Path, metadata_text: str, registry_entry
         actual_git = _is_git_repository(repo_path)
         if repo.get('id') in {'', None}:
             failures.append(f'{prefix}.id_missing')
+        checkout_role = str(repo.get('checkout_role') or '')
+        if checkout_role not in CHECKOUT_ROLES:
+            failures.append(f'{prefix}.checkout_role_invalid')
         if registry_ids and str(repo.get('id')) not in registry_ids:
             failures.append(f'{prefix}.registry_project_mismatch')
         if git_repository != actual_git:
@@ -741,10 +758,23 @@ def _merge_metadata_source_repositories(current: list[dict[str, object]], desire
         if matched is None:
             merged.append(desired_repo)
             continue
-        preserved = dict(matched)
-        for key in ('id', 'path', 'work_dir', 'remote', 'git_repository'):
-            preserved[key] = desired_repo.get(key)
-        merged.append(preserved)
+        refreshed = dict(matched)
+        for key in (
+            'id',
+            'path',
+            'checkout_role',
+            'work_dir',
+            'remote',
+            'git_repository',
+            'working_branch',
+            'branch_required',
+            'branch_check',
+            'last_commit_id',
+            'baseline_status',
+            'codegraph',
+        ):
+            refreshed[key] = desired_repo.get(key)
+        merged.append(refreshed)
     return merged
 
 
@@ -1035,6 +1065,22 @@ def project_failures(data: dict, strict: bool = True, include_roles: bool = Fals
     return failures
 
 
+def _refresh_registered_project_metadata(current: str, rendered: str) -> str:
+    current_repositories = _metadata_source_repositories(current)
+    desired_repositories = _metadata_source_repositories(rendered)
+    merged_repositories = _merge_metadata_source_repositories(current_repositories, desired_repositories)
+    lines = current.splitlines()
+    for key, value in (
+        ('metadata_version', PROJECT_METADATA_VERSION),
+        ('authority', 'canonical'),
+        ('project_root', _yaml_scalar(rendered, 'project_root')),
+    ):
+        lines, _ = _replace_or_append_scalar(lines, key, value)
+    lines, _ = _replace_top_level_block(lines, _source_repository_roles_block(), 'source_repository_roles')
+    lines, _ = _replace_top_level_block(lines, _source_repositories_block(merged_repositories), 'source_repositories')
+    return '\n'.join(lines).rstrip() + '\n'
+
+
 def apply_project(
     project_root: Path,
     init_git: bool = True,
@@ -1042,6 +1088,7 @@ def apply_project(
     name: str | None = None,
     force: bool = False,
     scope: str = 'init',
+    registry_entry_data: dict[str, object] | None = None,
     return_details: bool = False,
 ) -> list[str] | tuple[list[str], dict[str, object]]:
     wb = project_root / '.work-bundle'
@@ -1095,7 +1142,9 @@ def apply_project(
     ):
         changed.append(str(rule_index_path))
     project_metadata_path = project_root / '.work-bundle/project.yaml'
-    project_metadata = _render_project_metadata(project_root, name)
+    project_metadata = _render_project_metadata(project_root, name, registry_entry_data)
+    if registry_entry_data is not None and project_metadata_path.is_file():
+        project_metadata = _refresh_registered_project_metadata(read(project_metadata_path), project_metadata)
     if write(
         project_metadata_path,
         project_metadata,
@@ -1129,11 +1178,13 @@ def apply_project(
 
 
 def repair_project(project_root: Path, force: bool = False, return_details: bool = False) -> list[str] | tuple[list[str], dict[str, object]]:
+    registry_entry_data, _ = find_registry_entry(project_root)
     changed, agents_result = apply_project(
         project_root,
         init_git=False,
         force=force,
         scope='init' if force else 'migrate',
+        registry_entry_data=registry_entry_data,
         return_details=True,
     )
     data = inspect_project(project_root)
@@ -1144,6 +1195,13 @@ def repair_project(project_root: Path, force: bool = False, return_details: bool
             changed.append(str(metadata_path))
     if migrate_project_metadata_v2(project_root):
         changed.append(str(metadata_path))
+    if registry_entry_data is not None:
+        metadata_changed, refreshed_path, _ = sync_project_metadata_from_registry_entry(
+            registry_entry_data,
+            fallback_root=project_root,
+        )
+        if metadata_changed:
+            changed.append(str(refreshed_path))
     contract_changed, _, _ = _retire_legacy_rules_contract(project_root)
     changed.extend(contract_changed)
     if force:
@@ -1294,6 +1352,7 @@ def _render_projects(projects: list[dict[str, object]]) -> str:
             source_id = str(source.get("id", "") or _source_repository_id(str(project.get("slug", "project"))))
             lines.append(f"      - id: {source_id}")
             lines.append(f"        path: {source.get('path', '')}")
+            lines.append(f"        checkout_role: {_checkout_role(source, source_id)}")
             lines.append(f"        work_dir: {str(bool(source.get('work_dir', index == 0))).lower()}")
             remote = str(source.get("remote", ""))
             lines.append(f'        remote: "{remote}"' if remote else '        remote: ""')
@@ -1318,16 +1377,23 @@ def _normalize_registry_path(value: object) -> str:
     return str(Path(raw).expanduser().resolve())
 
 
-def _normalize_source_repositories(sources: object) -> list[tuple[str, bool, str, str, str]]:
+def _normalize_source_repositories(sources: object) -> list[tuple[str, str, bool, str, str, str]]:
     if not isinstance(sources, list):
         return []
-    normalized: list[tuple[str, bool, str]] = []
+    normalized: list[tuple[str, str, bool, str, str, str]] = []
     for source in sources:
         if not isinstance(source, dict):
             continue
         raw_path = source.get("path")
         path = str(Path(str(raw_path)).expanduser().resolve()) if raw_path else ""
-        normalized.append((path, bool(source.get("work_dir")), str(source.get("remote", "")), str(source.get("id", "")), str(bool(source.get("git_repository")))))
+        normalized.append((
+            path,
+            _checkout_role(source),
+            bool(source.get("work_dir")),
+            str(source.get("remote", "")),
+            str(source.get("id", "")),
+            str(bool(source.get("git_repository"))),
+        ))
     return sorted(normalized)
 
 
@@ -1455,6 +1521,7 @@ def registry_entry(project_root: Path, name: str | None = None, aliases: list[st
         "source_repositories": [{
             "id": repo["id"],
             "path": str(resolved),
+            "checkout_role": "truth",
             "work_dir": True,
             "remote": repo["remote"],
             "git_repository": repo["git_repository"],
@@ -1756,6 +1823,7 @@ def cmd_init_project(args: list[str]) -> int:
         'dry_run': parsed.dry_run,
     }
     if not parsed.dry_run:
+        existing_entry, _ = find_registry_entry(project_root)
         try:
             changed, agents_result = apply_project(
                 project_root,
@@ -1764,6 +1832,7 @@ def cmd_init_project(args: list[str]) -> int:
                 name=parsed.name,
                 force=parsed.force,
                 scope='init',
+                registry_entry_data=existing_entry,
                 return_details=True,
             )
         except ReferenceAssetError as exc:

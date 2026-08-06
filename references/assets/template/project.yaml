@@ -24,12 +24,13 @@ operation_policy:
     forbid_operations: [reset --hard, clean -fd, push --force]
 
 source_repository_roles:
-  registry: "Locator only: stable repository id, path, work_dir, remote, and Git capability."
-  project_metadata: "Working-state authority: branch baseline, commit baseline, operation policy, and CodeGraph state."
+  registry: "Locator only: stable repository id, path, checkout_role, work_dir, remote, and Git capability."
+  project_metadata: "Working-state authority: checkout role, branch baseline, commit baseline, operation policy, and CodeGraph state."
 
 source_repositories:
   - id: <stable-repository-id>
     path: <absolute-path-to-source-repository>
+    checkout_role: truth
     work_dir: true
     remote: ""
     git_repository: true

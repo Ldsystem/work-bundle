@@ -37,6 +37,7 @@ PROJECT_REGISTRY_ENTRY_FIELDS = (
 PROJECT_REGISTRY_SOURCE_FIELDS = (
     "id",
     "path",
+    "checkout_role",
     "work_dir",
     "remote",
     "git_repository",
@@ -107,8 +108,8 @@ def _import_wb_project():
 def _cleanup_wb_project_modules() -> None:
     if sys.path and sys.path[0] == str(REPO_ROOT / "scripts" / "work-bundle"):
         sys.path.pop(0)
-    sys.modules.pop("project", None)
-    sys.modules.pop("core", None)
+    for module_name in ("project", "bootstrap_config", "core"):
+        sys.modules.pop(module_name, None)
 
 
 def _init_managed_text_files(project: Path) -> list[Path]:
@@ -500,7 +501,14 @@ def test_registry_parser_tracks_projects_template_schema(tmp_path: Path) -> None
             "knowledge_root": "/tmp/project/.work-bundle/knowledge",
             "aliases": ["demo", "sample"],
             "source_repositories": [
-                {"id": "demo-main", "path": "/tmp/project", "work_dir": True, "remote": "origin", "git_repository": True},
+                {
+                    "id": "demo-main",
+                    "path": "/tmp/project",
+                    "checkout_role": "truth",
+                    "work_dir": True,
+                    "remote": "origin",
+                    "git_repository": True,
+                },
             ],
             "status": "active",
             "updated_at": "2026-06-11",
@@ -854,6 +862,102 @@ def test_validate_project_reports_stale_metadata_baseline(tmp_path: Path) -> Non
 
     assert "WB_PROJECT_METADATA_INVALID" in data["failures"]
     assert "source_repositories[0].baseline_status_stale" in data["failures"]
+
+
+def test_force_refresh_preserves_truth_and_development_checkouts(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    development = tmp_path / "project-development"
+    development.mkdir()
+    git(development, "init", "-q", "-b", "feature/demo")
+    git(development, "config", "user.email", "test@example.com")
+    git(development, "config", "user.name", "Test")
+    (development / "README.md").write_text("# Development\n", encoding="utf-8")
+    git(development, "add", "README.md")
+    git(development, "commit", "-m", "chore: seed development")
+
+    registry_path = config_root / "registry" / "projects.yaml"
+    registry_path.write_text(
+        "\n".join(
+            [
+                "projects:",
+                "  - slug: demo",
+                "    name: demo",
+                f"    work_bundle_root: {project.resolve() / '.work-bundle'}",
+                f"    knowledge_root: {project.resolve() / '.work-bundle' / 'knowledge'}",
+                "    aliases: []",
+                "    source_repositories:",
+                "      - id: demo-main",
+                f"        path: {project.resolve()}",
+                "        checkout_role: truth",
+                "        work_dir: false",
+                '        remote: ""',
+                "        git_repository: true",
+                "      - id: demo-development",
+                f"        path: {development.resolve()}",
+                "        checkout_role: development",
+                "        work_dir: true",
+                '        remote: ""',
+                "        git_repository: true",
+                "    status: active",
+                "    updated_at: 2026-01-01",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    metadata_path = project / ".work-bundle/project.yaml"
+    metadata_path.write_text(
+        metadata_path.read_text(encoding="utf-8").replace(
+            "operation_policy:\n",
+            "custom_user_field: keep-me\n\noperation_policy:\n",
+        ),
+        encoding="utf-8",
+    )
+
+    refreshed = run_wb(config_root, "init-project", str(project), "--name", "demo", "--force")
+    assert refreshed.returncode == 0, refreshed.stdout + refreshed.stderr
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    wb_project = _import_wb_project()
+    try:
+        repositories = wb_project._metadata_source_repositories(metadata_text)
+    finally:
+        _cleanup_wb_project_modules()
+
+    assert [repo["id"] for repo in repositories] == ["demo-main", "demo-development"]
+    assert [repo["checkout_role"] for repo in repositories] == ["truth", "development"]
+    assert repositories[0]["working_branch"] == "main"
+    assert repositories[1]["working_branch"] == "feature/demo"
+    assert repositories[1]["last_commit_id"] == git(development, "rev-parse", "HEAD")
+    assert "custom_user_field: keep-me" in metadata_text
+
+
+def test_doctor_repair_refreshes_all_registered_checkout_baselines(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    metadata_path = project / ".work-bundle/project.yaml"
+    recorded_head = git(project, "rev-parse", "HEAD")
+    (project / "README.md").write_text("# Advanced\n", encoding="utf-8")
+    git(project, "add", "README.md")
+    git(project, "commit", "-m", "chore: advance truth branch")
+    actual_head = git(project, "rev-parse", "HEAD")
+    assert recorded_head != actual_head
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    metadata_lines = metadata_text.splitlines()
+    baseline_index = next(index for index, line in enumerate(metadata_lines) if line.strip().startswith("last_commit_id:"))
+    metadata_lines[baseline_index] = f"    last_commit_id: {'0' * 40}"
+    metadata_path.write_text("\n".join(metadata_lines) + "\n", encoding="utf-8")
+
+    diagnosed = run_wb(config_root, "doctor-project", str(project))
+    assert diagnosed.returncode == 1
+    assert "source_repositories[0].baseline_status_stale" in json.loads(diagnosed.stdout)["failures"]
+
+    repaired = run_wb(config_root, "doctor-project", str(project), "--repair")
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    repair_data = json.loads(repaired.stdout)
+    assert str(metadata_path) in repair_data["changed_files"]
+    repaired_baseline = repair_data["project_source_repositories"][0]["last_commit_id"]
+    assert repaired_baseline != "0" * 40
+    assert git(project, "merge-base", "--is-ancestor", repaired_baseline, git(project, "rev-parse", "HEAD")) == ""
+    assert repair_data["project_source_repositories"][0]["checkout_role"] == "truth"
 
 
 def test_migrate_project_upgrades_v1_metadata_and_preserves_unknown_fields(tmp_path: Path) -> None:

@@ -68,7 +68,9 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 - Register every initialized project to `projects.yaml` as a new workspace slug or an existing workspace slug.
 - Derive the workspace slug from `--name` when provided; otherwise from the project root directory name (normalized lowercase alphanumeric with hyphens).
 - On slug or project-root match, merge registry entries and preserve existing `aliases` and `source_repositories` unless explicitly replaced.
-- Keep the registry locator-oriented. Registry `source_repositories` entries contain only stable `id`, `path`, `work_dir`, `remote`, and `git_repository`; they do not own `working_branch`, `last_commit_id`, `baseline_status`, `operation_policy`, or CodeGraph sync state.
+- Keep the registry locator-oriented. Registry `source_repositories` entries contain stable `id`, `path`, `checkout_role`, `work_dir`, `remote`, and `git_repository`; they do not own `working_branch`, `last_commit_id`, `baseline_status`, `operation_policy`, or CodeGraph sync state.
+- Model checkouts independently. A repository family may have a `checkout_role: truth` main checkout on its truth branch and a separate `checkout_role: development` worktree on a development branch. `work_dir` controls write preference; it does not imply that the checkout is the truth source.
+- Preserve every registered checkout and its role during initialize, force refresh, doctor repair, registration, and migration. Refresh each checkout's branch and commit evidence from its own path; never collapse a multi-checkout project to the command's current directory.
 - When registering a new repository to an existing workspace slug, update both the bootstrap-resolved registry and the workspace `.work-bundle/project.yaml`: append the locator to registry `source_repositories`, then add or refresh the corresponding project metadata `source_repositories[]` entry with mechanical Git and CodeGraph state.
 - Carry a short role description in both registry output/templates and project metadata: the registry is locator-only; project metadata is the working-state authority for branch baseline, commit baseline, operation policy, and CodeGraph state.
 - Ask for the workspace slug decision only when it is missing and blocking.
@@ -79,7 +81,8 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 - Keep `.work-bundle/project.yaml` as the project-local authority for operation policy, source repository working state, branch policy, Git baseline, and CodeGraph state.
 - Render `source_repository_roles` describing the registry locator role and project metadata working-state authority role.
 - Render `operation_policy.project_files` with non-destructive file operations and `operation_policy.git` with allowed read operations, permissive stage/commit/pull operations, and forbidden destructive operations including `reset --hard`, `clean -fd`, and `push --force`.
-- Render `source_repositories[]` with stable `id`, absolute `path`, `work_dir`, `remote`, `git_repository`, `working_branch`, `branch_required`, `branch_check.required_before`, `branch_check.on_mismatch: stop`, `last_commit_id`, `baseline_status`, and nested `codegraph`.
+- Render `source_repositories[]` with stable `id`, absolute `path`, `checkout_role`, `work_dir`, `remote`, `git_repository`, `working_branch`, `branch_required`, `branch_check.required_before`, `branch_check.on_mismatch: stop`, `last_commit_id`, `baseline_status`, and nested `codegraph`.
+- Use `checkout_role: truth` for the canonical/main checkout, `checkout_role: development` for an active development worktree, and `checkout_role: auxiliary` for a comparison or supporting checkout. Validate every checkout against its own recorded branch rather than applying one branch to all paths.
 - For Git-backed repositories, mechanically record current `working_branch` and `last_commit_id` when HEAD exists. Empty newly initialized repositories may use an empty `last_commit_id` with `baseline_status: unborn` until a later metadata refresh records a concrete commit.
 - For non-Git repositories, set `git_repository: false`, `branch_required: false`, empty `last_commit_id`, and `baseline_status: not-git`.
 - For repositories without `.codegraph/`, set `codegraph.supported: false`, `codegraph.index_present: false`, `codegraph.status: not-indexed`, and `codegraph.reason: no-index`. Do not run `codegraph init` or `codegraph sync`.
@@ -116,6 +119,7 @@ Use `doctor-project` as the canonical doctor command.
 - `doctor-project --repair`: repair deterministic structure defects; default repair preserves existing non-empty user content.
 - `doctor-project --repair --force`: repair with init-scoped template overwrite permission, while limiting `AGENTS.md` changes to the WorkBundle managed section.
 - Report metadata v2 failures using machine-readable failure keys such as stale metadata version, missing repository state, branch mismatch, stale baseline, registry/project mismatch, invalid operation policy, and invalid CodeGraph shape.
+- With `--repair --force`, refresh branch and commit baselines for all registered checkouts while preserving their IDs, paths, checkout roles, and unknown user fields.
 - Do not rewrite user-authored project content without explicit `--force`.
 - Do not migrate registry identity without preserving the old slug mapping or reporting the required user decision.
 

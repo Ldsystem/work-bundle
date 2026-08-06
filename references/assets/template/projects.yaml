@@ -1,6 +1,6 @@
 source_repository_roles:
-  registry: "Locator only: stable repository id, path, work_dir, remote, and Git capability."
-  project_metadata: "Working-state authority: branch baseline, commit baseline, operation policy, and CodeGraph state."
+  registry: "Locator only: stable repository id, path, checkout_role, work_dir, remote, and Git capability."
+  project_metadata: "Working-state authority: checkout role, branch baseline, commit baseline, operation policy, and CodeGraph state."
 
 projects:
   - slug: <project-slug>
@@ -11,6 +11,7 @@ projects:
     source_repositories:
       - id: <stable-repository-id>
         path: <path to source repository 1>
+        checkout_role: <truth|development|auxiliary>
         work_dir: <boolean type, indicates, whether the repository is work directory>
         remote: ""
         git_repository: <boolean type, indicates whether the source repository is Git-backed>
