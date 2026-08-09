@@ -1,9 +1,14 @@
 # Orchestration Workflow
 
-## Project Orchestration Layout
+## Workspace Orchestration Layout
 
 ```text
-.work-bundle/orchestration/
+<workspace-root>/
+  AGENTS.md
+  script/index.yaml
+  credentials/credentials.yaml  # protected and excluded; never read by orchestration
+  <member-project-root>/         # one or more in multi-repository mode
+  .work-bundle/orchestration/
   spec/
     active/
     archived/
@@ -19,7 +24,7 @@
   docs/
 ```
 
-Orchestration artifacts live under `.work-bundle/orchestration/` and are not durable knowledge. Do not store specs, plans, or handoffs under `.work-bundle/knowledge/`.
+Orchestration artifacts live under `<workspace-root>/.work-bundle/orchestration/` and are not durable knowledge. Do not store specs, plans, or handoffs under `.work-bundle/knowledge/`. In single-repository mode `workspace_root == project_root`; in multi-repository mode each `project_root` is a managed member beneath the workspace.
 
 Runtime orchestration rules live under `rules/orchestration/` (Markdown); orch skills cite merged rules from that directory.
 
@@ -99,7 +104,7 @@ After `orch-create-implementation-plan` generates the root plan, phase files, an
 
 ## Execution Modes
 
-Before execution selection, capability checks, delegation, or implementation changes, `orch-execute-plan` resolves every target source repository or local project root separately from the orchestration artifact repository. Project metadata source repositories from `.work-bundle/project.yaml` are preferred before task-scope fallback, and Git-backed targets compare actual branch and HEAD against metadata `working_branch` and `last_commit_id` before accepting the clean-worktree baseline. Each target records `target_kind` and `preflight_kind`; metadata-backed targets also record branch status, commit or metadata baseline status, and CodeGraph state:
+Before execution selection, capability checks, delegation, or implementation changes, `orch-execute-plan` first resolves the containing `workspace_root`, then resolves every target member `project_root` separately from the workspace orchestration artifact repository. Explicit `--workspace-root` has workspace-selection precedence; explicit `--project-root` selects a single-repository root or managed member; otherwise discovery walks upward from cwd before bounded registry fallback. Workspace metadata source members are preferred before task-scope fallback. Git-backed v3 members compare actual branch and HEAD against `expected_branch` and accepted `observed_head`; v2 compatibility input uses `working_branch` and `last_commit_id`. Each target records `target_kind` and `preflight_kind`; metadata-backed targets also record branch status, commit or metadata baseline status, and per-member CodeGraph state:
 
 - `git-backed` targets use `git-clean-worktree` preflight and accepted-baseline handling.
 - `local-project` targets use `local-project` preflight evidence that records the absolute root, source, accessibility, and that Git cleanliness is not applicable.
@@ -118,6 +123,14 @@ If multi-agent subagent delegation is unavailable, unsafe, or unsupported, execu
 Unrelated or unexplained changes block the next wave or task. Execution remains a no-retrieval stage: `orch-execute-plan` does not browse durable knowledge, retrieve knowledge context, or archive specs, plans, or handoffs. Completion of a task, phase, or plan requires an applicability-based compact executor-result handoff and status updates before `orch-review-plan`; continuation state comes from active specifications, plans, phases, tasks, indexes, and executor-result handoffs rather than orchestration handoff artifacts under active continuation.
 
 When a wave contains contract-decoupled participants, execution accepts each worker only against its declared task scope, common contract group, accepted prior handoffs, and task-local validation. The scheduler releases convergence work only after all barrier participants have completed or blocked with executor-result handoffs.
+
+## Workspace Utilities and Credentials
+
+Reusable workspace utilities live only under singular `<workspace-root>/script/` and must be declared in `script/index.yaml`. Inspecting the index is discovery, not execution authority; mutation, network, credential, and destructive operations retain their normal task and confirmation gates. Toolkit helpers under plural `scripts/` are separate and must not be reclassified as workspace utilities.
+
+When a task or indexed utility names a credential ID, target, and operation, invoke `wb-credential-use`. Orchestration passes only those non-secret references and authorization context. Credential values must never enter specifications, plans, tasks, handoffs, prompts, tool arguments/results, logs, indexes, CodeGraph, or Git. Executor evidence is redacted and credential-ID-only.
+
+The bootstrap-resolved runtime skill registry is external-only. Built-in skills under `$work_bundle_root/skills/`, including `wb-credential-use` and `wb-migrate-to-multi-repository`, remain toolkit-owned and are never registered there. For an external candidate, resolve the registry from `~/.work-bundle/bootstrap.yaml` field `skill_registry`, inspect and validate a `type: external` mapping, and obtain explicit user confirmation before any `register-skill --confirmed` merge.
 
 ## Review and Archive
 

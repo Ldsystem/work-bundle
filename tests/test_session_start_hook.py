@@ -19,7 +19,15 @@ def _init_project(tmp_path: Path) -> tuple[Path, Path]:
     git(project, "init", "-q", "-b", "main")
     git(project, "config", "user.email", "test@example.com")
     git(project, "config", "user.name", "Test")
-    init = run_wb(config_root, "init-project", str(project), "--name", "demo")
+    init = run_wb(
+        config_root,
+        "init-project",
+        str(project),
+        "--mode",
+        "single-repository",
+        "--name",
+        "demo",
+    )
     assert init.returncode == 0, init.stdout + init.stderr
     return config_root, project
 
@@ -213,3 +221,17 @@ def test_hook_tolerates_malformed_stdin(tmp_path: Path) -> None:
     data = json.loads(result.stdout)
     assert data["project_root"] == str(project)
     assert "malformed hook JSON stdin" in " ".join(data["warnings"])
+
+
+def test_hook_started_in_deep_child_syncs_only_workspace_agents(tmp_path: Path) -> None:
+    config_root, project = _init_project(tmp_path)
+    deep = project / "member-like" / "src" / "feature"
+    deep.mkdir(parents=True)
+
+    result = _run_hook(config_root, json.dumps({"cwd": str(deep)}), cwd=deep)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    assert data["project_root"] == str(project)
+    assert data["agents_status"] == "unchanged"
+    assert not (deep / "AGENTS.md").exists()

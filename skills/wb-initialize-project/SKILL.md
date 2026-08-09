@@ -1,6 +1,6 @@
 ---
 name: wb-initialize-project
-description: Initialize, validate, doctor, or migrate a project-local work-bundle workspace via scripts/wb.py dispatcher commands.
+description: Initialize, validate, doctor, or migrate single- and multi-repository WorkBundle workspaces via scripts/wb.py dispatcher commands.
 ---
 
 # wb-initialize-project
@@ -11,10 +11,12 @@ Initialize, doctor, validate, register, inspect, or migrate a project as a work-
 
 ## Inputs
 
-- `project_root`: concrete project path.
+- `workspace_root`: authority root that owns `.work-bundle/`, `AGENTS.md`, `script/`, `credentials/`, and managed members.
+- `project_root`: one concrete source repository checkout; equal to `workspace_root` in single-repository mode and a member path in multi-repository mode.
+- Explicit `mode`: `single-repository` or `multi-repository` for new initialization.
 - `~/.work-bundle/bootstrap.yaml` for `project_registry` and `work_bundle_root` resolution.
 - `~/.work-bundle/bootstrap.yaml` field `prefer_subagent` for the global sub-agent scheduling preference default.
-- `$project_root/.work-bundle/project.yaml` field `prefer_subagent` for the current workspace override.
+- `$workspace_root/.work-bundle/project.yaml` field `prefer_subagent` for the current workspace override.
 - Optional `WB_WORK_BUNDLE_ROOT` environment override when the agent must pass an explicit toolkit root to dispatcher commands.
 - Work-bundle reference templates and manifests under the bootstrap-resolved work-bundle root:
   - `references/assets/template/project.yaml`
@@ -30,15 +32,20 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 
 | Mode | Command |
 |---|---|
-| Initialize | `init-project <project-root> [--name <name>] [--force] [--dry-run] [--disable-work-bundle-git] [--create-project-skill-override]` |
-| Doctor | `doctor-project <project-root> [--repair] [--force]` |
-| Inspect only | `show-project [--project-root <project-root>]` |
-| Strict validate | `validate-project <project-root> [--dry-run]` |
-| Register only | `register-project <project-root> [--name <name>]` |
-| Migrate | `migrate-project <project-root> [--name <name>] [--force]` |
+| Initialize | `init-project <root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>] [--project-root <project-root>] [--name <name>] [--force] [--dry-run] [--disable-work-bundle-git] [--create-project-skill-override]` |
+| Doctor | `doctor-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--repair] [--force]` |
+| Inspect only | `show-project [--workspace-root <workspace-root>] [--project-root <project-root>]` |
+| Strict validate | `validate-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--dry-run]` |
+| Register only | `register-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--name <name>]` |
+| Inspect metadata migration | `migrate-project <root> [--name <name>] --dry-run` |
+| Apply metadata migration | `migrate-project <root> [--name <name>] [--force] --apply` |
+| Provision member | `provision-member --workspace-root <workspace-root> --repository-id <id> --working-branch <branch> --base-ref <ref> [--dry-run|--apply]` |
+| Cleanup member | `cleanup-member --workspace-root <workspace-root> --repository-id <id> [--dry-run|--apply]` |
 | Set sub-agent preference | `set-prefer-subagent <true|false|enable|disable|on|off> --scope <global|project> [--project-root <project-root>]` |
 
 `initialize-project` remains a compatibility alias for `init-project`; prefer `init-project` in new instructions.
+
+Existing command names and `--project-root` remain supported for single-repository projects. New creation must reject a missing or contradictory mode/root combination rather than silently infer topology. Single-repository mode is current and fully supported, not legacy or transitional.
 
 **Preserve behavior (default):** commands preserve existing non-empty files and user-authored `AGENTS.md` content outside the WorkBundle managed section. Re-running `init-project` on a healthy project reports `changed_files: []`.
 
@@ -52,7 +59,7 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 
 - `prefer_subagent` is a boolean preference only; it does not bypass orchestration preflight, dependency, write-scope, handoff, or fallback rules.
 - Effective value resolves as project metadata first, then global bootstrap, then `false`:
-  - project: `$project_root/.work-bundle/project.yaml` -> `prefer_subagent`;
+  - project: `$workspace_root/.work-bundle/project.yaml` -> `prefer_subagent`;
   - global: `$work_bundle_config_root/bootstrap.yaml` -> `prefer_subagent`;
   - default: `false`.
 - Use `set-prefer-subagent true --scope global` for requests such as "Enable global `prefer_subagent`".
@@ -67,30 +74,31 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 - Resolve the project registry path from `bootstrap.yaml` field `project_registry`.
 - Register every initialized project to `projects.yaml` as a new workspace slug or an existing workspace slug.
 - Derive the workspace slug from `--name` when provided; otherwise from the project root directory name (normalized lowercase alphanumeric with hyphens).
-- On slug or project-root match, merge registry entries and preserve existing `aliases` and `source_repositories` unless explicitly replaced.
-- Keep the registry locator-oriented. Registry `source_repositories` entries contain stable `id`, `path`, `checkout_role`, `work_dir`, `remote`, and `git_repository`; they do not own `working_branch`, `last_commit_id`, `baseline_status`, `operation_policy`, or CodeGraph sync state.
-- Model checkouts independently. A repository family may have a `checkout_role: truth` main checkout on its truth branch and a separate `checkout_role: development` worktree on a development branch. `work_dir` controls write preference; it does not imply that the checkout is the truth source.
-- Preserve every registered checkout and its role during initialize, force refresh, doctor repair, registration, and migration. Refresh each checkout's branch and commit evidence from its own path; never collapse a multi-checkout project to the command's current directory.
-- When registering a new repository to an existing workspace slug, update both the bootstrap-resolved registry and the workspace `.work-bundle/project.yaml`: append the locator to registry `source_repositories`, then add or refresh the corresponding project metadata `source_repositories[]` entry with mechanical Git and CodeGraph state.
-- Carry a short role description in both registry output/templates and project metadata: the registry is locator-only; project metadata is the working-state authority for branch baseline, commit baseline, operation policy, and CodeGraph state.
+- On slug or workspace-root match, merge registry entries and preserve existing aliases, origins, compatibility locators, and unknown fields unless explicitly replaced.
+- Keep the registry locator-oriented. It owns workspace slug/root and stable repository origin `id`, `origin_path`, `remote`, and Git capability; it does not own member path, expected branch, observed HEAD, cleanliness, lifecycle transaction, operation policy, or CodeGraph state.
+- Model origins and workspace members independently. Multiple workspaces may register the same origin ID while owning independent local control stores, named worktrees, and distinct working branches.
+- Preserve every registered origin/member identity and unknown field during initialize, repair, registration, and migration; never collapse multi-member state to the command cwd.
+- When registering an origin or provisioning a member, update the bootstrap-resolved registry and `$workspace_root/.work-bundle/project.yaml` atomically or recoverably, publishing active state only after verification.
+- Carry a short role description in registry output/templates and workspace metadata: registry is locator-only; workspace metadata is working-state authority.
 - Ask for the workspace slug decision only when it is missing and blocking.
 
-**Project metadata v2:**
+**Workspace metadata v3 and v2 compatibility:**
 
-- Render `.work-bundle/project.yaml` with `metadata_version: 2`.
-- Keep `.work-bundle/project.yaml` as the project-local authority for operation policy, source repository working state, branch policy, Git baseline, and CodeGraph state.
-- Render `source_repository_roles` describing the registry locator role and project metadata working-state authority role.
+- Render new or explicitly migrated `.work-bundle/project.yaml` with `metadata_version: 3`, `workspace_root`, explicit `workspace_mode`, workspace resource status, operation policy, and member bindings.
+- Keep `.work-bundle/project.yaml` as workspace-local authority for member working state, expected branch/base ref, observed HEAD/time, lifecycle state, operation policy, and CodeGraph state.
+- Read metadata v2 during the compatibility window, preserve unknown fields, and require inspect/dry-run/explicit apply before converting topology or moving worktrees.
 - Render `operation_policy.project_files` with non-destructive file operations and `operation_policy.git` with allowed read operations, permissive stage/commit/pull operations, and forbidden destructive operations including `reset --hard`, `clean -fd`, and `push --force`.
-- Render `source_repositories[]` with stable `id`, absolute `path`, `checkout_role`, `work_dir`, `remote`, `git_repository`, `working_branch`, `branch_required`, `branch_check.required_before`, `branch_check.on_mismatch: stop`, `last_commit_id`, `baseline_status`, and nested `codegraph`.
-- Use `checkout_role: truth` for the canonical/main checkout, `checkout_role: development` for an active development worktree, and `checkout_role: auxiliary` for a comparison or supporting checkout. Validate every checkout against its own recorded branch rather than applying one branch to all paths.
-- For Git-backed repositories, mechanically record current `working_branch` and `last_commit_id` when HEAD exists. Empty newly initialized repositories may use an empty `last_commit_id` with `baseline_status: unborn` until a later metadata refresh records a concrete commit.
+- Render v3 `source_repositories[]` members with stable `id`, `project_root`, `origin_id`, checkout kind, workspace-local control-store binding, worktree name, expected branch, base ref, observed HEAD/time, baseline/lifecycle status, operation policy, and nested CodeGraph state.
+- In single-repository mode require `workspace_root == project_root`; do not silently alter its existing Git tracking policy.
+- In canonical multi-repository mode require each managed `project_root` and absolute Git common directory to remain beneath `workspace_root`.
+- For Git-backed repositories, mechanically record live branch and HEAD as observations; keep expected branch/base ref as declared policy and provision input.
 - For non-Git repositories, set `git_repository: false`, `branch_required: false`, empty `last_commit_id`, and `baseline_status: not-git`.
 - For repositories without `.codegraph/`, set `codegraph.supported: false`, `codegraph.index_present: false`, `codegraph.status: not-indexed`, and `codegraph.reason: no-index`. Do not run `codegraph init` or `codegraph sync`.
 - For repositories with `.codegraph/`, report marker presence only; synchronization remains owned by orchestration review behavior, not initialization.
 
 **Initialization structure:**
 
-- Create `.work-bundle/knowledge/{context-packs,indexes,notes,open-questions}`.
+- Create `$workspace_root/.work-bundle/knowledge/{context-packs,indexes,notes,open-questions}`.
 - Create the full `.work-bundle/orchestration` subtree at initialization:
   - `orchestration/spec/{active,archived}`
   - `orchestration/plan/{active,archived}`
@@ -98,14 +106,17 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
   - `orchestration/handoff/executor/{active,archived}`
   - `orchestration/{docs,principles,templates,reviews,execution-state}`
 - Directory membership is driven by `references/wb-initialize-project-default-work-bundle-tree.yaml`.
+- Create or preserve `$workspace_root/script/index.yaml` from its empty v1 template and never auto-execute indexed utilities.
+- Create or preserve `$workspace_root/credentials/credentials.yaml` as the sole credential-directory file, enforce protection, and keep the directory Git-ignored without reading values.
+- In multi-repository mode place runtime Git control stores beneath `$workspace_root/.work-bundle/git/` and exclude them from workspace-management commits and broad scans.
 - Render `.work-bundle/project.yaml` from `references/assets/template/project.yaml`.
-- Render `.work-bundle/project.yaml` with metadata v2 repository state from mechanical Git and `.codegraph/` inspection.
+- Render `.work-bundle/project.yaml` with metadata v3 workspace/member state from mechanical Git and per-member `.codegraph/` inspection.
 - Render `.work-bundle/project.yaml` with a `prefer_subagent: false` default unless a future template version explicitly changes the default.
 - Render `.work-bundle/project.yaml` with an `agents_sync` section that owns WorkBundle `AGENTS.md` checksum and sync-status state.
 - Create, append, or refresh `AGENTS.md` with the WorkBundle managed section from `references/assets/template/AGENTS.md`; do not overwrite user-authored content outside the managed section.
 - Create or preserve required `.gitignore` entries.
 - Create or preserve the current project rule-store index at `.work-bundle/rules/index.yaml`; root `rules/index.yaml` is legacy-only and is not current project rule authority.
-- Initialize `.work-bundle/knowledge` as its own Git repository and create its initial deterministic commit when needed.
+- Create the declared `.work-bundle/knowledge` structure without staging, committing, or initializing Git; Git ownership requires a separate explicitly authorized workflow.
 - Bind registry IO to `references/assets/template/projects.yaml`; registry entries remain locators and project metadata owns working-state fields.
 - Fail mechanically when a required reference asset is missing; do not invent fallback content.
 
@@ -118,7 +129,8 @@ Use `doctor-project` as the canonical doctor command.
 - `doctor-project` without `--repair`: inspect and report mechanical failures only.
 - `doctor-project --repair`: repair deterministic structure defects; default repair preserves existing non-empty user content.
 - `doctor-project --repair --force`: repair with init-scoped template overwrite permission, while limiting `AGENTS.md` changes to the WorkBundle managed section.
-- Report metadata v2 failures using machine-readable failure keys such as stale metadata version, missing repository state, branch mismatch, stale baseline, registry/project mismatch, invalid operation policy, and invalid CodeGraph shape.
+- Every lifecycle result reports `git_actions: []`; initialization, doctor, metadata migration, and member provisioning never infer stage or commit authority.
+- Report v3 workspace/member failures and v2 compatibility failures using machine-readable keys for stale metadata, missing repository state, branch/HEAD mismatch, stale baseline, registry/metadata mismatch, invalid operation policy, invalid workspace resources, and invalid CodeGraph shape.
 - With `--repair --force`, refresh branch and commit baselines for all registered checkouts while preserving their IDs, paths, checkout roles, and unknown user fields.
 - Do not rewrite user-authored project content without explicit `--force`.
 - Do not migrate registry identity without preserving the old slug mapping or reporting the required user decision.
@@ -130,7 +142,7 @@ Use `migrate-project` for legacy layout upgrades.
 - Detect legacy `.work-bundle` layout, missing registry fields, obsolete template sections, retired bootstrap artifacts, legacy `rules/contract.yaml`, and moved template paths.
 - Preserve existing knowledge notes, open questions, orchestration artifacts, Git history, and project identity.
 - Add missing current files and directories without deleting unknown files.
-- Upgrade legacy `metadata_version: 1` project metadata to `metadata_version: 2` by adding missing `operation_policy`, `source_repositories`, branch/commit baseline fields, and CodeGraph state while preserving unknown user fields.
+- Preserve legacy metadata v1/v2 compatibility reads and provide explicit v2-to-v3 migration with `--dry-run` proposal, `--apply` conversion, origin/member mapping, conflict evidence, and unknown-field preservation.
 - Convert legacy whole-file WorkBundle `AGENTS.md` template content to the current managed section when needed, preserving content outside managed sections.
 - Write a migration report under `.work-bundle/orchestration/docs/migration-report-YYYY-MM-DD.md`.
 - When retired legacy bootstrap artifacts are present, archive evidence under `.work-bundle/orchestration/docs/legacy-bootstrap-archive-YYYY-MM-DD/`, remove active legacy bootstrap paths, and list retired artifacts in the migration report.
@@ -142,21 +154,33 @@ Use `migrate-project` for legacy layout upgrades.
 
 - Load, create, require, validate, or reference retired legacy bootstrap artifacts or paths.
 - Create or validate scripts; this skill consumes dispatcher commands only.
+- Open, print, grep, serialize, copy, or migrate credential values; only structural credential-store validation is permitted.
+- Create a managed worktree whose project root or Git common directory remains outside `workspace_root`.
 - Eagerly scan all work-bundle skills, rules, or references beyond command output.
 - Store project registry state under `project_root` or the work-bundle root.
 - Delete existing knowledge, orchestration artifacts, registry data, or unknown user files.
 - Create specifications, plans, phases, tasks, reviews, or handoffs during initialization.
+- Stage, commit, reset, clean, stash, checkout, or otherwise mutate Git state from ordinary lifecycle commands.
 
 ## Output
 
 - Initialized, doctored, validated, registered, or migrated project workspace.
 - Updated bootstrap-resolved `projects.yaml` registry entry when registration runs.
-- JSON command output with `status`, `failures`, `registry_path`, `registry_entry` or `registry_status`, metadata v2 evidence such as `project_metadata_version`, `project_source_repositories`, `project_metadata_v2_failures`, `agents_status` or equivalent AGENTS sync evidence, and `changed_files` where applicable.
+- JSON command output with `status`, `failures`, registry status, metadata version/mode/resources/member evidence, redacted lifecycle transaction state, AGENTS sync evidence, and changed files where applicable. Compatibility reads retain existing v2 evidence fields until explicit migration.
 - For `set-prefer-subagent`, JSON command output with `status`, `scope`, `prefer_subagent`, `target_path`, `changed_files`, and `effective_prefer_subagent`.
 - Migration report and optional legacy-bootstrap archive paths under `.work-bundle/orchestration/docs/` when migration retires legacy artifacts.
 
 ## On Failure
 
 - Stop before destructive changes.
-- Report the blocking file, missing reference asset, registry entry, slug decision, metadata v2 schema defect, branch mismatch, stale baseline, registry/project mismatch, or CodeGraph metadata inconsistency from command JSON `failures`.
+- Report the blocking file, missing reference asset, registry entry, slug/mode decision, metadata schema defect, branch/HEAD mismatch, stale baseline, registry/metadata mismatch, workspace-resource defect, or CodeGraph inconsistency from command JSON `failures`.
 - Ask at most one blocking question when slug or registry identity is unresolved.
+
+## Runtime Rules
+
+- `wb-project-context-preflight`: `rules/work-bundle/wb-project-context-preflight.md`
+- `wb-project-registry`: `rules/work-bundle/wb-project-registry.md`
+- `wb-script-instruction`: `rules/work-bundle/wb-script-instruction.md`
+- `rule-work-bundle-security-exclusion`: `rules/security-exclusion.md`
+- `wb-credential-use`: `rules/work-bundle/wb-credential-use.md` only when a task or utility requires a credential.
+- `wb-migrate-to-multi-repository`: `rules/work-bundle/wb-migrate-to-multi-repository.md` only for explicit topology migration.

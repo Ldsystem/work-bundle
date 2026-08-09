@@ -1,11 +1,9 @@
 ---
 id: wb-project-registry
 applies_when:
-  - task.registers_project
-  - task.registers_source_repository
-  - task.creates_workspace_slug
-  - task.resolves_project_location
-  - task.resolves_knowledge_base_location
+  - user asks to initialize, register, locate, doctor, or migrate a WorkBundle workspace
+  - a workflow creates or updates a workspace slug or repository origin locator
+  - a workflow resolves workspace, project, or knowledge locations through the global project registry
 enforcement: must
 load: conditional
 requires: []
@@ -20,22 +18,22 @@ Ensure project registration and lookup keep the bootstrap-resolved project regis
 ## Must
 
 - Resolve the project registry path from `$work_bundle_config_root/bootstrap.yaml` field `project_registry`.
-- Use `$work_bundle_config_root/registry/projects.yaml` to create workspace slugs, register projects, and resolve project or knowledge-base locations.
-- Treat `$work_bundle_config_root/registry/projects.yaml` as the locator authority: workspace slug, project root, knowledge root, source repository `id`, `path`, `work_dir`, `remote`, and `git_repository`.
-- Treat `$project_root/.work-bundle/project.yaml` as the project metadata authority: workspace structure, source repository roles, operation policy, branch baseline, commit baseline, baseline status, and CodeGraph support or sync state.
-- Register every initialized project to `projects.yaml` as an individual workspace slug or an existing workspace slug, and create or update the corresponding `$project_root/.work-bundle/project.yaml`.
-- When registering a new source repository to a workspace, update both `projects.yaml` and `$project_root/.work-bundle/project.yaml` in the same workflow.
+- Use `$work_bundle_config_root/registry/projects.yaml` to create workspace slugs, register workspaces and repository origins, and resolve workspace or knowledge-base locations.
+- Treat `$work_bundle_config_root/registry/projects.yaml` as locator authority for workspace slug/root, knowledge root, aliases, and stable repository origin `id`, `origin_path`, `remote`, and Git capability.
+- Treat `$workspace_root/.work-bundle/project.yaml` as working-state authority for workspace mode/resources, member `project_root`, checkout/control-store binding, expected branch/base ref, observed HEAD, lifecycle transaction, operation policy, and CodeGraph state.
+- Register every initialized single- or multi-repository workspace to `projects.yaml` under an explicit new or existing workspace slug, and create or update the corresponding workspace metadata.
+- When registering a new repository origin or provisioning a member, update registry and workspace metadata through an atomic or recoverable workflow with before/after evidence.
 - Include a short description of registry and project metadata roles in project metadata, so agents know the registry is a locator and project metadata is the working-state authority.
-- Source `source_repositories[]` entries from the project registry during migration or initialization, then enrich the corresponding project metadata entries with branch, commit, baseline, operation policy, and CodeGraph state.
+- Preserve metadata v2 locator entries as compatibility input during explicit migration, preserve unknown fields, and publish v3 origin/member separation only after target verification.
 
 ## Must Not
 
 - Do not infer project locations from recent conversation when registry access is required.
 - Do not register a project without an explicit workspace slug decision.
 - Do not store project registry state under `work_bundle_root` or `project_root`.
-- Do not store branch baseline, commit baseline, operation policy, source repository roles, or CodeGraph sync state in `projects.yaml`.
-- Do not update `projects.yaml` for a project or source repository registration without also updating the matching `$project_root/.work-bundle/project.yaml`.
-- Do not update `$project_root/.work-bundle/project.yaml` with a new source repository without also updating the bootstrap-resolved `projects.yaml` locator entry.
+- Do not store member paths, expected branch, observed HEAD, cleanliness, lifecycle transaction, operation policy, or CodeGraph state in `projects.yaml`.
+- Do not update `projects.yaml` for a project or source repository registration without also updating the matching `$workspace_root/.work-bundle/project.yaml`.
+- Do not update `$workspace_root/.work-bundle/project.yaml` with a new repository origin/member binding without also updating the bootstrap-resolved `projects.yaml` locator entry through the same atomic-or-recoverable transaction.
 
 ## Validation
 
@@ -44,7 +42,7 @@ Ensure project registration and lookup keep the bootstrap-resolved project regis
 - Verify initialized projects have both a registry entry and a matching `$project_root/.work-bundle/project.yaml`.
 - Verify newly registered source repositories appear in both the registry locator and project metadata working-state sections.
 - Verify project metadata includes short role descriptions for the registry and project metadata responsibilities.
-- Verify `projects.yaml` contains locator fields only and does not own branch, commit, operation policy, source repository roles, or CodeGraph sync state.
+- Verify `projects.yaml` contains locator fields only and does not own member checkout state, branch/HEAD observations, cleanliness, lifecycle transaction, operation policy, or CodeGraph state.
 
 ## On Violation
 

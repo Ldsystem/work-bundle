@@ -558,3 +558,111 @@ def test_initialize_project_guidance_matches_create_rule_project_scope() -> None
     assert legacy_root_mentions
     assert all(("legacy" in line.lower() or "migration" in line.lower()) for line in legacy_root_mentions)
     assert "`.work-bundle/project.yaml`, `rules/index.yaml`" not in initialize
+
+
+def test_workspace_ecosystem_documentation_and_external_registry_boundary() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    scripts_readme = (REPO_ROOT / "scripts/work-bundle/README.md").read_text(encoding="utf-8")
+    registry_template = (REPO_ROOT / "references/assets/template/skill-registry.yaml").read_text(encoding="utf-8")
+    registry_contract = (REPO_ROOT / "references/wb-register-skill-contract.yaml").read_text(encoding="utf-8")
+
+    assert "`workspace_root`" in readme
+    assert "`project_root`" in readme
+    assert "singular `script/`" in readme
+    assert "credentials/credentials.yaml" in readme
+    assert "--scope project --workspace-root <workspace-root>" in scripts_readme
+    assert "bootstrap.yaml` field `skill_registry`" in scripts_readme
+    assert "runtime skill registry" in scripts_readme and "external-only" in scripts_readme
+    assert "wb-credential-use` and `wb-migrate-to-multi-repository" in scripts_readme
+    assert "scope: external-skills-only" in registry_template
+    assert "built_in_work_bundle_skills: toolkit-owned-not-registered" in registry_template
+    assert "type: internal" not in registry_template
+    assert "unconfirmed_merge_forbidden: true" in registry_template
+    assert "registry_path_source: bootstrap.skill_registry" in registry_contract
+    assert "scope: external-skills-only" in registry_contract
+    assert "non_external_entries_must_be_rejected: true" in registry_contract
+    assert "explicit_confirmation_required_for_merge: true" in registry_contract
+
+
+def test_credential_contract_skill_and_rules_use_closed_form_specific_adapters() -> None:
+    contract = (REPO_ROOT / "references/wb-credential-use-contract.yaml").read_text(encoding="utf-8")
+    skill = (REPO_ROOT / "skills/wb-credential-use/SKILL.md").read_text(encoding="utf-8")
+    credential_rule = (REPO_ROOT / "rules/work-bundle/wb-credential-use.md").read_text(encoding="utf-8")
+    security_rule = (REPO_ROOT / "rules/security-exclusion.md").read_text(encoding="utf-8")
+
+    assert "closed_forms: true" in contract and "ids_unique: true" in contract
+    for form in (
+        "password_file", "username_password", "ssh_private_key", "passphrase",
+        "environment_reference", "external_secret_reference",
+    ):
+        assert f"{form}:" in contract
+    skill_mechanisms = {
+        "path-reference": "path reference",
+        "protected-fd": "protected file descriptor",
+        "stdin": "stdin",
+        "child-environment": "child-scoped environment",
+        "keychain": "keychain",
+        "ssh-agent": "agent",
+    }
+    for mechanism, phrase in skill_mechanisms.items():
+        assert mechanism in contract and phrase in skill.lower()
+    assert "Suppress raw child stdout/stderr" in skill
+    assert "adapter-result contract" in security_rule
+    assert "form-specific adapter" in credential_rule
+
+
+def test_work_bundle_skill_registry_rule_excludes_builtin_skills() -> None:
+    rule = (REPO_ROOT / "rules/work-bundle/wb-skill-registry.md").read_text(encoding="utf-8")
+    skill = (REPO_ROOT / "skills/wb-register-skill/SKILL.md").read_text(encoding="utf-8")
+    rule_index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
+
+    assert "external skill registry" in rule
+    assert "built-in WorkBundle skills" in rule
+    assert "Reject any attempt to register a built-in WorkBundle skill" in rule
+    assert "task.registers_external_skill" in rule_index
+    assert "task.registers_skill" not in rule_index
+    assert "only for external skills" in skill
+    assert "~/.work-bundle/registry/skill-registry.yaml" in skill
+
+
+def test_registry_entry_validation_rejects_builtin_and_internal_skills(tmp_path: Path) -> None:
+    common = (
+        "mode: native\npriority: optional\nused_by: [backend-developer]\n"
+        "stages: [implementation]\nallowed_outputs: [result]\n"
+        "validation: [bounded]\nfallback: manual\n"
+    )
+    internal = tmp_path / "internal.yaml"
+    internal.write_text(f"type: internal\nsource: /tmp/external-skill/SKILL.md\n{common}", encoding="utf-8")
+    builtin = tmp_path / "builtin.yaml"
+    builtin.write_text(
+        f"type: external\nsource: {REPO_ROOT / 'skills/wb-credential-use/SKILL.md'}\n{common}",
+        encoding="utf-8",
+    )
+
+    internal_result = run_wb("validate-registry-entry", str(internal))
+    builtin_result = run_wb("validate-registry-entry", str(builtin))
+
+    assert internal_result.returncode == 1
+    assert "external-type-required" in internal_result.stdout
+    assert builtin_result.returncode == 1
+    assert "built-in-work-bundle-skill-forbidden" in builtin_result.stdout
+
+
+def test_register_skill_refuses_builtin_before_registry_mutation(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.yaml"
+    registry.write_text("skills: {}\n", encoding="utf-8")
+    entry = tmp_path / "builtin.yaml"
+    entry.write_text(
+        "type: external\n"
+        f"source: {REPO_ROOT / 'skills/wb-migrate-to-multi-repository/SKILL.md'}\n"
+        "mode: native\npriority: optional\nused_by: [devops-engineer]\n"
+        "stages: [implementation]\nallowed_outputs: [migration-result]\n"
+        "validation: [bounded]\nfallback: manual\n",
+        encoding="utf-8",
+    )
+
+    result = run_wb("register-skill", "--registry", str(registry), "--entry", str(entry), "--confirmed")
+
+    assert result.returncode == 2
+    assert "built-in-work-bundle-skill-forbidden" in result.stdout
+    assert registry.read_text(encoding="utf-8") == "skills: {}\n"

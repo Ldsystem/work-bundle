@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
-from core import CLI_HELP_EPILOG, LEGACY_COMMAND_MIGRATIONS
+from core import CLI_HELP_EPILOG, LEGACY_COMMAND_MIGRATIONS, out
 from doctor import cmd_doctor
 from integrity import cmd_integrity_report, cmd_merge_skill_hints
 from legacy import cmd_legacy_command_removed
 from metadata_profile import cmd_domain_profile
 from bootstrap_config import cmd_migrate_work_bundle_config
-from project import cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_project, cmd_register_project_command, cmd_session_start, cmd_set_prefer_subagent, cmd_show_project, cmd_validate_project
+from project import cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_migrate_to_multi_repository, cmd_project, cmd_provision_member, cmd_register_project_command, cmd_session_start, cmd_set_prefer_subagent, cmd_show_project, cmd_validate_project
 from role_context import cmd_role_context
 from rules import cmd_create_rules, cmd_validate_rules
 from skill_registry import cmd_registry
@@ -19,6 +20,7 @@ from violations import (
     cmd_violation_ensure_store,
     cmd_violation_write_index,
 )
+from credential import CredentialError, list_metadata
 
 
 def main() -> int:
@@ -56,8 +58,22 @@ def main() -> int:
         return cmd_show_project(parsed.args)
     if command == 'migrate-project':
         return cmd_migrate_project(parsed.args)
+    if command == 'migrate-to-multi-repository':
+        return cmd_migrate_to_multi_repository(parsed.args)
     if command == 'doctor-project':
         return cmd_doctor_project(parsed.args)
+    if command == 'provision-member':
+        return cmd_provision_member(parsed.args)
+    if command == 'credential-list':
+        credential_parser = argparse.ArgumentParser(prog='wb.py credential-list')
+        credential_parser.add_argument('--workspace-root', required=True)
+        credential_args = credential_parser.parse_args(parsed.args)
+        try:
+            out([item.__dict__ for item in list_metadata(Path(credential_args.workspace_root))])
+            return 0
+        except CredentialError as exc:
+            out({'status': 'blocked', 'failure_code': str(exc)})
+            return 1
     if command == 'session-start':
         return cmd_session_start(parsed.args)
     if command == 'inspect-project-initialization':

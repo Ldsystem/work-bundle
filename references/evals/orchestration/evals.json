@@ -252,6 +252,24 @@
       "prompt": "Create and later review a specification that carries material candidate or opposite evidence in Open Questions.",
       "expected_output": "Records material non-authority or opposite evidence in Open Questions with an explicit blocking yes/no classification, does not convert non-authority evidence into requirements solely because it is relevant, and during review settles each material item as resolved, no longer applicable, delegated through approved ks-* follow-up, still blocked, or explicitly non-blocking with rationale before archive.",
       "files": []
+    },
+    {
+      "id": 43,
+      "prompt": "Execute a task from a deep directory inside a managed multi-repository workspace member.",
+      "expected_output": "Resolves the containing workspace_root for .work-bundle orchestration, workspace AGENTS.md, script/index.yaml, and project rules; keeps repository preflight, source edits, tests, commits, and CodeGraph scoped to the selected member project_root; and does not use the registered origin path as the normal writable checkout.",
+      "files": []
+    },
+    {
+      "id": 44,
+      "prompt": "Register the built-in wb-credential-use and wb-migrate-to-multi-repository skills in the runtime skill registry.",
+      "expected_output": "Refuses the registry mutation because the bootstrap-resolved runtime registry is external-skills-only, keeps both built-in skills toolkit-owned and discoverable through WorkBundle skill surfaces, and creates no registry proposal or merge.",
+      "files": []
+    },
+    {
+      "id": 45,
+      "prompt": "Delegate a task that names a workspace credential ID and a read-only operation.",
+      "expected_output": "Invokes wb-credential-use and transmits only credential ID, redacted target, requested operation, and authorization context; never reads or transfers credential values; and records only redacted executor evidence.",
+      "files": []
     }
   ],
   "v4_evals": [

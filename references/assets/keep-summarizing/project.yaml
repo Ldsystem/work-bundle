@@ -1,3 +1,10 @@
+workspace:
+  metadata: .work-bundle/project.yaml
+  resolution: containing-workspace
+  member_source_scope: project-root
+  utility_index: script/index.yaml
+  credential_store_access: forbidden
+
 project:
   slug: example-project
   name: Example Project

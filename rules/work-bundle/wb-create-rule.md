@@ -18,7 +18,7 @@ Summarize the enforceable contract for creating, migrating, and validating work-
 
 ## Must
 
-- Resolve rule-store scope before rule work: `toolkit` → `$work_bundle_root/rules/`, `global` → `$work_bundle_config_root/rules/`, `project` → `$project_root/.work-bundle/rules/`, or explicit root compatibility mode.
+- Resolve rule-store scope before rule work: `toolkit` → `$work_bundle_root/rules/`, `global` → `$work_bundle_config_root/rules/`, `project` → `$workspace_root/.work-bundle/rules/`, or explicit root compatibility mode.
 - Treat rule-store scope separately from rule area directories (`work-bundle/`, `keep-summarizing/`, `orchestration/`, `integrity-check/`).
 - Store scoped rules under `<rules-root>/<scope>/<rule-id>.md` using the prefix map (`wb-` → `work-bundle/`, `ks-` → `keep-summarizing/`, `orch-` → `orchestration/`, `rule-integrity-check-` → `integrity-check/`).
 - Store cross-cutting rules at `<rules-root>/<rule-id>.md` directly under the selected rules root; do not use a `global/` area directory.
@@ -28,7 +28,7 @@ Summarize the enforceable contract for creating, migrating, and validating work-
 - Keep rules under 500 lines and self-contained in the rule body.
 - Run `python3 scripts/wb.py create-rules --scope <toolkit|global|project>` to sync the index after changes, or use explicit-root compatibility mode when required.
 - Run `python3 scripts/wb.py validate-rules --scope <toolkit|global|project>` for mechanical checks, or use explicit-root compatibility mode when required.
-- Enforce the toolkit write boundary: do not mutate `$work_bundle_root/rules/**` unless `$project_root == $work_bundle_root`.
+- Enforce the toolkit write boundary: do not mutate `$work_bundle_root/rules/**` unless `$workspace_root == $work_bundle_root`.
 - Never pass area subdirectories such as `rules/work-bundle/` to `create-rules` or `validate-rules`.
 - Inspect `applies_when` semantically for concrete, actionable conditions before registration.
 - Apply the Trigger Clarity Principle to rule triggers and rule prose: name the user-visible or workflow-visible signal before describing rule lookup, selection, applicability, or application.

@@ -11,3 +11,5 @@ python3 scripts/ks.py breakdown-design --project <slug> --input <file>
 python3 scripts/ks.py index --project <slug>
 python3 scripts/ks.py query --project <slug> --target implementation_plan --query "<query>"
 ```
+
+Starting from a nested member resolves the containing `workspace_root`; durable knowledge remains under `<workspace-root>/.work-bundle/knowledge/` while source operations remain member-`project_root` scoped. The protected workspace credential store is excluded from retrieval and indexing.

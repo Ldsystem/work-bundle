@@ -7,6 +7,14 @@ import subprocess
 from core import *
 
 from bootstrap_config import default_toolkit_root
+from workspace import WorkspaceContext, WorkspaceTransaction
+from workspace_resources import ensure_workspace_resources, validate_script_index
+from worktree import provision_member, verify_git_control_scope
+def migrate_project_metadata_v3(source_root: Path, target_root: Path, repository_id: str, branch: str, base_ref: str = 'HEAD', apply: bool = False, **options: object) -> dict[str, object]:
+    from migration import apply_migration, propose_migration
+    if not apply:
+        return propose_migration(source_root, target_root, repository_id, branch, base_ref, **options)
+    return apply_migration(source_root, target_root, repository_id, branch, base_ref, **options)
 
 DIAG_REFERENCE_ASSET_MISSING = 'WB_REFERENCE_ASSET_MISSING'
 INIT_TREE_MANIFEST = 'references/wb-initialize-project-default-work-bundle-tree.yaml'
@@ -28,19 +36,26 @@ AGENTS_RULE_END_MARKER = '\n'.join([
     '# ========================',
 ])
 REQUIRED_PROJECT_GITIGNORE = ['.work-bundle/', 'AGENTS.md']
-PROJECT_METADATA_REQUIRED_FIELDS = [
+PROJECT_METADATA_V3_REQUIRED_FIELDS = [
     'metadata_version',
     'authority',
+    'workspace_root',
+    'workspace_mode',
+    'workspace_resources',
     'project_root',
     'source_repository_roles',
     'operation_policy',
     'source_repositories',
     'migration',
 ]
-PROJECT_METADATA_VERSION = '2'
+PROJECT_METADATA_V2_REQUIRED_FIELDS = [
+    'metadata_version', 'authority', 'project_root', 'source_repository_roles',
+    'operation_policy', 'source_repositories', 'migration',
+]
+PROJECT_METADATA_VERSION = '3'
 SOURCE_REPOSITORY_ROLES = {
-    'registry': 'Locator only: stable repository id, path, checkout_role, work_dir, remote, and Git capability.',
-    'project_metadata': 'Working-state authority: checkout role, branch baseline, commit baseline, operation policy, and CodeGraph state.',
+    'registry': 'Locator only: workspace slug/root and stable repository origin identity and locators.',
+    'project_metadata': 'Working-state authority: member path, branch/HEAD observation, lifecycle transaction, operation policy, and CodeGraph state.',
 }
 CHECKOUT_ROLES = frozenset({'truth', 'development', 'auxiliary'})
 BRANCH_CHECK_REQUIRED_BEFORE = [
@@ -141,13 +156,15 @@ def _yaml_string(value: object) -> str:
 
 
 def _source_repository_state_from_locator(locator: dict[str, object], fallback_slug: str) -> dict[str, object]:
-    raw_path = locator.get('path')
+    raw_path = locator.get('origin_path') or locator.get('path')
     resolved = Path(str(raw_path)).expanduser().resolve() if raw_path else Path.cwd().resolve()
     state = _source_repository_state(resolved, fallback_slug)
     source_id = str(locator.get('id') or state['id'])
     state['id'] = source_id
     state['work_dir'] = bool(locator.get('work_dir', False))
     state['checkout_role'] = _checkout_role(locator, source_id)
+    state['checkout_kind'] = 'single-repository' if state['checkout_role'] == 'truth' else 'local-project'
+    state['git_control_scope'] = 'project' if state.get('git_repository') else 'not-applicable'
     locator_remote = str(locator.get('remote') or '')
     if locator_remote:
         state['remote'] = locator_remote
@@ -185,22 +202,22 @@ def _source_repositories_block(repositories: list[dict[str, object]]) -> str:
         codegraph = repo.get('codegraph') if isinstance(repo.get('codegraph'), dict) else {}
         lines.extend([
             f"  - id: {_yaml_string(repo.get('id'))}",
-            f"    path: {_yaml_string(repo.get('path'))}",
-            f"    checkout_role: {_yaml_string(repo.get('checkout_role') or _checkout_role(repo))}",
-            f"    work_dir: {str(bool(repo.get('work_dir'))).lower()}",
-            f"    remote: {_yaml_string(repo.get('remote'))}",
+            f"    project_root: {_yaml_string(repo.get('project_root') or repo.get('path'))}",
+            f"    origin_id: {_yaml_string(repo.get('origin_id') or repo.get('id'))}",
+            f"    checkout_kind: {_yaml_string(repo.get('checkout_kind') or 'single-repository')}",
+            f"    git_control_root: {_yaml_string(repo.get('git_control_root'))}",
+            f"    git_control_scope: {_yaml_string(repo.get('git_control_scope') or 'project')}",
+            f"    worktree_name: {_yaml_string(repo.get('worktree_name') or repo.get('id'))}",
             f"    git_repository: {str(bool(repo.get('git_repository'))).lower()}",
-            f"    working_branch: {_yaml_string(repo.get('working_branch'))}",
-            f"    branch_required: {str(bool(repo.get('branch_required'))).lower()}",
-            "    branch_check:",
-            "      required_before:",
-        ])
-        for item in BRANCH_CHECK_REQUIRED_BEFORE:
-            lines.append(f"        - {item}")
-        lines.extend([
-            "      on_mismatch: stop",
-            f"    last_commit_id: {_yaml_string(repo.get('last_commit_id'))}",
+            f"    expected_branch: {_yaml_string(repo.get('expected_branch') or repo.get('working_branch'))}",
+            f"    base_ref: {_yaml_string(repo.get('base_ref') or 'HEAD')}",
+            f"    observed_head: {_yaml_string(repo.get('observed_head') or repo.get('last_commit_id'))}",
+            f"    observation_time: {_yaml_string(repo.get('observation_time') or utc_now_rfc3339())}",
             f"    baseline_status: {repo.get('baseline_status', 'current')}",
+            f"    lifecycle_status: {repo.get('lifecycle_status', 'active')}",
+            f"    operation_policy: {repo.get('operation_policy', 'inherit')}",
+        ])
+        lines.extend([
             "    codegraph:",
             f"      supported: {str(bool(codegraph.get('supported'))).lower()}",
             f"      index_present: {str(bool(codegraph.get('index_present'))).lower()}",
@@ -238,12 +255,16 @@ def _render_project_metadata(
     project_root: Path,
     name: str | None = None,
     registry_entry_data: dict[str, object] | None = None,
+    workspace_root: Path | None = None,
+    mode: str = 'single-repository',
 ) -> str:
     template = _require_reference_text(INIT_PROJECT_TEMPLATE)
     slug = _slug_from_root(project_root, name)
     repositories = _registry_source_repository_states(project_root, name, registry_entry_data)
     repo = repositories[0]
     replacements = {
+        '<absolute-path-to-workspace-root>': str((workspace_root or project_root).resolve()),
+        '<single-repository|multi-repository>': mode,
         '<absolute-path-to-project-root>': str(project_root.resolve()),
         '<industry-or-domain>': name or slug,
         '<runtime-or-framework>': 'unspecified',
@@ -251,6 +272,7 @@ def _render_project_metadata(
         '<absolute-path-to-source-repository>': repo['path'],
         '<required-working-branch>': repo['working_branch'],
         '<git-head-commit-or-empty-for-non-git>': repo['last_commit_id'],
+        '<rfc3339-observation-time>': repo['observation_time'],
         '<commit|stage|pull>': 'commit,stage,pull',
         '<push>': 'push',
         '<reset --hard>': 'reset --hard',
@@ -308,11 +330,7 @@ def _git_command_ok(project_root: Path, *args: str) -> bool:
 
 
 def _metadata_commit_drift_allowed(project_root: Path, expected: str, actual: str) -> bool:
-    if not expected or not actual or expected == actual:
-        return True
-    if not _git_command_ok(project_root, 'merge-base', '--is-ancestor', expected, actual):
-        return False
-    return _git_value(project_root, 'log', '-1', '--format=%s') == 'chore: initialize work-bundle project'
+    return not expected or not actual or expected == actual
 
 
 def _source_repository_id(slug: str) -> str:
@@ -336,6 +354,18 @@ def _source_repository_state(project_root: Path, slug: str | None = None) -> dic
         'working_branch': branch,
         'branch_required': git_repository,
         'last_commit_id': head,
+        'project_root': str(resolved),
+        'origin_id': _source_repository_id(repo_slug),
+        'checkout_kind': 'single-repository',
+        'git_control_root': str((resolved / '.git').resolve(strict=False)) if git_repository else '',
+        'git_control_scope': 'project' if git_repository else 'not-applicable',
+        'worktree_name': _source_repository_id(repo_slug),
+        'expected_branch': branch,
+        'base_ref': 'HEAD',
+        'observed_head': head,
+        'observation_time': utc_now_rfc3339(),
+        'lifecycle_status': 'active',
+        'operation_policy': 'inherit',
         'baseline_status': 'current' if git_repository and branch and head else ('unborn' if git_repository else 'not-git'),
         'codegraph': {
             'supported': codegraph_present,
@@ -566,6 +596,16 @@ def _metadata_source_repositories(text: str) -> list[dict[str, object]]:
                     values.append(stripped[2:].strip())
     if current is not None:
         repositories.append(current)
+    for repository in repositories:
+        # Normalize v3 member names for compatibility consumers without
+        # rewriting the source document or discarding unknown fields.
+        if 'project_root' in repository:
+            repository.setdefault('path', repository.get('project_root'))
+            repository.setdefault('working_branch', repository.get('expected_branch', ''))
+            repository.setdefault('last_commit_id', repository.get('observed_head', ''))
+            repository.setdefault('checkout_role', 'truth' if repository.get('checkout_kind') == 'single-repository' else 'development')
+            repository.setdefault('work_dir', True)
+            repository.setdefault('branch_required', bool(repository.get('git_repository')))
     return repositories
 
 
@@ -595,9 +635,10 @@ def _metadata_operation_policy_valid(text: str) -> bool:
     )
 
 
-def _metadata_v2_failures(project_root: Path, metadata_text: str, registry_entry_data: dict[str, object] | None) -> list[str]:
+def _metadata_failures(project_root: Path, metadata_text: str, registry_entry_data: dict[str, object] | None) -> list[str]:
     failures: list[str] = []
-    if _yaml_scalar(metadata_text, 'metadata_version') != PROJECT_METADATA_VERSION:
+    version = _yaml_scalar(metadata_text, 'metadata_version')
+    if version not in {'2', '3'}:
         failures.append('project_metadata_version_stale')
     if not _metadata_operation_policy_valid(metadata_text):
         failures.append('operation_policy_invalid')
@@ -626,6 +667,14 @@ def _metadata_v2_failures(project_root: Path, metadata_text: str, registry_entry
             failures.append(f'{prefix}.registry_project_mismatch')
         if git_repository != actual_git:
             failures.append(f'{prefix}.git_repository_mismatch')
+        if version == '3':
+            for field in ('project_root', 'origin_id', 'checkout_kind', 'git_control_root', 'git_control_scope', 'worktree_name', 'expected_branch', 'base_ref', 'observed_head', 'observation_time', 'baseline_status', 'lifecycle_status', 'operation_policy', 'codegraph'):
+                if field not in repo:
+                    failures.append(f'{prefix}.{field}_missing')
+            if repo.get('checkout_kind') not in {'single-repository', 'managed-worktree', 'local-project'}:
+                failures.append(f'{prefix}.checkout_kind_invalid')
+            if repo.get('git_control_scope') not in {'workspace', 'project', 'not-applicable'}:
+                failures.append(f'{prefix}.git_control_scope_invalid')
         if git_repository:
             working_branch = str(repo.get('working_branch') or '')
             last_commit_id = str(repo.get('last_commit_id') or '')
@@ -640,12 +689,12 @@ def _metadata_v2_failures(project_root: Path, metadata_text: str, registry_entry
                 failures.append(f'{prefix}.baseline_status_stale')
             if working_branch and actual_branch and working_branch != actual_branch:
                 failures.append(f'{prefix}.branch_mismatch')
-            if repo.get('branch_required') is not True:
+            if version == '2' and repo.get('branch_required') is not True:
                 failures.append(f'{prefix}.branch_required_missing')
             branch_check = repo.get('branch_check')
-            if not isinstance(branch_check, dict):
+            if version == '2' and not isinstance(branch_check, dict):
                 failures.append(f'{prefix}.branch_check_missing')
-            else:
+            elif version == '2':
                 required_before = branch_check.get('required_before')
                 if not isinstance(required_before, list) or any(item not in required_before for item in BRANCH_CHECK_REQUIRED_BEFORE):
                     failures.append(f'{prefix}.branch_check_required_before_invalid')
@@ -663,6 +712,23 @@ def _metadata_v2_failures(project_root: Path, metadata_text: str, registry_entry
                 failures.append(f'{prefix}.codegraph_{key}_missing')
         if not marker_present and (codegraph.get('status') != 'not-indexed' or codegraph.get('reason') != 'no-index'):
             failures.append(f'{prefix}.codegraph_no_index_invalid')
+    return failures
+
+
+def _workspace_metadata_failures(project_root: Path, metadata_text: str) -> list[str]:
+    if _yaml_scalar(metadata_text, 'metadata_version') != '3':
+        return []
+    failures: list[str] = []
+    workspace_root = _yaml_scalar(metadata_text, 'workspace_root')
+    mode = _yaml_scalar(metadata_text, 'workspace_mode')
+    if mode not in {'single-repository', 'multi-repository'}:
+        failures.append('workspace_mode_invalid')
+    if mode == 'single-repository' and Path(workspace_root).expanduser().resolve() != project_root.resolve():
+        failures.append('workspace_root_contradiction')
+    resource_section = '\n'.join(_yaml_section_lines(metadata_text, 'workspace_resources'))
+    if 'script/index.yaml' not in resource_section or 'credentials/credentials.yaml' not in resource_section:
+        failures.append('workspace_resources_invalid')
+    failures.extend(validate_script_index(Path(workspace_root).expanduser().resolve() if workspace_root else project_root))
     return failures
 
 
@@ -714,32 +780,32 @@ def migrate_project_metadata_v2(
     if not metadata_path.is_file():
         return False
     current = read(metadata_path)
+    if _yaml_scalar(current, 'metadata_version') == PROJECT_METADATA_VERSION:
+        return False
     rendered = _render_project_metadata(project_root, name, registry_entry_data)
-    lines = current.splitlines()
-    changed = False
-    current_version = _yaml_scalar(current, 'metadata_version')
-    for key, value in [
-        ('metadata_version', PROJECT_METADATA_VERSION),
-        ('authority', 'canonical'),
-        ('project_root', str(project_root.resolve())),
-    ]:
-        lines, scalar_changed = _replace_or_append_scalar(lines, key, value)
-        changed = changed or scalar_changed
-    if not _yaml_scalar('\n'.join(lines), 'industry'):
-        lines, scalar_changed = _replace_or_append_scalar(lines, 'industry', name or _slug_from_root(project_root, name))
-        changed = changed or scalar_changed
-    next_text = '\n'.join(lines)
-    for key in ('source_repository_roles', 'operation_policy', 'source_repositories', 'migration'):
-        lines, block_changed = _append_missing_top_level_block(lines, next_text, rendered, key)
-        if block_changed:
-            changed = True
-            next_text = '\n'.join(lines)
-    if registry_entry_data is not None and current_version != PROJECT_METADATA_VERSION:
-        lines, block_changed = _replace_top_level_block(lines, _top_level_block_text(rendered, 'source_repositories'), 'source_repositories')
-        changed = changed or block_changed
-    if changed:
-        return write(metadata_path, '\n'.join(lines).rstrip() + '\n')
-    return False
+    rendered_keys = {
+        line.split(':', 1)[0] for line in rendered.splitlines()
+        if line and not line.startswith((' ', '#')) and ':' in line
+    }
+    current_lines = current.splitlines()
+    unknown_blocks: list[str] = []
+    index = 0
+    while index < len(current_lines):
+        line = current_lines[index]
+        if not line or line.startswith((' ', '#')) or ':' not in line:
+            index += 1
+            continue
+        key = line.split(':', 1)[0]
+        end = index + 1
+        while end < len(current_lines) and (not current_lines[end] or current_lines[end].startswith((' ', '\t'))):
+            end += 1
+        if key not in rendered_keys:
+            unknown_blocks.append('\n'.join(current_lines[index:end]).rstrip())
+        index = end
+    next_text = rendered.rstrip()
+    if unknown_blocks:
+        next_text += '\n\n' + '\n\n'.join(unknown_blocks)
+    return write(metadata_path, next_text.rstrip() + '\n')
 
 
 def _workspace_root_from_registry_entry(entry: dict[str, object], fallback_root: Path) -> Path:
@@ -759,6 +825,10 @@ def _merge_metadata_source_repositories(current: list[dict[str, object]], desire
             merged.append(desired_repo)
             continue
         refreshed = dict(matched)
+        observation_changed = (
+            matched.get('observed_head') != desired_repo.get('observed_head')
+            or matched.get('expected_branch') != desired_repo.get('expected_branch')
+        )
         for key in (
             'id',
             'path',
@@ -772,8 +842,13 @@ def _merge_metadata_source_repositories(current: list[dict[str, object]], desire
             'last_commit_id',
             'baseline_status',
             'codegraph',
+            'project_root', 'origin_id', 'checkout_kind', 'git_control_root',
+            'git_control_scope', 'worktree_name', 'expected_branch', 'base_ref',
+            'observed_head', 'lifecycle_status', 'operation_policy',
         ):
             refreshed[key] = desired_repo.get(key)
+        if observation_changed or not refreshed.get('observation_time'):
+            refreshed['observation_time'] = desired_repo.get('observation_time')
         merged.append(refreshed)
     return merged
 
@@ -991,9 +1066,11 @@ def inspect_project(project_root: Path) -> dict:
     pm = read(project_root / '.work-bundle/project.yaml')
     runtime = resolve_bootstrap_runtime()
     project_metadata_path = project_root / '.work-bundle/project.yaml'
-    project_metadata_missing = [field for field in PROJECT_METADATA_REQUIRED_FIELDS if f'{field}:' not in pm]
+    metadata_version = _yaml_scalar(pm, 'metadata_version')
+    required_fields = PROJECT_METADATA_V3_REQUIRED_FIELDS if metadata_version == '3' else PROJECT_METADATA_V2_REQUIRED_FIELDS
+    project_metadata_missing = [field for field in required_fields if f'{field}:' not in pm]
     registry_entry_data, registry_path = find_registry_entry(project_root)
-    metadata_v2_failures = _metadata_v2_failures(project_root, pm, registry_entry_data) if project_metadata_path.exists() else []
+    metadata_failures = (_metadata_failures(project_root, pm, registry_entry_data) + _workspace_metadata_failures(project_root, pm)) if project_metadata_path.exists() else []
     source_repositories = _metadata_source_repositories(pm)
     return {
         'project_root': str(project_root),
@@ -1012,9 +1089,10 @@ def inspect_project(project_root: Path) -> dict:
         'project_metadata_path': str(project_metadata_path),
         'project_metadata_exists': project_metadata_path.exists(),
         'project_metadata_required_fields_missing': project_metadata_missing,
-        'project_metadata_version': _yaml_scalar(pm, 'metadata_version'),
-        'project_metadata_v2_failures': metadata_v2_failures,
-        'project_metadata_valid': not project_metadata_missing and not metadata_v2_failures,
+        'project_metadata_version': metadata_version,
+        'project_metadata_failures': metadata_failures,
+        'project_metadata_v2_failures': metadata_failures,
+        'project_metadata_valid': not project_metadata_missing and not metadata_failures,
         'project_metadata_authority': '.work-bundle/project.yaml',
         'project_source_repositories': source_repositories,
         'source_repository_roles': SOURCE_REPOSITORY_ROLES,
@@ -1090,6 +1168,8 @@ def apply_project(
     scope: str = 'init',
     registry_entry_data: dict[str, object] | None = None,
     return_details: bool = False,
+    workspace_root: Path | None = None,
+    mode: str = 'single-repository',
 ) -> list[str] | tuple[list[str], dict[str, object]]:
     wb = project_root / '.work-bundle'
     knowledge = wb / 'knowledge'
@@ -1130,9 +1210,6 @@ def apply_project(
         changed.append(str(knowledge_project))
     if _ensure_lines(wb / '.gitignore', gitignore_patterns):
         changed.append(str(wb / '.gitignore'))
-    if init_git and not (knowledge / '.git').exists():
-        subprocess.run(['git', 'init', str(knowledge)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        changed.append(str(knowledge / '.git'))
     rule_index_path = _project_rule_store_root(project_root) / 'index.yaml'
     rule_index = _require_reference_text(INIT_RULE_INDEX).rstrip() + '\n'
     if write(
@@ -1142,9 +1219,14 @@ def apply_project(
     ):
         changed.append(str(rule_index_path))
     project_metadata_path = project_root / '.work-bundle/project.yaml'
-    project_metadata = _render_project_metadata(project_root, name, registry_entry_data)
-    if registry_entry_data is not None and project_metadata_path.is_file():
-        project_metadata = _refresh_registered_project_metadata(read(project_metadata_path), project_metadata)
+    project_metadata = _render_project_metadata(project_root, name, registry_entry_data, workspace_root, mode)
+    if project_metadata_path.is_file():
+        current_metadata = read(project_metadata_path)
+        current_version = _yaml_scalar(current_metadata, 'metadata_version')
+        if current_version in {'1', '2'}:
+            project_metadata = current_metadata
+        elif registry_entry_data is not None:
+            project_metadata = _refresh_registered_project_metadata(current_metadata, project_metadata)
     if write(
         project_metadata_path,
         project_metadata,
@@ -1157,20 +1239,6 @@ def apply_project(
         path = wb / 'orchestration/skill-registry.override.yaml'
         if write(path, 'id: project-skill-registry-override\nstatus: current\noverrides: {}\n', overwrite=False):
             changed.append(str(path))
-    if init_git and (knowledge / '.git').exists():
-        subprocess.run(['git', '-C', str(knowledge), 'add', '.'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        has_head = subprocess.run(['git', '-C', str(knowledge), 'rev-parse', '--verify', 'HEAD'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-        has_changes = subprocess.run(['git', '-C', str(knowledge), 'diff', '--cached', '--quiet'], check=False).returncode != 0
-        if has_changes and not has_head:
-            if subprocess.run(['git', '-C', str(knowledge), 'commit', '-m', 'chore: initialize work-bundle knowledge'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
-                changed.append(str(knowledge / '.git/initial-commit'))
-    if (project_root / '.git').exists():
-        tracked = [project_root / '.gitignore', project_root / 'AGENTS.md', project_root / '.work-bundle/project.yaml']
-        subprocess.run(['git', '-C', str(project_root), 'add', '-f', *[str(path.relative_to(project_root)) for path in tracked if path.exists()]], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        has_staged = subprocess.run(['git', '-C', str(project_root), 'diff', '--cached', '--quiet'], check=False).returncode != 0
-        if has_staged:
-            if subprocess.run(['git', '-C', str(project_root), 'commit', '-m', 'chore: initialize work-bundle project'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
-                changed.append(str(project_root / '.git/work-bundle-initialization-commit'))
     changed = sorted(set(changed))
     if return_details:
         return changed, agents_result
@@ -1187,14 +1255,13 @@ def repair_project(project_root: Path, force: bool = False, return_details: bool
         registry_entry_data=registry_entry_data,
         return_details=True,
     )
+    changed.extend(ensure_workspace_resources(project_root))
     data = inspect_project(project_root)
     metadata_path = project_root / '.work-bundle/project.yaml'
-    if data.get('project_metadata_required_fields_missing') and (force or not read(metadata_path).strip()):
+    if data.get('project_metadata_required_fields_missing') and not read(metadata_path).strip():
         rendered = _render_project_metadata(project_root)
         if write(metadata_path, rendered, overwrite=force):
             changed.append(str(metadata_path))
-    if migrate_project_metadata_v2(project_root):
-        changed.append(str(metadata_path))
     if registry_entry_data is not None:
         metadata_changed, refreshed_path, _ = sync_project_metadata_from_registry_entry(
             registry_entry_data,
@@ -1694,7 +1761,11 @@ def _session_start_payload(project_root: Path) -> dict[str, object]:
 def _session_start_metadata_warnings(project_root: Path) -> list[str]:
     metadata_path = project_root / '.work-bundle/project.yaml'
     metadata = read(metadata_path)
-    missing = [field for field in PROJECT_METADATA_REQUIRED_FIELDS if f'{field}:' not in metadata]
+    version = _yaml_scalar(metadata, 'metadata_version')
+    required = PROJECT_METADATA_V3_REQUIRED_FIELDS if version == '3' else PROJECT_METADATA_V2_REQUIRED_FIELDS
+    missing = [field for field in required if f'{field}:' not in metadata]
+    if version not in {'2', '3'}:
+        missing.insert(0, 'metadata_version[2|3]')
     if not missing:
         return []
     return [_session_start_warning(f'project metadata missing required fields: {", ".join(missing)}', project_root)]
@@ -1806,6 +1877,8 @@ def cmd_session_start(args: list[str]) -> int:
 def cmd_init_project(args: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="wb.py init-project")
     parser.add_argument("project_root")
+    parser.add_argument("--mode", choices=['single-repository', 'multi-repository'])
+    parser.add_argument("--workspace-root")
     parser.add_argument("--name")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -1813,6 +1886,26 @@ def cmd_init_project(args: list[str]) -> int:
     parser.add_argument("--create-project-skill-override", action="store_true")
     parsed = parser.parse_args(args)
     project_root = Path(parsed.project_root).expanduser().resolve()
+    workspace_root = Path(parsed.workspace_root).expanduser().resolve() if parsed.workspace_root else project_root
+    existing_metadata = read(workspace_root / '.work-bundle/project.yaml')
+    declared_mode = _yaml_scalar(existing_metadata, 'workspace_mode')
+    if parsed.mode is None and not declared_mode:
+        out({
+            'command': 'init-project',
+            'status': 'issues-found',
+            'mode': None,
+            'dry_run': parsed.dry_run,
+            'changed_files': [],
+            'git_actions': [],
+            'failures': ['WB_WORKSPACE_MODE_REQUIRED'],
+        })
+        return 1
+    mode = parsed.mode or declared_mode
+    try:
+        WorkspaceContext(workspace_root, mode, project_root if mode == 'single-repository' else None).validate()
+    except ValueError as exc:
+        out({'command': 'init-project', 'status': 'issues-found', 'failures': [str(exc)]})
+        return 1
     changed: list[str] | str = "none"
     agents_result: dict[str, object] = {
         'agents_status': 'skipped-dry-run' if parsed.dry_run else 'skipped',
@@ -1823,6 +1916,7 @@ def cmd_init_project(args: list[str]) -> int:
         'dry_run': parsed.dry_run,
     }
     if not parsed.dry_run:
+        resource_changes = ensure_workspace_resources(workspace_root)
         existing_entry, _ = find_registry_entry(project_root)
         try:
             changed, agents_result = apply_project(
@@ -1834,6 +1928,8 @@ def cmd_init_project(args: list[str]) -> int:
                 scope='init',
                 registry_entry_data=existing_entry,
                 return_details=True,
+                workspace_root=workspace_root,
+                mode=mode,
             )
         except ReferenceAssetError as exc:
             out(_reference_failure_payload(exc, 'init-project'))
@@ -1841,6 +1937,8 @@ def cmd_init_project(args: list[str]) -> int:
         entry, registry_changed, registry = upsert_project_registry(project_root, parsed.name)
         if registry_changed and isinstance(changed, list):
             changed.append(str(registry))
+        if isinstance(changed, list):
+            changed.extend(resource_changes)
     else:
         entry = registry_entry(project_root, parsed.name)
         registry = project_registry_path()
@@ -1854,6 +1952,16 @@ def cmd_init_project(args: list[str]) -> int:
         "failures": failures,
         "agents_status": agents_result.get('agents_status'),
         "agents_sync": _agents_sync_output(agents_result),
+        "mode": mode,
+        "dry_run": parsed.dry_run,
+        "git_actions": [],
+        "transaction": {
+            "id": f"init-{_slug_from_root(workspace_root, parsed.name)}",
+            "state": "proposed" if parsed.dry_run else ("published" if not failures else "failed"),
+            "owned_paths": sorted(set(changed if isinstance(changed, list) else [])) if not parsed.dry_run else [],
+            "registry_status": "unchanged" if parsed.dry_run else ("published" if not failures else "failed"),
+            "metadata_status": "unchanged" if parsed.dry_run else ("published" if not failures else "failed"),
+        },
     })
     if parsed.dry_run:
         data["dry_run"] = True
@@ -1933,6 +2041,84 @@ def cmd_validate_project(args: list[str]) -> int:
     return 0 if not failures else 1
 
 
+def cmd_provision_member(args: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog='wb.py provision-member')
+    parser.add_argument('--workspace-root', required=True)
+    parser.add_argument('--origin', required=True)
+    parser.add_argument('--repository-id', required=True)
+    parser.add_argument('--working-branch', required=True)
+    parser.add_argument('--base-ref', default='HEAD')
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--dry-run', action='store_true')
+    mode.add_argument('--apply', action='store_true')
+    parsed = parser.parse_args(args)
+    workspace_root = Path(parsed.workspace_root).expanduser().resolve()
+    origin = Path(parsed.origin).expanduser().resolve()
+    proposal = {'workspace_root': str(workspace_root), 'repository_id': parsed.repository_id, 'origin': str(origin), 'working_branch': parsed.working_branch, 'base_ref': parsed.base_ref}
+    if parsed.dry_run:
+        out({
+            'command': 'provision-member', 'status': 'passed', 'mode': 'multi-repository',
+            'dry_run': True, 'proposal': proposal, 'changed_files': [], 'git_actions': [],
+            'transaction': {'id': f"provision-{parsed.repository_id}", 'state': 'proposed', 'owned_paths': [], 'registry_status': 'pending', 'metadata_status': 'pending'},
+            'failures': [],
+        })
+        return 0
+    try:
+        result = provision_member(workspace_root, origin, parsed.repository_id, parsed.working_branch, parsed.base_ref)
+    except (ValueError, RuntimeError) as exc:
+        out({'command': 'provision-member', 'status': 'issues-found', 'failures': [str(exc)], 'proposal': proposal})
+        return 1
+    out({
+        'command': 'provision-member', 'status': 'passed', 'mode': 'multi-repository',
+        'dry_run': False, 'result': result, 'changed_files': [result['git_control_root'], result['project_root']],
+        'git_actions': [], 'transaction': result['transaction'], 'failures': [],
+    })
+    return 0
+
+
+def cmd_migrate_to_multi_repository(args: list[str]) -> int:
+    from migration import MigrationError
+    parser = argparse.ArgumentParser(prog='wb.py migrate-to-multi-repository')
+    parser.add_argument('source_project_root')
+    parser.add_argument('--target-workspace-root', required=True)
+    parser.add_argument('--repository-id', required=True)
+    parser.add_argument('--repository-name', required=True)
+    parser.add_argument('--workspace-slug', required=True)
+    parser.add_argument('--working-branch', required=True)
+    parser.add_argument('--base-ref', default='HEAD')
+    parser.add_argument('--accepted-baseline-id')
+    parser.add_argument('--additional-origin', action='append', default=[], metavar='ID=PATH')
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--dry-run', action='store_true'); mode.add_argument('--apply', action='store_true')
+    parsed = parser.parse_args(args)
+    additional_origins: list[dict[str, object]] = []
+    for value in parsed.additional_origin:
+        if '=' not in value:
+            parser.error('--additional-origin must use ID=PATH')
+        origin_id, origin_path = value.split('=', 1)
+        if not origin_id or not origin_path:
+            parser.error('--additional-origin must use non-empty ID=PATH')
+        additional_origins.append({
+            'id': origin_id,
+            'origin_path': str(Path(origin_path).expanduser().resolve()),
+            'remote': '',
+            'git_repository': (Path(origin_path).expanduser() / '.git').exists(),
+        })
+    try:
+        result = migrate_project_metadata_v3(
+            Path(parsed.source_project_root), Path(parsed.target_workspace_root),
+            parsed.repository_id, parsed.working_branch, parsed.base_ref, parsed.apply,
+            workspace_slug=parsed.workspace_slug, repository_name=parsed.repository_name,
+            accepted_baseline_id=parsed.accepted_baseline_id,
+            additional_repository_origins=additional_origins,
+        )
+    except (MigrationError, ValueError, RuntimeError) as exc:
+        out({'command':'migrate-to-multi-repository','status':'issues-found','failure_code':str(exc)})
+        return 1
+    out({'command':'migrate-to-multi-repository','status':'passed','result':result})
+    return 0
+
+
 def cmd_set_prefer_subagent(args: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="wb.py set-prefer-subagent")
     parser.add_argument("value", choices=["true", "false", "enable", "disable", "enabled", "disabled", "on", "off"])
@@ -1961,9 +2147,41 @@ def cmd_migrate_project(args: list[str]) -> int:
     parser.add_argument("project_root")
     parser.add_argument("--name")
     parser.add_argument("--force", action="store_true")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--dry-run", action="store_true")
+    action.add_argument("--apply", action="store_true")
     parsed = parser.parse_args(args)
     project_root = Path(parsed.project_root).expanduser().resolve()
     before = inspect_project(project_root)
+    metadata_path = project_root / '.work-bundle/project.yaml'
+    current_text = read(metadata_path)
+    current_version = _yaml_scalar(current_text, 'metadata_version')
+    if not parsed.apply:
+        proposal = _render_project_metadata(project_root, parsed.name)
+        data = {
+            'command': 'migrate-project',
+            'status': 'passed' if parsed.dry_run else 'issues-found',
+            'mode': 'single-repository',
+            'dry_run': True,
+            'changed_files': [],
+            'git_actions': [],
+            'failures': [] if parsed.dry_run else ['WB_MIGRATION_EXPLICIT_ACTION_REQUIRED'],
+            'migration': {
+                'from_version': current_version,
+                'to_version': PROJECT_METADATA_VERSION,
+                'preserves_unknown_fields': True,
+                'proposed_sha256': hashlib.sha256(proposal.encode('utf-8')).hexdigest(),
+            },
+            'transaction': {
+                'id': f"metadata-{_slug_from_root(project_root, parsed.name)}",
+                'state': 'proposed',
+                'owned_paths': [str(metadata_path)],
+                'registry_status': 'unchanged',
+                'metadata_status': 'pending',
+            },
+        }
+        out(data)
+        return 0 if parsed.dry_run else 1
     try:
         changed, agents_result = apply_project(
             project_root,
@@ -2022,6 +2240,16 @@ def cmd_migrate_project(args: list[str]) -> int:
         "registry_path": str(registry),
         "registry_entry": entry,
         "before_status": "passed" if not project_failures(before, strict=False, include_roles=False) else "issues-found",
+        "mode": _yaml_scalar(read(metadata_path), 'workspace_mode') or 'single-repository',
+        "dry_run": False,
+        "git_actions": [],
+        "transaction": {
+            "id": f"metadata-{_slug_from_root(project_root, parsed.name)}",
+            "state": "published" if not failures else "failed",
+            "owned_paths": sorted(set(changed)),
+            "registry_status": "published" if registry_changed else "unchanged",
+            "metadata_status": "published" if str(metadata_path) in changed else "unchanged",
+        },
     })
     return 0 if not failures else 1
 
@@ -2049,7 +2277,7 @@ def cmd_doctor_project(args: list[str]) -> int:
             out(_reference_failure_payload(exc, 'doctor-project'))
             return 1
     data = inspect_project(project_root)
-    failures = project_failures(data, strict=False, include_roles=True)
+    failures = project_failures(data, strict=parsed.repair, include_roles=True)
     data.update({
         'command': 'doctor-project',
         'status': 'passed' if not failures else 'issues-found',
@@ -2057,6 +2285,21 @@ def cmd_doctor_project(args: list[str]) -> int:
         'changed_files': sorted(set(changed)),
         'agents_status': agents_result.get('agents_status'),
         'agents_sync': _agents_sync_output(agents_result),
+        'mode': _yaml_scalar(read(project_root / '.work-bundle/project.yaml'), 'workspace_mode') or 'single-repository-compatibility',
+        'dry_run': not parsed.repair,
+        'git_actions': [],
+        'finding_classification': {
+            'repairable': [item for item in failures if item in {'project_gitignore', 'project_ignores_work_bundle', 'project_ignores_agents', 'agents_md', 'work_bundle', 'work_bundle_gitignore', 'knowledge_root', 'orchestration_root', 'rules_root', 'rule_index'}],
+            'advisory': [item for item in failures if item.endswith('baseline_status_stale')],
+            'blocking': [item for item in failures if item not in {'project_gitignore', 'project_ignores_work_bundle', 'project_ignores_agents', 'agents_md', 'work_bundle', 'work_bundle_gitignore', 'knowledge_root', 'orchestration_root', 'rules_root', 'rule_index'} and not item.endswith('baseline_status_stale')],
+        },
+        'transaction': {
+            'id': f"doctor-{_slug_from_root(project_root)}",
+            'state': 'published' if parsed.repair and not failures else ('failed' if parsed.repair else 'proposed'),
+            'owned_paths': sorted(set(changed)),
+            'registry_status': 'unchanged',
+            'metadata_status': 'published' if str(project_root / '.work-bundle/project.yaml') in changed else 'unchanged',
+        },
     })
     out(data)
     return 0 if not failures else 1

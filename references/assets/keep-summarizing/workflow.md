@@ -1,9 +1,14 @@
 # keep-summarizing Workflow
 
-## Project Knowledge Layout
+## Workspace Knowledge Layout
 
 ```text
-.work-bundle/
+<workspace-root>/
+  AGENTS.md
+  script/index.yaml
+  credentials/credentials.yaml  # excluded from knowledge access
+  <member-project-root>/
+  .work-bundle/
   knowledge/
     project.yaml
     notes/
@@ -18,7 +23,7 @@
     handoff/
 ```
 
-`.work-bundle/knowledge/` is the default durable source of truth for one managed project. Legacy knowledge roots are readable only when explicitly selected for migration or read-only intake.
+`<workspace-root>/.work-bundle/knowledge/` is the default durable source of truth for one managed workspace. A nested member cwd resolves upward to the containing workspace; source inspection remains scoped to that member `project_root`. Single-repository mode remains current with `workspace_root == project_root`. Legacy knowledge roots are readable only when explicitly selected for migration or read-only intake.
 Handoff artifacts live under `.work-bundle/orchestration/handoff/` and are not durable knowledge.
 
 ## V3 Lifecycle Authority Model
@@ -69,7 +74,9 @@ Orchestration must retrieve durable knowledge through `ks-what-is-helpful` gatew
 
 ## Project Registry
 
-Use `.work-bundle/project.yaml` as the authority for project metadata, override inputs, copy restrictions, and project resolution priority. Resolve the global project registry from `~/.work-bundle/bootstrap.yaml` only when cross-project registry access is required. Use project-local `AGENTS.md`, initialized from `references/assets/template/AGENTS.md`, for work-bundle runtime entry rules. Resolve stable role context from `roles/` role profiles.
+Use `<workspace-root>/.work-bundle/project.yaml` as working-state authority for workspace metadata, member bindings, override inputs, copy restrictions, and resolution priority. Resolve the global project registry from `~/.work-bundle/bootstrap.yaml` only as a bounded cross-workspace locator fallback. Use workspace-root `AGENTS.md`, initialized from `references/assets/template/AGENTS.md`, for WorkBundle runtime entry rules. Resolve stable role context from `roles/` role profiles.
+
+Reusable workspace utilities live under singular `<workspace-root>/script/` and are reusable only through `script/index.yaml`; toolkit plural `scripts/` remains separate. Never read, index, embed, summarize, copy, or expose `<workspace-root>/credentials/credentials.yaml`. Credential-backed operations belong to `wb-credential-use`, and only credential IDs plus redacted metadata may cross agent-visible surfaces.
 
 ## Structural-Value Test
 

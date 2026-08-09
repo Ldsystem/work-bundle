@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 
-from core import project_root
+from core import resolve_workspace_root
 
 
 STATUS_COMMAND = ["git", "status", "--porcelain=v1", "--untracked-files=all"]
@@ -128,7 +128,7 @@ def _metadata_repository_entries(root: Path) -> list[dict[str, object]]:
 def _metadata_repositories(root: Path) -> list[Path]:
     repositories: list[Path] = []
     for entry in _metadata_repository_entries(root):
-        raw = entry.get("path")
+        raw = entry.get("project_root") or entry.get("path")
         if raw:
             repositories.append(Path(str(raw)).expanduser().resolve())
     return repositories
@@ -137,7 +137,7 @@ def _metadata_repositories(root: Path) -> list[Path]:
 def _enrich_with_metadata(root: Path, targets: list[dict[str, str]]) -> list[dict[str, object]]:
     entries: dict[str, dict[str, object]] = {}
     for entry in _metadata_repository_entries(root):
-        raw = entry.get("path")
+        raw = entry.get("project_root") or entry.get("path")
         if raw:
             entries[str(Path(str(raw)).expanduser().resolve())] = entry
     enriched: list[dict[str, object]] = []
@@ -288,8 +288,8 @@ def inspect_repository_state(
     if metadata:
         actual_branch = _run_git(path, "branch", "--show-current").stdout.strip()
         actual_head = _run_git(path, "rev-parse", "HEAD").stdout.strip()
-        expected_branch = str(metadata.get("working_branch") or "")
-        expected_head = str(metadata.get("last_commit_id") or "")
+        expected_branch = str(metadata.get("expected_branch") or metadata.get("working_branch") or "")
+        expected_head = str(metadata.get("observed_head") or metadata.get("last_commit_id") or "")
         branch_status = "not-applicable"
         commit_status = "not-applicable"
         if bool(metadata.get("git_repository")):
@@ -377,7 +377,7 @@ def _load_baselines(path: str | None) -> dict[str, list[str]]:
 
 
 def cmd_repository_preflight(args: argparse.Namespace) -> None:
-    root = project_root(args)
+    root = resolve_workspace_root(args)
     targets = resolve_target_repositories(
         root,
         task_files=((Path(path) if Path(path).is_absolute() else root / path).resolve() for path in args.task_file),

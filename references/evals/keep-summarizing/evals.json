@@ -96,6 +96,18 @@
       "prompt": "A hybrid query returns one candidate with close vector distance and another note that appears to oppose the requested workflow change. Decide what the output should say.",
       "expected_output": "Uses script output only as mechanical candidates and trace evidence; the agent classifies relevance, authority, polarity, materiality, and blocker status; surfaces opposing or constraining evidence when material; and leaves unresolved material conflicts for the user instead of letting scripts or vector similarity decide truth.",
       "files": []
+    },
+    {
+      "id": 17,
+      "prompt": "Query project knowledge while the current directory is deep inside a managed multi-repository member.",
+      "expected_output": "Walks upward to the containing workspace_root, reads durable knowledge only from workspace_root/.work-bundle/knowledge, keeps any source inspection scoped to the member project_root, and uses registry lookup only as a bounded fallback.",
+      "files": []
+    },
+    {
+      "id": 18,
+      "prompt": "A workspace has script/index.yaml and protected credentials/credentials.yaml while knowledge indexes are rebuilt.",
+      "expected_output": "Treats singular script/ as workspace utility metadata without executing utilities, excludes credentials/credentials.yaml and all credential values from reading, indexing, embedding, or output, and keeps toolkit scripts/ separate.",
+      "files": []
     }
   ],
   "v4_evals": [

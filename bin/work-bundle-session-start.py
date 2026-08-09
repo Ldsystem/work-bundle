@@ -31,9 +31,21 @@ def _read_hook_input() -> tuple[Path, list[str]]:
     return Path.cwd().resolve(), []
 
 
+def resolve_workspace_root(start: Path) -> Path:
+    """Resolve the nearest workspace so SessionStart never writes member AGENTS.md."""
+    current = start.expanduser().resolve()
+    if current.is_file():
+        current = current.parent
+    for candidate in [current, *current.parents]:
+        if (candidate / '.work-bundle' / 'project.yaml').is_file():
+            return candidate
+    return current
+
+
 def main() -> int:
     cwd, warnings = _read_hook_input()
-    args = ['--project-root', str(cwd), '--json']
+    workspace = resolve_workspace_root(cwd)
+    args = ['--project-root', str(workspace), '--json']
     for warning in warnings:
         args.extend(['--input-warning', warning])
     return int(_load_session_start()(args))

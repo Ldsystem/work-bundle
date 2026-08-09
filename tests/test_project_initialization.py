@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -161,7 +162,7 @@ def _minimal_work_bundle_root(tmp_path: Path, *, include_project_template: bool 
     return root
 
 
-def test_init_project_creates_structure_commits_and_is_idempotent(tmp_path: Path) -> None:
+def test_init_project_creates_structure_without_git_actions_and_is_idempotent(tmp_path: Path) -> None:
     config_root = bootstrap_config(tmp_path)
     project = tmp_path / "project"
     project.mkdir()
@@ -169,7 +170,7 @@ def test_init_project_creates_structure_commits_and_is_idempotent(tmp_path: Path
     git(project, "config", "user.email", "test@example.com")
     git(project, "config", "user.name", "Test")
 
-    init = run_wb(config_root, "init-project", str(project), "--name", "demo")
+    init = run_wb(config_root, "init-project", str(project), "--mode", "single-repository", "--name", "demo")
     assert init.returncode == 0, init.stdout + init.stderr
     init_data = json.loads(init.stdout)
     assert init_data["status"] == "passed"
@@ -187,8 +188,11 @@ def test_init_project_creates_structure_commits_and_is_idempotent(tmp_path: Path
     assert not (project / "rules/contract.yaml").exists()
     assert (project / ".work-bundle/rules/index.yaml").is_file()
     assert not (project / "rules/index.yaml").exists()
-    assert "initialize work-bundle project" in git(project, "log", "--oneline")
-    assert "initialize work-bundle knowledge" in git(project / ".work-bundle/knowledge", "log", "--oneline")
+    assert init_data["git_actions"] == []
+    assert init_data["transaction"]["state"] == "published"
+    assert subprocess.run(["git", "-C", str(project), "rev-parse", "--verify", "HEAD"], check=False, capture_output=True).returncode != 0
+    assert git(project, "diff", "--cached", "--name-only") == ""
+    assert not (project / ".work-bundle/knowledge/.git").exists()
 
     validate = run_wb(config_root, "validate-project", str(project))
     assert validate.returncode == 0, validate.stdout + validate.stderr
@@ -198,9 +202,61 @@ def test_init_project_creates_structure_commits_and_is_idempotent(tmp_path: Path
     assert validate_data["rule_index"] is True
     assert validate_data["legacy_rule_index"] is False
 
-    rerun = run_wb(config_root, "init-project", str(project), "--name", "demo")
+    time.sleep(1.1)
+    rerun = run_wb(config_root, "init-project", str(project), "--mode", "single-repository", "--name", "demo")
     assert rerun.returncode == 0, rerun.stdout + rerun.stderr
     assert json.loads(rerun.stdout)["changed_files"] == []
+
+
+def test_new_init_requires_explicit_mode_without_writes(tmp_path: Path) -> None:
+    config_root = bootstrap_config(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    git(project, "init", "-q", "-b", "main")
+    head_before = subprocess.run(["git", "-C", str(project), "rev-parse", "--verify", "HEAD"], check=False, capture_output=True).returncode
+    result = run_wb(config_root, "init-project", str(project), "--name", "demo")
+    data = json.loads(result.stdout)
+    assert result.returncode == 1
+    assert data["failures"] == ["WB_WORKSPACE_MODE_REQUIRED"]
+    assert data["changed_files"] == []
+    assert not (project / ".work-bundle").exists()
+    assert subprocess.run(["git", "-C", str(project), "rev-parse", "--verify", "HEAD"], check=False, capture_output=True).returncode == head_before
+    assert git(project, "diff", "--cached", "--name-only") == ""
+
+
+def test_metadata_v2_migration_requires_dry_run_then_explicit_apply(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    metadata_path = project / ".work-bundle/project.yaml"
+    metadata_path.write_text(
+        f"metadata_version: 2\nauthority: canonical\nproject_root: {project.resolve()}\ncustom_user_field: keep-me\n",
+        encoding="utf-8",
+    )
+    before = metadata_path.read_bytes()
+    missing_action = run_wb(config_root, "migrate-project", str(project), "--name", "demo")
+    assert missing_action.returncode == 1
+    assert json.loads(missing_action.stdout)["failures"] == ["WB_MIGRATION_EXPLICIT_ACTION_REQUIRED"]
+    dry_run = run_wb(config_root, "migrate-project", str(project), "--dry-run", "--name", "demo")
+    assert dry_run.returncode == 0
+    assert metadata_path.read_bytes() == before
+    applied = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo")
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    assert "metadata_version: 3" in metadata_path.read_text(encoding="utf-8")
+    assert "custom_user_field: keep-me" in metadata_path.read_text(encoding="utf-8")
+    assert json.loads(applied.stdout)["git_actions"] == []
+
+
+def test_doctor_repair_preserves_head_and_index(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    head_before = git(project, "rev-parse", "HEAD")
+    staged_before = git(project, "diff", "--cached", "--name-only")
+    (project / "script/index.yaml").unlink()
+    result = run_wb(config_root, "doctor-project", str(project), "--repair")
+    data = json.loads(result.stdout)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert data["git_actions"] == []
+    assert str(project / "script/index.yaml") in data["changed_files"]
+    assert git(project, "rev-parse", "HEAD") == head_before
+    assert git(project, "diff", "--cached", "--name-only") == staged_before
 
 
 def test_migrate_project_writes_report_without_breaking_validation(tmp_path: Path) -> None:
@@ -210,9 +266,9 @@ def test_migrate_project_writes_report_without_breaking_validation(tmp_path: Pat
     git(project, "init", "-q", "-b", "main")
     git(project, "config", "user.email", "test@example.com")
     git(project, "config", "user.name", "Test")
-    assert run_wb(config_root, "init-project", str(project), "--name", "demo").returncode == 0
+    assert run_wb(config_root, "init-project", str(project), "--mode", "single-repository", "--name", "demo").returncode == 0
 
-    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo")
+    migrated = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo")
     assert migrated.returncode == 0, migrated.stdout + migrated.stderr
     data = json.loads(migrated.stdout)
     assert data["status"] == "passed"
@@ -310,8 +366,9 @@ def test_register_project_adds_repository_to_registry_and_project_metadata(tmp_p
     assert repositories[1]["codegraph"]["reason"] == "no-index"
 
 
-def test_registry_upsert_replaces_aliases_when_explicit(tmp_path: Path) -> None:
+def test_registry_upsert_replaces_aliases_when_explicit(tmp_path: Path, monkeypatch) -> None:
     config_root = bootstrap_config(tmp_path)
+    monkeypatch.setenv("WB_CONFIG_ROOT", str(config_root))
     project = tmp_path / "project"
     project.mkdir()
     resolved = project.resolve()
@@ -358,7 +415,10 @@ def _init_fixture_project(tmp_path: Path) -> tuple[Path, Path]:
     git(project, "init", "-q", "-b", "main")
     git(project, "config", "user.email", "test@example.com")
     git(project, "config", "user.name", "Test")
-    assert run_wb(config_root, "init-project", str(project), "--name", "demo").returncode == 0
+    (project / "README.md").write_text("# Fixture\n", encoding="utf-8")
+    git(project, "add", "README.md")
+    git(project, "commit", "-m", "chore: seed fixture")
+    assert run_wb(config_root, "init-project", str(project), "--mode", "single-repository", "--name", "demo").returncode == 0
     return config_root, project
 
 
@@ -421,13 +481,13 @@ def test_init_force_overwrites_init_managed_templates_only(tmp_path: Path) -> No
     custom_role = "id: project-manager\ncustom: true\n"
     role_path.write_text(custom_role, encoding="utf-8")
 
-    without_force = run_wb(config_root, "init-project", str(project), "--name", "demo")
+    without_force = run_wb(config_root, "init-project", str(project), "--mode", "single-repository", "--name", "demo")
     assert without_force.returncode == 0, without_force.stdout + without_force.stderr
     assert agents_path.read_text(encoding="utf-8").startswith(custom_agents.rstrip() + "\n\n")
     assert role_path.read_text(encoding="utf-8") == custom_role
 
     agents_path.write_text(custom_agents, encoding="utf-8")
-    with_force = run_wb(config_root, "init-project", str(project), "--name", "demo", "--force")
+    with_force = run_wb(config_root, "init-project", str(project), "--mode", "single-repository", "--name", "demo", "--force")
     assert with_force.returncode == 0, with_force.stdout + with_force.stderr
     force_data = json.loads(with_force.stdout)
     assert str(agents_path) in force_data["changed_files"]
@@ -445,7 +505,7 @@ def test_migrate_project_retires_legacy_bootstrap_without_force(tmp_path: Path) 
     legacy_file = bootstrap_dir / "agent-bootstrap.md"
     legacy_file.write_text("# legacy bootstrap\n", encoding="utf-8")
 
-    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo")
+    migrated = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo")
     assert migrated.returncode == 0, migrated.stdout + migrated.stderr
     migrate_data = json.loads(migrated.stdout)
 
@@ -542,7 +602,7 @@ def test_init_fails_mechanically_when_required_template_missing(tmp_path: Path) 
     git(project, "config", "user.email", "test@example.com")
     git(project, "config", "user.name", "Test")
 
-    init = run_wb(config_root, "init-project", str(project), "--name", "demo")
+    init = run_wb(config_root, "init-project", str(project), "--mode", "single-repository", "--name", "demo")
     assert init.returncode == 1, init.stdout + init.stderr
     data = json.loads(init.stdout)
     assert data["command"] == "init-project"
@@ -553,7 +613,7 @@ def test_init_fails_mechanically_when_required_template_missing(tmp_path: Path) 
 
 def test_healthy_reinit_reports_empty_changed_files(tmp_path: Path) -> None:
     config_root, project = _init_fixture_project(tmp_path)
-    rerun = run_wb(config_root, "init-project", str(project), "--name", "demo")
+    rerun = run_wb(config_root, "init-project", str(project), "--mode", "single-repository", "--name", "demo")
     assert rerun.returncode == 0, rerun.stdout + rerun.stderr
     rerun_data = json.loads(rerun.stdout)
     assert rerun_data["status"] == "passed"
@@ -569,7 +629,7 @@ def test_migrate_force_does_not_overwrite_agents_md(tmp_path: Path) -> None:
     custom_agents = "# Custom Agents\n"
     agents_path.write_text(custom_agents, encoding="utf-8")
 
-    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo", "--force")
+    migrated = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo", "--force")
     assert migrated.returncode == 0, migrated.stdout + migrated.stderr
     migrate_data = json.loads(migrated.stdout)
     assert agents_path.read_text(encoding="utf-8").startswith(custom_agents.rstrip() + "\n\n")
@@ -589,7 +649,7 @@ def test_migrate_force_wraps_legacy_agents_template_without_duplicate(tmp_path: 
     template = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
     agents_path.write_text(template, encoding="utf-8")
 
-    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo", "--force")
+    migrated = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo", "--force")
     assert migrated.returncode == 0, migrated.stdout + migrated.stderr
     data = json.loads(migrated.stdout)
     text = agents_path.read_text(encoding="utf-8")
@@ -643,7 +703,7 @@ def test_migrate_project_retires_legacy_rules_contract(tmp_path: Path) -> None:
     contract_path.parent.mkdir(parents=True, exist_ok=True)
     contract_path.write_text("id: work-bundle-rule-contract\nstatus: current\n", encoding="utf-8")
 
-    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo")
+    migrated = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo")
     assert migrated.returncode == 0, migrated.stdout + migrated.stderr
     migrate_data = json.loads(migrated.stdout)
 
@@ -670,7 +730,7 @@ def test_migrate_project_preserves_legacy_root_rule_index_as_non_authority(tmp_p
     current_rule_index = project / ".work-bundle/rules/index.yaml"
     current_text = current_rule_index.read_text(encoding="utf-8")
 
-    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo")
+    migrated = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo")
     assert migrated.returncode == 0, migrated.stdout + migrated.stderr
 
     assert legacy_rule_index.read_text(encoding="utf-8") == legacy_text
@@ -789,7 +849,7 @@ def test_templates_include_layered_prefer_subagent_defaults() -> None:
     assert "bypass repository preflight" in agents_text
 
 
-def test_project_metadata_v2_records_git_and_codegraph_state(tmp_path: Path) -> None:
+def test_project_metadata_v3_records_git_and_codegraph_state(tmp_path: Path) -> None:
     wb_project = _import_wb_project()
     try:
         project = tmp_path / "project"
@@ -805,7 +865,8 @@ def test_project_metadata_v2_records_git_and_codegraph_state(tmp_path: Path) -> 
         rendered = wb_project._render_project_metadata(project, "demo")
         metadata = wb_project._metadata_source_repositories(rendered)
 
-        assert "metadata_version: 2" in rendered
+        assert "metadata_version: 3" in rendered
+        assert "workspace_mode: single-repository" in rendered
         assert "operation_policy:" in rendered
         assert metadata[0]["id"] == "demo-main"
         assert metadata[0]["git_repository"] is True
@@ -822,7 +883,7 @@ def test_validate_project_reports_metadata_branch_mismatch(tmp_path: Path) -> No
     config_root, project = _init_fixture_project(tmp_path)
     metadata_path = project / ".work-bundle/project.yaml"
     metadata_path.write_text(
-        metadata_path.read_text(encoding="utf-8").replace("working_branch: main", "working_branch: wrong-branch"),
+        metadata_path.read_text(encoding="utf-8").replace("expected_branch: main", "expected_branch: wrong-branch"),
         encoding="utf-8",
     )
 
@@ -841,7 +902,7 @@ def test_validate_project_reports_stale_metadata_baseline(tmp_path: Path) -> Non
     current_head = git(project, "rev-parse", "HEAD")
     metadata_path.write_text(
         metadata_path.read_text(encoding="utf-8")
-        .replace("last_commit_id:", f"last_commit_id: {current_head}")
+        .replace("observed_head:", f"observed_head: {current_head}")
         .replace("baseline_status: unborn", "baseline_status: current"),
         encoding="utf-8",
     )
@@ -914,7 +975,7 @@ def test_force_refresh_preserves_truth_and_development_checkouts(tmp_path: Path)
         encoding="utf-8",
     )
 
-    refreshed = run_wb(config_root, "init-project", str(project), "--name", "demo", "--force")
+    refreshed = run_wb(config_root, "init-project", str(project), "--mode", "single-repository", "--name", "demo", "--force")
     assert refreshed.returncode == 0, refreshed.stdout + refreshed.stderr
     metadata_text = metadata_path.read_text(encoding="utf-8")
     wb_project = _import_wb_project()
@@ -942,8 +1003,8 @@ def test_doctor_repair_refreshes_all_registered_checkout_baselines(tmp_path: Pat
     assert recorded_head != actual_head
     metadata_text = metadata_path.read_text(encoding="utf-8")
     metadata_lines = metadata_text.splitlines()
-    baseline_index = next(index for index, line in enumerate(metadata_lines) if line.strip().startswith("last_commit_id:"))
-    metadata_lines[baseline_index] = f"    last_commit_id: {'0' * 40}"
+    baseline_index = next(index for index, line in enumerate(metadata_lines) if line.strip().startswith("observed_head:"))
+    metadata_lines[baseline_index] = f"    observed_head: {'0' * 40}"
     metadata_path.write_text("\n".join(metadata_lines) + "\n", encoding="utf-8")
 
     diagnosed = run_wb(config_root, "doctor-project", str(project))
@@ -979,11 +1040,11 @@ def test_migrate_project_upgrades_v1_metadata_and_preserves_unknown_fields(tmp_p
         encoding="utf-8",
     )
 
-    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo")
+    migrated = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo")
     assert migrated.returncode == 0, migrated.stdout + migrated.stderr
     text = metadata_path.read_text(encoding="utf-8")
 
-    assert "metadata_version: 2" in text
+    assert "metadata_version: 3" in text
     assert "custom_user_field: keep-me" in text
     assert "operation_policy:" in text
     assert "source_repositories:" in text
@@ -1038,7 +1099,7 @@ def test_migrate_project_sources_repositories_from_registry(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    migrated = run_wb(config_root, "migrate-project", str(project), "--name", "demo")
+    migrated = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo")
     assert migrated.returncode == 0, migrated.stdout + migrated.stderr
     text = metadata_path.read_text(encoding="utf-8")
     wb_project = _import_wb_project()
@@ -1050,7 +1111,8 @@ def test_migrate_project_sources_repositories_from_registry(tmp_path: Path) -> N
     assert [repo["id"] for repo in repositories] == ["demo-main", "demo-library"]
     assert [repo["path"] for repo in repositories] == [str(resolved_project), str(resolved_extra)]
     assert repositories[0]["work_dir"] is True
-    assert repositories[1]["work_dir"] is False
+    assert repositories[1]["work_dir"] is True
+    assert repositories[1]["checkout_kind"] == "local-project"
     assert "source_repositories[1].registry_project_mismatch" not in json.loads(migrated.stdout)["failures"]
 
 
@@ -1227,7 +1289,7 @@ def test_init_project_metadata_records_agents_sync_checksum(tmp_path: Path) -> N
     managed = agents_text.split("# Work Bundle RULE START", 1)[1].split("# Work Bundle RULE END", 1)[0]
     assert "checksum" not in managed.lower()
 
-    rerun = run_wb(config_root, "init-project", str(project), "--name", "demo")
+    rerun = run_wb(config_root, "init-project", str(project), "--mode", "single-repository", "--name", "demo")
     assert rerun.returncode == 0, rerun.stdout + rerun.stderr
     assert json.loads(rerun.stdout)["changed_files"] == []
 

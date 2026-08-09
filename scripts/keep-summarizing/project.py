@@ -30,6 +30,11 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 def cmd_resolve(args: argparse.Namespace) -> None:
     cwd = Path(args.cwd or os.getcwd()).resolve()
+    workspace = resolve_workspace_root(cwd)
+    if workspace:
+        root = work_bundle_knowledge_root(workspace)
+        print(read_project_slug(root, workspace.name))
+        return
     registry_entry = registry_entry_for_cwd(cwd, args)
     if registry_entry:
         print(registry_entry.get("slug"))
@@ -48,4 +53,3 @@ def cmd_resolve(args: argparse.Namespace) -> None:
             print(project_yaml.parent.name)
             return
     raise SystemExit("No matching project knowledge repo found.")
-

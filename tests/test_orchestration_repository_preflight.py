@@ -66,6 +66,39 @@ def write_project_metadata(project: Path, repo: Path, *, branch: str = "main", c
     )
 
 
+def write_workspace_metadata_v3(workspace: Path, repo: Path) -> None:
+    head = git(repo, "rev-parse", "HEAD")
+    (workspace / ".work-bundle").mkdir(parents=True, exist_ok=True)
+    (workspace / ".work-bundle" / "project.yaml").write_text(
+        "\n".join(
+            [
+                "metadata_version: 3",
+                f"workspace_root: {workspace.resolve()}",
+                "workspace_mode: multi-repository",
+                "source_repositories:",
+                "  - id: repo-main",
+                f"    project_root: {repo.resolve()}",
+                "    origin_id: origin-main",
+                "    checkout_kind: managed-worktree",
+                "    git_repository: true",
+                "    expected_branch: main",
+                f"    observed_head: {head}",
+                "    baseline_status: current",
+                "    codegraph:",
+                "      supported: false",
+                "      index_present: false",
+                f"      root: {repo.resolve()}",
+                "      status: not-indexed",
+                '      synced_commit_id: ""',
+                '      last_synced_at: ""',
+                "      reason: no-index",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_clean_repository_passes(tmp_path: Path) -> None:
     repo = repository(tmp_path)
     result = inspect_repository_state(repo)
@@ -255,6 +288,25 @@ def test_metadata_preflight_reports_branch_commit_and_codegraph_no_index(tmp_pat
     assert row["metadata"]["branch_status"] == "matched"
     assert row["metadata"]["commit_status"] == "matched"
     assert row["metadata"]["codegraph"]["actual_index_present"] is False
+    assert row["metadata"]["codegraph"]["reason"] == "no-index"
+
+
+def test_v3_workspace_metadata_resolves_and_preflights_member_root(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    member = repository(workspace, "member")
+    write_workspace_metadata_v3(workspace, member)
+
+    targets = resolve_target_repositories(workspace)
+    assert targets[0]["path"] == str(member.resolve())
+    assert targets[0]["source"] == "project-metadata"
+
+    result = repository_preflight(targets)
+    row = result["repository_preflight"]["repositories"][0]
+    assert result["repository_preflight"]["status"] == "passed"
+    assert row["metadata"]["expected_branch"] == "main"
+    assert row["metadata"]["actual_branch"] == "main"
+    assert row["metadata"]["commit_status"] == "matched"
     assert row["metadata"]["codegraph"]["reason"] == "no-index"
 
 
