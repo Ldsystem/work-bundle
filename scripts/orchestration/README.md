@@ -11,3 +11,5 @@ python3 scripts/orch.py write-spec --title "<title>" --purpose "<purpose>" --com
 python3 scripts/orch.py write-plan --title "<title>" --purpose "<purpose>" --component "<component>" --content-file <file>
 python3 scripts/orch.py doctor
 ```
+
+Orchestration artifacts resolve from the containing `workspace_root`, including when invoked inside a nested member. Repository inspection, tests, preflight, commits, and CodeGraph remain scoped to each selected member `project_root`. Execution consumes carried spec/plan/task/handoff context and never reads `.work-bundle/knowledge/` or credential values directly.

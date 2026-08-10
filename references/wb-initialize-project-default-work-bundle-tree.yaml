@@ -1,8 +1,11 @@
 id: default-work-bundle-tree
 status: current
 roots:
+  - script
+  - credentials
   - roles
   - rules
+  - .work-bundle/git
   - .work-bundle/knowledge/notes
   - .work-bundle/knowledge/open-questions
   - .work-bundle/knowledge/context-packs
@@ -20,3 +23,13 @@ roots:
   - .work-bundle/orchestration/templates
   - .work-bundle/orchestration/reviews
   - .work-bundle/orchestration/execution-state
+files:
+  - path: script/index.yaml
+    template: references/assets/template/script-index.yaml
+    preserve_non_empty: true
+  - path: credentials/credentials.yaml
+    template: references/assets/template/credentials.yaml
+    preserve_non_empty: true
+    directory_mode: "0700"
+    file_mode: "0600"
+    git_ignored: true

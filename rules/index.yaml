@@ -208,7 +208,9 @@ rules:
   - id: rule-work-bundle-security-exclusion
     path: security-exclusion.md
     applies_when:
-      - v4 work-bundle operation requires security-exclusion
+      - a task, script index entry, plan, or handoff identifies a credential requirement
+      - initialization, doctor, migration, discovery, indexing, or validation touches credential-store structure or redacted credential-use evidence
+      - an operation could expose credential material through agent-visible or tracked surfaces
     enforcement: must
     load: conditional
     requires: []
@@ -229,12 +231,33 @@ rules:
     enforcement: must
     load: conditional
     requires: []
+  - id: wb-credential-use
+    path: work-bundle/wb-credential-use.md
+    applies_when:
+      - a user explicitly requests an operation that requires a named workspace credential ID
+      - a script/index.yaml entry declares one or more credential IDs for a requested utility
+      - an orchestration plan or task declares a credential ID, target, and requested operation
+    enforcement: must
+    load: conditional
+    requires:
+      - rule-work-bundle-security-exclusion
+  - id: wb-migrate-to-multi-repository
+    path: work-bundle/wb-migrate-to-multi-repository.md
+    applies_when:
+      - a user asks to migrate a current single-repository WorkBundle project into a multi-repository workspace
+      - an approved migration workflow inspects, dry-runs, applies, retries, or rolls back single-to-multi topology migration
+    enforcement: must
+    load: conditional
+    requires:
+      - wb-project-context-preflight
+      - wb-project-registry
+      - rule-work-bundle-security-exclusion
   - id: wb-project-context-preflight
     path: work-bundle/wb-project-context-preflight.md
     applies_when:
       - a user request starts WorkBundle-guided work for a project repository
       - task requires source-code browsing, inspection, review, planning, repair, refactor, migration, or editing in a WorkBundle-registered project
-      - task requires resolving project source repositories, work directories, project metadata, or repository structure before acting
+      - task requires resolving workspace structure, member source repositories, work directories, project metadata, or repository structure before acting
       - orchestration workflow resolves project metadata before specification evidence, implementation planning, execution, review, or project scope updates
       - repository preflight evaluates source repositories from `.work-bundle/project.yaml`
       - agent checks branch baseline, commit baseline, registry locator, or CodeGraph support for a source repository
@@ -244,11 +267,9 @@ rules:
   - id: wb-project-registry
     path: work-bundle/wb-project-registry.md
     applies_when:
-      - task.registers_project
-      - task.registers_source_repository
-      - task.creates_workspace_slug
-      - task.resolves_project_location
-      - task.resolves_knowledge_base_location
+      - user asks to initialize, register, locate, doctor, or migrate a WorkBundle workspace
+      - a workflow creates or updates a workspace slug or repository origin locator
+      - a workflow resolves workspace, project, or knowledge locations through the global project registry
     enforcement: must
     load: conditional
     requires: []
@@ -258,13 +279,15 @@ rules:
       - user requests creation of a new work-bundle script
       - user requests update of scripts under scripts/
       - agent maintains script dispatchers, doctors, or project initialization scripts
+      - user or workflow creates, updates, discovers, or runs a reusable workspace utility under script/
+      - a workspace utility is declared in script/index.yaml
     enforcement: must
     load: conditional
     requires: []
   - id: wb-skill-registry
     path: work-bundle/wb-skill-registry.md
     applies_when:
-      - task.registers_skill
+      - task.registers_external_skill
       - task.resolves_available_skills
       - task.resolves_role_skills
       - task.resolves_stage_skills

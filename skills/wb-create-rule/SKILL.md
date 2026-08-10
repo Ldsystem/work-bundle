@@ -16,7 +16,8 @@ Authority for rule work is limited to:
 - `skills/wb-create-rule/SKILL.md` — this skill (primary agent contract).
 - `$work_bundle_root/rules/` — toolkit runtime rules and `index.yaml` when rule-store scope is `toolkit`.
 - `$work_bundle_config_root/rules/` — global user runtime rules and `index.yaml` when rule-store scope is `global`.
-- `$project_root/.work-bundle/rules/` — project runtime rules and `index.yaml` when rule-store scope is `project`.
+- `$workspace_root/.work-bundle/rules/` — workspace project-scope runtime rules and `index.yaml` when rule-store scope is `project`.
+- `$project_root/.work-bundle/rules/` — compatibility alias only when `project_root == workspace_root`; never use a multi-repository member root as project rule authority.
 - `references/wb-create-rule-validation.yaml` — mechanical validation catalogs
 - `scripts/wb.py` — dispatcher for `create-rules` and `validate-rules`
 
@@ -30,12 +31,12 @@ Rule-store scope chooses which rules root is created, synced, or validated:
 |---|---|---|
 | `toolkit` | `$work_bundle_root/rules/` | Built-in WorkBundle rules. |
 | `global` | `$work_bundle_config_root/rules/` | User-customized global rules. |
-| `project` | `$project_root/.work-bundle/rules/` | Project-local rules. |
+| `project` | `$workspace_root/.work-bundle/rules/` | Workspace project-scope rules shared by its members. |
 | `explicit` | user-supplied `<rules-root>` | Backward-compatible direct root mode. |
 
 Rule-store scope is not the same as a rule area directory. Area directories inside any rules root remain `work-bundle/`, `keep-summarizing/`, `orchestration/`, and `integrity-check/`.
 
-**Toolkit write boundary:** agents must not create, edit, delete, migrate, or index `$work_bundle_root/rules/**` unless `$project_root == $work_bundle_root`. If the active project root is different from the toolkit root, stop with a boundary blocker instead of mutating toolkit rules.
+**Toolkit write boundary:** agents must not create, edit, delete, migrate, or index `$work_bundle_root/rules/**` unless `$workspace_root == $work_bundle_root`. If the active workspace root is different from the toolkit root, stop with a boundary blocker instead of mutating toolkit rules.
 
 ## Rule Layout
 
@@ -142,10 +143,10 @@ Use the unified work-bundle dispatcher. Prefer scoped commands:
 |---|---|
 | `python3 scripts/wb.py create-rules --scope toolkit` | Sync toolkit rules; allowed only when `$project_root == $work_bundle_root`. |
 | `python3 scripts/wb.py create-rules --scope global` | Sync global user rules under `$work_bundle_config_root/rules/`. |
-| `python3 scripts/wb.py create-rules --scope project --project-root <project-root>` | Sync project rules under `<project-root>/.work-bundle/rules/`. |
+| `python3 scripts/wb.py create-rules --scope project --workspace-root <workspace-root>` | Sync project-scope rules under `<workspace-root>/.work-bundle/rules/`. |
 | `python3 scripts/wb.py validate-rules --scope toolkit` | Validate toolkit rules. |
 | `python3 scripts/wb.py validate-rules --scope global` | Validate global user rules. |
-| `python3 scripts/wb.py validate-rules --scope project --project-root <project-root>` | Validate project rules. |
+| `python3 scripts/wb.py validate-rules --scope project --workspace-root <workspace-root>` | Validate workspace project-scope rules. |
 | `python3 scripts/wb.py create-rules <rules-root>` | Backward-compatible explicit-root mode. |
 | `python3 scripts/wb.py validate-rules <rules-root>` | Backward-compatible explicit-root mode. |
 
@@ -268,7 +269,7 @@ Reject unclear trigger constructions:
 - Do not cite paths outside the selected rule-store root, this skill, the validation catalog, or the dispatcher as rule authority.
 - Do not create or document a `global/` area directory inside any rules root.
 - Do not run `create-rules` or `validate-rules` against scope subdirectories such as `rules/work-bundle/`.
-- Do not mutate toolkit rules when `$project_root != $work_bundle_root`.
+- Do not mutate toolkit rules when `$workspace_root != $work_bundle_root`.
 - Do not rely on scripts to judge `applies_when` semantics.
 - Do not use `before rule selection` or `when selecting rules` as the only trigger for rule consideration.
 
@@ -288,6 +289,13 @@ Reject unclear trigger constructions:
 ```bash
 python3 scripts/wb.py validate-rules --scope <toolkit|global|project>
 ```
+
+## Runtime Rules
+
+- `wb-create-rule`: `rules/work-bundle/wb-create-rule.md`
+- `wb-project-context-preflight`: `rules/work-bundle/wb-project-context-preflight.md`
+- `wb-script-instruction`: `rules/work-bundle/wb-script-instruction.md` when rule work changes script/lifecycle instructions.
+- `rule-work-bundle-security-exclusion`: `rules/security-exclusion.md` when a rule touches credential-bearing surfaces.
 
 ## On Violation
 

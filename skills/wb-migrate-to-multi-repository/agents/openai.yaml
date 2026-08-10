@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migrate WorkBundle Workspace"
+  short_description: "Run recoverable multi-repository migration"
+  default_prompt: "Use $wb-migrate-to-multi-repository to inspect, dry-run, and recoverably migrate a single-repository workspace."

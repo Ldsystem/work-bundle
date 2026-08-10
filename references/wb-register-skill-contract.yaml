@@ -20,3 +20,11 @@ stable_roles:
   - database-engineer
   - qa-reviewer
   - devops-engineer
+registration_authority:
+  scope: external-skills-only
+  built_in_work_bundle_skills: toolkit-owned-not-registered
+  registry_path_source: bootstrap.skill_registry
+  proposal_must_be_redacted: true
+  explicit_confirmation_required_for_merge: true
+  unconfirmed_proposals_must_not_mutate_registry: true
+  non_external_entries_must_be_rejected: true

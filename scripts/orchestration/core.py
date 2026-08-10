@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -46,18 +47,129 @@ def is_relative_to(path: Path, parent: Path) -> bool:
     return path == parent or parent in path.parents
 
 
-def project_root(args: argparse.Namespace) -> Path:
-    if args.project_root:
-        return Path(args.project_root).resolve()
-    current = Path.cwd().resolve()
+def _walk_workspace_root(start: Path) -> Path | None:
+    current = start.expanduser().resolve()
+    if current.is_file():
+        current = current.parent
     for candidate in [current, *current.parents]:
-        if (candidate / ".work-bundle").exists():
+        if (candidate / ".work-bundle" / "project.yaml").is_file():
             return candidate
-    raise SystemExit("No project root found. Pass --project-root or run inside a work bundle.")
+    return None
+
+
+def _registry_workspace_candidates(start: Path) -> list[Path]:
+    config_root = Path(os.environ.get("WB_CONFIG_ROOT", Path.home() / ".work-bundle")).expanduser()
+    bootstrap = config_root / "bootstrap.yaml"
+    if not bootstrap.is_file():
+        return []
+    registry_value = ""
+    for line in bootstrap.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("project_registry:"):
+            registry_value = line.split(":", 1)[1].strip().strip("'\"")
+            break
+    if not registry_value:
+        return []
+    registry_value = registry_value.replace("$work_bundle_config_root", str(config_root))
+    registry = Path(registry_value).expanduser().resolve()
+    if not registry.is_file():
+        return []
+    projects: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    for line in registry.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if line.startswith("  - slug:"):
+            current = {"locators": []}
+            projects.append(current)
+            continue
+        if current is None:
+            continue
+        if stripped.startswith("workspace_root:"):
+            value = stripped.split(":", 1)[1].strip().strip("'\"")
+            if value:
+                current["root"] = Path(value).expanduser().resolve()
+        elif stripped.startswith("origin_path:") or stripped.startswith("path:"):
+            value = stripped.split(":", 1)[1].strip().strip("'\"")
+            if value:
+                locators = current["locators"]
+                assert isinstance(locators, list)
+                locators.append(Path(value).expanduser().resolve())
+
+    current_path = start.resolve()
+    matches: list[Path] = []
+    for project in projects:
+        root = project.get("root")
+        if not isinstance(root, Path):
+            continue
+        locators = [root, *[path for path in project["locators"] if isinstance(path, Path)]]
+        if any(locator == current_path or locator in current_path.parents for locator in locators):
+            matches.append(root)
+    return matches
+
+
+def resolve_workspace_root(args: argparse.Namespace) -> Path:
+    explicit_workspace = getattr(args, "workspace_root", None)
+    if explicit_workspace:
+        root = Path(explicit_workspace).expanduser().resolve()
+        if not (root / ".work-bundle" / "project.yaml").is_file():
+            raise SystemExit(f"No workspace metadata found at: {root}")
+        return root
+
+    explicit_project = getattr(args, "project_root", None)
+    start = Path(explicit_project).expanduser() if explicit_project else Path.cwd()
+    found = _walk_workspace_root(start)
+    if found:
+        return found
+    if explicit_project:
+        return start.resolve()
+
+    current = start.resolve()
+    matching = _registry_workspace_candidates(current)
+    if matching:
+        return max(matching, key=lambda path: len(path.parts))
+    raise SystemExit("No workspace root found. Pass --workspace-root/--project-root or run inside a work bundle.")
+
+
+def _member_roots(root: Path) -> list[Path]:
+    metadata = root / ".work-bundle" / "project.yaml"
+    roots: list[Path] = []
+    in_repositories = False
+    for line in metadata.read_text(encoding="utf-8").splitlines():
+        if line == "source_repositories:":
+            in_repositories = True
+            continue
+        if in_repositories and line and not line.startswith(" "):
+            break
+        if not in_repositories:
+            continue
+        stripped = line.strip()
+        if stripped.startswith("project_root:") or stripped.startswith("path:"):
+            value = stripped.split(":", 1)[1].strip().strip("'\"")
+            if value:
+                roots.append(Path(value).expanduser().resolve())
+    return roots
+
+
+def resolve_member_project_root(args: argparse.Namespace, workspace: Path | None = None) -> Path:
+    root = workspace or resolve_workspace_root(args)
+    explicit_project = getattr(args, "project_root", None)
+    candidate = Path(explicit_project).expanduser().resolve() if explicit_project else Path.cwd().resolve()
+    members = [member for member in _member_roots(root) if member == candidate or member in candidate.parents]
+    if members:
+        return max(members, key=lambda path: len(path.parts))
+    if candidate == root or root in candidate.parents:
+        return root
+    if not explicit_project and getattr(args, "workspace_root", None):
+        return root
+    raise SystemExit(f"Project root is not a managed member of workspace: {candidate}")
+
+
+def project_root(args: argparse.Namespace) -> Path:
+    """Compatibility alias for the workspace authority root."""
+    return resolve_workspace_root(args)
 
 
 def work_bundle(args: argparse.Namespace) -> Path:
-    return project_root(args) / ".work-bundle"
+    return resolve_workspace_root(args) / ".work-bundle"
 
 
 def orchestration_root(args: argparse.Namespace) -> Path:
@@ -139,14 +251,14 @@ def init_dirs(args: argparse.Namespace) -> None:
 
 
 def rel(path: Path, args: argparse.Namespace) -> str:
-    return path.resolve().relative_to(project_root(args)).as_posix()
+    return path.resolve().relative_to(resolve_workspace_root(args)).as_posix()
 
 
 def artifact_path_from_row(row: dict[str, object], args: argparse.Namespace) -> Path:
     raw_path = str(row.get("path", ""))
     if not raw_path:
         raise SystemExit(f"Index row has no path: {row}")
-    return project_root(args) / raw_path
+    return resolve_workspace_root(args) / raw_path
 
 
 def move_to_archive(path: Path, active_root: Path, archived_root: Path) -> Path:
@@ -193,4 +305,3 @@ def repository_root() -> Path:
 
 def keep_summarizing_root() -> Path:
     return repository_root() / "keep-summarizing"
-

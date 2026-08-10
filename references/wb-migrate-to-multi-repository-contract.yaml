@@ -1,0 +1,99 @@
+id: migrate-to-multi-repository-contract
+status: current
+source_mode: single-repository
+target_mode: multi-repository
+required_inputs:
+  - source_project_root
+  - target_workspace_root
+  - workspace_slug
+  - repository_id
+  - repository_name
+  - working_branch
+  - base_ref
+optional_inputs:
+  - additional_repository_origins
+workflow:
+  ordered_stages: [inspect, dry-run, apply]
+  apply_requires_explicit_authority: true
+  dirty_apply_requires_accepted_baseline_id: true
+  registry_publication_after_target_verification: true
+proposal:
+  git_state:
+    source_repository: separate
+    nested_work_bundle: separate
+  accepted_baseline:
+    evidence_id: required-when-either-source-is-dirty
+    derived_from: [source-head, source-status, nested-head, nested-status]
+copy_policy:
+  include:
+    - .work-bundle
+    - script
+    - script/index.yaml
+    - managed-AGENTS-section
+  exclude:
+    - credentials/credentials.yaml
+    - transient-caches
+    - unsafe-symlink-targets
+  preserve:
+    - knowledge-git-history
+    - orchestration-state
+    - project-rules
+    - unknown-files
+    - user-authored-AGENTS-content
+    - materially-required-permissions-and-timestamps
+  verification: file-type-content-and-digest
+source_preservation:
+  repository_unchanged: required
+  work_bundle_unchanged: required
+  branch_unchanged: required
+  working_tree_unchanged: required
+  registry_entry_unchanged_until_verified: required
+  credential_store_unchanged: required
+  forbidden_operations: [commit, clean, stash, reset, delete, deregister]
+target:
+  empty_protected_credential_store: required
+  workspace_local_git_control: required
+  named_member_worktree: required
+  metadata_version: 3
+failure:
+  transaction_record_scope: target-parent/.work-bundle-migration-transactions
+  record_outside_disposable_owned_paths: true
+  record_is_redacted: true
+  false_active_registry_entry: forbidden
+  retry_is_idempotent: true
+  rollback_scope: migration-owned-target-paths-only
+  publication_restore_scope: metadata-and-bootstrap-resolved-registry
+transaction:
+  stages: [copy-authority, workspace-resources, member-provision, final-verification, metadata-publication, registry-publication]
+  final_verification_before_publication:
+    required: [session-start-discovery, member-preflight, workspace-local-git-control, metadata-candidate, registry-candidate, source-preservation]
+  publication:
+    metadata_and_locator_registry: atomic-or-recoverable
+    before_after_digests: required
+    active_member_before_verification: forbidden
+  retry:
+    failed_transaction: repeatable-with-same-accepted-baseline
+    published_transaction: replay-complete-persisted-result-without-writes
+    stable_evidence: [transaction-id, transaction-context, member-binding, validation-results]
+result:
+  redacted: true
+  required:
+    - source_and_target_roots
+    - copied_inventory_and_digests
+    - skipped_sensitive_and_transient_paths
+    - script_index_validation
+    - agents_merge_status
+    - provisioned_member_bindings
+    - metadata_and_registry_status
+    - source_preservation_checks
+    - transaction_status
+    - validation_results
+    - retry_or_rollback_instructions
+    - separate_source_and_work_bundle_git_state
+    - accepted_baseline_id
+    - validation_results
+    - retry_or_rollback_instructions
+  forbidden:
+    - credential_content
+    - credential_file_content
+    - raw_secret_path_when_sensitive

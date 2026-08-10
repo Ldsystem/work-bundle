@@ -180,8 +180,8 @@ def registry_file(args: argparse.Namespace | None = None) -> Path:
     return default_registry_file()
 
 
-def work_bundle_knowledge_root(project_root: Path) -> Path:
-    return project_root.resolve() / ".work-bundle" / "knowledge"
+def work_bundle_knowledge_root(workspace_root: Path) -> Path:
+    return workspace_root.resolve() / ".work-bundle" / "knowledge"
 
 
 def find_work_bundle_knowledge(start: Path) -> Path | None:
@@ -191,6 +191,48 @@ def find_work_bundle_knowledge(start: Path) -> Path | None:
         if root.exists():
             return root.resolve()
     return None
+
+
+def resolve_workspace_root(start: Path) -> Path | None:
+    """Find the nearest containing WorkBundle workspace without registry I/O."""
+    current = start.expanduser().resolve()
+    if current.is_file():
+        current = current.parent
+    for candidate in [current, *current.parents]:
+        if (candidate / ".work-bundle" / "project.yaml").is_file():
+            return candidate
+    return None
+
+
+def _workspace_root_from_registry_entry(entry: dict[str, object]) -> Path | None:
+    value = entry.get("workspace_root") or entry.get("work_bundle_root")
+    return Path(str(value)).expanduser().resolve() if value else None
+
+
+def resolve_member_project_root(workspace_root: Path, start: Path) -> Path:
+    """Resolve a cwd/explicit path to its deepest declared source member."""
+    metadata = workspace_root / ".work-bundle" / "project.yaml"
+    candidate = start.expanduser().resolve()
+    members: list[Path] = []
+    in_repositories = False
+    for line in metadata.read_text(encoding="utf-8").splitlines():
+        if line == "source_repositories:":
+            in_repositories = True
+            continue
+        if in_repositories and line and not line.startswith(" "):
+            break
+        if not in_repositories:
+            continue
+        stripped = line.strip()
+        if stripped.startswith("project_root:") or stripped.startswith("path:"):
+            value = stripped.split(":", 1)[1].strip().strip("'\"")
+            if value:
+                member = Path(value).expanduser().resolve()
+                if member == candidate or member in candidate.parents:
+                    members.append(member)
+    if members:
+        return max(members, key=lambda path: len(path.parts))
+    return workspace_root.resolve()
 
 
 def read_project_slug(root: Path, fallback: str) -> str:
@@ -329,7 +371,7 @@ def project_registry_entry(project: str, args: argparse.Namespace | None = None)
 def registry_entry_for_cwd(cwd: Path, args: argparse.Namespace | None = None) -> dict[str, object] | None:
     cwd = cwd.resolve()
     for entry in registry_projects(registry_file(args)):
-        for key in ["work_bundle_root", "knowledge_root"]:
+        for key in ["workspace_root", "work_bundle_root", "knowledge_root"]:
             value = entry.get(key)
             if value:
                 candidate = Path(str(value)).expanduser()
@@ -358,9 +400,22 @@ def resolve_knowledge_base(args: argparse.Namespace | None = None) -> tuple[Path
         explicit_root = getattr(args, "knowledge_root", None)
         if explicit_root:
             return Path(explicit_root).resolve(), "work-bundle"
+        workspace_arg = getattr(args, "workspace_root", None)
+        if workspace_arg:
+            workspace = Path(workspace_arg).expanduser().resolve()
+            return work_bundle_knowledge_root(workspace), "work-bundle"
         project_root = getattr(args, "project_root", None)
         if project_root:
-            return work_bundle_knowledge_root(Path(project_root)), "work-bundle"
+            explicit = Path(project_root).expanduser().resolve()
+            workspace = resolve_workspace_root(explicit)
+            if workspace:
+                return work_bundle_knowledge_root(workspace), "work-bundle"
+            entry = registry_entry_for_cwd(explicit, args)
+            if entry:
+                registry_workspace = _workspace_root_from_registry_entry(entry)
+                if registry_workspace:
+                    return work_bundle_knowledge_root(registry_workspace), "registry"
+            return work_bundle_knowledge_root(explicit), "work-bundle"
         cwd_arg = getattr(args, "cwd", None)
         if cwd_arg:
             found = find_work_bundle_knowledge(Path(cwd_arg))

@@ -1,0 +1,89 @@
+id: workspace-metadata-v3-contract
+status: current
+metadata_version: 3
+authority: workspace-working-state
+compatibility:
+  readable_versions: [2, 3]
+  migration_requires_explicit_apply: true
+  preserve_unknown_fields: true
+workspace:
+  required:
+    - workspace_root
+    - workspace_mode
+    - workspace_resources
+    - operation_policy
+    - source_repositories
+    - lifecycle_transaction
+  workspace_mode:
+    allowed: [single-repository, multi-repository]
+    single-repository:
+      workspace_root_equals_project_root: true
+      lifecycle_status: current
+    multi-repository:
+      member_project_roots_within_workspace_root: true
+  resources:
+    script_index:
+      path: script/index.yaml
+      allowed_status: [current, missing, invalid]
+      content_in_metadata: forbidden
+    credential_store:
+      path: credentials/credentials.yaml
+      allowed_status: [protected, missing, invalid, unsupported-protection]
+      content_in_metadata: forbidden
+      credential_ids_in_metadata: forbidden
+registry_authority:
+  owns:
+    - workspace_slug
+    - workspace_root
+    - repository_origin_id
+    - origin_path
+    - remote
+    - git_repository
+  forbids:
+    - expected_branch
+    - observed_head
+    - cleanliness
+    - lifecycle_transaction
+    - operation_policy
+    - codegraph_state
+member_schema:
+  required:
+    - id
+    - project_root
+    - origin_id
+    - checkout_kind
+    - git_control_root
+    - git_control_scope
+    - worktree_name
+    - expected_branch
+    - base_ref
+    - observed_head
+    - observation_time
+    - baseline_status
+    - lifecycle_status
+    - operation_policy
+    - codegraph
+  checkout_kind:
+    allowed: [single-repository, managed-worktree, local-project]
+  git_control_scope:
+    allowed: [workspace, project, not-applicable]
+    managed_worktree_requires_workspace_scope: true
+  paths:
+    managed_project_root_within_workspace_root: true
+    managed_git_control_root_within_workspace_root: true
+  observations:
+    expected_branch_is_policy: true
+    base_ref_is_provision_input: true
+    observed_head_is_live_evidence: true
+    observation_time_format: RFC3339
+  lifecycle_status:
+    allowed: [proposed, provisioning, active, failed, archived]
+transaction:
+  lifecycle_result:
+    required: [status, mode, dry_run, changed_files, git_actions, transaction, failures]
+    git_actions_default: []
+    ordinary_lifecycle_stage_or_commit: forbidden
+  registry_and_metadata_update: atomic-or-recoverable
+  before_after_evidence_required: true
+  false_active_member_forbidden: true
+  preserve_original_repository: true

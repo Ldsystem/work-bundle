@@ -1,0 +1,4 @@
+interface:
+  display_name: "WorkBundle Credential Use"
+  short_description: "Run authorized credential adapters safely"
+  default_prompt: "Use $wb-credential-use for a named credential, exact target, purpose, and authorized operation."

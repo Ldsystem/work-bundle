@@ -1,18 +1,30 @@
 source_repository_roles:
-  registry: "Locator only: stable repository id, path, work_dir, remote, and Git capability."
-  project_metadata: "Working-state authority: branch baseline, commit baseline, operation policy, and CodeGraph state."
+  registry: "Locator only: workspace slug/root and stable repository origin identity and locators."
+  project_metadata: "Working-state authority: member path, branch/HEAD observation, lifecycle transaction, operation policy, and CodeGraph state."
 
 projects:
   - slug: <project-slug>
     name: <project-name>
+    workspace_root: <absolute-path-to-workspace-root>
     work_bundle_root: <path to the project scope `.work-bundle/` dir, default to `$project_root/.work-bundle`>
     knowledge_root: <path to the knowledge base of the project, default to `$project_root/.work-bundle/knowledge/`>
     aliases: []
+    repository_origins:
+      - id: <stable-repository-id>
+        origin_path: <path-to-origin-or-empty>
+        remote: ""
+        git_repository: <boolean type, indicates whether the origin is Git-backed>
+    # Compatibility locator for metadata v2 readers only. Mutable checkout
+    # state is never stored here and v3 writers use repository_origins.
     source_repositories:
       - id: <stable-repository-id>
         path: <path to source repository 1>
+        checkout_role: <truth|development|auxiliary>
         work_dir: <boolean type, indicates, whether the repository is work directory>
         remote: ""
         git_repository: <boolean type, indicates whether the source repository is Git-backed>
+    compatibility:
+      readable_project_metadata_versions: [2, 3]
+      source_repositories_role: locator-only
     status: active
     updated_at: 2026-05-18

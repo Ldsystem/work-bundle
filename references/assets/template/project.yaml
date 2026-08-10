@@ -1,8 +1,23 @@
-metadata_version: 2
-authority: canonical
+metadata_version: 3
+authority: workspace-working-state
+workspace_root: <absolute-path-to-workspace-root>
+workspace_mode: <single-repository|multi-repository>
 project_root: <absolute-path-to-project-root>
 industry: <industry-or-domain>
 prefer_subagent: false
+
+metadata_compatibility:
+  readable_versions: [2, 3]
+  migration_requires_explicit_apply: true
+  preserves_unknown_fields: true
+
+workspace_resources:
+  script_index:
+    path: script/index.yaml
+    status: current
+  credential_store:
+    path: credentials/credentials.yaml
+    status: protected
 
 agents_sync:
   managed_section: work-bundle-rule
@@ -24,27 +39,25 @@ operation_policy:
     forbid_operations: [reset --hard, clean -fd, push --force]
 
 source_repository_roles:
-  registry: "Locator only: stable repository id, path, work_dir, remote, and Git capability."
-  project_metadata: "Working-state authority: branch baseline, commit baseline, operation policy, and CodeGraph state."
+  registry: "Locator only: workspace slug/root and stable repository origin identity and locators."
+  project_metadata: "Working-state authority: member path, branch/HEAD observation, lifecycle transaction, operation policy, and CodeGraph state."
 
 source_repositories:
   - id: <stable-repository-id>
-    path: <absolute-path-to-source-repository>
-    work_dir: true
-    remote: ""
+    project_root: <absolute-path-to-source-repository>
+    origin_id: <stable-repository-id>
+    checkout_kind: single-repository
+    git_control_root: <absolute-path-to-source-repository>/.git
+    git_control_scope: project
+    worktree_name: <stable-repository-id>
     git_repository: true
-    working_branch: <required-working-branch>
-    branch_required: true
-    branch_check:
-      required_before:
-        - specification_evidence
-        - implementation_planning
-        - execution
-        - review
-        - project_scope_update
-      on_mismatch: stop
-    last_commit_id: <git-head-commit-or-empty-for-non-git>
+    expected_branch: <required-working-branch>
+    base_ref: HEAD
+    observed_head: <git-head-commit-or-empty-for-non-git>
+    observation_time: <rfc3339-observation-time>
     baseline_status: current
+    lifecycle_status: active
+    operation_policy: inherit
     codegraph:
       supported: false
       index_present: false
@@ -54,8 +67,13 @@ source_repositories:
       last_synced_at: ""
       reason: no-index
 
+lifecycle_transaction:
+  state: published
+  registry_status: published
+  metadata_status: published
+
 migration:
   authority_owner: /wb-initialize-project
-  compatibility_window: none
-  doctor_flow: "Use /wb-initialize-project doctor for stale legacy project metadata structures."
-  migrate_flow: "Use /wb-initialize-project migrate to converge old metadata paths to .work-bundle/project.yaml."
+  compatibility_window: metadata-v2-readable-until-explicit-v3-apply
+  doctor_flow: "Use /wb-initialize-project doctor for deterministic file-only repair."
+  migrate_flow: "Inspect or dry-run metadata v2, then use explicit --apply for v3 conversion."

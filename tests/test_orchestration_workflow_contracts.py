@@ -701,6 +701,23 @@ def test_orchestration_evals_cover_codegraph_and_no_retrieval_fallback() -> None
     assert "does not require any additional runtime preference file" in expected
 
 
+def test_orchestration_workflow_carries_workspace_member_and_credential_boundaries() -> None:
+    workflow = text("references/assets/orchestration/workflow.md")
+    cases = evals("references/evals/orchestration/evals.json")
+    prompts = "\n".join(str(case["prompt"]) for case in cases)
+    expected = "\n".join(str(case["expected_output"]) for case in cases)
+
+    assert "<workspace-root>/.work-bundle/orchestration/" in workflow
+    assert "explicit `--project-root` selects a single-repository root or managed member" in workflow
+    assert "Reusable workspace utilities live only under singular `<workspace-root>/script/`" in workflow
+    assert "Credential values must never enter specifications, plans, tasks, handoffs" in workflow
+    assert "runtime skill registry is external-only" in workflow
+    assert "`wb-credential-use` and `wb-migrate-to-multi-repository`" in workflow
+    assert "deep directory inside a managed multi-repository workspace member" in prompts
+    assert "creates no registry proposal or merge" in expected
+    assert "transmits only credential ID, redacted target, requested operation" in expected
+
+
 def test_keep_summarizing_evals_cover_cross_lifecycle_discovery_and_narrow_authority() -> None:
     cases = evals("references/evals/keep-summarizing/evals.json")
     prompts = "\n".join(str(case["prompt"]) for case in cases)

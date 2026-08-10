@@ -2,11 +2,13 @@
 .work-bundle/
 AGENTS.md
 !references/assets/template/AGENTS.md
+credentials/
 design/
 # OS
 .DS_Store
 
 # IDE / editors
+.air/
 .idea/
 .vscode/
 *.swp

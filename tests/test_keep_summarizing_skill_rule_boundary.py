@@ -228,3 +228,16 @@ def test_ks_note_authority_surfaces_opposing_and_constraining_evidence() -> None
         ),
         "ks-note-state-authority",
     )
+
+
+def test_keep_summarizing_workflow_uses_workspace_authority_and_excludes_credentials() -> None:
+    workflow = skill_text(REPO_ROOT / "references/assets/keep-summarizing/workflow.md")
+    project = skill_text(REPO_ROOT / "references/assets/keep-summarizing/project.yaml")
+
+    assert "<workspace-root>/.work-bundle/knowledge/" in workflow
+    assert "nested member cwd resolves upward to the containing workspace" in workflow
+    assert "singular `<workspace-root>/script/`" in workflow
+    assert "Never read, index, embed, summarize, copy, or expose" in workflow
+    assert "metadata: .work-bundle/project.yaml" in project
+    assert "member_source_scope: project-root" in project
+    assert "credential_store_access: forbidden" in project
