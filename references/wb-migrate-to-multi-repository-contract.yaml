@@ -17,6 +17,13 @@ workflow:
   apply_requires_explicit_authority: true
   dirty_apply_requires_accepted_baseline_id: true
   registry_publication_after_target_verification: true
+legacy_topology:
+  evidence_sources: [workspace-metadata, bootstrap-resolved-project-registry]
+  single_compatible: in-place-metadata-migration-allowed
+  multiple_repositories: multi-repository-migration-required
+  disagreement: block
+  force_override: forbidden
+  apply_requires_exact_proposal_id: true
 proposal:
   git_state:
     source_repository: separate
@@ -75,6 +82,13 @@ transaction:
     failed_transaction: repeatable-with-same-accepted-baseline
     published_transaction: replay-complete-persisted-result-without-writes
     stable_evidence: [transaction-id, transaction-context, member-binding, validation-results]
+member_provisioning:
+  internal_checkout_state: verified
+  public_success_state: published
+  public_success_requires: [workspace-local-checkout, metadata-member, registry-origin]
+  verified_retry: resume-publication
+  published_retry: replay-without-writes
+  unrelated_non_empty_target: collision
 result:
   redacted: true
   required:

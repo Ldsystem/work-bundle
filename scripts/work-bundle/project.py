@@ -9,7 +9,6 @@ from core import *
 from bootstrap_config import default_toolkit_root
 from workspace import WorkspaceContext, WorkspaceTransaction
 from workspace_resources import ensure_workspace_resources, validate_script_index
-from worktree import provision_member, verify_git_control_scope
 def migrate_project_metadata_v3(source_root: Path, target_root: Path, repository_id: str, branch: str, base_ref: str = 'HEAD', apply: bool = False, **options: object) -> dict[str, object]:
     from migration import apply_migration, propose_migration
     if not apply:
@@ -1665,6 +1664,157 @@ def find_registry_entry(project_root: Path) -> tuple[dict[str, object] | None, P
     return None, path
 
 
+def assess_legacy_topology(
+    project_root: Path,
+    metadata_text: str,
+    registry_entry_data: dict[str, object] | None,
+    registry_origin_data: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    """Classify legacy metadata without converting repository locators into members."""
+    project_root = project_root.expanduser().resolve()
+    metadata_sources = _metadata_source_repositories(metadata_text)
+    registry_sources = (
+        registry_entry_data.get('source_repositories')
+        if isinstance(registry_entry_data, dict)
+        else []
+    )
+    registry_sources = registry_sources if isinstance(registry_sources, list) else []
+
+    def identities(sources: object) -> list[dict[str, str]]:
+        result: list[dict[str, str]] = []
+        if not isinstance(sources, list):
+            return result
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            raw_path = source.get('project_root') or source.get('origin_path') or source.get('path')
+            result.append({
+                'id': str(source.get('id') or ''),
+                'path': str(Path(str(raw_path)).expanduser().resolve()) if raw_path else '',
+            })
+        return result
+
+    metadata_identities = identities(metadata_sources)
+    registry_identities = identities([*registry_sources, *(registry_origin_data or [])])
+    registry_identities = [
+        dict(identity)
+        for identity in {
+            (item['id'], item['path']): item
+            for item in registry_identities
+        }.values()
+    ]
+    conflicts: list[str] = []
+    by_id: dict[str, set[str]] = {}
+    for identity in [*metadata_identities, *registry_identities]:
+        if identity['id'] and identity['path']:
+            by_id.setdefault(identity['id'], set()).add(identity['path'])
+    for source_id, paths in sorted(by_id.items()):
+        if len(paths) > 1:
+            conflicts.append(f'repository-id-path-conflict:{source_id}')
+
+    paths = {
+        identity['path']
+        for identity in [*metadata_identities, *registry_identities]
+        if identity['path']
+    }
+    if conflicts:
+        classification = 'topology-conflict'
+        failure_code = 'WB_MIGRATION_TOPOLOGY_CONFLICT'
+    elif len(paths) > 1:
+        classification = 'multi-repository-migration-required'
+        failure_code = 'WB_MIGRATION_MULTI_REPOSITORY_WORKFLOW_REQUIRED'
+    elif paths and paths != {str(project_root)}:
+        classification = 'topology-conflict'
+        failure_code = 'WB_MIGRATION_TOPOLOGY_CONFLICT'
+    else:
+        classification = 'single-compatible'
+        failure_code = ''
+    return {
+        'classification': classification,
+        'failure_code': failure_code,
+        'metadata_sources': metadata_identities,
+        'registry_sources': registry_identities,
+        'distinct_repository_paths': sorted(paths),
+        'conflicts': conflicts,
+        'required_command': 'migrate-to-multi-repository' if classification == 'multi-repository-migration-required' else '',
+    }
+
+
+def _metadata_migration_proposal(
+    project_root: Path,
+    metadata_text: str,
+    registry_path: Path,
+    registry_entry_data: dict[str, object] | None,
+    name: str | None,
+    force: bool,
+) -> dict[str, object]:
+    topology = assess_legacy_topology(
+        project_root,
+        metadata_text,
+        registry_entry_data,
+        _registry_origin_locators(registry_path, registry_entry_data),
+    )
+    facts = {
+        'project_root': str(project_root.resolve()),
+        'name': name or '',
+        'force': force,
+        'metadata_sha256': hashlib.sha256(metadata_text.encode('utf-8')).hexdigest(),
+        'registry_topology_sha256': hashlib.sha256(
+            json.dumps(topology['registry_sources'], sort_keys=True).encode('utf-8')
+        ).hexdigest(),
+        'topology': topology,
+    }
+    proposal_id = hashlib.sha256(json.dumps(facts, sort_keys=True).encode('utf-8')).hexdigest()
+    return {'id': proposal_id, **facts}
+
+
+def _registry_origin_locators(
+    registry_path: Path,
+    registry_entry_data: dict[str, object] | None,
+) -> list[dict[str, object]]:
+    if not registry_path.is_file() or not isinstance(registry_entry_data, dict):
+        return []
+    slug = str(registry_entry_data.get('slug') or '')
+    if not slug:
+        return []
+    lines = registry_path.read_text(encoding='utf-8').splitlines()
+    starts = [index for index, line in enumerate(lines) if line.startswith('  - slug:')]
+    project_bounds: tuple[int, int] | None = None
+    for position, start in enumerate(starts):
+        value = lines[start].split(':', 1)[1].strip().strip('"\'')
+        if value == slug:
+            project_bounds = (start, starts[position + 1] if position + 1 < len(starts) else len(lines))
+            break
+    if project_bounds is None:
+        return []
+    start, end = project_bounds
+    origin_start = next(
+        (index for index in range(start + 1, end) if lines[index].startswith('    repository_origins:')),
+        None,
+    )
+    if origin_start is None:
+        return []
+    origins: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    for line in lines[origin_start + 1:end]:
+        if line and not line.startswith('      '):
+            break
+        if line.startswith('      - '):
+            if current is not None:
+                origins.append(current)
+            current = {}
+            item = line.strip()[2:]
+            if ':' in item:
+                key, value = item.split(':', 1)
+                current[key.strip()] = value.strip().strip('"\'')
+        elif current is not None and line.startswith('        ') and ':' in line:
+            key, value = line.strip().split(':', 1)
+            current[key.strip()] = value.strip().strip('"\'')
+    if current is not None:
+        origins.append(current)
+    return origins
+
+
 def list_project_registry() -> tuple[list[dict[str, object]], Path]:
     path = project_registry_path()
     return _project_blocks(path), path
@@ -2042,37 +2192,43 @@ def cmd_validate_project(args: list[str]) -> int:
 
 
 def cmd_provision_member(args: list[str]) -> int:
+    from member import MemberLifecycleError, provision_member_lifecycle
     parser = argparse.ArgumentParser(prog='wb.py provision-member')
     parser.add_argument('--workspace-root', required=True)
     parser.add_argument('--origin', required=True)
     parser.add_argument('--repository-id', required=True)
     parser.add_argument('--working-branch', required=True)
     parser.add_argument('--base-ref', default='HEAD')
+    parser.add_argument('--workspace-slug')
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--dry-run', action='store_true')
     mode.add_argument('--apply', action='store_true')
     parsed = parser.parse_args(args)
     workspace_root = Path(parsed.workspace_root).expanduser().resolve()
     origin = Path(parsed.origin).expanduser().resolve()
-    proposal = {'workspace_root': str(workspace_root), 'repository_id': parsed.repository_id, 'origin': str(origin), 'working_branch': parsed.working_branch, 'base_ref': parsed.base_ref}
-    if parsed.dry_run:
-        out({
-            'command': 'provision-member', 'status': 'passed', 'mode': 'multi-repository',
-            'dry_run': True, 'proposal': proposal, 'changed_files': [], 'git_actions': [],
-            'transaction': {'id': f"provision-{parsed.repository_id}", 'state': 'proposed', 'owned_paths': [], 'registry_status': 'pending', 'metadata_status': 'pending'},
-            'failures': [],
-        })
-        return 0
     try:
-        result = provision_member(workspace_root, origin, parsed.repository_id, parsed.working_branch, parsed.base_ref)
-    except (ValueError, RuntimeError) as exc:
-        out({'command': 'provision-member', 'status': 'issues-found', 'failures': [str(exc)], 'proposal': proposal})
+        result = provision_member_lifecycle(
+            workspace_root,
+            origin,
+            parsed.repository_id,
+            parsed.working_branch,
+            parsed.base_ref,
+            workspace_slug=parsed.workspace_slug,
+            dry_run=parsed.dry_run,
+        )
+    except MemberLifecycleError as exc:
+        out({
+            'command': 'provision-member',
+            'status': 'issues-found',
+            'mode': 'multi-repository',
+            'dry_run': parsed.dry_run,
+            'failure_code': exc.code,
+            'failures': [exc.code],
+            'result': exc.result,
+            'git_actions': [],
+        })
         return 1
-    out({
-        'command': 'provision-member', 'status': 'passed', 'mode': 'multi-repository',
-        'dry_run': False, 'result': result, 'changed_files': [result['git_control_root'], result['project_root']],
-        'git_actions': [], 'transaction': result['transaction'], 'failures': [],
-    })
+    out({'command': 'provision-member', **result})
     return 0
 
 
@@ -2147,6 +2303,7 @@ def cmd_migrate_project(args: list[str]) -> int:
     parser.add_argument("project_root")
     parser.add_argument("--name")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--accepted-proposal-id")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--dry-run", action="store_true")
     action.add_argument("--apply", action="store_true")
@@ -2156,21 +2313,37 @@ def cmd_migrate_project(args: list[str]) -> int:
     metadata_path = project_root / '.work-bundle/project.yaml'
     current_text = read(metadata_path)
     current_version = _yaml_scalar(current_text, 'metadata_version')
+    registry_entry_data, registry = find_registry_entry(project_root)
+    proposal_evidence = _metadata_migration_proposal(
+        project_root, current_text, registry, registry_entry_data, parsed.name, parsed.force
+    )
+    topology = proposal_evidence['topology']
     if not parsed.apply:
-        proposal = _render_project_metadata(project_root, parsed.name)
+        proposal = ''
+        if topology['classification'] == 'single-compatible':
+            proposal = _render_project_metadata(project_root, parsed.name, registry_entry_data)
+        topology_failure = str(topology.get('failure_code') or '')
+        failures = (
+            [topology_failure]
+            if topology_failure
+            else ([] if parsed.dry_run else ['WB_MIGRATION_EXPLICIT_ACTION_REQUIRED'])
+        )
         data = {
             'command': 'migrate-project',
-            'status': 'passed' if parsed.dry_run else 'issues-found',
-            'mode': 'single-repository',
+            'status': 'passed' if parsed.dry_run and not failures else 'issues-found',
+            'mode': 'single-repository' if topology['classification'] == 'single-compatible' else topology['classification'],
             'dry_run': True,
             'changed_files': [],
             'git_actions': [],
-            'failures': [] if parsed.dry_run else ['WB_MIGRATION_EXPLICIT_ACTION_REQUIRED'],
+            'failures': failures,
+            'topology_assessment': topology,
             'migration': {
                 'from_version': current_version,
                 'to_version': PROJECT_METADATA_VERSION,
                 'preserves_unknown_fields': True,
-                'proposed_sha256': hashlib.sha256(proposal.encode('utf-8')).hexdigest(),
+                'proposed_sha256': hashlib.sha256(proposal.encode('utf-8')).hexdigest() if proposal else '',
+                'proposal_id': proposal_evidence['id'],
+                'apply_requires_accepted_proposal': current_version == '2',
             },
             'transaction': {
                 'id': f"metadata-{_slug_from_root(project_root, parsed.name)}",
@@ -2181,7 +2354,34 @@ def cmd_migrate_project(args: list[str]) -> int:
             },
         }
         out(data)
-        return 0 if parsed.dry_run else 1
+        return 0 if parsed.dry_run and not failures else 1
+    if topology['classification'] != 'single-compatible':
+        failure_code = str(topology.get('failure_code') or 'WB_MIGRATION_TOPOLOGY_CONFLICT')
+        out({
+            'command': 'migrate-project',
+            'status': 'issues-found',
+            'mode': topology['classification'],
+            'dry_run': False,
+            'failures': [failure_code],
+            'topology_assessment': topology,
+            'changed_files': [],
+            'git_actions': [],
+        })
+        return 1
+    if current_version == '2' and not parsed.accepted_proposal_id:
+        out({
+            'command': 'migrate-project', 'status': 'issues-found', 'dry_run': False,
+            'failures': ['WB_MIGRATION_PROPOSAL_REQUIRED'], 'changed_files': [], 'git_actions': [],
+            'proposal_id': proposal_evidence['id'],
+        })
+        return 1
+    if current_version == '2' and parsed.accepted_proposal_id != proposal_evidence['id']:
+        out({
+            'command': 'migrate-project', 'status': 'issues-found', 'dry_run': False,
+            'failures': ['WB_MIGRATION_PROPOSAL_STALE'], 'changed_files': [], 'git_actions': [],
+            'proposal_id': proposal_evidence['id'],
+        })
+        return 1
     try:
         changed, agents_result = apply_project(
             project_root,
