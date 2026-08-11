@@ -74,9 +74,14 @@ DIRECTIVE_ALLOWED_SKILLS = {
 }
 
 CLI_HELP_EPILOG = '''Canonical consolidated command surface:
-  inspect-project-initialization <project-root>
-  initialize-project <project-root>
+  init-project <project-root> --mode <single-repository|multi-repository>
+  show-project [--workspace-root <workspace-root> | --project-root <project-root>]
   validate-project <project-root> --dry-run
+  doctor-project <project-root> [--repair] [--force]
+  migrate-project <project-root> --dry-run
+  migrate-to-multi-repository <source-project-root> --target-workspace-root <target> [--origin <git-origin>] ...
+  provision-member --workspace-root <workspace-root> --origin <git-origin> ... (--dry-run|--apply)
+  cleanup-member --workspace-root <workspace-root> --repository-id <id> (--dry-run|--apply)
   set-prefer-subagent <true|false|enable|disable|on|off> --scope <global|project> [--project-root <project-root>]
   generate-project-metadata-profile --input <authority-context> --output <output-path>
   merge-project-metadata-profile --current <current-profile> --incoming <incoming-profile> --output <output-path>

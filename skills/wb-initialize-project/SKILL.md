@@ -34,13 +34,13 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 |---|---|
 | Initialize | `init-project <root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>] [--project-root <project-root>] [--name <name>] [--force] [--dry-run] [--disable-work-bundle-git] [--create-project-skill-override]` |
 | Doctor | `doctor-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--repair] [--force]` |
-| Inspect only | `show-project [--workspace-root <workspace-root>] [--project-root <project-root>]` |
+| Inspect only | `show-project [--workspace-root <workspace-root> | --project-root <project-root>]` |
 | Strict validate | `validate-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--dry-run]` |
 | Register only | `register-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--name <name>]` |
 | Inspect metadata migration | `migrate-project <root> [--name <name>] --dry-run` |
 | Apply metadata migration | `migrate-project <root> [--name <name>] [--force] [--accepted-proposal-id <id>] --apply` |
 | Provision member | `provision-member --workspace-root <workspace-root> [--workspace-slug <slug>] --origin <origin-root> --repository-id <id> --working-branch <branch> --base-ref <ref> [--dry-run|--apply]` |
-| Cleanup member | `cleanup-member --workspace-root <workspace-root> --repository-id <id> [--dry-run|--apply]` |
+| Cleanup member | `cleanup-member --workspace-root <workspace-root> --repository-id <id> (--dry-run|--apply)` |
 | Set sub-agent preference | `set-prefer-subagent <true|false|enable|disable|on|off> --scope <global|project> [--project-root <project-root>]` |
 
 `initialize-project` remains a compatibility alias for `init-project`; prefer `init-project` in new instructions.
@@ -56,6 +56,8 @@ Existing command names and `--project-root` remain supported for single-reposito
 For metadata v2, `migrate-project --dry-run` classifies topology from project metadata plus the bootstrap-resolved registry and returns a proposal ID. In-place apply is allowed only for `single-compatible` evidence and requires that exact ID. Multiple repository locators route to `migrate-to-multi-repository`; registry/metadata identity conflicts and proposal drift fail closed. `--force` never overrides topology classification.
 
 `provision-member --dry-run` returns `status: proposed` without writes. Apply treats checkout verification as an internal state and returns `status: passed` only after the member binding and origin locator are recoverably published to workspace metadata and the project registry. Matching verified transactions resume publication, published transactions replay without writes, and unrelated targets remain collisions.
+
+An exact workspace-local checkout created by an older WorkBundle version may have no recovery record. `provision-member` adopts it only when control scope, origin, repository ID, branch, and base HEAD all match; dry-run reports `resume_source: verified-orphan`. It never claims that adopted checkout as rollback-owned. `cleanup-member` is limited to recorded, unpublished, transaction-owned checkouts; published members require a separate deregistration workflow and unrecorded paths are never deleted.
 
 **`init-project --dry-run` / `validate-project --dry-run`:** inspect and report mechanical failures without writing project files.
 

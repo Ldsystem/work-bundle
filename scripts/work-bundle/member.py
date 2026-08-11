@@ -296,7 +296,10 @@ def _matching_checkout(
     control = workspace_root / '.work-bundle' / 'git' / f'{repository_id}.git'
     if not target.is_dir() or not control.is_dir():
         return None
-    verification = verify_git_control_scope(workspace_root, target)
+    try:
+        verification = verify_git_control_scope(workspace_root, target)
+    except (OSError, RuntimeError):
+        return None
     if not verification['valid'] or _git_branch(target) != branch:
         return None
     remote = _git_value(target, 'remote', 'get-url', 'origin')
@@ -394,8 +397,51 @@ def provision_member_lifecycle(
         if existing_root != target:
             raise MemberLifecycleError('WB_MEMBER_REPOSITORY_ID_CONFLICT', {'proposal': proposal})
     _registry_candidate(registry_before.decode('utf-8'), slug, origin, repository_id)
+    matching_orphan = None
+    if not record and target.exists() and any(target.iterdir()):
+        matching_orphan = _matching_checkout(
+            workspace_root, origin, repository_id, branch, base_ref, require_base=True
+        )
+    metadata_ids = {str(item.get('id') or '') for item in metadata_repositories}
+    registry_ids = {
+        str(item.get('id') or '')
+        for item in registry_entry.get('source_repositories', [])
+        if isinstance(item, dict)
+    }
+    if (
+        not record
+        and matching_orphan
+        and repository_id in metadata_ids
+        and repository_id in registry_ids
+    ):
+        public_member = _member_result(matching_orphan, transaction_id)
+        return {
+            'status': 'passed',
+            'mode': 'multi-repository',
+            'dry_run': dry_run,
+            'idempotent': True,
+            'result': {
+                **public_member,
+                'metadata_status': 'published',
+                'registry_status': 'published',
+            },
+            'changed_files': [],
+            'git_actions': [],
+            'transaction': {
+                'id': transaction_id,
+                'state': 'published',
+                'owned_paths': [],
+                'registry_status': 'published',
+                'metadata_status': 'published',
+                'resume_source': 'converged-authorities',
+            },
+            'validation_results': {'metadata_and_registry_converged': True},
+            'failures': [],
+        }
     if dry_run:
-        if target.exists() and any(target.iterdir()) and not (record and _context_matches(record, context)):
+        if target.exists() and any(target.iterdir()) and not (
+            (record and _context_matches(record, context)) or matching_orphan
+        ):
             raise MemberLifecycleError('WB_WORKTREE_TARGET_COLLISION', {'proposal': proposal})
         return {
             'status': 'proposed',
@@ -406,7 +452,8 @@ def provision_member_lifecycle(
             'git_actions': [],
             'transaction': {
                 'id': transaction_id,
-                'state': 'proposed',
+                'state': 'verified' if matching_orphan else 'proposed',
+                'resume_source': 'verified-orphan' if matching_orphan else 'new-checkout',
                 'owned_paths': [],
                 'registry_status': 'pending',
                 'metadata_status': 'pending',
@@ -444,7 +491,15 @@ def provision_member_lifecycle(
             raise MemberLifecycleError('WB_MEMBER_VERIFIED_STATE_DIVERGED')
         checkout_owned = bool(record.get('checkout_owned', True))
     elif target.exists() and any(target.iterdir()):
-        raise MemberLifecycleError('WB_WORKTREE_TARGET_COLLISION', {'proposal': proposal})
+        member = matching_orphan or _matching_checkout(
+            workspace_root, origin, repository_id, branch, base_ref, require_base=True
+        )
+        if member is None:
+            raise MemberLifecycleError('WB_WORKTREE_TARGET_COLLISION', {'proposal': proposal})
+        # A checkout without a recovery record is safe to resume only after exact
+        # origin/branch/base/control verification. Its paths are not claimed for
+        # rollback because prior transaction ownership cannot be proven.
+        checkout_owned = False
 
     try:
         if member is None:
@@ -577,3 +632,67 @@ def provision_member_lifecycle(
         _write_record(record_path, failure_record)
         detail = exc.result if isinstance(exc, MemberLifecycleError) else {}
         raise MemberLifecycleError(code, {**detail, 'transaction': failure_record, 'recovery_record': str(record_path)}) from exc
+
+
+def cleanup_member_lifecycle(
+    workspace_root: Path,
+    repository_id: str,
+    *,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Remove only a recorded, unpublished, transaction-owned checkout."""
+    from project import _metadata_source_repositories
+
+    workspace_root = workspace_root.expanduser().resolve()
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', repository_id):
+        raise MemberLifecycleError('WB_REPOSITORY_ID_INVALID')
+    metadata_path = workspace_root / '.work-bundle/project.yaml'
+    if not metadata_path.is_file():
+        raise MemberLifecycleError('WB_MEMBER_METADATA_MISSING')
+    published_ids = {
+        str(item.get('id') or '')
+        for item in _metadata_source_repositories(metadata_path.read_text(encoding='utf-8'))
+    }
+    if repository_id in published_ids:
+        raise MemberLifecycleError('WB_MEMBER_CLEANUP_PUBLISHED')
+    record_path = _record_path(workspace_root, repository_id)
+    record = _read_record(record_path)
+    if not record:
+        raise MemberLifecycleError('WB_MEMBER_CLEANUP_RECOVERY_MISSING')
+    context = record.get('context')
+    if (
+        not isinstance(context, dict)
+        or context.get('workspace_root') != str(workspace_root)
+        or context.get('repository_id') != repository_id
+        or record.get('state') not in {'verified', 'failed'}
+        or record.get('checkout_owned') is not True
+    ):
+        raise MemberLifecycleError('WB_MEMBER_CLEANUP_NOT_OWNED')
+    target = workspace_root / repository_id
+    control = workspace_root / '.work-bundle' / 'git' / f'{repository_id}.git'
+    branch = str(context.get('branch') or '')
+    result = {
+        'status': 'proposed' if dry_run else 'passed',
+        'dry_run': dry_run,
+        'repository_id': repository_id,
+        'changed_files': [] if dry_run else [str(path) for path in (target, control) if path.exists()],
+        'git_actions': [],
+        'transaction': {
+            'id': record.get('id'),
+            'state': 'cleanup-proposed' if dry_run else 'cleaned',
+            'owned_paths': [str(target), str(control)],
+            'registry_status': 'unchanged',
+            'metadata_status': 'unchanged',
+        },
+        'failures': [],
+    }
+    if dry_run:
+        return result
+    _remove_created_member(
+        control, target, branch,
+        keep_control=False, keep_target=False, delete_branch=True,
+    )
+    record['state'] = 'cleaned'
+    record['cleanup'] = {'state': 'completed', 'metadata_status': 'unchanged', 'registry_status': 'unchanged'}
+    _write_record(record_path, record)
+    return result

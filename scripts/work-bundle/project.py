@@ -12,6 +12,7 @@ from workspace_resources import ensure_workspace_resources, validate_script_inde
 def migrate_project_metadata_v3(source_root: Path, target_root: Path, repository_id: str, branch: str, base_ref: str = 'HEAD', apply: bool = False, **options: object) -> dict[str, object]:
     from migration import apply_migration, propose_migration
     if not apply:
+        options.pop('accepted_baseline_id', None)
         return propose_migration(source_root, target_root, repository_id, branch, base_ref, **options)
     return apply_migration(source_root, target_root, repository_id, branch, base_ref, **options)
 
@@ -1158,6 +1159,46 @@ def _refresh_registered_project_metadata(current: str, rendered: str) -> str:
     return '\n'.join(lines).rstrip() + '\n'
 
 
+def ensure_project_layout(project_root: Path) -> list[str]:
+    """Create non-authority workspace structure without changing metadata or Git."""
+    wb = project_root / '.work-bundle'
+    knowledge = wb / 'knowledge'
+    changed: list[str] = []
+    if _ensure_lines(project_root / '.gitignore', REQUIRED_PROJECT_GITIGNORE):
+        changed.append(str(project_root / '.gitignore'))
+    for directory in _init_tree_roots():
+        if directory == 'rules':
+            directory = '.work-bundle/rules'
+        path = project_root / directory
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+            changed.append(str(path))
+    for role in ROLE_NAMES:
+        role_path = project_root / 'roles' / f'{role}.yaml'
+        role_text = '\n'.join([
+            f'id: {role}', 'status: current',
+            'domain_profile: .work-bundle/project.yaml', 'duty_profile:',
+            '  stance: project-specific role context must be resolved before work',
+            '  skilled_at: []', '  quality_focus: []',
+            '  must_resolve_from_context:', '    - project-metadata', '',
+        ])
+        if write(role_path, role_text, overwrite=False):
+            changed.append(str(role_path))
+    knowledge_project = knowledge / 'project.yaml'
+    if write(knowledge_project, 'id: project\nstatus: current\n', overwrite=False):
+        changed.append(str(knowledge_project))
+    if _ensure_lines(wb / '.gitignore', _init_gitignore_patterns()):
+        changed.append(str(wb / '.gitignore'))
+    rule_index_path = _project_rule_store_root(project_root) / 'index.yaml'
+    if write(
+        rule_index_path,
+        _require_reference_text(INIT_RULE_INDEX).rstrip() + '\n',
+        overwrite=False,
+    ):
+        changed.append(str(rule_index_path))
+    return sorted(set(changed))
+
+
 def apply_project(
     project_root: Path,
     init_git: bool = True,
@@ -1172,49 +1213,15 @@ def apply_project(
 ) -> list[str] | tuple[list[str], dict[str, object]]:
     wb = project_root / '.work-bundle'
     knowledge = wb / 'knowledge'
-    changed: list[str] = []
-    tree_roots = _init_tree_roots()
-    gitignore_patterns = _init_gitignore_patterns()
-    if _ensure_lines(project_root / '.gitignore', REQUIRED_PROJECT_GITIGNORE):
-        changed.append(str(project_root / '.gitignore'))
-    for directory in tree_roots:
-        if directory == 'rules':
-            directory = '.work-bundle/rules'
-        path = project_root / directory
-        if not path.exists():
-            path.mkdir(parents=True, exist_ok=True)
-            changed.append(str(path))
-    for role in ROLE_NAMES:
-        role_path = project_root / 'roles' / f'{role}.yaml'
-        role_text = '\n'.join([
-            f'id: {role}',
-            'status: current',
-            'domain_profile: .work-bundle/project.yaml',
-            'duty_profile:',
-            '  stance: project-specific role context must be resolved before work',
-            '  skilled_at: []',
-            '  quality_focus: []',
-            '  must_resolve_from_context:',
-            '    - project-metadata',
-            '',
-        ])
-        if write(role_path, role_text, overwrite=False):
-            changed.append(str(role_path))
+    changed = ensure_project_layout(project_root)
     knowledge_project = knowledge / 'project.yaml'
-    if write(
-        knowledge_project,
-        'id: project\nstatus: current\n',
-        overwrite=_template_overwrite(project_root, knowledge_project, force, scope),
+    if _template_overwrite(project_root, knowledge_project, force, scope) and write(
+        knowledge_project, 'id: project\nstatus: current\n', overwrite=True
     ):
         changed.append(str(knowledge_project))
-    if _ensure_lines(wb / '.gitignore', gitignore_patterns):
-        changed.append(str(wb / '.gitignore'))
     rule_index_path = _project_rule_store_root(project_root) / 'index.yaml'
-    rule_index = _require_reference_text(INIT_RULE_INDEX).rstrip() + '\n'
-    if write(
-        rule_index_path,
-        rule_index,
-        overwrite=_template_overwrite(project_root, rule_index_path, force, scope),
+    if _template_overwrite(project_root, rule_index_path, force, scope) and write(
+        rule_index_path, _require_reference_text(INIT_RULE_INDEX).rstrip() + '\n', overwrite=True
     ):
         changed.append(str(rule_index_path))
     project_metadata_path = project_root / '.work-bundle/project.yaml'
@@ -1245,6 +1252,19 @@ def apply_project(
 
 
 def repair_project(project_root: Path, force: bool = False, return_details: bool = False) -> list[str] | tuple[list[str], dict[str, object]]:
+    current_metadata = read(project_root / '.work-bundle/project.yaml')
+    if (
+        _yaml_scalar(current_metadata, 'metadata_version') == '3'
+        and _yaml_scalar(current_metadata, 'workspace_mode') == 'multi-repository'
+    ):
+        changed = ensure_project_layout(project_root)
+        changed.extend(ensure_workspace_resources(project_root))
+        agents_result = sync_agents_managed_section(project_root, force=force)
+        changed.extend(str(path) for path in agents_result.get('changed_files', []))
+        changed = sorted(set(changed))
+        if return_details:
+            return changed, agents_result
+        return changed
     registry_entry_data, _ = find_registry_entry(project_root)
     changed, agents_result = apply_project(
         project_root,
@@ -1928,7 +1948,12 @@ def cmd_session_start(args: list[str]) -> int:
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--input-warning', action='append', default=[], help=argparse.SUPPRESS)
     parsed = parser.parse_args(args)
-    project_root = Path(parsed.project_root).expanduser().resolve()
+    requested_root = Path(parsed.project_root).expanduser().resolve()
+    project_root = requested_root
+    for candidate in (requested_root, *requested_root.parents):
+        if (candidate / '.work-bundle/project.yaml').is_file():
+            project_root = candidate
+            break
     data = _session_start_payload(project_root)
     data['dry_run'] = parsed.dry_run
     warnings = list(parsed.input_warning)
@@ -2150,9 +2175,12 @@ def cmd_register_project_command(args: list[str]) -> int:
 
 def cmd_show_project(args: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="wb.py show-project")
-    parser.add_argument("--project-root", default=".")
+    roots = parser.add_mutually_exclusive_group()
+    roots.add_argument("--project-root")
+    roots.add_argument("--workspace-root")
     parsed = parser.parse_args(args)
-    project_root = Path(parsed.project_root).expanduser().resolve()
+    selected_root = parsed.project_root or parsed.workspace_root or "."
+    project_root = Path(selected_root).expanduser().resolve()
     data = inspect_project(project_root)
     entry, registry = find_registry_entry(project_root)
     failures = project_failures(data, strict=False, include_roles=False)
@@ -2232,6 +2260,30 @@ def cmd_provision_member(args: list[str]) -> int:
     return 0
 
 
+def cmd_cleanup_member(args: list[str]) -> int:
+    from member import MemberLifecycleError, cleanup_member_lifecycle
+    parser = argparse.ArgumentParser(prog='wb.py cleanup-member')
+    parser.add_argument('--workspace-root', required=True)
+    parser.add_argument('--repository-id', required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--dry-run', action='store_true')
+    mode.add_argument('--apply', action='store_true')
+    parsed = parser.parse_args(args)
+    try:
+        result = cleanup_member_lifecycle(
+            Path(parsed.workspace_root), parsed.repository_id, dry_run=parsed.dry_run
+        )
+    except MemberLifecycleError as exc:
+        out({
+            'command': 'cleanup-member', 'status': 'issues-found',
+            'failure_code': exc.code, 'failures': [exc.code],
+            'result': exc.result, 'git_actions': [],
+        })
+        return 1
+    out({'command': 'cleanup-member', **result})
+    return 0
+
+
 def cmd_migrate_to_multi_repository(args: list[str]) -> int:
     from migration import MigrationError
     parser = argparse.ArgumentParser(prog='wb.py migrate-to-multi-repository')
@@ -2239,6 +2291,10 @@ def cmd_migrate_to_multi_repository(args: list[str]) -> int:
     parser.add_argument('--target-workspace-root', required=True)
     parser.add_argument('--repository-id', required=True)
     parser.add_argument('--repository-name', required=True)
+    parser.add_argument(
+        '--origin',
+        help='Git repository used to provision the primary member; defaults to source_project_root',
+    )
     parser.add_argument('--workspace-slug', required=True)
     parser.add_argument('--working-branch', required=True)
     parser.add_argument('--base-ref', default='HEAD')
@@ -2247,6 +2303,36 @@ def cmd_migrate_to_multi_repository(args: list[str]) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--dry-run', action='store_true'); mode.add_argument('--apply', action='store_true')
     parsed = parser.parse_args(args)
+    source_root = Path(parsed.source_project_root).expanduser().resolve()
+    primary_origin = Path(parsed.origin).expanduser().resolve() if parsed.origin else source_root
+    if not parsed.origin and not _is_git_repository(source_root):
+        out({
+            'command': 'migrate-to-multi-repository', 'status': 'issues-found',
+            'failure_code': 'WB_MIGRATION_ORIGIN_REQUIRED',
+        })
+        return 1
+    if not _is_git_repository(primary_origin):
+        out({
+            'command': 'migrate-to-multi-repository', 'status': 'issues-found',
+            'failure_code': 'WB_MIGRATION_ORIGIN_INVALID',
+        })
+        return 1
+    declared_paths = {
+        Path(str(item.get('path') or item.get('project_root') or '')).expanduser().resolve()
+        for item in _metadata_source_repositories(read(source_root / '.work-bundle/project.yaml'))
+        if str(item.get('path') or item.get('project_root') or '')
+    }
+    source_registry_entry, _ = find_registry_entry(source_root)
+    if isinstance(source_registry_entry, dict):
+        for item in source_registry_entry.get('source_repositories', []):
+            if isinstance(item, dict) and str(item.get('path') or ''):
+                declared_paths.add(Path(str(item['path'])).expanduser().resolve())
+    if parsed.origin and declared_paths and primary_origin not in declared_paths:
+        out({
+            'command': 'migrate-to-multi-repository', 'status': 'issues-found',
+            'failure_code': 'WB_MIGRATION_ORIGIN_NOT_DECLARED',
+        })
+        return 1
     additional_origins: list[dict[str, object]] = []
     for value in parsed.additional_origin:
         if '=' not in value:
@@ -2262,8 +2348,9 @@ def cmd_migrate_to_multi_repository(args: list[str]) -> int:
         })
     try:
         result = migrate_project_metadata_v3(
-            Path(parsed.source_project_root), Path(parsed.target_workspace_root),
+            source_root, Path(parsed.target_workspace_root),
             parsed.repository_id, parsed.working_branch, parsed.base_ref, parsed.apply,
+            origin=primary_origin,
             workspace_slug=parsed.workspace_slug, repository_name=parsed.repository_name,
             accepted_baseline_id=parsed.accepted_baseline_id,
             additional_repository_origins=additional_origins,

@@ -1336,6 +1336,12 @@ def test_provision_member_cli_publishes_both_authorities_and_replays_idempotentl
     shown = run_wb(config_root, "show-project", "--project-root", str(workspace))
     assert shown.returncode == 0, shown.stdout + shown.stderr
     assert {item["id"] for item in json.loads(shown.stdout)["project_source_repositories"]} >= {"repo-two"}
+    nested_session = run_wb(
+        config_root, "session-start", "--project-root", str(workspace / "repo-two"),
+        "--dry-run", "--json",
+    )
+    assert nested_session.returncode == 0, nested_session.stdout + nested_session.stderr
+    assert json.loads(nested_session.stdout)["project_root"] == str(workspace.resolve())
     validated = run_wb(config_root, "validate-project", str(workspace), "--dry-run")
     assert validated.returncode == 0, validated.stdout + validated.stderr
 
@@ -1353,6 +1359,19 @@ def test_provision_member_cli_publishes_both_authorities_and_replays_idempotentl
     assert registry.read_bytes() == registry_bytes
     assert record.read_bytes() == record_bytes
     assert (metadata.stat().st_mtime_ns, registry.stat().st_mtime_ns, record.stat().st_mtime_ns) == mtimes
+
+    record.unlink()
+    metadata_mtime = metadata.stat().st_mtime_ns
+    registry_mtime = registry.stat().st_mtime_ns
+    converged = run_wb(config_root, *args, "--apply")
+    converged_data = json.loads(converged.stdout)
+    assert converged.returncode == 0, converged.stdout + converged.stderr
+    assert converged_data["idempotent"] is True
+    assert converged_data["transaction"]["resume_source"] == "converged-authorities"
+    assert converged_data["changed_files"] == []
+    assert not record.exists()
+    assert metadata.stat().st_mtime_ns == metadata_mtime
+    assert registry.stat().st_mtime_ns == registry_mtime
 
 
 def test_provision_member_cli_rejects_unrelated_non_empty_target(tmp_path: Path) -> None:
@@ -1383,6 +1402,137 @@ def test_provision_member_cli_rejects_unrelated_non_empty_target(tmp_path: Path)
     assert json.loads(applied.stdout)["failure_code"] == "WB_WORKTREE_TARGET_COLLISION"
     assert (target / "user-file").read_text(encoding="utf-8") == "preserve\n"
     assert not (workspace / ".work-bundle/git/repo-two.git").exists()
+
+
+def test_provision_member_adopts_exact_verified_orphan_without_recovery_record(tmp_path: Path) -> None:
+    config_root, workspace = _init_multi_workspace(tmp_path)
+    origin = tmp_path / "origin"
+    _seed_committed_repository(origin)
+    script_root = REPO_ROOT / "scripts/work-bundle"
+    sys.path.insert(0, str(script_root))
+    try:
+        import worktree  # type: ignore[import-not-found]
+
+        worktree.provision_member(workspace, origin, "repo-two", "feature-two")
+    finally:
+        sys.path.remove(str(script_root))
+        for module_name in ("worktree", "workspace"):
+            sys.modules.pop(module_name, None)
+    record = workspace / ".work-bundle/transactions/provision-repo-two.json"
+    assert not record.exists()
+    args = (
+        "provision-member", "--workspace-root", str(workspace),
+        "--workspace-slug", "multi", "--origin", str(origin),
+        "--repository-id", "repo-two", "--working-branch", "feature-two",
+        "--base-ref", "HEAD",
+    )
+    proposed = run_wb(config_root, *args, "--dry-run")
+    proposal_data = json.loads(proposed.stdout)
+    assert proposed.returncode == 0, proposed.stdout + proposed.stderr
+    assert proposal_data["transaction"]["state"] == "verified"
+    assert proposal_data["transaction"]["resume_source"] == "verified-orphan"
+    applied = run_wb(config_root, *args, "--apply")
+    data = json.loads(applied.stdout)
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    assert data["status"] == "passed"
+    assert data["transaction"]["state"] == "published"
+    assert '  - id: "repo-two"' in (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
+
+
+def test_cleanup_member_command_removes_only_recorded_unpublished_owned_checkout(tmp_path: Path) -> None:
+    config_root, workspace = _init_multi_workspace(tmp_path)
+    origin = tmp_path / "origin"
+    _seed_committed_repository(origin)
+    script_root = REPO_ROOT / "scripts/work-bundle"
+    sys.path.insert(0, str(script_root))
+    try:
+        import member  # type: ignore[import-not-found]
+        import worktree  # type: ignore[import-not-found]
+
+        provisioned = worktree.provision_member(workspace, origin, "repo-two", "feature-two")
+        transaction_id = member._transaction_id(workspace, origin, "repo-two", "feature-two", "HEAD")
+        context = {
+            "transaction_id": transaction_id,
+            "workspace_root": str(workspace.resolve()),
+            "workspace_slug": "multi",
+            "origin": str(origin.resolve()),
+            "repository_id": "repo-two",
+            "branch": "feature-two",
+            "base_ref": "HEAD",
+        }
+        member._write_record(member._record_path(workspace, "repo-two"), {
+            "id": transaction_id, "state": "verified", "context": context,
+            "checkout_owned": True, "registry_status": "unchanged",
+            "metadata_status": "unchanged", "member": member._member_result(provisioned, transaction_id),
+        })
+    finally:
+        sys.path.remove(str(script_root))
+        for module_name in ("member", "migration", "worktree", "workspace", "project", "core", "bootstrap_config"):
+            sys.modules.pop(module_name, None)
+    dry_run = run_wb(
+        config_root, "cleanup-member", "--workspace-root", str(workspace),
+        "--repository-id", "repo-two", "--dry-run",
+    )
+    assert dry_run.returncode == 0
+    assert (workspace / "repo-two").is_dir()
+    applied = run_wb(
+        config_root, "cleanup-member", "--workspace-root", str(workspace),
+        "--repository-id", "repo-two", "--apply",
+    )
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    assert not (workspace / "repo-two").exists()
+    assert not (workspace / ".work-bundle/git/repo-two.git").exists()
+    record = json.loads((workspace / ".work-bundle/transactions/provision-repo-two.json").read_text(encoding="utf-8"))
+    assert record["state"] == "cleaned"
+
+
+def test_show_project_accepts_workspace_root_alias(tmp_path: Path) -> None:
+    config_root, workspace = _init_multi_workspace(tmp_path)
+    shown = run_wb(config_root, "show-project", "--workspace-root", str(workspace))
+    assert shown.returncode == 0, shown.stdout + shown.stderr
+    assert json.loads(shown.stdout)["project_root"] == str(workspace.resolve())
+
+
+def test_migrate_to_multi_repository_cli_dry_run_accepts_external_origin(tmp_path: Path) -> None:
+    config_root = bootstrap_config(tmp_path)
+    authority = tmp_path / "authority"
+    origin = tmp_path / "origin"
+    target = tmp_path / "workspace"
+    authority.mkdir()
+    (authority / ".work-bundle").mkdir()
+    (authority / ".work-bundle/project.yaml").write_text(
+        "metadata_version: 2\nauthority: canonical\n", encoding="utf-8"
+    )
+    _seed_committed_repository(origin)
+    proposed = run_wb(
+        config_root,
+        "migrate-to-multi-repository", str(authority),
+        "--target-workspace-root", str(target),
+        "--origin", str(origin),
+        "--repository-id", "repo-one",
+        "--repository-name", "Repository One",
+        "--workspace-slug", "workspace-one",
+        "--working-branch", "feature/workspace",
+        "--base-ref", "HEAD",
+        "--dry-run",
+    )
+    data = json.loads(proposed.stdout)
+    assert proposed.returncode == 0, proposed.stdout + proposed.stderr
+    assert data["status"] == "passed"
+    assert data["result"]["member_origin_root"] == str(origin.resolve())
+    assert data["result"]["changed_files"] == []
+    missing_origin = run_wb(
+        config_root,
+        "migrate-to-multi-repository", str(authority),
+        "--target-workspace-root", str(target),
+        "--repository-id", "repo-one",
+        "--repository-name", "Repository One",
+        "--workspace-slug", "workspace-one",
+        "--working-branch", "feature/workspace",
+        "--dry-run",
+    )
+    assert missing_origin.returncode == 1
+    assert json.loads(missing_origin.stdout)["failure_code"] == "WB_MIGRATION_ORIGIN_REQUIRED"
 
 
 @pytest.mark.parametrize("stage", ["metadata-publication", "registry-publication"])

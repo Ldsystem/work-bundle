@@ -11,6 +11,7 @@ required_inputs:
   - working_branch
   - base_ref
 optional_inputs:
+  - primary_git_origin
   - additional_repository_origins
 workflow:
   ordered_stages: [inspect, dry-run, apply]
@@ -51,6 +52,7 @@ copy_policy:
   verification: file-type-content-and-digest
 source_preservation:
   repository_unchanged: required
+  member_origin_unchanged: required
   work_bundle_unchanged: required
   branch_unchanged: required
   working_tree_unchanged: required
@@ -89,6 +91,13 @@ member_provisioning:
   verified_retry: resume-publication
   published_retry: replay-without-writes
   unrelated_non_empty_target: collision
+  legacy_verified_without_record:
+    adoption_requires: [workspace-local-control, exact-origin, exact-repository-id, exact-branch, exact-base-head]
+    rollback_owned: false
+  cleanup:
+    allowed_state: recorded-unpublished-transaction-owned
+    published_member: forbidden
+    unrecorded_path: forbidden
 result:
   redacted: true
   required:
