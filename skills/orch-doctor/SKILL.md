@@ -53,9 +53,9 @@ Verify:
 9. `keep-summarizing` `what-is-helpful` documents gateway mode, `ks.py query`, and `authority | candidate | background | blocked` retrieval roles;
 10. keep-summarizing active docs do not advertise legacy note paths or `archived` note status;
 11. orchestration evals that require v3 role labels are backed by orch skill documentation;
-12. specification contracts contain source-evidence roles, the change-driven extra evidence loop, and the body-level `Quality gate: verified|blocked` result;
-13. planning contracts require generated-artifact verification and repair before completion;
-14. execution contracts require spec/plan/phase/task verification, preserve no-retrieval execution, and keep single-agent fallback available;
+12. specification and plan contracts allocate `dev-semantic-convergence`, caller-specific lenses, compact `semantic_loop` evidence, and the body-level `Quality gate: verified|blocked` result where applicable;
+13. task contracts carry source IDs, methodology, provider-neutral capability, compiled-brief context, and acceptance-review fields;
+14. execution contracts preserve no-retrieval execution, compile bounded task/review packets, require fresh task validation plus acceptance review, and keep reduced-independence fallback explicit;
 15. the CodeGraph-first rule remains conditional on an indexed target and requires a recorded fallback reason when unavailable;
 16. active orchestration contracts do not depend on `HABITS.md` or the deprecated role-selection subsystem.
 17. executor-result contracts default to sparse YAML, require fields by applicability, reject forbidden executor advice fields, and do not require active orchestration handoffs;
@@ -73,12 +73,12 @@ Verify:
 - `orch-execute-plan` checks sub-agent support before delegation;
 - `orch-execute-plan` preserves the single-agent fallback and does not fail only because sub-agents are unavailable;
 - layered `prefer_subagent` remains permission-only and cannot bypass preflight, dependency, scope, or handoff safety checks;
-- executor-result handoffs require agent-owned drift/gap verification and a post-repair recheck;
+- executor-result handoffs require local task-fit evidence against the compiled brief and assigned task, with full lifecycle artifacts reserved for inconsistent context or source-contract escalation;
 - executor-result handoffs default to sparse YAML, omit non-applicable fields, reject forbidden executor advice fields, and require compact `codegraph:` and `delegation_evidence:` only when applicable;
 - active orchestration handoffs are unavailable and continuation uses active specs, plans, tasks, indexes, and executor-result handoffs;
 - `orch-execute-plan` does not archive specs, plans, or handoffs;
 - `orch-review-plan` is the only skill that archives completed specification, plan, and handoff artifacts;
-- `orch-review-plan` creates a repair specification instead of fixing source files when review fails;
+- `orch-review-plan` routes implementation rejection to task repair/re-review, plan defects to plan repair, and requirement/design/authority defects to specification repair;
 - `orch-doctor` stays read-only and reports repair instructions instead of applying them.
 
 ## Bias Checks
@@ -95,8 +95,8 @@ Look for one-sided or conflicting instructions that would bias execution toward 
 
 Deterministic doctor checks are limited to bounded file presence, JSON shape,
 required contract terms, and forbidden active dependencies. They must not judge
-semantic evidence sufficiency, user-purpose drift, materiality, or whether the
-agent-owned evidence loop needs another round.
+semantic evidence sufficiency, user-purpose drift, materiality, task code quality,
+or whether semantic convergence needs another round.
 
 When bias is found, cite the conflicting artifact and the exact behavior risk.
 
@@ -119,22 +119,13 @@ Files changed: none
 
 ## Validation
 
-Confirm `dev-rules-doctor` was used first, diagnostics stayed read-only, orch skill coverage was checked, skill front matter was checked, quality-gate and verification contract terms were present, sparse YAML and applicability terms were present, forbidden executor advice fields and active orchestration handoffs were rejected, compact CodeGraph and visible delegation safety terms were present, invisible internal spawn task-delegation regressions were absent, forbidden active dependencies were absent, workflow responsibilities remained distinct, required fallback paths were present, archival remained isolated to `orch-review-plan`, and no files were changed.
+Confirm `dev-rules-doctor` was used first, diagnostics stayed read-only, orch skill coverage was checked, skill front matter was checked, semantic-convergence and compiled-context terms were present, sparse YAML and applicability terms were present, forbidden executor advice fields and active orchestration handoffs were rejected, compact CodeGraph and visible delegation safety terms were present, invisible internal spawn task-delegation regressions were absent, forbidden active dependencies were absent, workflow responsibilities remained distinct, required fallback paths were present, archival remained isolated to `orch-review-plan`, and no files were changed.
 
 ## Runtime Rules
 
 - `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
 
-## Rule Loading (mandatory)
-
-Before substantive doctor work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive orchestration work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or directive summaries as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress orchestration task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns rule discovery and loading. Load the runtime rule above when its indexed condition applies.
 
 ## Read-Only Constraints (skill-owned)
 
@@ -146,13 +137,13 @@ Diagnose develop-rules installation health and orchestrator workflow consistency
 - Stop and report the blocker if `dev-rules-doctor` cannot run; do not treat installation health as passed.
 - Perform a read-only orchestrator audit across orchestrator skill files, workflow reference, orchestration evals, and helper commands in `scripts/orch.py`.
 - Verify skill coverage, front matter consistency, workflow responsibility separation, retrieval-policy mappings, helper command availability or declared fallback behavior, and required execution fallback paths.
-- Verify `orch-execute-plan` checks sub-agent support, preserves single-agent fallback, and does not archive artifacts during execution.
+- Verify `orch-execute-plan` compiles bounded task/review packets, preserves visible sub-agent and reduced-independence fallback paths, requires fresh validation plus task acceptance, and does not archive artifacts during execution.
 - Verify `orch-review-plan` is the only skill that archives completed specification, plan, and handoff artifacts.
 - Verify knowledge-using orch skills route through `keep-summarizing` rather than direct `.work-bundle/knowledge/` browsing.
 - Verify executor-result contracts default to sparse YAML, require fields by applicability, omit non-applicable fields, reject forbidden executor advice fields, and do not require active orchestration handoffs.
 - Verify compact CodeGraph evidence includes `root`, `applicable`, `up_to_date`, and accepted fallback or blocker facts such as `no-index` and `sync-failed` where applicable.
 - Verify compact visible delegation evidence uses `delegation_evidence`, `visible_reference` when available, and `internal_spawn_used_for_task_delegation: false`, and does not permit invisible internal spawn work to own delegated task execution.
-- Look for workflow bias such as mandatory sub-agents when unavailable, skipped handoffs, execution treated as review, or handoff conclusions treated as persisted knowledge.
+- Look for workflow bias such as false review independence, skipped handoffs, scheduler-owned code review, mandatory full lifecycle context for a valid brief, or handoff conclusions treated as persisted knowledge.
 - Report findings as concrete repair actions with cited conflicting artifacts when issues are found.
 - Emit doctor output with `Files changed: none`.
 

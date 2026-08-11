@@ -20,7 +20,7 @@ Require compact executor-result handoffs before reporting execution complete or 
 - Default executor-result handoffs to sparse YAML. Use Markdown only when a real blocker, failure, or broad cross-repository impact needs narrative that YAML cannot express safely.
 - Include only applicable executor-result fields needed for continuation or review: identity, related artifacts, result state, concise summary, changed files, validation commands and results, unresolved blockers, `task_fit_check`, repository/preflight evidence, compact CodeGraph evidence, and `delegation_evidence`.
 - Omit empty optional blocks, placeholder headings, duplicated spec/plan/task prose, raw chat logs, private reasoning, unrelated history, generic reminders, and non-applicable sections.
-- For completed or partial task results, include `task_fit_check` naming the related task, result `clean|repaired|unresolved|skipped`, and findings only when meaningful. The check must cover the related specification, root plan, parent phase, and assigned task.
+- For completed or partial task results, include `task_fit_check` naming the related task, result `clean|repaired|unresolved|skipped`, and findings only when meaningful. Check the compiled task brief and assigned task; inspect full specification, plan, and phase artifacts only when compiled context is inconsistent or a reviewer finds a source-contract problem.
 - For executor-result handoffs, preserve execution safety evidence where applicable: repository preflight or accepted-baseline evidence, validation evidence, drift/gap verification, unresolved blockers, and changed-path evidence.
 - For executor-result handoffs, include compact CodeGraph evidence when source-code inspection or edits were in scope. The evidence must be no larger than `root`, `applicable`, `up_to_date`, and required fallback or blocker facts unless a failure needs more detail.
 - For executor-result handoffs, explicitly record no-index fallback when a target repository lacks `.codegraph/`; do not omit CodeGraph evidence silently when source-code work was in scope.
@@ -43,7 +43,7 @@ Require compact executor-result handoffs before reporting execution complete or 
 - Include forbidden executor advice fields in executor-result handoffs: `suggested_durable_conclusions`, `durable_candidate_facts`, `recommended_orchestration_review`, `recommended_next_actions`, `delegation`, `deviations`, `strategy_advice`, or `knowledge_persistence`.
 - Use executor-result handoffs for durable-knowledge persistence recommendations, phase/plan/spec review advice, or orchestration strategy advice.
 - Omit changed files, validation evidence, unresolved blockers, or `task_fit_check` when they are applicable to the completed or partial result.
-- Omit explicit spec/root-plan/phase/task drift-gap verification evidence or claim a clean result without recording the artifacts checked and recheck outcome.
+- Claim a clean result without recording the compiled brief and assigned task checked, repairs made, and recheck outcome.
 - Omit applicable compact CodeGraph fallback, up-to-date, or blocker evidence from executor-result handoffs for source-code work.
 - Omit visible `delegation_evidence` from executor-result handoffs when plan, phase, or task ownership was delegated, or record contradictory delegation evidence such as `internal_spawn_used_for_task_delegation: true`.
 - Omit contract-only validation evidence from a contract-decoupled task handoff, or report peer implementation validation as used before barrier release.
@@ -57,7 +57,7 @@ Require compact executor-result handoffs before reporting execution complete or 
 - Confirm handoff type and sparse executor-result fields match the completed scope by applicability, not by fixed Markdown section presence.
 - Confirm executor-result handoffs are sparse YAML by default, omit empty optional fields, and reject forbidden executor advice fields.
 - Confirm executor-result handoffs created during execution did not invoke knowledge retrieval.
-- Confirm executor-result handoffs identify the specification, root plan, parent phase, and task checked; include findings, repairs, and final recheck evidence; and do not leave repairable task-scoped drift unresolved.
+- Confirm executor-result handoffs identify the compiled brief and assigned task checked; include findings, repairs, and final recheck evidence; and escalate to full source artifacts when compiled context is inconsistent.
 - Confirm executor-result handoffs include applicable compact CodeGraph evidence for every source-code target: root, applicability, `up_to_date`, and no-index, sync-failed, stale, or blocker facts when used.
 - Confirm executor-result handoffs include `delegation_evidence` when delegation was used, including `visible_reference` when available and `internal_spawn_used_for_task_delegation: false`.
 - Confirm contract-decoupled task handoffs include common-contract validation scope and `peer_implementation_validation_used: false`.
