@@ -80,7 +80,7 @@ def main() -> int:
             return 1
     if command.startswith('execution-workspace-'):
         action = command.removeprefix('execution-workspace-')
-        if action in {'prepare', 'status', 'cleanup-owned', 'doctor-stale'}:
+        if action in {'prepare', 'status', 'mark-terminal', 'cleanup-owned', 'doctor-stale'}:
             return cmd_execution_workspace(action, parsed.args)
     if command == 'instruction-audit':
         return cmd_instruction_audit(parsed.args)

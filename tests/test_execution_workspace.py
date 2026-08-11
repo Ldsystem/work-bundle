@@ -17,6 +17,7 @@ from execution_workspace import (  # noqa: E402
     cleanup_owned,
     doctor_stale,
     hydrate_workspace,
+    mark_terminal,
     register_existing,
     prepare_worktree,
     state_path,
@@ -142,23 +143,22 @@ def test_symlink_readonly_requires_nonwritable_source_and_refuses_write_through(
 
 
 def test_prepare_records_provenance_status_and_cleanup_owned(tmp_path: Path) -> None:
-    source, runtime, prepared = prepare_fixture(tmp_path)
+    _, runtime, prepared = prepare_fixture(tmp_path)
     workspace = Path(str(prepared["execution_workspace_state"]["path"]))
     state = prepared["execution_workspace_state"]
     assert state["kind"] == "worktree"
     assert state["owner"] == "work-bundle"
     assert state["cleanup_policy"] == "after_integration"
+    assert state["lifecycle_status"] == "active"
     assert git(workspace, "branch", "--show-current") == "codex/exec-1"
 
     status = workspace_status(runtime, "workspace-1", "exec-1", "repo-1")
     assert status["status"] == "active"
     assert status["git_identity"] == "matched"
 
-    cleaned = cleanup_owned(runtime, "workspace-1", "exec-1", "repo-1")
-    assert cleaned["status"] == "cleaned"
-    assert not workspace.exists()
-    assert not state_path(runtime, "workspace-1", "exec-1", "repo-1").exists()
-    assert str(workspace) not in git(source, "worktree", "list", "--porcelain")
+    with pytest.raises(ExecutionWorkspaceError, match="WB_EXECUTION_WORKSPACE_NOT_TERMINAL"):
+        cleanup_owned(runtime, "workspace-1", "exec-1", "repo-1")
+    assert workspace.is_dir()
 
 
 def test_prepare_rejects_target_collision_without_mutation(tmp_path: Path) -> None:
@@ -227,6 +227,14 @@ def test_cleanup_owned_removes_explicit_non_secret_hydration(tmp_path: Path) -> 
     )
     workspace = Path(str(prepared["execution_workspace_state"]["path"]))
     assert (workspace / "local.cfg").is_file()
+    mark_terminal(
+        runtime,
+        "workspace-1",
+        "exec-1",
+        "repo-1",
+        lifecycle_status="integrated",
+        evidence="integration:local-main",
+    )
     with pytest.raises(ExecutionWorkspaceError, match="WB_EXECUTION_WORKSPACE_DIRTY"):
         cleanup_owned(runtime, "workspace-1", "exec-1", "repo-1")
     (workspace / "local.cfg").unlink()
@@ -246,6 +254,16 @@ def test_cleanup_refuses_user_owned_and_identity_mismatch(tmp_path: Path) -> Non
     assert workspace.is_dir()
 
     data["execution_workspace_state"]["owner"] = "work-bundle"
+    record.write_text(json.dumps(data), encoding="utf-8")
+    mark_terminal(
+        runtime,
+        "workspace-1",
+        "exec-1",
+        "repo-1",
+        lifecycle_status="retired",
+        evidence="decision:explicit-retirement",
+    )
+    data = json.loads(record.read_text(encoding="utf-8"))
     data["git_identity"]["git_common_dir"] = str(tmp_path / "wrong.git")
     record.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ExecutionWorkspaceError, match="WB_EXECUTION_GIT_IDENTITY_MISMATCH"):
@@ -288,7 +306,50 @@ def test_doctor_stale_reports_and_cleans_only_with_explicit_permission(tmp_path:
     assert report["cleaned_count"] == 0
     assert workspace.is_dir()
 
+    non_terminal = doctor_stale(runtime, max_age_hours=24, cleanup=True)
+    assert non_terminal["cleaned_count"] == 0
+    assert non_terminal["stale"][0]["lifecycle_status"] == "active"
+    assert non_terminal["stale"][0]["cleanup_failure_code"] == "WB_EXECUTION_WORKSPACE_NOT_TERMINAL"
+    assert workspace.is_dir()
+
+
+def test_terminal_stale_workspace_can_be_cleaned_after_durable_disposition(tmp_path: Path) -> None:
+    _, runtime, prepared = prepare_fixture(tmp_path)
+    workspace = Path(str(prepared["execution_workspace_state"]["path"]))
+    record = state_path(runtime, "workspace-1", "exec-1", "repo-1")
+    data = json.loads(record.read_text(encoding="utf-8"))
+    data["execution_workspace_state"]["created_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=10)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    record.write_text(json.dumps(data), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/wb.py"),
+            "execution-workspace-mark-terminal",
+            "--runtime-root",
+            str(runtime),
+            "--workspace-id",
+            "workspace-1",
+            "--execution-id",
+            "exec-1",
+            "--repository-id",
+            "repo-1",
+            "--status",
+            "integrated",
+            "--evidence",
+            "integration:local-main",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    terminal = json.loads(result.stdout)
+    assert terminal["execution_workspace_state"]["terminal_evidence"] == "integration:local-main"
+
     cleaned = doctor_stale(runtime, max_age_hours=24, cleanup=True)
+
     assert cleaned["cleaned_count"] == 1
     assert not workspace.exists()
 
@@ -303,6 +364,14 @@ def test_doctor_stale_never_force_cleans_dirty_owned_workspace(tmp_path: Path) -
         datetime.now(timezone.utc) - timedelta(days=10)
     ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     record.write_text(json.dumps(data), encoding="utf-8")
+    mark_terminal(
+        runtime,
+        "workspace-1",
+        "exec-1",
+        "repo-1",
+        lifecycle_status="discarded",
+        evidence="decision:explicit-discard",
+    )
 
     report = doctor_stale(runtime, max_age_hours=24, cleanup=True)
 

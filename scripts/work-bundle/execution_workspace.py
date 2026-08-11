@@ -25,6 +25,8 @@ from workspace_resources import _load_yaml
 OWNERS = frozenset({"work-bundle", "harness", "user"})
 KINDS = frozenset({"worktree", "existing"})
 CLEANUP_POLICIES = frozenset({"after_integration", "manual"})
+LIFECYCLE_STATUSES = frozenset({"active", "integrated", "discarded", "retired"})
+TERMINAL_LIFECYCLE_STATUSES = frozenset({"integrated", "discarded", "retired"})
 HYDRATION_STRATEGIES = frozenset({"regenerate", "copy", "credential-inject", "symlink-readonly", "omit"})
 SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 SECRET_SUFFIXES = frozenset({".key", ".pem", ".secret", ".p12", ".pfx"})
@@ -297,6 +299,9 @@ def prepare_worktree(
             "cleanup_policy": cleanup_policy,
             "hydration_profile": hydration_profile,
             "created_at": utc_now_rfc3339(),
+            "lifecycle_status": "active",
+            "terminal_evidence": None,
+            "terminal_recorded_at": None,
         }
         _write_state(record, state, identity)
     except Exception:
@@ -362,6 +367,9 @@ def register_existing(
         "cleanup_policy": cleanup_policy,
         "hydration_profile": hydration_profile,
         "created_at": utc_now_rfc3339(),
+        "lifecycle_status": "active",
+        "terminal_evidence": None,
+        "terminal_recorded_at": None,
     }
     _write_state(record, state, identity)
     return {
@@ -388,7 +396,21 @@ def _read_record(path: Path) -> tuple[dict[str, object], dict[str, str]]:
     }
     if not isinstance(state, dict) or not required.issubset(state) or not isinstance(identity, dict):
         raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_INVALID")
-    if state.get("kind") not in KINDS or state.get("owner") not in OWNERS:
+    if (
+        state.get("kind") not in KINDS
+        or state.get("owner") not in OWNERS
+        or state.get("cleanup_policy") not in CLEANUP_POLICIES
+    ):
+        raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_INVALID")
+    lifecycle_status = state.get("lifecycle_status", "active")
+    if lifecycle_status not in LIFECYCLE_STATUSES:
+        raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_INVALID")
+    terminal_evidence = state.get("terminal_evidence")
+    terminal_recorded_at = state.get("terminal_recorded_at")
+    if lifecycle_status in TERMINAL_LIFECYCLE_STATUSES:
+        if not isinstance(terminal_evidence, str) or not terminal_evidence.strip() or not terminal_recorded_at:
+            raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_INVALID")
+    elif terminal_evidence is not None or terminal_recorded_at is not None:
         raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_INVALID")
     return state, {str(key): str(value) for key, value in identity.items()}
 
@@ -459,6 +481,8 @@ def cleanup_owned(
         raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_PATH_MISMATCH")
     if not _identity_matches(state, identity):
         raise ExecutionWorkspaceError("WB_EXECUTION_GIT_IDENTITY_MISMATCH")
+    if state.get("lifecycle_status", "active") not in TERMINAL_LIFECYCLE_STATUSES:
+        raise ExecutionWorkspaceError("WB_EXECUTION_WORKSPACE_NOT_TERMINAL")
     dirty = _git("-C", str(expected_target), "status", "--porcelain=v1", "--untracked-files=all")
     if dirty:
         raise ExecutionWorkspaceError(
@@ -472,6 +496,44 @@ def cleanup_owned(
     record.unlink()
     _remove_empty_runtime_parents(record, runtime_root)
     return {"status": "cleaned", "path": str(expected_target), "state_path": str(record)}
+
+
+def mark_terminal(
+    runtime_root: Path,
+    workspace_id: str,
+    execution_id: str,
+    repository_id: str,
+    *,
+    lifecycle_status: str,
+    evidence: str,
+) -> dict[str, object]:
+    if lifecycle_status not in TERMINAL_LIFECYCLE_STATUSES:
+        raise ExecutionWorkspaceError("WB_EXECUTION_LIFECYCLE_STATUS_INVALID")
+    if not evidence.strip():
+        raise ExecutionWorkspaceError("WB_EXECUTION_TERMINAL_EVIDENCE_REQUIRED")
+    runtime_root = runtime_root.expanduser().resolve()
+    record = state_path(runtime_root, workspace_id, execution_id, repository_id)
+    state, identity = _read_record(record)
+    if state.get("owner") != "work-bundle" or state.get("kind") != "worktree":
+        raise ExecutionWorkspaceError("WB_EXECUTION_WORKSPACE_NOT_OWNED")
+    if state.get("id") != execution_id or state.get("repository_id") != repository_id:
+        raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_IDENTITY_MISMATCH")
+    expected_target = workspace_path(runtime_root, workspace_id, execution_id, repository_id)
+    if Path(str(state.get("path", ""))).resolve() != expected_target:
+        raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_PATH_MISMATCH")
+    if identity.get("branch_ref") != f"refs/heads/{state.get('branch', '')}":
+        raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_IDENTITY_MISMATCH")
+    if not _identity_matches(state, identity):
+        raise ExecutionWorkspaceError("WB_EXECUTION_GIT_IDENTITY_MISMATCH")
+    state["lifecycle_status"] = lifecycle_status
+    state["terminal_evidence"] = evidence.strip()
+    state["terminal_recorded_at"] = utc_now_rfc3339()
+    _write_state(record, state, identity)
+    return {
+        "status": "terminal-recorded",
+        "execution_workspace_state": state,
+        "state_path": str(record),
+    }
 
 
 def _state_records(runtime_root: Path) -> list[Path]:
@@ -501,6 +563,7 @@ def doctor_stale(runtime_root: Path, *, max_age_hours: int = 168, cleanup: bool 
             "created_at": str(state["created_at"]),
             "reason": "age-threshold-exceeded",
             "cleaned": False,
+            "lifecycle_status": state.get("lifecycle_status", "active"),
         }
         if cleanup and state.get("cleanup_policy") == "after_integration":
             workspace_id = record.parents[2].name
@@ -540,10 +603,13 @@ def cmd_execution_workspace(action: str, argv: list[str]) -> int:
         parser.add_argument("--cleanup-policy", choices=sorted(CLEANUP_POLICIES))
         parser.add_argument("--kind", choices=sorted(KINDS), default="worktree")
         parser.add_argument("--owner", choices=sorted(OWNERS), default="work-bundle")
-    elif action in {"status", "cleanup-owned"}:
+    elif action in {"status", "cleanup-owned", "mark-terminal"}:
         parser.add_argument("--workspace-id", required=True)
         parser.add_argument("--execution-id", required=True)
         parser.add_argument("--repository-id", required=True)
+        if action == "mark-terminal":
+            parser.add_argument("--status", dest="lifecycle_status", choices=sorted(TERMINAL_LIFECYCLE_STATUSES), required=True)
+            parser.add_argument("--evidence", required=True)
     elif action == "doctor-stale":
         parser.add_argument("--max-age-hours", type=int, default=168)
         parser.add_argument("--cleanup", action="store_true")
@@ -591,6 +657,15 @@ def cmd_execution_workspace(action: str, argv: list[str]) -> int:
         elif action == "cleanup-owned":
             result = cleanup_owned(
                 parsed.runtime_root, parsed.workspace_id, parsed.execution_id, parsed.repository_id
+            )
+        elif action == "mark-terminal":
+            result = mark_terminal(
+                parsed.runtime_root,
+                parsed.workspace_id,
+                parsed.execution_id,
+                parsed.repository_id,
+                lifecycle_status=parsed.lifecycle_status,
+                evidence=parsed.evidence,
             )
         else:
             result = doctor_stale(

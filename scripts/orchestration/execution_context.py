@@ -499,6 +499,15 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         "constraints": [f"{sid}: {records[sid]}" for sid in source_ids if sid.startswith("CON-")],
     }
     validation = _resolve_reference(validation_value, records, source_paths)
+    acceptance_review = task.get("acceptance_review")
+    if acceptance_review in (None, {}):
+        review_required = True
+    elif not isinstance(acceptance_review, dict):
+        raise SystemExit(f"Task acceptance_review must be a mapping: {task_path}")
+    else:
+        review_required = acceptance_review.get("required", True)
+        if not isinstance(review_required, bool):
+            raise SystemExit(f"Task acceptance_review.required must be boolean: {task_path}")
     brief = {
         "task_brief": {
             "task_id": task_id,
@@ -519,7 +528,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
             "workspace": {"root": str(root)},
             "validation": validation,
             "handoff_contract": "executor-result-v1",
-            "review_required": True,
+            "review_required": review_required,
         }
     }
     serialized_brief = json.dumps(brief, ensure_ascii=False)

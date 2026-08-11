@@ -14,7 +14,7 @@ Execution is a no-retrieval stage. Use the selected task, cited specification va
 1. Resolve target task, phase, or plan and its executable dependency queue.
 2. Before compilation, capability selection, delegation, or edits, resolve the workspace and every target repository from `.work-bundle/project.yaml`. Git-backed targets must match branch and accepted metadata baseline and be clean unless validated handoffs explain exact changes. Never mutate user work to pass preflight.
 3. Record CodeGraph applicability per target. When `.codegraph/` exists for indexed source work, sync after preflight and query it before broad inspection; recheck cleanliness and sync after changes. Otherwise record `no-index` and use bounded direct inspection. Do not initialize CodeGraph.
-4. Select or prepare the declared execution workspace and hydration profile. Record provenance. Cleanup may remove only a WorkBundle-owned workspace whose expected Git identity still matches and whose policy allows cleanup; never delete user or harness workspaces.
+4. Select or prepare the declared execution workspace and hydration profile. Record provenance. Cleanup may remove only a clean WorkBundle-owned workspace whose expected Git identity still matches, whose policy allows cleanup, and whose durable lifecycle state confirms integration or an explicit discarded/retired decision. Age alone is report-only; never delete user or harness workspaces.
 5. Compile the bounded task brief:
 
 ```bash

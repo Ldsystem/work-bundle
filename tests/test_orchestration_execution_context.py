@@ -128,6 +128,37 @@ def test_build_task_brief_resolves_source_ids_and_keeps_allocations_task_local(t
     assert "review_required: true" in packet
 
 
+def test_build_task_brief_preserves_review_not_required_from_task_contract(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            "validation:\n",
+            "acceptance_review:\n  required: false\nvalidation:\n",
+        ),
+        encoding="utf-8",
+    )
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert "review_required: false" in packet
+    assert "review_required: true" not in packet
+
+
+def test_build_task_brief_preserves_explicit_review_requirement(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            "validation:\n",
+            "acceptance_review:\n  required: true\nvalidation:\n",
+        ),
+        encoding="utf-8",
+    )
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert "review_required: true" in packet
+
+
 def test_build_task_brief_fails_closed_for_missing_source_id_without_reading_knowledge(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
     task.write_text(task.read_text(encoding="utf-8").replace("TEST-004]", "TEST-004, REQ-999]"), encoding="utf-8")

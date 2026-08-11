@@ -61,7 +61,7 @@ Before compilation, delegation, or edits, resolve the containing workspace and e
 
 Use CodeGraph first only when a target contains `.codegraph/` and the work affects indexed source. Sync after preflight and before graph inspection, recheck cleanliness, and sync again after indexed changes. Record `no-index` and use bounded direct inspection when absent; do not initialize CodeGraph.
 
-When isolation is required or preferred, `orch-execute-plan` selects or prepares an execution workspace and applies the named hydration profile. Temporary workspaces carry provenance and may be cleaned only when WorkBundle owns them, Git identity still matches, and policy allows it. Never delete user or harness workspaces. Never copy credential values into task packets, prompts, handoffs, or worktrees; `credential-inject` uses the protected credential boundary.
+When isolation is required or preferred, `orch-execute-plan` selects or prepares an execution workspace and applies the named hydration profile. Temporary workspaces carry provenance and may be cleaned only when WorkBundle owns them, Git identity still matches, policy allows it, the worktree is clean, and durable provenance records confirmed integration or an explicit discarded/retired decision. Age makes a workspace stale for reporting but never proves a terminal lifecycle state. Never delete user or harness workspaces. Never copy credential values into task packets, prompts, handoffs, or worktrees; `credential-inject` uses the protected credential boundary.
 
 ## Task execution and acceptance
 
