@@ -70,6 +70,25 @@ def test_validate_current_rules_passes() -> None:
             sys.path.pop(0)
 
 
+def test_verification_evidence_before_claim_rule_is_always_loaded_and_indexed() -> None:
+    rule = (REPO_ROOT / "rules/verification-evidence-before-claim.md").read_text(encoding="utf-8")
+    index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
+    body = rule.split("---", 2)[2]
+
+    assert "id: verification-evidence-before-claim" in rule
+    assert "path: verification-evidence-before-claim.md" in index
+    assert "load: always" in rule
+    assert "exact claim" in rule
+    assert "capable evidence" in rule
+    assert "fresh, claim-relevant evidence" in rule
+    assert "only the status that evidence supports" in rule
+    assert "Knowledge Base Update" in rule
+    assert "stale evidence" in rule
+    assert "partial evidence" in rule
+    assert "durable knowledge remains unresolved" in rule
+    assert 150 <= len(body.split()) <= 250
+
+
 def test_codegraph_rule_stays_index_gated_and_preserves_fallback() -> None:
     rule = (REPO_ROOT / "rules/agent-codegraph-first.md").read_text(encoding="utf-8")
     index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
@@ -516,29 +535,29 @@ def test_orchestration_rules_require_contract_barrier_and_review_settlement_evid
     assert "barrier id, participant role, readiness `reached|blocked`" in handoff
     assert "every participant completed or blocked with executor-result handoffs before joint validation began" in handoff
 
-    assert "Close included violations only during passing, unblocked review" in review
-    assert "Use approved violation lifecycle operations to close resolved specification-included violations" in review
-    assert "Settle specification-carried unsettled notes" in review
-    assert "Block archive when material specification-carried unsettled evidence remains unresolved" in review
-    assert "Do not archive when specification-included violation closure is incomplete" in review
+    assert "accepted task-review status coherence" in review
+    assert "Route missing handoff, status, validation, or review evidence to `review-blocked`" in review
+    assert "Route incomplete durable knowledge work to `knowledge-blocked`" in review
+    assert "Create or require plan repair only for a decomposition defect" in review
+    assert "specification repair only for a requirement, design, or authority defect" in review
+    assert "Do not create a repair specification for every failed review gate" in review
 
 
 def test_execution_and_review_skills_carry_task003_flow_requirements() -> None:
     execute = (REPO_ROOT / "skills/orch-execute-plan/SKILL.md").read_text(encoding="utf-8")
     review = (REPO_ROOT / "skills/orch-review-plan/SKILL.md").read_text(encoding="utf-8")
 
-    assert "Detect contract groups and barriers" in execute
-    assert "sibling in-progress implementation files" in execute
+    assert "Contract-decoupled participants validate against the common contract" in execute
     assert "accepted prior handoffs" in execute
-    assert "common contract group id" in execute
-    assert "`peer_implementation_validation_used: false`" in execute
-    assert "Release the barrier for convergence work only when all participants have valid completed or blocked handoffs" in execute
+    assert "reach the named barrier before convergence work" in execute
+    assert "The scheduler does not perform code-quality review" in execute
+    assert "acceptance_review.verdict: accept" in execute
 
-    assert "specification-included violation evidence is evaluated" in review
-    assert "Close included violations only during passing, unblocked review" in review
-    assert "specification-carried unsettled material" in review
-    assert "resolved by implementation, no longer applicable, promoted or delegated through approved `ks-*` follow-up" in review
-    assert "Do not archive when the knowledge update disposition is `required`" in review
+    assert "Independent `dev-code-review` owns task-scoped implementation quality" in review
+    assert "Do not broadly inspect source" in review
+    assert "knowledge-blocked" in review
+    assert "repair plan only" in review
+    assert "repair specification" in review
 
 
 def test_initialize_project_guidance_matches_create_rule_project_scope() -> None:

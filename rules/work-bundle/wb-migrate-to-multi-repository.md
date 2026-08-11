@@ -20,6 +20,8 @@ Require dry-run-first, source-preserving, recoverable migration from a supported
 ## Must
 
 - Invoke `wb-migrate-to-multi-repository` with explicit source `project_root`, target `workspace_root`, workspace slug, repository identity/name, working branch, and base ref.
+- Keep the authority-copy source distinct from the primary Git origin. When the authority root is not Git-backed, require an explicit origin selected from its declared reusable source repositories and preserve both states independently.
+- Classify legacy topology from both workspace metadata and the bootstrap-resolved registry. Permit in-place metadata migration only when the evidence is unambiguously single-repository; route multiple repositories here and block identity disagreement or proposal drift.
 - Run inspect and dry-run proposal before explicit apply and report source repository and nested `.work-bundle` Git state separately. Require the exact proposal-derived accepted-baseline ID before applying either dirty state.
 - Preserve source repository, branch, worktree, `.work-bundle`, registry entry, script utilities, and credential store unchanged until target verification passes.
 - Copy and verify WorkBundle state and indexed workspace utilities without following unsafe symlinks or treating transient caches as authority.
@@ -27,6 +29,9 @@ Require dry-run-first, source-preserving, recoverable migration from a supported
 - Provision a workspace-local Git control store and named member worktree, then publish registry and metadata only after target verification.
 - Verify SessionStart discovery, member preflight, workspace-local Git control, staged metadata/registry identities, resources, and source preservation before publishing any active state.
 - Publish metadata v3 and the bootstrap-resolved locator registry atomically or recoverably after final verification, with before/after identity and digest evidence.
+- Treat a provisioned checkout in `verified` state as internal and incomplete. A public `provision-member` success requires metadata and registry publication; matching verified retries resume publication and published retries replay without writes.
+- Treat an exact verified checkout without a recovery record as an older incomplete WorkBundle checkout only when workspace-local control, origin, repository ID, branch, and base HEAD all match. Resume publication without claiming the adopted paths as rollback-owned; keep all non-matching paths as collisions.
+- Permit `cleanup-member` to remove only recorded, unpublished, transaction-owned checkout/control paths. Never use cleanup to deregister published members or delete unrecorded paths.
 - Record partial failure outside disposable owned paths as a redacted recoverable transaction supporting idempotent retry or rollback of migration-owned target paths only.
 - Return an already published retry from the persisted complete result with the same transaction identity/context and no metadata, registry, target, or recovery-record write.
 
@@ -35,6 +40,7 @@ Require dry-run-first, source-preserving, recoverable migration from a supported
 - Do not commit, clean, stash, reset, delete, deregister, relocate, or silently change the source workspace or repository.
 - Do not create a direct linked worktree whose Git common directory remains outside `workspace_root`.
 - Do not publish a false active target registry entry or reuse conflicting paths or branches.
+- Do not let `migrate-project --force` override topology classification or report public provisioning success while metadata or registry publication is pending.
 - Do not delete the recovery record when rolling back transaction-owned target paths.
 - Do not copy, print, index, delegate, or archive credential material.
 
@@ -43,6 +49,7 @@ Require dry-run-first, source-preserving, recoverable migration from a supported
 - Verify source preservation, copy inventory/digests, script-index consistency, credential exclusion, AGENTS merge, and target resource protection.
 - Verify member path and absolute Git common directory are within `workspace_root`, branch/base/HEAD evidence matches, and metadata/registry converge.
 - Verify SessionStart discovery and per-member preflight from nested target paths.
+- Verify multi-source legacy input routes to this workflow and public member results never combine `status: passed` with pending publication.
 - Verify failure recovery touches only transaction-owned target paths and leaves source authority active.
 
 ## On Violation

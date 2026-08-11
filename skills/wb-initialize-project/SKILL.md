@@ -34,13 +34,13 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 |---|---|
 | Initialize | `init-project <root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>] [--project-root <project-root>] [--name <name>] [--force] [--dry-run] [--disable-work-bundle-git] [--create-project-skill-override]` |
 | Doctor | `doctor-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--repair] [--force]` |
-| Inspect only | `show-project [--workspace-root <workspace-root>] [--project-root <project-root>]` |
+| Inspect only | `show-project [--workspace-root <workspace-root> | --project-root <project-root>]` |
 | Strict validate | `validate-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--dry-run]` |
 | Register only | `register-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--name <name>]` |
 | Inspect metadata migration | `migrate-project <root> [--name <name>] --dry-run` |
-| Apply metadata migration | `migrate-project <root> [--name <name>] [--force] --apply` |
-| Provision member | `provision-member --workspace-root <workspace-root> --repository-id <id> --working-branch <branch> --base-ref <ref> [--dry-run|--apply]` |
-| Cleanup member | `cleanup-member --workspace-root <workspace-root> --repository-id <id> [--dry-run|--apply]` |
+| Apply metadata migration | `migrate-project <root> [--name <name>] [--force] [--accepted-proposal-id <id>] --apply` |
+| Provision member | `provision-member --workspace-root <workspace-root> [--workspace-slug <slug>] --origin <origin-root> --repository-id <id> --working-branch <branch> --base-ref <ref> [--dry-run|--apply]` |
+| Cleanup member | `cleanup-member --workspace-root <workspace-root> --repository-id <id> (--dry-run|--apply)` |
 | Set sub-agent preference | `set-prefer-subagent <true|false|enable|disable|on|off> --scope <global|project> [--project-root <project-root>]` |
 
 `initialize-project` remains a compatibility alias for `init-project`; prefer `init-project` in new instructions.
@@ -52,6 +52,12 @@ Existing command names and `--project-root` remain supported for single-reposito
 **`init-project --force`:** may overwrite init-managed template files only: `.work-bundle/project.yaml`, `.work-bundle/rules/index.yaml`, `.work-bundle/knowledge/project.yaml`. For `AGENTS.md`, force refreshes only the WorkBundle managed section from `references/assets/template/AGENTS.md` and preserves user-authored content outside that section.
 
 **`migrate-project --force`:** narrower migration-only repair subset; overwrites `.work-bundle/project.yaml` only. For `AGENTS.md`, migration may convert legacy whole-file template content or stale managed sections to the current marker-bounded managed section without taking ownership of the whole file.
+
+For metadata v2, `migrate-project --dry-run` classifies topology from project metadata plus the bootstrap-resolved registry and returns a proposal ID. In-place apply is allowed only for `single-compatible` evidence and requires that exact ID. Multiple repository locators route to `migrate-to-multi-repository`; registry/metadata identity conflicts and proposal drift fail closed. `--force` never overrides topology classification.
+
+`provision-member --dry-run` returns `status: proposed` without writes. Apply treats checkout verification as an internal state and returns `status: passed` only after the member binding and origin locator are recoverably published to workspace metadata and the project registry. Matching verified transactions resume publication, published transactions replay without writes, and unrelated targets remain collisions.
+
+An exact workspace-local checkout created by an older WorkBundle version may have no recovery record. `provision-member` adopts it only when control scope, origin, repository ID, branch, and base HEAD all match; dry-run reports `resume_source: verified-orphan`. It never claims that adopted checkout as rollback-owned. `cleanup-member` is limited to recorded, unpublished, transaction-owned checkouts; published members require a separate deregistration workflow and unrecorded paths are never deleted.
 
 **`init-project --dry-run` / `validate-project --dry-run`:** inspect and report mechanical failures without writing project files.
 
@@ -79,6 +85,7 @@ Existing command names and `--project-root` remain supported for single-reposito
 - Model origins and workspace members independently. Multiple workspaces may register the same origin ID while owning independent local control stores, named worktrees, and distinct working branches.
 - Preserve every registered origin/member identity and unknown field during initialize, repair, registration, and migration; never collapse multi-member state to the command cwd.
 - When registering an origin or provisioning a member, update the bootstrap-resolved registry and `$workspace_root/.work-bundle/project.yaml` atomically or recoverably, publishing active state only after verification.
+- Treat public member-provision success as a converged state: workspace-local checkout verified, metadata member published, and registry origin published. Never report success with pending publication states.
 - Carry a short role description in registry output/templates and workspace metadata: registry is locator-only; workspace metadata is working-state authority.
 - Ask for the workspace slug decision only when it is missing and blocking.
 
@@ -137,7 +144,7 @@ Use `doctor-project` as the canonical doctor command.
 
 ## Migration Mode
 
-Use `migrate-project` for legacy layout upgrades.
+Use `migrate-project` only for unambiguous single-repository legacy layout upgrades. Use `migrate-to-multi-repository` when legacy evidence contains multiple repositories.
 
 - Detect legacy `.work-bundle` layout, missing registry fields, obsolete template sections, retired bootstrap artifacts, legacy `rules/contract.yaml`, and moved template paths.
 - Preserve existing knowledge notes, open questions, orchestration artifacts, Git history, and project identity.

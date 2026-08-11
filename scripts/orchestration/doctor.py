@@ -170,16 +170,14 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             continue
         text = path.read_text(encoding="utf-8")
         if skill_name == "orch-execute-plan":
-            if "must not run v3 retrieval" not in text and "must not invoke retrieval" not in text:
+            if "no-retrieval stage" not in text and "must not invoke retrieval" not in text:
                 issues.append("orch-execute-plan lacks explicit no-retrieval rule")
         elif skill_name == "orch-create-specification":
             required_terms = [
                 "polarity-neutral and stage/perspective/status-neutral query anchors",
-                "implementation_spec` only as classification and output-grouping intent",
-                "must not discovery-filter candidates to that lifecycle stage",
-                "cross-stage discovery evidence",
+                "classification and output-grouping intent, not a discovery-stage lifecycle filter",
                 "supporting, opposing, constraining, unresolved/open-question",
-                "does not require downstream agents to read `.work-bundle/knowledge/`",
+                "execution does not require `.work-bundle/knowledge/` reads",
             ]
             for required in required_terms:
                 if required not in text:
@@ -217,11 +215,11 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             bundle_root / "references" / "assets" / "orchestration" / "workflow.md",
             "orchestration workflow",
             [
-                "Before execution selection, capability checks, delegation, or implementation changes",
-                "Quality gate: verified|blocked",
-                "runs generated-plan verification against the source specification before completion",
-                "keeps archive blocked if delegation is unavailable or evidence is incomplete",
-                "continuation state comes from active specifications, plans, phases, tasks, indexes, and executor-result handoffs",
+                "Disposable task briefs, review packages, and lightweight development plans",
+                "build-task-brief",
+                "independent dev-code-review",
+                "A task becomes `Completed` only when",
+                "Final workflow audit",
             ],
         ),
         (
@@ -256,11 +254,10 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             skill_root / "orch-create-specification" / "SKILL.md",
             "orch-create-specification skill",
             [
-                "authority`, `candidate`, `background`, and `blocked",
-                "neutral anchors",
-                "cross-stage discovery evidence",
+                "authority, candidate, background, or blocked",
+                "polarity-neutral and stage/perspective/status-neutral query anchors",
                 "classification and output-grouping intent",
-                "Extra evidence loop",
+                "semantic_loop:",
                 "Quality gate: verified|blocked",
             ],
         ),
@@ -298,24 +295,24 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         (
             skill_root / "orch-create-implementation-plan" / "SKILL.md",
             "orch-create-implementation-plan skill",
-            ["generated-plan verification pass", "Repair generated-artifact drift", "safe parallelization"],
+            ["source-ID coverage", "dev-semantic-convergence", "context_mode: compiled-brief"],
         ),
         (
             skill_root / "orch-execute-plan" / "SKILL.md",
             "orch-execute-plan skill",
             [
-                "## Repository Preflight",
-                "every target source repository",
-                "Block when no target repository resolves or any Git-backed target reports `dirty`",
-                "related specification, root plan, parent phase, and assigned task before handoff",
-                "Do not fail only because multi-agent subagent delegation support is missing",
-                "internal_spawn_used_for_task_delegation: false",
+                "Before compilation, capability selection, delegation, or edits",
+                "every target repository",
+                "build-task-brief",
+                "build-review-package",
+                "reviewer_independent: false",
+                "acceptance_review.verdict: accept",
             ],
         ),
         (
             skill_root / "orch-execute-plan" / "SKILL.md",
             "orch-execute-plan skill",
-            ["Execution Constraints (skill-owned)", "clean-worktree preflight"],
+            ["Execution Constraints (skill-owned)", "no-retrieval stage", "record `no-index`"],
         ),
         (
             ks_what_is_helpful_skill,
@@ -341,7 +338,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 "classification and output-grouping intent",
                 "does not require downstream knowledge-base lookup",
                 "quality gate is verified",
-                "repairs the task-scoped gap and repeats verification before handoff",
+                "accepted independent task review",
+                "task-review verdict",
                 "target repository has no .codegraph directory",
                 "sparse YAML",
                 "active orchestration handoff",
@@ -350,12 +348,15 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         (
             skill_root / "orch-review-plan" / "SKILL.md",
             "orch-review-plan skill",
-            ["## Delegate-Return-Resume Protocol", "delegate mixed implementation, validation, handoff, and review evidence to `ks-extract-valuable-points`", "do not archive until all other review checks pass and disposition is `completed` or `not-needed`"],
-        ),
-        (
-            skill_root / "orch-review-plan" / "SKILL.md",
-            "orch-review-plan skill",
-            ["orch-review-completion", "ks-extract-valuable-points", "may invoke, schedule, or hand off to an approved `ks-*` owner"],
+            [
+                "workflow audit and deterministic finalizer",
+                "acceptance_review.verdict: accept",
+                "Knowledge Base Update disposition is `completed` or `not-needed`",
+                "approved `ks-*` return evidence",
+                "Do not broadly inspect source",
+                "Do not create a repair specification for every failed gate",
+                "orch-review-completion",
+            ],
         ),
     ]
     for path, label, required_terms in workflow_contracts:

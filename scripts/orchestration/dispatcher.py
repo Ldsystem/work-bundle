@@ -6,6 +6,7 @@ import argparse
 from core import HANDOFF_TYPES
 from doctor import cmd_doctor
 from documents import cmd_git_status, cmd_next_action_candidates, cmd_related, cmd_state, cmd_write_doc
+from execution_context import cmd_build_review_package, cmd_build_task_brief
 from handoffs import cmd_index_handoffs, cmd_list_handoffs, cmd_set_handoff_status, cmd_write_handoff
 from init import cmd_init
 from plans import cmd_archive_plan, cmd_index_plans, cmd_list_plans, cmd_set_plan_status, cmd_write_phase, cmd_write_plan, cmd_write_task
@@ -30,6 +31,15 @@ def build_parser() -> argparse.ArgumentParser:
     repository_preflight.add_argument("--repository", action="append", default=[])
     repository_preflight.add_argument("--accepted-baseline")
     repository_preflight.set_defaults(func=cmd_repository_preflight)
+    task_brief = sub.add_parser("build-task-brief", parents=[parent])
+    task_brief.add_argument("--task", required=True)
+    task_brief.set_defaults(func=cmd_build_task_brief)
+    review_package = sub.add_parser("build-review-package", parents=[parent])
+    review_package.add_argument("--task", required=True)
+    review_package.add_argument("--handoff", required=True)
+    review_package.add_argument("--base", required=True)
+    review_package.add_argument("--head", required=True)
+    review_package.set_defaults(func=cmd_build_review_package)
     related = sub.add_parser("related", parents=[parent])
     related.add_argument("--id", required=True)
     related.set_defaults(func=cmd_related)

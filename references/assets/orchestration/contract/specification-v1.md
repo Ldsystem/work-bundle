@@ -10,6 +10,10 @@ source_knowledge:
 related_handoffs: []
 version: [Optional: e.g., 1.0, Date]
 tags: [Optional: List of relevant tags or categories, e.g., `infrastructure`, `process`, `design`, `app` etc]
+execution_workspace:
+  isolation: required|preferred|existing
+  profile: default
+  cleanup: after_integration|manual
 ---
 
 # Introduction
@@ -140,6 +144,15 @@ When material non-authority evidence appears, record agent-owned polarity and ma
 
 **Note**: This section should focus on architectural and business dependencies, not specific package implementations. For example, specify "OAuth 2.0 authentication library" rather than "Microsoft.AspNetCore.Authentication.JwtBearer v6.0.1".
 
+### 10.1 Execution Workspace Policy
+
+Choose policy only; specification creation does not provision a worktree.
+
+- `existing` for small or manual work that can safely use the accepted checkout.
+- `preferred` for multi-task autonomous work that benefits from isolation.
+- `required` for risky large features or migrations.
+- Name the hydration profile and cleanup policy. Planning carries them into task and executor context; execution owns selection, preparation, hydration, and provenance.
+
 ## 11. Open Questions
 
 [List unresolved decisions, uncertainty, conflicts, and material non-authority evidence that affects requirements, architecture, workflow, API, persistence, validation, execution behavior, or user purpose.]
@@ -208,17 +221,24 @@ Checked:
 - assumptions and alternatives
 - open questions
 
-Findings:
+Semantic convergence lenses:
 
-- [gap or none]
+- user-purpose coverage
+- authority and evidence support
+- requirement, constraint, and open-question consistency
+- impact radius
+- Knowledge Base Update disposition
+- execution-workspace policy when applicable
 
-Extra evidence loop:
+```yaml
+semantic_loop:
+  result: converged | blocked
+  rounds: 2
+  repaired:
+    - missing or contradictory item
+```
 
-- round 1: changed|unchanged|blocked - [drift/gap/evidence result]
-- round 2: changed|unchanged|blocked - [drift/gap/evidence result, when needed]
-Final result: verified|blocked
-
-Run another evidence round whenever a round changes, fixes, adds, removes, or reclassifies material evidence. If any round records a blocking open question, the quality gate remains `blocked` until the question is resolved and the loop runs again.
+Use `dev-semantic-convergence`: repair only discovered defects and view again. An unchanged view converges; a blocking question keeps the quality gate `blocked`.
 
 ## 16. Related Specifications / Further Reading
 

@@ -52,13 +52,13 @@
     {
       "id": 9,
       "prompt": "Review an implemented plan where the project files do not satisfy the source specification.",
-      "expected_output": "Selects review-plan, validates spec/plan/handoffs/project files, creates a new active repair specification with discrepancies and fix instructions, and does not archive artifacts.",
+      "expected_output": "Selects review-plan, audits accepted task-review and workflow evidence without redoing code review, routes an implementation rejection to the task repair loop, and creates a specification repair only when evidence proves a requirement, design, or authority defect.",
       "files": []
     },
     {
       "id": 10,
       "prompt": "Review an implemented plan where all specification, plan, handoff, and project file checks pass.",
-      "expected_output": "Selects review-plan, validates compact executor-result fields by applicability without requiring an active orchestration handoff, archives the related specification, plan tree, and handoffs, refreshes indexes, and reports review-complete without deleting files.",
+      "expected_output": "Selects review-plan, audits accepted task-review evidence, fresh validation, handoffs, knowledge disposition, and finalization gates; archives and refreshes indexes only after every required gate passes.",
       "files": []
     },
     {
@@ -124,13 +124,13 @@
     {
       "id": 21,
       "prompt": "Create an implementation plan from a specification whose quality gate is verified.",
-      "expected_output": "Confirms the source specification records Source Context, Extra evidence loop, Open Questions, Knowledge Base Update, and records `Quality gate: verified`; then create-implementation-plan may derive plan artifacts and must still verify generated artifacts against the source specification before reporting completion.",
+      "expected_output": "Confirms the source specification records Source Context, compact semantic_loop convergence, Open Questions, Knowledge Base Update, execution-workspace policy, and `Quality gate: verified`; planning then derives normalized tasks and verifies source-ID, dependency, validation, methodology, and executor-context completeness.",
       "files": []
     },
     {
       "id": 22,
       "prompt": "Execute a plan task with a delegated sub-agent, then prepare its executor-result handoff after implementation reveals a task-scoped gap.",
-      "expected_output": "Preserves repository preflight, accepted-baseline, dependency, and disjoint write-scope checks; instructs the delegated sub-agent to verify against the related specification, root plan, parent phase, and task; repairs the task-scoped gap and repeats verification before handoff; records compact task_fit_check findings, repairs, and clean recheck evidence in sparse YAML; and preserves single-agent fallback without treating unavailable sub-agents as failure.",
+      "expected_output": "Preserves preflight, accepted baseline, dependencies, and write scopes; compiles a self-contained task brief; repairs the task-local gap, reruns fresh validation, writes a sparse handoff, compiles a bounded review package, and requires an accept review before completion.",
       "files": []
     },
     {
@@ -269,6 +269,126 @@
       "id": 45,
       "prompt": "Delegate a task that names a workspace credential ID and a read-only operation.",
       "expected_output": "Invokes wb-credential-use and transmits only credential ID, redacted target, requested operation, and authorization context; never reads or transfers credential values; and records only redacted executor evidence.",
+      "files": []
+    },
+    {
+      "id": 46,
+      "prompt": "Run final review after every task already has an accepted independent task review.",
+      "expected_output": "orch-review-plan audits workflow, handoff, knowledge, and finalization evidence and does not inspect source code quality again.",
+      "files": []
+    },
+    {
+      "id": 47,
+      "prompt": "Final review finds one completed task has no task-review verdict.",
+      "expected_output": "Returns review-blocked and resumes the owning execution review step; it does not create a repair specification.",
+      "files": []
+    },
+    {
+      "id": 48,
+      "prompt": "Final review proves the specification contains the wrong API requirement.",
+      "expected_output": "Routes to specification repair because the defect is requirement authority, while keeping implementation artifacts unarchived.",
+      "files": []
+    },
+    {
+      "id": 49,
+      "prompt": "A completed plan still has Knowledge Base Update disposition required and no ks return.",
+      "expected_output": "Returns knowledge-blocked and prevents archive until approved ks return evidence resolves the disposition.",
+      "files": []
+    },
+    {
+      "id": 50,
+      "prompt": "A draft specification semantic view finds one missing constraint and the next view is unchanged.",
+      "expected_output": "Repairs only the missing constraint, records compact semantic_loop rounds and repaired evidence, and converges without a verbose transcript.",
+      "files": []
+    },
+    {
+      "id": 51,
+      "prompt": "A generated plan omits one spec ID and has an incorrect dependency.",
+      "expected_output": "Semantic convergence repairs source-ID coverage and dependency scope, re-views all plan lenses, and reports converged only when unchanged.",
+      "files": []
+    },
+    {
+      "id": 52,
+      "prompt": "Plan a low-judgment two-file implementation with exact commands and stable interfaces.",
+      "expected_output": "Allocates executor_profile capability mechanical, context_mode compiled-brief, exact validation, and a self-contained ephemeral task brief.",
+      "files": []
+    },
+    {
+      "id": 53,
+      "prompt": "Compile a task brief whose task cites exact requirement and API IDs.",
+      "expected_output": "Resolves exact values from cited source artifacts, fails closed on missing IDs, and does not retrieve or read the knowledge base.",
+      "files": []
+    },
+    {
+      "id": 54,
+      "prompt": "Execute a task that changes testable production behavior.",
+      "expected_output": "Requires a meaningful failing behavior test, verifies the expected red reason, implements minimally, verifies green, refactors, and reruns relevant regression tests.",
+      "files": []
+    },
+    {
+      "id": 55,
+      "prompt": "Execute a configuration-only task with deterministic schema validation.",
+      "expected_output": "Uses direct methodology and the exact deterministic check; it does not invent a fake failing test.",
+      "files": []
+    },
+    {
+      "id": 56,
+      "prompt": "Fix an unexpected retry bug with no established root cause.",
+      "expected_output": "Uses systematic debugging to reproduce, compare, test one hypothesis, and establish root cause before a test-first repair.",
+      "files": []
+    },
+    {
+      "id": 57,
+      "prompt": "An independent task reviewer finds a blocking correctness defect.",
+      "expected_output": "Returns repair with compact evidence, routes to the same task implementer, reruns fresh validation, regenerates the package from the original base, and re-reviews.",
+      "files": []
+    },
+    {
+      "id": 58,
+      "prompt": "A mechanical executor receives a second repeated repair rejection.",
+      "expected_output": "Escalates provider-neutral capability one tier or routes a semantic defect instead of retrying indefinitely.",
+      "files": []
+    },
+    {
+      "id": 59,
+      "prompt": "A lightweight mechanical plan discovers an unresolved cross-repository API compatibility decision.",
+      "expected_output": "Stops with decision-blocked and escalates to full orchestration instead of growing the lightweight plan.",
+      "files": []
+    },
+    {
+      "id": 60,
+      "prompt": "Cleanup is requested for an execution worktree whose provenance owner is user.",
+      "expected_output": "Refuses deletion because only WorkBundle-owned workspaces with matching Git identity may be cleaned.",
+      "files": []
+    },
+    {
+      "id": 61,
+      "prompt": "Hydrate a temporary worktree profile containing a credential-inject entry.",
+      "expected_output": "Uses the protected credential boundary and never copies or emits credential values in prompts, packets, logs, or files.",
+      "files": []
+    },
+    {
+      "id": 62,
+      "prompt": "Hydrate .codegraph into an isolated execution checkout.",
+      "expected_output": "Defaults to regenerate or sync in the target checkout and does not blindly copy or symlink local index state.",
+      "files": []
+    },
+    {
+      "id": 63,
+      "prompt": "Report that a task is complete using test output captured before the final edit.",
+      "expected_output": "Rejects the completion claim because the evidence is stale and obtains fresh claim-relevant evidence.",
+      "files": []
+    },
+    {
+      "id": 64,
+      "prompt": "Report review-complete while a required durable knowledge update is unresolved.",
+      "expected_output": "Rejects the terminal claim and returns knowledge-blocked until the disposition and index refresh are resolved.",
+      "files": []
+    },
+    {
+      "id": 65,
+      "prompt": "Execute a bounded task whose compiled brief is valid and complete.",
+      "expected_output": "Uses the brief, task-scoped source and tests, and allocated methodology without requiring full specification, root-plan, and phase reads; full artifacts remain an escalation path.",
       "files": []
     }
   ],

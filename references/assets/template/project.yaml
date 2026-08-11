@@ -19,6 +19,21 @@ workspace_resources:
     path: credentials/credentials.yaml
     status: protected
 
+execution_workspace_profiles:
+  default:
+    hydrate:
+      - path: .codegraph
+        strategy: regenerate
+      - path: .env.local
+        strategy: credential-inject
+      - path: config/local.yaml
+        strategy: copy
+        sensitivity: non-secret
+    setup:
+      - pnpm install --frozen-lockfile
+    baseline:
+      - pnpm test
+
 agents_sync:
   managed_section: work-bundle-rule
   template_path: references/assets/template/AGENTS.md

@@ -1,167 +1,126 @@
 import re
 from pathlib import Path
 
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ORCH_SKILL_GLOB = "skills/orch-*/SKILL.md"
 
 
-def orch_skill_paths() -> list[Path]:
-    return sorted(REPO_ROOT.glob(ORCH_SKILL_GLOB))
+def read(path: str) -> str:
+    return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
-def skill_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+def test_runtime_rule_paths_exist_without_duplicated_loading_algorithm() -> None:
+    for path in sorted(REPO_ROOT.glob("skills/orch-*/SKILL.md")):
+        text = path.read_text(encoding="utf-8")
+        for rule_path in re.findall(r"`(rules/orchestration/[^`]+)`", text):
+            assert (REPO_ROOT / rule_path).is_file(), f"{path.name}: {rule_path}"
+        if path.name == "SKILL.md" and path.parent.name in {
+            "orch-create-specification",
+            "orch-create-implementation-plan",
+            "orch-execute-plan",
+            "orch-review-plan",
+        }:
+            assert "## Rule Loading (mandatory)" not in text
+            assert "Central `AGENTS.md` owns rule discovery and loading" in text
 
 
-def runtime_rule_paths(text: str) -> list[str]:
-    return re.findall(r"`(rules/orchestration/[^`]+)`", text)
+def test_role_context_stays_deprecated() -> None:
+    for path in sorted(REPO_ROOT.glob("skills/orch-*/SKILL.md")):
+        text = path.read_text(encoding="utf-8")
+        assert "## Role Context" not in text
+        if path.parent.name in {
+            "orch-create-specification",
+            "orch-create-implementation-plan",
+            "orch-execute-plan",
+            "orch-review-plan",
+        }:
+            assert "Role-context is deprecated; do not invoke it from orch skills" in text
 
 
-def test_all_orch_skills_have_rule_loading() -> None:
-    for path in orch_skill_paths():
-        text = skill_text(path)
-        if "## Runtime Rules" not in text:
-            continue
-        assert "## Rule Loading (mandatory)" in text, path.name
-        runtime_idx = text.index("## Runtime Rules")
-        loading_idx = text.index("## Rule Loading (mandatory)")
-        assert loading_idx > runtime_idx, path.name
+def test_specification_uses_compact_semantic_convergence_and_workspace_policy() -> None:
+    text = read("skills/orch-create-specification/SKILL.md")
+    for token in [
+        "dev-semantic-convergence",
+        "user-purpose coverage",
+        "authority and evidence support",
+        "requirement, constraint, and open-question consistency",
+        "impact radius",
+        "Knowledge Base Update disposition",
+        "execution-workspace policy",
+        "semantic_loop:",
+        "Quality gate: verified|blocked",
+        "Initial User Purpose Evidence",
+        "Design Interrogation",
+    ]:
+        assert token in text
+    assert "Extra evidence loop" not in text
 
 
-def test_runtime_rules_paths_exist() -> None:
-    for path in orch_skill_paths():
-        for rule_path in runtime_rule_paths(skill_text(path)):
-            target = REPO_ROOT / rule_path
-            assert target.is_file(), f"{path.name} cites missing rule {rule_path}"
+def test_planner_allocates_methodology_capability_and_bounded_context() -> None:
+    text = read("skills/orch-create-implementation-plan/SKILL.md")
+    for token in [
+        "Prefer the fewest phases and tasks",
+        "source-ID coverage",
+        "dev-systematic-debugging",
+        "dev-test-driven-development",
+        "dev-code-review",
+        "mechanical",
+        "standard",
+        "judgment",
+        "context_mode: compiled-brief",
+        "acceptance_review:",
+        "after_failed_repairs: 2",
+        "common contract group",
+        "post-barrier convergence task",
+    ]:
+        assert token in text
 
 
-def test_no_role_context_in_orch_skills() -> None:
-    for path in orch_skill_paths():
-        text = skill_text(path)
-        assert "## Role Context" not in text, path.name
-        assert "wb-select-role-context" not in text.replace("Do not reintroduce `wb-select-role-context`", ""), path.name
-        if "role-context" in text:
-            assert "deprecated" in text.lower(), path.name
-            assert "Do not invoke it from orch skills" in text, path.name
+def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> None:
+    text = read("skills/orch-execute-plan/SKILL.md")
+    for token in [
+        "## Execution Constraints (skill-owned)",
+        "## Scheduler-Owned Constraints",
+        "## Executor-Owned Constraints",
+        "build-task-brief",
+        "build-review-package",
+        "dev-code-review",
+        "The scheduler does not perform code-quality review",
+        "reviewer_independent: false",
+        "After two failed repair rounds",
+        "acceptance_review.verdict: accept",
+        "context-blocked",
+        "repository-blocked",
+        "decision-blocked",
+        "validation-blocked",
+        "review-blocked",
+        "knowledge-blocked",
+        "workspace-blocked",
+        "no-index",
+        "no-retrieval",
+    ]:
+        assert token in text
 
 
-def test_boundary_sections_do_not_duplicate_m2_prose() -> None:
-    forbidden = ("do not write durable", "directly create, edit, promote")
-    for path in orch_skill_paths():
-        text = skill_text(path)
-        if "## Boundary" not in text:
-            continue
-        boundary = text.split("## Boundary", 1)[1].split("\n## ", 1)[0]
-        for phrase in forbidden:
-            assert phrase not in boundary.lower(), f"{path.name} Boundary duplicates M2: {phrase}"
+def test_final_review_is_workflow_audit_not_code_review() -> None:
+    text = read("skills/orch-review-plan/SKILL.md")
+    for token in [
+        "workflow audit",
+        "Independent `dev-code-review` owns task-scoped implementation quality",
+        "acceptance_review.verdict: accept",
+        "review-blocked",
+        "knowledge-blocked",
+        "repository-blocked",
+        "workspace-blocked",
+        "repair plan only",
+        "repair specification",
+        "Do not broadly inspect source",
+        "Do not create a repair specification for every failed gate",
+    ]:
+        assert token in text
 
 
-def test_no_enforcement_pointer_stub_rules() -> None:
-    removed = (
-        REPO_ROOT / "rules/orchestration/orch-execute-plan.md",
-        REPO_ROOT / "rules/orchestration/orch-doctor-readonly.md",
-    )
-    for path in removed:
-        assert not path.is_file(), f"removed stub rule still present: {path}"
-
-
-def test_execute_and_doctor_skills_own_constraints() -> None:
-    execute = skill_text(REPO_ROOT / "skills/orch-execute-plan/SKILL.md")
-    doctor = skill_text(REPO_ROOT / "skills/orch-doctor/SKILL.md")
-
-    assert "## Execution Constraints (skill-owned)" in execute
-    assert "## Scheduler-Owned Constraints" in execute
-    assert "## Executor-Owned Constraints" in execute
-    assert "repository preflight" in execute.lower() or "clean-worktree preflight" in execute.lower()
-    assert "## Read-Only Constraints (skill-owned)" in doctor
-    assert "Files changed: none" in doctor
-
-
-def test_create_specification_keeps_quality_gate_terms_and_rule_loading() -> None:
-    skill = skill_text(REPO_ROOT / "skills/orch-create-specification/SKILL.md")
-
-    assert "## Runtime Rules" in skill
-    assert "## Rule Loading (mandatory)" in skill
-    assert "`orch-orchestration-boundary`" in skill
-    assert "Extra evidence loop" in skill
-    assert "Quality gate: verified|blocked" in skill
-    assert "material non-authority" in skill
-    assert "Design Interrogation" in skill
-
-
-def test_create_specification_requires_neutral_cross_stage_gateway() -> None:
-    skill = skill_text(REPO_ROOT / "skills/orch-create-specification/SKILL.md")
-
-    assert "polarity-neutral and stage/perspective/status-neutral query anchors" in skill
-    assert "Implementation specification work uses `implementation_spec` only as classification and output-grouping intent" in skill
-    assert "must not discovery-filter candidates to that lifecycle stage before authority classification" in skill
-    assert "cross-stage discovery evidence" in skill
-    assert "supporting, opposing, constraining, unresolved/open-question" in skill
-    assert "does not require downstream agents to read `.work-bundle/knowledge/`" in skill
-
-
-def test_create_specification_handles_metadata_blockers_violations_and_non_authority() -> None:
-    skill = skill_text(REPO_ROOT / "skills/orch-create-specification/SKILL.md")
-
-    assert "Do not let repository metadata blockers stop bounded durable-knowledge gateway retrieval" in skill
-    assert "classification-only until source repository trust is restored" in skill
-    assert "## WorkBundle Violation Registry" in skill
-    assert "related active violations" in skill
-    assert "violation ID, severity, deviation summary, related scope, required resolution, and expected review closure" in skill
-    assert "Treat exact-current-work WorkBundle conflicts as specification-owned" in skill
-    assert "Evidence class or polarity alone does not make an Open Question blocking" in skill
-
-
-def test_orchestration_skill_boundary_carries_impact_radius_and_violation_terms() -> None:
-    create_spec = skill_text(REPO_ROOT / "skills/orch-create-specification/SKILL.md")
-    create_plan = skill_text(REPO_ROOT / "skills/orch-create-implementation-plan/SKILL.md")
-    execute = skill_text(REPO_ROOT / "skills/orch-execute-plan/SKILL.md")
-
-    assert "upstream/downstream" in create_spec
-    assert "validation/test impact-radius evidence" in create_spec
-    assert "source-spec impact-radius evidence" in create_plan
-    assert "upstream/downstream or validation/test scope" in create_plan
-    assert "`wb-violation-evaluation`" in execute
-    assert "chain-of-thought" in execute
-
-
-def test_orchestration_gateway_rule_keeps_policy_as_intent_not_filter() -> None:
-    rule = skill_text(REPO_ROOT / "rules/orchestration/orch-knowledge-gateway.md")
-
-    assert "Discover relevant candidates across allowed lifecycle partitions" in rule
-    assert "classification and output-grouping intent" in rule
-    assert "not as a discovery-stage lifecycle filter" in rule
-    assert "Treat a directive retrieval policy such as `implementation_spec` as a stage-gated discovery filter" in rule
-    assert "future knowledge-base lookup" in rule
-    assert "retrieval policy did not stage-gate candidate discovery" in rule
-
-
-def test_planning_skill_requires_contract_decoupled_barriers_and_compactness() -> None:
-    skill = skill_text(REPO_ROOT / "skills/orch-create-implementation-plan/SKILL.md")
-
-    assert "Prefer the fewest phases and tasks" in skill
-    assert "common contract group and accepted prior handoffs, not on sibling in-progress implementation output" in skill
-    assert "barrier ID, readiness evidence, and convergence owner" in skill
-    assert "Create explicit barrier metadata" in skill
-    assert "post-barrier convergence task" in skill
-    assert "Do not make contract-decoupled participant tasks depend on sibling in-progress implementation work" in skill
-    assert "compactness, contract-dependency clarity, barrier correctness" in skill
-
-
-def test_orch_doctor_declares_full_quality_gate_and_forbidden_dependency_checks() -> None:
-    skill = skill_text(REPO_ROOT / "skills/orch-doctor/SKILL.md")
-
-    assert "source-evidence roles" in skill
-    assert "generated-artifact verification and repair" in skill
-    assert "preserve no-retrieval execution" in skill
-    assert "CodeGraph-first rule remains conditional" in skill
-    assert "active orchestration contracts do not depend on `HABITS.md`" in skill
-    assert "deprecated role-selection subsystem" in skill
-    assert "must not judge" in skill
-    assert "sparse YAML" in skill
-    assert "forbidden executor advice fields" in skill
-    assert "active orchestration handoffs" in skill
-    assert "delegation_evidence" in skill
-    assert "`root`, `applicable`, `up_to_date`" in skill
+def test_orch_doctor_remains_read_only() -> None:
+    text = read("skills/orch-doctor/SKILL.md")
+    assert "## Read-Only Constraints (skill-owned)" in text
+    assert "Files changed: none" in text

@@ -51,7 +51,7 @@ Always include identity, related artifacts, result state, and concise summary. I
 - `changes.files` for changed or inspected files, symbols, artifacts, schemas, commands, or docs.
 - `validation.commands` for commands, tests, inspections, or intentional skips.
 - `unresolved` only for remaining blockers or issues.
-- `task_fit_check` for completed or partial task results, covering the related specification, root plan, parent phase, and assigned task.
+- `task_fit_check` for completed or partial task results, covering the compiled task brief and assigned task. Escalate to full source artifacts only for inconsistent compiled context or a reviewer-reported source-contract problem.
 - `repository` when repository preflight, accepted baseline, changed paths, or blocker state matters.
 - `codegraph` when source-code inspection or edits were in scope; keep it to `root`, `applicable`, `up_to_date`, and fallback/blocker facts unless more detail is needed.
 - `delegation_evidence` when task, phase, or plan ownership was delegated or fallback proof is required; record `internal_spawn_used_for_task_delegation: false`.
@@ -95,16 +95,7 @@ Confirm required sparse YAML metadata exists, referenced specs/plans/phases/task
 - `orch-artifact-authoring`: `rules/orchestration/orch-artifact-authoring.md`
 - `orch-handoff-required`: `rules/orchestration/orch-handoff-required.md`
 
-## Rule Loading (mandatory)
-
-Before substantive handoff work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive orchestration work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or directive summaries as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress orchestration task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules above when their indexed conditions apply.
 
 ## Scripts
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -174,6 +175,10 @@ def test_apply_preserves_source_and_publishes_v3_and_locator(tmp_path: Path) -> 
     result = apply(source, target, registry_path)
     assert result['status'] == 'published'
     assert result['metadata_and_registry_status'] == {'metadata': 'published', 'registry': 'published'}
+    historical_identity = hashlib.sha256(
+        f'{source.resolve()}:{target.resolve()}:workspace-one:repo-one'.encode('utf-8')
+    ).hexdigest()[:20]
+    assert result['transaction']['id'] == historical_identity
     assert source_snapshot(source) == before
     metadata = (target / '.work-bundle/project.yaml').read_text(encoding='utf-8')
     assert 'metadata_version: 3' in metadata
@@ -195,15 +200,52 @@ def test_apply_preserves_source_and_publishes_v3_and_locator(tmp_path: Path) -> 
     assert (target / '.work-bundle/unknown/maintain.sh').stat().st_mtime_ns == before['unknown_mtime']
     assert git(target / '.work-bundle', 'rev-list', '--count', 'HEAD') == '2'
     assert not (target / '.work-bundle/.cache').exists()
-    assert (target / 'AGENTS.md').read_bytes() == before['agents']
+    agents_text = (target / 'AGENTS.md').read_text(encoding='utf-8')
+    assert agents_text.startswith(before['agents'].decode('utf-8'))
+    assert '# Work Bundle RULE START' in agents_text
     credential = target / 'credentials/credentials.yaml'
     assert credential.read_text(encoding='utf-8') == 'version: 1\ncredentials: []\n'
     assert stat.S_IMODE(credential.parent.stat().st_mode) == 0o700
     assert stat.S_IMODE(credential.stat().st_mode) == 0o600
     assert result['script_index_validation'] == 'passed'
+    assert (target / '.gitignore').is_file()
+    assert (target / 'roles/solution-architect.yaml').is_file()
+    assert 'credentials/' in (target / '.work-bundle/.gitignore').read_text(encoding='utf-8')
+    assert 'git/' in (target / '.work-bundle/.gitignore').read_text(encoding='utf-8')
     record = json.loads(Path(str(result['transaction_record'])).read_text(encoding='utf-8'))
     assert record['state'] == 'published'
     assert record['source_preserved'] is True
+
+
+def test_non_git_authority_can_provision_from_explicit_external_origin(tmp_path: Path) -> None:
+    source, origin, target = tmp_path / 'authority', tmp_path / 'origin', tmp_path / 'target'
+    registry_path = tmp_path / 'config/projects.yaml'
+    seed(origin, dirty_source=True, dirty_nested=False)
+    source.mkdir()
+    (source / '.work-bundle').mkdir()
+    (source / '.work-bundle/project.yaml').write_text(
+        'metadata_version: 2\nauthority: canonical\n', encoding='utf-8'
+    )
+    (source / 'script').mkdir()
+    (source / 'script/index.yaml').write_text(SCRIPT_INDEX_TEMPLATE, encoding='utf-8')
+    (source / 'AGENTS.md').write_text('legacy authority\n', encoding='utf-8')
+    registry(registry_path)
+    dry_run = propose_migration(
+        source, target, 'repo-one', 'feature/workspace', 'HEAD', origin=origin,
+        workspace_slug='workspace-one', repository_name='Repository One',
+    )
+    result = apply_migration(
+        source, target, 'repo-one', 'feature/workspace', 'HEAD', origin=origin,
+        workspace_slug='workspace-one', repository_name='Repository One',
+        accepted_baseline_id=str(dry_run['accepted_baseline_evidence']['id']),
+        registry_path=registry_path,
+    )
+    assert result['status'] == 'published'
+    assert result['member_origin_git']['dirty'] is True
+    assert result['member']['project_root'] == str((target / 'repo-one').resolve())
+    assert git(target / 'repo-one', 'rev-parse', 'HEAD') == git(origin, 'rev-parse', 'HEAD')
+    registry_text = registry_path.read_text(encoding='utf-8')
+    assert f'origin_path: "{origin.resolve()}"' in registry_text
 
 
 @pytest.mark.parametrize('stage', TRANSACTION_STAGES)

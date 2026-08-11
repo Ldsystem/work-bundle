@@ -1,8 +1,8 @@
 ---
 id: orch-review-completion
 applies_when:
-  - review-plan runs after implementation
-  - orchestration completion may create or change durable implementation knowledge during specification authoring, planning, or review
+  - review-plan audits a completed or blocked implementation plan
+  - orchestration artifacts may be finalized or archived
 enforcement: must
 load: conditional
 requires: []
@@ -12,87 +12,35 @@ requires: []
 
 ## Purpose
 
-Govern final review, knowledge-update disposition, delegate-return-resume for structural updates, and archival of completed orchestration artifacts. Durable knowledge remains clean; orchestration artifacts are derived. Review may delegate durable work but must not write durable knowledge directly.
+Keep final review focused on whether the WorkBundle workflow completed correctly. Task-scoped implementation quality belongs to independent task review before a task becomes complete.
 
 ## Must
 
-- Run review only through `review-plan` after execution, using related active specification, plan, phase, task, executor-result handoffs, linked legacy orchestration handoffs only when already referenced by the reviewed artifacts, and referenced project files.
-- Validate that specification requirements, plan coverage, handoff evidence, project file changes, validation results, and status indexes are coherent before archival.
-- Validate compact executor-result handoffs by required-by-applicability fields rather than fixed Markdown sections, including changed files or inspected artifacts, validation commands/results, unresolved blockers, task-fit checks, repository/preflight evidence, CodeGraph evidence, and delegation evidence.
-- Validate that executor-result handoffs contain complete and consistent compact CodeGraph evidence when source-code work required it: `root`, `applicable`, `up_to_date`, required fallback or blocker facts, and, for indexed source-code work, index presence, sync/query or explored-symbol evidence, post-change sync when indexed source changed, and final graph impact/up-to-date result.
-- Validate that executor-result handoffs contain complete and consistent `delegation_evidence` when task, phase, or plan ownership was delegated, including delegation surface, `visible_reference` when available, `internal_spawn_used_for_task_delegation: false`, internal helper-worker usage if any, and fallback or blocker reason when visible delegation was unavailable or unsafe.
-- Reject completion when applicable CodeGraph, delegation, validation, blocker, repository/preflight, or task-fit evidence is missing, incomplete, stale, or contradictory to the implementation scope, target repository state, or execution mode.
-- Validate specification-included violation evidence before archive. Close included violations only during passing, unblocked review when the reviewed implementation resolves the behavior and archive is otherwise allowed.
-- Use approved violation lifecycle operations to close resolved specification-included violations as `completed`; do not delete violation evidence files or close unrelated evidence.
-- Keep review blocked or failed when a specification-included blocking violation remains unresolved, cannot be closed, lacks lifecycle evidence, or contradicts the reviewed implementation.
-- Settle specification-carried unsettled notes, opposite evidence, candidate/background evidence, and other material non-authority inputs before archive when they affect requirements, workflow, policy, validation, execution behavior, or durable knowledge disposition.
-- Record one settlement result for each material unsettled item: resolved by implementation, no longer applicable, promoted or delegated through approved `ks-*` follow-up, still blocked, or explicitly non-blocking with rationale.
-- Block archive when material specification-carried unsettled evidence remains unresolved or lacks settlement evidence.
-- Include `Knowledge Base Update` disposition in specifications and carry disposition, expected durable conclusions, evidence sources, and follow-up path into plans, tasks, and handoff criteria.
-- Evaluate `Knowledge Base Update` disposition during review from the specification, plan, implementation evidence, validation evidence, and approved `ks-*` delegate-return evidence; do not require executor-result handoffs to carry durable-knowledge recommendations.
-- assess validated implementation and review evidence for structural updates.
-- delegate mixed structural evidence to ks-extract-valuable-points; use `ks-breakdown-design` only when structural evidence is design-file-only.
-- Provide the target project identity, reviewed specification, plan, relevant handoffs, validation evidence, changed project files or symbols, expected durable conclusions, structural-update summary, and current disposition to the delegated `ks-*` owner.
-- validate returned structural-value result durable paths or no-write rationale index rebuild status blockers and completion state before resuming disposition evaluation.
-- Resume disposition evaluation only after delegated return evidence is complete and consistent.
-- Gate review archive on disposition `completed` or `not-needed`.
-- Emit a final line in this exact form: `Knowledge update disposition: completed|not-needed|blocked|required`.
-- Archive related active specification, plan, phase, task, and handoff artifacts only when all review checks pass and disposition is `completed` or `not-needed`.
-- Mark handoffs `reviewed`, move artifacts from `active/` to `archived/`, refresh orchestration indexes, and report archived paths on success.
-- Create a repair specification on review failure instead of editing implementation source files.
-- Link repair specifications to the reviewed plan, related handoffs, discrepancies, evidence, severity, required fixes, and acceptance criteria.
-
-Disposition gate:
-
-| Disposition | Meaning for archive |
-| --- | --- |
-| `completed` | Delegated return identifies written or updated durable paths and successful index rebuild status |
-| `not-needed` | Delegated structural-value assessment safely concludes no durable write is warranted with evidence-backed no-write rationale |
-| `required` | Structural update still pending; archive blocked |
-| `blocked` | Delegation unavailable, incomplete, contradictory, or lacking actionable blocker path; archive blocked |
-
-Delegate-return-resume protocol:
-
-1. Set or retain `Knowledge update disposition: required` when structural update is identified.
-2. Delegate to the approved `ks-*` owner with full review inputs.
-3. Require return of structural-value result, durable paths or evidence-backed no-write rationale, index rebuild status, blockers, and completion state.
-4. Validate the return, then resume disposition evaluation.
-5. Archive only when disposition resolves to `completed` or `not-needed` and all other review checks pass.
+- Audit spec, plan, phase, task, handoff, and accepted task-review status coherence.
+- Require fresh planned validation evidence and an `accept` task-review verdict wherever review is required.
+- Verify declared dependency, barrier, and convergence gates from recorded evidence.
+- Route missing handoff, status, validation, or review evidence to `review-blocked` and resume the owning execution step.
+- Route incomplete durable knowledge work to `knowledge-blocked` and resume the approved `ks-*` delegate-return path.
+- Route incomplete repository metadata, index, workspace, or archive mechanics to `repository-blocked` or `workspace-blocked` and use bounded deterministic helpers.
+- Require specification Knowledge Base Update disposition `completed` or `not-needed` before archive.
+- Create or require plan repair only for a decomposition defect, and specification repair only for a requirement, design, or authority defect.
+- Complete allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh only after all gates allow finalization.
 
 ## Must Not
 
-- Archive during execute-plan or before review completes successfully.
-- Archive completed plans while knowledge update disposition remains `required` or `blocked`.
-- Directly create, edit, promote, delete, or index `.work-bundle/knowledge/**` from orchestration review work.
-- Do not treat missing, incomplete, contradictory, or blocked delegation evidence as completed or not-needed.
-- Do not treat missing, incomplete, contradictory, or blocked CodeGraph sync/query/post-change/fallback evidence as completed when the completed task required CodeGraph evidence.
-- Do not treat missing, incomplete, contradictory, or blocked visible delegation evidence as completed when plan, phase, or task ownership was delegated.
-- Do not close specification-included violations before review passes, while review is blocked, or before the implementation evidence shows the included violation is resolved.
-- Do not archive when specification-included violation closure is incomplete or when material specification-carried evidence remains unsettled.
-- Do not delete violation evidence files while closing review-included violations; use lifecycle archive or status operations only.
-- Do not fail compact executor-result handoffs merely because Markdown section headings are absent when the applicable structured evidence is present and consistent.
-- Do not require active orchestration handoffs as review inputs; continuation state comes from active specifications, plans, phases, tasks, indexes, and executor-result handoffs.
-- Do not require or accept executor-result durable-knowledge advice fields such as `suggested_durable_conclusions`, `durable_candidate_facts`, `recommended_orchestration_review`, `recommended_next_actions`, `strategy_advice`, or `knowledge_persistence`.
-- Create orchestration plan phases or tasks that write `.work-bundle/knowledge/` directly.
-- Make execution agents browse `.work-bundle/knowledge/` directly.
-- Fix implementation source files when review fails; create a repair specification instead.
-- Delete archived artifacts; move them to `archived/` only.
-- Ignore failed validation or missing handoff evidence and archive anyway.
+- Do not broadly inspect project source to redo task code review.
+- Do not repair implementation or test code during final review.
+- Do not substitute project-file inspection for accepted task-review evidence.
+- Do not create a repair specification for every failed review gate.
+- Do not archive while required knowledge, validation, review, repository, or workspace evidence is unresolved.
+- Do not directly write durable knowledge from orchestration.
 
 ## Validation
 
-- Confirm review used only allowed context and gateway retrieval when durable knowledge was needed.
-- Confirm compact executor-result handoffs were validated by field applicability, not fixed Markdown section presence.
-- Confirm required validation, unresolved blocker, task-fit, repository/preflight, CodeGraph, and delegation evidence is present and consistent before accepting completion or archival.
-- Confirm active orchestration handoff input was not required.
-- Confirm structural updates followed delegate-return-resume and returned complete evidence before archive resumed.
-- Confirm final disposition is one of `completed`, `not-needed`, `blocked`, or `required` with supporting evidence.
-- Confirm specification-included violation evidence is either closed as `completed` through lifecycle evidence during passing unblocked review, or blocks/fails review when unresolved.
-- Confirm material specification-carried unsettled evidence has a settlement result before archive.
-- Confirm archive occurred only on success with disposition `completed` or `not-needed`.
-- Confirm failure paths produced a repair specification and reported blocked or required disposition without archival.
-- Confirm indexes under `.work-bundle/orchestration/spec/`, `plan/`, and `handoff/` were refreshed after successful archive.
+- Confirm every completed review-required task has fresh validation, a valid executor-result handoff, and `accept` review evidence.
+- Confirm blocker routing names the owning resume path instead of restarting the lifecycle.
+- Confirm finalization and archive occur only after knowledge disposition and deterministic gates resolve.
 
 ## On Violation
 
-Stop review or archive, report the missing handoff, disposition, CodeGraph evidence, delegation evidence, violation closure evidence, or unsettled-evidence settlement, keep active artifacts in place, and resume only after the missing or contradictory evidence is repaired, disposition evaluation completes with valid delegated return evidence, included violations are closed or explicitly blocking, unsettled material is settled, or a repair specification path is established.
+Stop finalization, emit the smallest typed blocker, and resume the step that owns the missing or contradictory evidence. Repair a plan or specification only when the defect belongs to that artifact.

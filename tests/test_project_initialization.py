@@ -7,6 +7,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEGACY_BOOTSTRAP_POINTER = "references/bootstrap"
@@ -238,11 +240,152 @@ def test_metadata_v2_migration_requires_dry_run_then_explicit_apply(tmp_path: Pa
     dry_run = run_wb(config_root, "migrate-project", str(project), "--dry-run", "--name", "demo")
     assert dry_run.returncode == 0
     assert metadata_path.read_bytes() == before
-    applied = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo")
+    proposal_id = json.loads(dry_run.stdout)["migration"]["proposal_id"]
+    applied = run_wb(
+        config_root,
+        "migrate-project",
+        str(project),
+        "--apply",
+        "--name",
+        "demo",
+        "--accepted-proposal-id",
+        proposal_id,
+    )
     assert applied.returncode == 0, applied.stdout + applied.stderr
     assert "metadata_version: 3" in metadata_path.read_text(encoding="utf-8")
     assert "custom_user_field: keep-me" in metadata_path.read_text(encoding="utf-8")
     assert json.loads(applied.stdout)["git_actions"] == []
+
+
+def test_metadata_v2_multi_source_routes_to_explicit_workspace_migration(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    extra = tmp_path / "library"
+    extra.mkdir()
+    git(extra, "init", "-q", "-b", "main")
+    metadata = project / ".work-bundle/project.yaml"
+    metadata.write_text(
+        "\n".join(
+            [
+                "metadata_version: 2",
+                "authority: canonical",
+                f"project_root: {project.resolve()}",
+                "source_repositories:",
+                "  - id: demo-main",
+                f"    path: {project.resolve()}",
+                "  - id: demo-library",
+                f"    path: {extra.resolve()}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    registry = config_root / "registry/projects.yaml"
+    registry.write_text(
+        "\n".join(
+            [
+                "projects:",
+                "  - slug: demo",
+                "    name: demo",
+                f"    work_bundle_root: {project.resolve() / '.work-bundle'}",
+                f"    knowledge_root: {project.resolve() / '.work-bundle/knowledge'}",
+                "    aliases: []",
+                "    source_repositories:",
+                "      - id: demo-main",
+                f"        path: {project.resolve()}",
+                "        git_repository: true",
+                "      - id: demo-library",
+                f"        path: {extra.resolve()}",
+                "        git_repository: true",
+                "    status: active",
+                "    updated_at: 2026-08-11",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    metadata_before = metadata.read_bytes()
+    registry_before = registry.read_bytes()
+
+    result = run_wb(config_root, "migrate-project", str(project), "--dry-run", "--name", "demo")
+    data = json.loads(result.stdout)
+
+    assert result.returncode == 1
+    assert data["mode"] == "multi-repository-migration-required"
+    assert data["failures"] == ["WB_MIGRATION_MULTI_REPOSITORY_WORKFLOW_REQUIRED"]
+    assert data["topology_assessment"]["required_command"] == "migrate-to-multi-repository"
+    assert metadata.read_bytes() == metadata_before
+    assert registry.read_bytes() == registry_before
+
+    forced = run_wb(
+        config_root,
+        "migrate-project",
+        str(project),
+        "--apply",
+        "--force",
+        "--name",
+        "demo",
+        "--accepted-proposal-id",
+        data["migration"]["proposal_id"],
+    )
+    assert forced.returncode == 1
+    assert json.loads(forced.stdout)["failures"] == ["WB_MIGRATION_MULTI_REPOSITORY_WORKFLOW_REQUIRED"]
+    assert metadata.read_bytes() == metadata_before
+    assert registry.read_bytes() == registry_before
+
+
+def test_metadata_v2_apply_rejects_stale_proposal(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    metadata = project / ".work-bundle/project.yaml"
+    metadata.write_text(
+        f"metadata_version: 2\nauthority: canonical\nproject_root: {project.resolve()}\n",
+        encoding="utf-8",
+    )
+    dry_run = run_wb(config_root, "migrate-project", str(project), "--dry-run", "--name", "demo")
+    proposal_id = json.loads(dry_run.stdout)["migration"]["proposal_id"]
+    metadata.write_text(metadata.read_text(encoding="utf-8") + "user_change: preserve\n", encoding="utf-8")
+
+    applied = run_wb(
+        config_root,
+        "migrate-project",
+        str(project),
+        "--apply",
+        "--name",
+        "demo",
+        "--accepted-proposal-id",
+        proposal_id,
+    )
+
+    assert applied.returncode == 1
+    assert json.loads(applied.stdout)["failures"] == ["WB_MIGRATION_PROPOSAL_STALE"]
+    assert "user_change: preserve" in metadata.read_text(encoding="utf-8")
+
+
+def test_metadata_v2_topology_identity_disagreement_blocks(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    conflicting = tmp_path / "conflicting"
+    conflicting.mkdir()
+    metadata = project / ".work-bundle/project.yaml"
+    metadata.write_text(
+        "\n".join(
+            [
+                "metadata_version: 2",
+                f"project_root: {project.resolve()}",
+                "source_repositories:",
+                "  - id: demo-main",
+                f"    path: {conflicting.resolve()}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_wb(config_root, "migrate-project", str(project), "--dry-run", "--name", "demo")
+    data = json.loads(result.stdout)
+
+    assert result.returncode == 1
+    assert data["mode"] == "topology-conflict"
+    assert data["failures"] == ["WB_MIGRATION_TOPOLOGY_CONFLICT"]
+    assert data["changed_files"] == []
 
 
 def test_doctor_repair_preserves_head_and_index(tmp_path: Path) -> None:
@@ -1050,7 +1193,7 @@ def test_migrate_project_upgrades_v1_metadata_and_preserves_unknown_fields(tmp_p
     assert "source_repositories:" in text
 
 
-def test_migrate_project_sources_repositories_from_registry(tmp_path: Path) -> None:
+def test_migrate_project_routes_registry_multi_source_to_workspace_migration(tmp_path: Path) -> None:
     config_root, project = _init_fixture_project(tmp_path)
     extra_repo = tmp_path / "library"
     extra_repo.mkdir()
@@ -1067,15 +1210,17 @@ def test_migrate_project_sources_repositories_from_registry(tmp_path: Path) -> N
                 f"    work_bundle_root: {resolved_project / '.work-bundle'}",
                 f"    knowledge_root: {resolved_project / '.work-bundle' / 'knowledge'}",
                 "    aliases: []",
+                "    repository_origins:",
+                "      - id: demo-main",
+                f"        origin_path: {resolved_project}",
+                "        git_repository: true",
+                "      - id: demo-library",
+                f"        origin_path: {resolved_extra}",
+                "        git_repository: true",
                 "    source_repositories:",
                 "      - id: demo-main",
                 f"        path: {resolved_project}",
                 "        work_dir: true",
-                '        remote: ""',
-                "        git_repository: true",
-                "      - id: demo-library",
-                f"        path: {resolved_extra}",
-                "        work_dir: false",
                 '        remote: ""',
                 "        git_repository: true",
                 "    status: active",
@@ -1099,21 +1244,395 @@ def test_migrate_project_sources_repositories_from_registry(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    migrated = run_wb(config_root, "migrate-project", str(project), "--apply", "--name", "demo")
-    assert migrated.returncode == 0, migrated.stdout + migrated.stderr
-    text = metadata_path.read_text(encoding="utf-8")
-    wb_project = _import_wb_project()
-    try:
-        repositories = wb_project._metadata_source_repositories(text)
-    finally:
-        _cleanup_wb_project_modules()
+    before = metadata_path.read_bytes()
+    migrated = run_wb(config_root, "migrate-project", str(project), "--dry-run", "--name", "demo")
+    data = json.loads(migrated.stdout)
+    assert migrated.returncode == 1
+    assert data["mode"] == "multi-repository-migration-required"
+    assert data["topology_assessment"]["required_command"] == "migrate-to-multi-repository"
+    assert metadata_path.read_bytes() == before
 
-    assert [repo["id"] for repo in repositories] == ["demo-main", "demo-library"]
-    assert [repo["path"] for repo in repositories] == [str(resolved_project), str(resolved_extra)]
-    assert repositories[0]["work_dir"] is True
-    assert repositories[1]["work_dir"] is True
-    assert repositories[1]["checkout_kind"] == "local-project"
-    assert "source_repositories[1].registry_project_mismatch" not in json.loads(migrated.stdout)["failures"]
+
+def _seed_committed_repository(path: Path) -> None:
+    path.mkdir()
+    git(path, "init", "-q", "-b", "main")
+    git(path, "config", "user.email", "test@example.com")
+    git(path, "config", "user.name", "Test")
+    (path / "README.md").write_text("seed\n", encoding="utf-8")
+    git(path, "add", "README.md")
+    git(path, "commit", "-q", "-m", "seed")
+
+
+def _init_multi_workspace(tmp_path: Path) -> tuple[Path, Path]:
+    config_root = bootstrap_config(tmp_path)
+    workspace = tmp_path / "workspace"
+    _seed_committed_repository(workspace)
+    initialized = run_wb(
+        config_root,
+        "init-project",
+        str(workspace),
+        "--mode",
+        "multi-repository",
+        "--workspace-root",
+        str(workspace),
+        "--name",
+        "multi",
+    )
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+    return config_root, workspace
+
+
+def test_provision_member_cli_publishes_both_authorities_and_replays_idempotently(tmp_path: Path) -> None:
+    config_root, workspace = _init_multi_workspace(tmp_path)
+    origin = tmp_path / "origin"
+    _seed_committed_repository(origin)
+    args = (
+        "provision-member",
+        "--workspace-root",
+        str(workspace),
+        "--workspace-slug",
+        "multi",
+        "--origin",
+        str(origin),
+        "--repository-id",
+        "repo-two",
+        "--working-branch",
+        "feature-two",
+        "--base-ref",
+        "HEAD",
+    )
+    proposed = run_wb(config_root, *args, "--dry-run")
+    assert proposed.returncode == 0
+    assert json.loads(proposed.stdout)["status"] == "proposed"
+
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config_root / "registry/projects.yaml"
+    metadata.write_text(metadata.read_text(encoding="utf-8") + "custom_workspace_field: keep\n", encoding="utf-8")
+    registry.write_text(
+        registry.read_text(encoding="utf-8").replace("    status: active", "    custom_locator_field: keep\n    status: active", 1),
+        encoding="utf-8",
+    )
+    credential = workspace / "credentials/credentials.yaml"
+    credential_stat = (credential.stat().st_mode, credential.stat().st_mtime_ns, credential.stat().st_size)
+    origin_head = git(origin, "rev-parse", "HEAD")
+    origin_status = git(origin, "status", "--short")
+
+    applied = run_wb(config_root, *args, "--apply")
+    data = json.loads(applied.stdout)
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    assert data["status"] == "passed"
+    assert data["transaction"]["state"] == "published"
+    assert data["transaction"]["metadata_status"] == "published"
+    assert data["transaction"]["registry_status"] == "published"
+    assert "pending" not in json.dumps(data)
+    assert '  - id: "repo-two"\n    project_root:' in metadata.read_text(encoding="utf-8")
+    assert "custom_workspace_field: keep" in metadata.read_text(encoding="utf-8")
+    assert "repository_origins:" in registry.read_text(encoding="utf-8")
+    assert '      - id: "repo-two"' in registry.read_text(encoding="utf-8")
+    assert "custom_locator_field: keep" in registry.read_text(encoding="utf-8")
+    assert (credential.stat().st_mode, credential.stat().st_mtime_ns, credential.stat().st_size) == credential_stat
+    assert git(origin, "rev-parse", "HEAD") == origin_head
+    assert git(origin, "status", "--short") == origin_status
+    shown = run_wb(config_root, "show-project", "--project-root", str(workspace))
+    assert shown.returncode == 0, shown.stdout + shown.stderr
+    assert {item["id"] for item in json.loads(shown.stdout)["project_source_repositories"]} >= {"repo-two"}
+    nested_session = run_wb(
+        config_root, "session-start", "--project-root", str(workspace / "repo-two"),
+        "--dry-run", "--json",
+    )
+    assert nested_session.returncode == 0, nested_session.stdout + nested_session.stderr
+    assert json.loads(nested_session.stdout)["project_root"] == str(workspace.resolve())
+    validated = run_wb(config_root, "validate-project", str(workspace), "--dry-run")
+    assert validated.returncode == 0, validated.stdout + validated.stderr
+
+    metadata_bytes = metadata.read_bytes()
+    registry_bytes = registry.read_bytes()
+    record = workspace / ".work-bundle/transactions/provision-repo-two.json"
+    record_bytes = record.read_bytes()
+    mtimes = (metadata.stat().st_mtime_ns, registry.stat().st_mtime_ns, record.stat().st_mtime_ns)
+    replayed = run_wb(config_root, *args, "--apply")
+    replay_data = json.loads(replayed.stdout)
+    assert replayed.returncode == 0
+    assert replay_data["idempotent"] is True
+    assert replay_data["changed_files"] == []
+    assert metadata.read_bytes() == metadata_bytes
+    assert registry.read_bytes() == registry_bytes
+    assert record.read_bytes() == record_bytes
+    assert (metadata.stat().st_mtime_ns, registry.stat().st_mtime_ns, record.stat().st_mtime_ns) == mtimes
+
+    record.unlink()
+    metadata_mtime = metadata.stat().st_mtime_ns
+    registry_mtime = registry.stat().st_mtime_ns
+    converged = run_wb(config_root, *args, "--apply")
+    converged_data = json.loads(converged.stdout)
+    assert converged.returncode == 0, converged.stdout + converged.stderr
+    assert converged_data["idempotent"] is True
+    assert converged_data["transaction"]["resume_source"] == "converged-authorities"
+    assert converged_data["changed_files"] == []
+    assert not record.exists()
+    assert metadata.stat().st_mtime_ns == metadata_mtime
+    assert registry.stat().st_mtime_ns == registry_mtime
+
+
+def test_provision_member_cli_rejects_unrelated_non_empty_target(tmp_path: Path) -> None:
+    config_root, workspace = _init_multi_workspace(tmp_path)
+    origin = tmp_path / "origin"
+    _seed_committed_repository(origin)
+    target = workspace / "repo-two"
+    target.mkdir()
+    (target / "user-file").write_text("preserve\n", encoding="utf-8")
+
+    applied = run_wb(
+        config_root,
+        "provision-member",
+        "--workspace-root",
+        str(workspace),
+        "--workspace-slug",
+        "multi",
+        "--origin",
+        str(origin),
+        "--repository-id",
+        "repo-two",
+        "--working-branch",
+        "feature-two",
+        "--apply",
+    )
+
+    assert applied.returncode == 1
+    assert json.loads(applied.stdout)["failure_code"] == "WB_WORKTREE_TARGET_COLLISION"
+    assert (target / "user-file").read_text(encoding="utf-8") == "preserve\n"
+    assert not (workspace / ".work-bundle/git/repo-two.git").exists()
+
+
+def test_provision_member_adopts_exact_verified_orphan_without_recovery_record(tmp_path: Path) -> None:
+    config_root, workspace = _init_multi_workspace(tmp_path)
+    origin = tmp_path / "origin"
+    _seed_committed_repository(origin)
+    script_root = REPO_ROOT / "scripts/work-bundle"
+    sys.path.insert(0, str(script_root))
+    try:
+        import worktree  # type: ignore[import-not-found]
+
+        worktree.provision_member(workspace, origin, "repo-two", "feature-two")
+    finally:
+        sys.path.remove(str(script_root))
+        for module_name in ("worktree", "workspace"):
+            sys.modules.pop(module_name, None)
+    record = workspace / ".work-bundle/transactions/provision-repo-two.json"
+    assert not record.exists()
+    args = (
+        "provision-member", "--workspace-root", str(workspace),
+        "--workspace-slug", "multi", "--origin", str(origin),
+        "--repository-id", "repo-two", "--working-branch", "feature-two",
+        "--base-ref", "HEAD",
+    )
+    proposed = run_wb(config_root, *args, "--dry-run")
+    proposal_data = json.loads(proposed.stdout)
+    assert proposed.returncode == 0, proposed.stdout + proposed.stderr
+    assert proposal_data["transaction"]["state"] == "verified"
+    assert proposal_data["transaction"]["resume_source"] == "verified-orphan"
+    applied = run_wb(config_root, *args, "--apply")
+    data = json.loads(applied.stdout)
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    assert data["status"] == "passed"
+    assert data["transaction"]["state"] == "published"
+    assert '  - id: "repo-two"' in (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
+
+
+def test_cleanup_member_command_removes_only_recorded_unpublished_owned_checkout(tmp_path: Path) -> None:
+    config_root, workspace = _init_multi_workspace(tmp_path)
+    origin = tmp_path / "origin"
+    _seed_committed_repository(origin)
+    script_root = REPO_ROOT / "scripts/work-bundle"
+    sys.path.insert(0, str(script_root))
+    try:
+        import member  # type: ignore[import-not-found]
+        import worktree  # type: ignore[import-not-found]
+
+        provisioned = worktree.provision_member(workspace, origin, "repo-two", "feature-two")
+        transaction_id = member._transaction_id(workspace, origin, "repo-two", "feature-two", "HEAD")
+        context = {
+            "transaction_id": transaction_id,
+            "workspace_root": str(workspace.resolve()),
+            "workspace_slug": "multi",
+            "origin": str(origin.resolve()),
+            "repository_id": "repo-two",
+            "branch": "feature-two",
+            "base_ref": "HEAD",
+        }
+        member._write_record(member._record_path(workspace, "repo-two"), {
+            "id": transaction_id, "state": "verified", "context": context,
+            "checkout_owned": True, "registry_status": "unchanged",
+            "metadata_status": "unchanged", "member": member._member_result(provisioned, transaction_id),
+        })
+    finally:
+        sys.path.remove(str(script_root))
+        for module_name in ("member", "migration", "worktree", "workspace", "project", "core", "bootstrap_config"):
+            sys.modules.pop(module_name, None)
+    dry_run = run_wb(
+        config_root, "cleanup-member", "--workspace-root", str(workspace),
+        "--repository-id", "repo-two", "--dry-run",
+    )
+    assert dry_run.returncode == 0
+    assert (workspace / "repo-two").is_dir()
+    applied = run_wb(
+        config_root, "cleanup-member", "--workspace-root", str(workspace),
+        "--repository-id", "repo-two", "--apply",
+    )
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    assert not (workspace / "repo-two").exists()
+    assert not (workspace / ".work-bundle/git/repo-two.git").exists()
+    record = json.loads((workspace / ".work-bundle/transactions/provision-repo-two.json").read_text(encoding="utf-8"))
+    assert record["state"] == "cleaned"
+
+
+def test_show_project_accepts_workspace_root_alias(tmp_path: Path) -> None:
+    config_root, workspace = _init_multi_workspace(tmp_path)
+    shown = run_wb(config_root, "show-project", "--workspace-root", str(workspace))
+    assert shown.returncode == 0, shown.stdout + shown.stderr
+    assert json.loads(shown.stdout)["project_root"] == str(workspace.resolve())
+
+
+def test_migrate_to_multi_repository_cli_dry_run_accepts_external_origin(tmp_path: Path) -> None:
+    config_root = bootstrap_config(tmp_path)
+    authority = tmp_path / "authority"
+    origin = tmp_path / "origin"
+    target = tmp_path / "workspace"
+    authority.mkdir()
+    (authority / ".work-bundle").mkdir()
+    (authority / ".work-bundle/project.yaml").write_text(
+        "metadata_version: 2\nauthority: canonical\n", encoding="utf-8"
+    )
+    _seed_committed_repository(origin)
+    proposed = run_wb(
+        config_root,
+        "migrate-to-multi-repository", str(authority),
+        "--target-workspace-root", str(target),
+        "--origin", str(origin),
+        "--repository-id", "repo-one",
+        "--repository-name", "Repository One",
+        "--workspace-slug", "workspace-one",
+        "--working-branch", "feature/workspace",
+        "--base-ref", "HEAD",
+        "--dry-run",
+    )
+    data = json.loads(proposed.stdout)
+    assert proposed.returncode == 0, proposed.stdout + proposed.stderr
+    assert data["status"] == "passed"
+    assert data["result"]["member_origin_root"] == str(origin.resolve())
+    assert data["result"]["changed_files"] == []
+    missing_origin = run_wb(
+        config_root,
+        "migrate-to-multi-repository", str(authority),
+        "--target-workspace-root", str(target),
+        "--repository-id", "repo-one",
+        "--repository-name", "Repository One",
+        "--workspace-slug", "workspace-one",
+        "--working-branch", "feature/workspace",
+        "--dry-run",
+    )
+    assert missing_origin.returncode == 1
+    assert json.loads(missing_origin.stdout)["failure_code"] == "WB_MIGRATION_ORIGIN_REQUIRED"
+
+
+@pytest.mark.parametrize("stage", ["metadata-publication", "registry-publication"])
+def test_provision_member_publication_failure_restores_authorities_and_owned_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+) -> None:
+    config_root, workspace = _init_multi_workspace(tmp_path)
+    origin = tmp_path / "origin"
+    _seed_committed_repository(origin)
+    monkeypatch.setenv("WB_CONFIG_ROOT", str(config_root))
+    script_root = REPO_ROOT / "scripts/work-bundle"
+    sys.path.insert(0, str(script_root))
+    try:
+        import member  # type: ignore[import-not-found]
+
+        metadata = workspace / ".work-bundle/project.yaml"
+        registry = config_root / "registry/projects.yaml"
+        metadata_before = metadata.read_bytes()
+        registry_before = registry.read_bytes()
+        with pytest.raises(member.MemberLifecycleError):
+            member.provision_member_lifecycle(
+                workspace,
+                origin,
+                "repo-two",
+                "feature-two",
+                workspace_slug="multi",
+                fail_stage=stage,
+            )
+        assert metadata.read_bytes() == metadata_before
+        assert registry.read_bytes() == registry_before
+        assert not (workspace / "repo-two").exists()
+        assert not (workspace / ".work-bundle/git/repo-two.git").exists()
+        record = workspace / ".work-bundle/transactions/provision-repo-two.json"
+        assert json.loads(record.read_text(encoding="utf-8"))["state"] == "failed"
+    finally:
+        sys.path.remove(str(script_root))
+        for module_name in ("member", "migration", "worktree", "project", "core", "bootstrap_config"):
+            sys.modules.pop(module_name, None)
+
+
+def test_provision_member_resumes_matching_verified_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_root, workspace = _init_multi_workspace(tmp_path)
+    origin = tmp_path / "origin"
+    _seed_committed_repository(origin)
+    monkeypatch.setenv("WB_CONFIG_ROOT", str(config_root))
+    script_root = REPO_ROOT / "scripts/work-bundle"
+    sys.path.insert(0, str(script_root))
+    try:
+        import member  # type: ignore[import-not-found]
+        import worktree  # type: ignore[import-not-found]
+
+        provisioned = worktree.provision_member(workspace, origin, "repo-two", "feature-two")
+        transaction_id = member._transaction_id(workspace, origin, "repo-two", "feature-two", "HEAD")
+        context = {
+            "transaction_id": transaction_id,
+            "workspace_root": str(workspace.resolve()),
+            "workspace_slug": "multi",
+            "origin": str(origin.resolve()),
+            "repository_id": "repo-two",
+            "branch": "feature-two",
+            "base_ref": "HEAD",
+        }
+        member._write_record(
+            member._record_path(workspace, "repo-two"),
+            {
+                "id": transaction_id,
+                "state": "verified",
+                "context": context,
+                "checkout_owned": True,
+                "registry_status": "unchanged",
+                "metadata_status": "unchanged",
+                "member": member._member_result(provisioned, transaction_id),
+            },
+        )
+    finally:
+        sys.path.remove(str(script_root))
+        for module_name in ("member", "migration", "worktree", "project", "core", "bootstrap_config"):
+            sys.modules.pop(module_name, None)
+
+    resumed = run_wb(
+        config_root,
+        "provision-member",
+        "--workspace-root",
+        str(workspace),
+        "--workspace-slug",
+        "multi",
+        "--origin",
+        str(origin),
+        "--repository-id",
+        "repo-two",
+        "--working-branch",
+        "feature-two",
+        "--base-ref",
+        "HEAD",
+        "--apply",
+    )
+    assert resumed.returncode == 0, resumed.stdout + resumed.stderr
+    assert json.loads(resumed.stdout)["transaction"]["state"] == "published"
 
 
 def test_resolve_effective_prefer_subagent_uses_project_global_default_order(tmp_path: Path, monkeypatch) -> None:

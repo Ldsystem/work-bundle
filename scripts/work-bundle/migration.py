@@ -147,33 +147,45 @@ def _preservation_inventory(root: Path) -> list[dict[str, object]]:
     return inventory
 
 
-def _baseline_evidence(source_state: dict[str, object], nested_state: dict[str, object]) -> dict[str, object]:
+def _baseline_evidence(
+    source_state: dict[str, object],
+    nested_state: dict[str, object],
+    member_origin_state: dict[str, object] | None = None,
+) -> dict[str, object]:
+    origin_state = member_origin_state or source_state
     facts = {
         'source_repository_dirty': bool(source_state['dirty']),
         'work_bundle_git_dirty': bool(nested_state['dirty']),
+        'member_origin_dirty': bool(origin_state['dirty']),
         'source_head': source_state['head'],
         'work_bundle_head': nested_state['head'],
+        'member_origin_head': origin_state['head'],
         'source_status_entries': source_state['status_entries'],
         'work_bundle_status_entries': nested_state['status_entries'],
+        'member_origin_status_entries': origin_state['status_entries'],
     }
     token = hashlib.sha256(json.dumps(facts, sort_keys=True).encode('utf-8')).hexdigest()
     return {**facts, 'id': token}
 
 
-def inspect_migration(source: Path, target: Path) -> dict[str, object]:
+def inspect_migration(source: Path, target: Path, origin: Path | None = None) -> dict[str, object]:
     source, target = source.resolve(), target.resolve()
+    origin = (origin or source).resolve()
     source_state = source_git_state(source)
     nested_state = work_bundle_git_state(source)
+    origin_state = source_git_state(origin)
     return {
         'source_root': str(source),
         'target_root': str(target),
+        'member_origin_root': str(origin),
         'source_exists': source.is_dir(),
         'target_exists': target.exists(),
         'work_bundle_exists': (source / '.work-bundle').is_dir(),
         'credential_store_present': (source / 'credentials/credentials.yaml').is_file(),
         'source_repository_git': source_state,
         'work_bundle_git': nested_state,
-        'accepted_baseline_evidence': _baseline_evidence(source_state, nested_state),
+        'member_origin_git': origin_state,
+        'accepted_baseline_evidence': _baseline_evidence(source_state, nested_state, origin_state),
     }
 
 
@@ -184,11 +196,12 @@ def propose_migration(
     branch: str,
     base_ref: str,
     *,
+    origin: Path | None = None,
     workspace_slug: str | None = None,
     repository_name: str | None = None,
     additional_repository_origins: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
-    inspection = inspect_migration(source, target)
+    inspection = inspect_migration(source, target, origin)
     slug = workspace_slug or target.name
     name = repository_name or repository_id
     return {
@@ -204,7 +217,9 @@ def propose_migration(
         'git_actions': [],
         'credential_action': 'create-empty-protected-store',
         'apply_requires_accepted_baseline': bool(
-            inspection['source_repository_git']['dirty'] or inspection['work_bundle_git']['dirty']
+            inspection['source_repository_git']['dirty']
+            or inspection['work_bundle_git']['dirty']
+            or inspection['member_origin_git']['dirty']
         ),
     }
 
@@ -333,7 +348,7 @@ def _metadata_text(
     known = {
         'metadata_version', 'authority', 'workspace_root', 'workspace_mode', 'project_root',
         'industry', 'prefer_subagent', 'metadata_compatibility', 'workspace_resources',
-        'agents_sync', 'language', 'operation_policy', 'source_repository_roles',
+        'language', 'operation_policy', 'source_repository_roles',
         'source_repositories', 'lifecycle_transaction', 'migration',
     }
     lines = [
@@ -673,6 +688,7 @@ def apply_migration(
     branch: str,
     base_ref: str = 'HEAD',
     *,
+    origin: Path | None = None,
     workspace_slug: str | None = None,
     repository_name: str | None = None,
     additional_repository_origins: list[dict[str, object]] | None = None,
@@ -682,6 +698,7 @@ def apply_migration(
     retry: bool = False,
 ) -> dict[str, object]:
     source, target = source.resolve(), target.resolve()
+    origin = (origin or source).resolve()
     slug = workspace_slug or target.name
     name = repository_name or repository_id
     if registry_path is None:
@@ -694,6 +711,7 @@ def apply_migration(
         repository_id,
         branch,
         base_ref,
+        origin=origin,
         workspace_slug=slug,
         repository_name=name,
         additional_repository_origins=additional_repository_origins,
@@ -701,11 +719,17 @@ def apply_migration(
     baseline = proposal['accepted_baseline_evidence']
     if proposal['apply_requires_accepted_baseline'] and accepted_baseline_id != baseline['id']:
         raise MigrationError('WB_MIGRATION_ACCEPTED_BASELINE_REQUIRED')
-    transaction_id = hashlib.sha256(f'{source}:{target}:{slug}:{repository_id}'.encode('utf-8')).hexdigest()[:20]
+    transaction_identity = (
+        f'{source}:{target}:{slug}:{repository_id}'
+        if origin == source
+        else f'{source}:{origin}:{target}:{slug}:{repository_id}'
+    )
+    transaction_id = hashlib.sha256(transaction_identity.encode('utf-8')).hexdigest()[:20]
     target_preexisted = target.exists()
     transaction = MigrationTransaction(target, transaction_id, target_root_created=not target_preexisted)
     transaction.context.update({
         'source_root': str(source),
+        'member_origin_root': str(origin),
         'target_root': str(target),
         'workspace_slug': slug,
         'repository_id': repository_id,
@@ -714,6 +738,7 @@ def apply_migration(
         'baseline_id': baseline['id'],
         'source_repository_dirty': baseline['source_repository_dirty'],
         'work_bundle_git_dirty': baseline['work_bundle_git_dirty'],
+        'member_origin_dirty': baseline['member_origin_dirty'],
         'target_root_preexisting': target_preexisted,
         'member': {
             'lifecycle_state': 'not-started',
@@ -738,6 +763,7 @@ def apply_migration(
     source_snapshot = {
         'repository_git': source_git_state(source),
         'work_bundle_git': work_bundle_git_state(source),
+        'member_origin_git': source_git_state(origin),
         'work_bundle_inventory': _preservation_inventory(source / '.work-bundle'),
         'script_inventory': _inventory(source / 'script'),
         'agents_digest': _digest(source / 'AGENTS.md') if (source / 'AGENTS.md').is_file() else None,
@@ -762,7 +788,13 @@ def apply_migration(
             shutil.copy2(source / 'AGENTS.md', agents_target)
         credentials_target = target / 'credentials'
         transaction.own(credentials_target)
+        transaction.own(target / 'script')
+        transaction.own(target / 'roles')
+        transaction.own(target / '.gitignore')
         ensure_workspace_resources(target)
+        from project import ensure_project_layout, sync_agents_managed_section
+        ensure_project_layout(target)
+        sync_agents_managed_section(target)
         _failure(fail_stage, 'workspace-resources')
         script_failures = validate_script_index(target)
         if script_failures:
@@ -772,7 +804,7 @@ def apply_migration(
         transaction.own(control_target)
         transaction.own(member_target)
         transaction.context['member']['lifecycle_state'] = 'provisioning'
-        member = provision_member(target, source, repository_id, branch, base_ref)
+        member = provision_member(target, origin, repository_id, branch, base_ref)
         member_preflight = _member_preflight(target, member, branch)
         transaction.context['member'] = {
             'lifecycle_state': 'verified' if member_preflight['passed'] else 'failed',
@@ -809,7 +841,7 @@ def apply_migration(
             slug,
             repository_id,
             name,
-            source,
+            origin,
             list(additional_repository_origins or []),
         )
         _failure(fail_stage, 'final-verification')
@@ -819,6 +851,7 @@ def apply_migration(
         source_before_publication = {
             'repository_git': source_git_state(source),
             'work_bundle_git': work_bundle_git_state(source),
+            'member_origin_git': source_git_state(origin),
             'work_bundle_inventory': _preservation_inventory(source / '.work-bundle'),
             'script_inventory': _inventory(source / 'script'),
             'agents_digest': _digest(source / 'AGENTS.md') if (source / 'AGENTS.md').is_file() else None,
@@ -840,6 +873,7 @@ def apply_migration(
         source_after = {
             'repository_git': source_git_state(source),
             'work_bundle_git': work_bundle_git_state(source),
+            'member_origin_git': source_git_state(origin),
             'work_bundle_inventory': _preservation_inventory(source / '.work-bundle'),
             'script_inventory': _inventory(source / 'script'),
             'agents_digest': _digest(source / 'AGENTS.md') if (source / 'AGENTS.md').is_file() else None,
@@ -858,11 +892,16 @@ def apply_migration(
             },
             'skipped_sensitive_and_transient_paths': ['credentials/credentials.yaml', *sorted(TRANSIENT_NAMES)],
             'script_index_validation': 'passed',
-            'agents_merge_status': 'copied-preserved' if source_snapshot['agents_digest'] else 'not-present',
+            'agents_merge_status': (
+                'managed-section-synchronized'
+                if source_snapshot['agents_digest']
+                else 'managed-section-created'
+            ),
             'metadata_and_registry_status': {'metadata': 'published', 'registry': 'published'},
             'source_preservation_checks': {
                 'repository_git': True,
                 'work_bundle_git': True,
+                'member_origin_git': True,
                 'authority_inventory': True,
                 'script_inventory': True,
                 'agents': True,
@@ -876,6 +915,7 @@ def apply_migration(
             },
             'source_repository_git': proposal['source_repository_git'],
             'work_bundle_git': proposal['work_bundle_git'],
+            'member_origin_git': proposal['member_origin_git'],
             'accepted_baseline_id': baseline['id'],
             'git_actions': [],
         }
@@ -904,6 +944,7 @@ def apply_migration(
             source_preserved=(
                 source_git_state(source) == source_snapshot['repository_git']
                 and work_bundle_git_state(source) == source_snapshot['work_bundle_git']
+                and source_git_state(origin) == source_snapshot['member_origin_git']
             ),
             baseline_id=baseline['id'],
         )
