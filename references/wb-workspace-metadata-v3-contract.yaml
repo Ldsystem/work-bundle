@@ -10,7 +10,6 @@ workspace:
   required:
     - workspace_root
     - workspace_mode
-    - workspace_resources
     - operation_policy
     - source_repositories
     - lifecycle_transaction
@@ -19,8 +18,11 @@ workspace:
     single-repository:
       workspace_root_equals_project_root: true
       lifecycle_status: current
+      workspace_resources: forbidden
+      forbidden_runtime_paths: [script, credentials]
     multi-repository:
       member_project_roots_within_workspace_root: true
+      workspace_resources: required
   resources:
     script_index:
       path: script/index.yaml

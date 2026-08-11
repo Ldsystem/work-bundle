@@ -35,10 +35,9 @@ proposal:
 copy_policy:
   include:
     - .work-bundle
-    - script
-    - script/index.yaml
     - managed-AGENTS-section
   exclude:
+    - script
     - credentials/credentials.yaml
     - transient-caches
     - unsafe-symlink-targets
@@ -60,6 +59,7 @@ source_preservation:
   credential_store_unchanged: required
   forbidden_operations: [commit, clean, stash, reset, delete, deregister]
 target:
+  script_index_from_reference_template: required
   empty_protected_credential_store: required
   workspace_local_git_control: required
   named_member_worktree: required

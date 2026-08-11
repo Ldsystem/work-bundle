@@ -41,7 +41,6 @@ PROJECT_METADATA_V3_REQUIRED_FIELDS = [
     'authority',
     'workspace_root',
     'workspace_mode',
-    'workspace_resources',
     'project_root',
     'source_repository_roles',
     'operation_policy',
@@ -285,6 +284,8 @@ def _render_project_metadata(
         _source_repositories_block(repositories),
         'source_repositories',
     )
+    if mode == 'single-repository':
+        rendered_lines, _ = _replace_top_level_block(rendered_lines, '', 'workspace_resources')
     rendered_lines, _ = _replace_top_level_block(
         rendered_lines,
         _source_repository_roles_block(),
@@ -726,9 +727,18 @@ def _workspace_metadata_failures(project_root: Path, metadata_text: str) -> list
     if mode == 'single-repository' and Path(workspace_root).expanduser().resolve() != project_root.resolve():
         failures.append('workspace_root_contradiction')
     resource_section = '\n'.join(_yaml_section_lines(metadata_text, 'workspace_resources'))
-    if 'script/index.yaml' not in resource_section or 'credentials/credentials.yaml' not in resource_section:
-        failures.append('workspace_resources_invalid')
-    failures.extend(validate_script_index(Path(workspace_root).expanduser().resolve() if workspace_root else project_root))
+    resolved_workspace = Path(workspace_root).expanduser().resolve() if workspace_root else project_root
+    if mode == 'multi-repository':
+        if 'script/index.yaml' not in resource_section or 'credentials/credentials.yaml' not in resource_section:
+            failures.append('workspace_resources_invalid')
+        failures.extend(validate_script_index(resolved_workspace))
+    elif mode == 'single-repository':
+        if resource_section:
+            failures.append('single_repository_workspace_resources_forbidden')
+        if (resolved_workspace / 'script').exists():
+            failures.append('single_repository_script_directory_forbidden')
+        if (resolved_workspace / 'credentials').exists():
+            failures.append('single_repository_credentials_directory_forbidden')
     return failures
 
 
@@ -1151,9 +1161,16 @@ def _refresh_registered_project_metadata(current: str, rendered: str) -> str:
     for key, value in (
         ('metadata_version', PROJECT_METADATA_VERSION),
         ('authority', 'canonical'),
+        ('workspace_root', _yaml_scalar(rendered, 'workspace_root')),
+        ('workspace_mode', _yaml_scalar(rendered, 'workspace_mode')),
         ('project_root', _yaml_scalar(rendered, 'project_root')),
     ):
         lines, _ = _replace_or_append_scalar(lines, key, value)
+    lines, _ = _replace_top_level_block(
+        lines,
+        _top_level_block_text(rendered, 'workspace_resources'),
+        'workspace_resources',
+    )
     lines, _ = _replace_top_level_block(lines, _source_repository_roles_block(), 'source_repository_roles')
     lines, _ = _replace_top_level_block(lines, _source_repositories_block(merged_repositories), 'source_repositories')
     return '\n'.join(lines).rstrip() + '\n'
@@ -1274,7 +1291,6 @@ def repair_project(project_root: Path, force: bool = False, return_details: bool
         registry_entry_data=registry_entry_data,
         return_details=True,
     )
-    changed.extend(ensure_workspace_resources(project_root))
     data = inspect_project(project_root)
     metadata_path = project_root / '.work-bundle/project.yaml'
     if data.get('project_metadata_required_fields_missing') and not read(metadata_path).strip():
@@ -2091,7 +2107,7 @@ def cmd_init_project(args: list[str]) -> int:
         'dry_run': parsed.dry_run,
     }
     if not parsed.dry_run:
-        resource_changes = ensure_workspace_resources(workspace_root)
+        resource_changes = ensure_workspace_resources(workspace_root) if mode == 'multi-repository' else []
         existing_entry, _ = find_registry_entry(project_root)
         try:
             changed, agents_result = apply_project(

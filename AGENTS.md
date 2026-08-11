@@ -10,7 +10,7 @@ purpose:
   - General conception:
   - `work_bundle_root`: installed WorkBundle toolkit source; it owns builtin skills, rules, references, and toolkit helper code.
   - `work_bundle_config_root`: user runtime state at `~/.work-bundle/`; it owns bootstrap, global registries, global rules, and violation state.
-  - `workspace_root`: authority root for one managed workspace; it owns `.work-bundle/`, root `AGENTS.md`, `script/`, `credentials/`, and managed repository member paths.
+  - `workspace_root`: authority root for one managed workspace; it owns `.work-bundle/` and root `AGENTS.md`; in multi-repository mode it also owns `script/`, `credentials/`, and managed repository member paths.
   - `project_root`: root of one concrete source repository checkout that agents inspect, edit, test, and commit. In multi-repository mode it is a child of `workspace_root`; in single-repository mode it equals `workspace_root`.
 
 applies_when:
@@ -30,12 +30,12 @@ must:
 - treat `prefer_subagent` as permission to prefer sub-agent scheduling only when normal execution safety, write-scope, dependency, and fallback checks pass
 - use `work_bundle_root` only for toolkit assets, builtin skills, builtin rules, and references
 - use `work_bundle_config_root` only for non-project runtime state produced by tool use
-- resolve workspace-owned metadata, rules, knowledge, orchestration, `AGENTS.md`, `script/index.yaml`, and `credentials/credentials.yaml` from `workspace_root`
+- resolve workspace-owned metadata, rules, knowledge, orchestration, and `AGENTS.md` from `workspace_root`; resolve `script/index.yaml` and `credentials/credentials.yaml` there only in multi-repository mode
 - resolve source inspection, edits, tests, commits, and per-repository CodeGraph state from the selected member `project_root`
 - when starting inside a managed member, walk upward to the containing `workspace_root/.work-bundle/project.yaml` before using registry fallback
-- inspect `$workspace_root/script/index.yaml` before creating or running a reusable workspace utility; discovery never authorizes execution
+- in multi-repository mode inspect `$workspace_root/script/index.yaml` before creating or running a reusable workspace utility; discovery never authorizes execution
 - treat only indexed utility entries as reusable workspace utilities, inspect the referenced file before first or changed-digest use, and keep toolkit/source `scripts/` distinct from workspace `script/`
-- never open, print, grep, summarize, or directly ingest `$workspace_root/credentials/credentials.yaml`
+- never open, print, grep, summarize, or directly ingest `$workspace_root/credentials/credentials.yaml`; the runtime path is forbidden in single-repository mode
 - invoke `wb-credential-use` when a task, utility index entry, or orchestration artifact identifies a credential requirement; pass only credential ID, target, requested operation, and non-secret authorization context
 
 must_not:

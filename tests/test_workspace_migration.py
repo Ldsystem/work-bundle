@@ -228,6 +228,7 @@ def test_non_git_authority_can_provision_from_explicit_external_origin(tmp_path:
     )
     (source / 'script').mkdir()
     (source / 'script/index.yaml').write_text(SCRIPT_INDEX_TEMPLATE, encoding='utf-8')
+    (source / 'script/legacy.py').write_text('raise SystemExit("must not migrate")\n', encoding='utf-8')
     (source / 'AGENTS.md').write_text('legacy authority\n', encoding='utf-8')
     registry(registry_path)
     dry_run = propose_migration(
@@ -243,6 +244,10 @@ def test_non_git_authority_can_provision_from_explicit_external_origin(tmp_path:
     assert result['status'] == 'published'
     assert result['member_origin_git']['dirty'] is True
     assert result['member']['project_root'] == str((target / 'repo-one').resolve())
+    assert not (target / 'script/legacy.py').exists()
+    assert (source / 'script/legacy.py').is_file()
+    assert 'script' in result['skipped_sensitive_and_transient_paths']
+    assert 'script' not in result['copied_inventory_and_digests']
     assert git(target / 'repo-one', 'rev-parse', 'HEAD') == git(origin, 'rev-parse', 'HEAD')
     registry_text = registry_path.read_text(encoding='utf-8')
     assert f'origin_path: "{origin.resolve()}"' in registry_text
