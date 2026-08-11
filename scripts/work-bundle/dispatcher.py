@@ -6,6 +6,7 @@ from pathlib import Path
 from core import CLI_HELP_EPILOG, LEGACY_COMMAND_MIGRATIONS, out
 from doctor import cmd_doctor
 from integrity import cmd_integrity_report, cmd_merge_skill_hints
+from instruction_audit import cmd_instruction_audit
 from legacy import cmd_legacy_command_removed
 from metadata_profile import cmd_domain_profile
 from bootstrap_config import cmd_migrate_work_bundle_config
@@ -21,6 +22,7 @@ from violations import (
     cmd_violation_write_index,
 )
 from credential import CredentialError, list_metadata
+from execution_workspace import cmd_execution_workspace
 
 
 def main() -> int:
@@ -76,6 +78,12 @@ def main() -> int:
         except CredentialError as exc:
             out({'status': 'blocked', 'failure_code': str(exc)})
             return 1
+    if command.startswith('execution-workspace-'):
+        action = command.removeprefix('execution-workspace-')
+        if action in {'prepare', 'status', 'cleanup-owned', 'doctor-stale'}:
+            return cmd_execution_workspace(action, parsed.args)
+    if command == 'instruction-audit':
+        return cmd_instruction_audit(parsed.args)
     if command == 'session-start':
         return cmd_session_start(parsed.args)
     if command == 'inspect-project-initialization':

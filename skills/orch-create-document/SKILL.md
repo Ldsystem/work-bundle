@@ -70,16 +70,7 @@ Confirm the document is reader-facing, stored under `.work-bundle/orchestration/
 - `orch-knowledge-gateway`: `rules/orchestration/orch-knowledge-gateway.md`
 - `orch-artifact-authoring`: `rules/orchestration/orch-artifact-authoring.md`
 
-## Rule Loading (mandatory)
-
-Before substantive document work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive orchestration work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or directive summaries as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress orchestration task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules above when their indexed conditions apply.
 
 ## Scripts
 

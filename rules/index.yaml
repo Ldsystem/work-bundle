@@ -137,8 +137,8 @@ rules:
   - id: orch-review-completion
     path: orchestration/orch-review-completion.md
     applies_when:
-      - review-plan runs after implementation
-      - orchestration completion may create or change durable implementation knowledge during specification authoring, planning, or review
+      - review-plan audits a completed or blocked implementation plan
+      - orchestration artifacts may be finalized or archived
     enforcement: must
     load: conditional
     requires: []
@@ -220,6 +220,13 @@ rules:
       - v4 work-bundle operation requires skill-registry
     enforcement: must
     load: conditional
+    requires: []
+  - id: verification-evidence-before-claim
+    path: verification-evidence-before-claim.md
+    applies_when:
+      - an agent is about to state that code, a task, a workflow, a review, an archive, or a knowledge update is complete, fixed, passing, clean, validated, or resolved
+    enforcement: must
+    load: always
     requires: []
   - id: wb-create-rule
     path: work-bundle/wb-create-rule.md

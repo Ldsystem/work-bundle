@@ -87,11 +87,19 @@ task_fit_check:
   task: path-or-id
   result: clean | repaired | unresolved | skipped
   artifacts_checked:
-    - related specification
-    - root plan
-    - parent phase
+    - compiled task brief
     - assigned task
   findings: []
+
+acceptance_review:
+  required: true | false
+  reviewer_independent: true | false
+  verdict: pending | accept | repair | blocked
+  reviewed_head: commit-or-tree-identity
+  findings:
+    - severity: blocking | advisory
+      scope: specification | correctness | quality | validation | rule
+      finding: "Compact evidence-backed text."
 
 repository:
   - root: /absolute/path
@@ -145,6 +153,7 @@ allocation_evidence:
 - `violation_closure` is required when a review task closes or carries specification-included violation evidence.
 - `unresolved` is included only when blockers or issues remain.
 - `task_fit_check` is required for completed and partial task results. It records the assigned task, result `clean|repaired|unresolved|skipped`, artifacts checked, and meaningful findings.
+- `acceptance_review` is required when the task contract requires review. A review-required task cannot become `Completed` until the verdict is `accept`.
 - `repository` is required when repository preflight, accepted baseline, changed paths, or blocker state matters for continuation.
 - `repository[].metadata` is required when project metadata baseline was used for target resolution, branch checks, commit checks, or CodeGraph policy decisions.
 - `codegraph` is required when source-code inspection or edits were in scope. Keep it compact: `root`, `applicable`, `up_to_date`, and required fallback or blocker facts are enough unless a failure needs detail.
@@ -177,7 +186,8 @@ Compact handoffs must not weaken safety gates:
 - CodeGraph evidence must preserve no-index fallback, sync-failed, stale, or blocker facts when applicable.
 - Delegation evidence must preserve visible surface, visible reference when available, and `internal_spawn_used_for_task_delegation: false`.
 - Validation evidence must list exact commands or inspections and their result.
-- Task-fit evidence must prove the result was checked against the related specification, root plan, parent phase, and assigned task.
+- Task-fit evidence must prove the executor followed the compiled brief and assigned task. Full specification, root-plan, and phase inspection is an escalation path when compiled context is inconsistent.
+- Acceptance-review evidence must identify review independence, the reviewed tree, verdict, and blocking or advisory findings.
 - Executor-result handoffs must not retrieve or write `.work-bundle/knowledge/`.
 - Contract-decoupled handoffs must show validation against the common contract and accepted prior handoffs, not sibling in-progress implementation.
 - Barrier handoffs must show whether the participant reached the barrier or blocked before convergence work is scheduled.
