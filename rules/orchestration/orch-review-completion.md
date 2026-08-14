@@ -22,10 +22,11 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Audit spec, plan, phase, task, handoff, and accepted task-review status coherence.
 - Require fresh planned validation evidence and an `accept` task-review verdict wherever review is required.
 - Verify declared dependency, barrier, and convergence gates from recorded evidence.
+- Aggregate only accepted task dispositions. Any accepted `update`, `supersede`, or `reclassify` promotes final durable closure to `required` even when the upstream specification says `not-needed`; accepted `none` and rejected dispositions do not trigger closure.
 - Route missing handoff, status, validation, or review evidence to `review-blocked` and resume the owning execution step.
 - Route incomplete durable knowledge work to `knowledge-blocked` and resume the approved `ks-*` delegate-return path.
 - Route incomplete repository metadata, index, workspace, or archive mechanics to `repository-blocked` or `workspace-blocked` and use bounded deterministic helpers.
-- Require specification Knowledge Base Update disposition `completed` or `not-needed` before archive.
+- Require the execution-evidence-driven final Knowledge Base Update disposition to be `completed` or `not-needed` before archive; archive remains blocked while promoted closure lacks validated keep-summarizing return evidence.
 - Create or require plan repair only for a decomposition defect, and specification repair only for a requirement, design, or authority defect.
 - Complete allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh only after all gates allow finalization.
 

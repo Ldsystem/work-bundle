@@ -19,9 +19,11 @@ Verify:
 - executor-result handoffs by applicability;
 - `acceptance_review.verdict: accept` wherever review was required;
 - accepted Truth Basis, implementation evidence, test oracle, and task-local knowledge disposition agree in each accepted review package;
+- aggregate accepted task dispositions before applying the final knowledge gate: any accepted `update`, `supersede`, or `reclassify` makes durable closure required even when the upstream specification said `not-needed`; accepted `none` and rejected task dispositions do not trigger closure;
+- record validated delegate-return state in the root plan's existing Knowledge Base Update `Closure return` field so the deterministic `archive-plan` helper enforces the same aggregate gate;
 - planned validation evidence exists and is fresh for the accepted task result;
 - declared dependency, barrier, and convergence gates occurred;
-- Knowledge Base Update disposition is `completed` or `not-needed` before archive;
+- the resulting final Knowledge Base Update disposition is `completed` or `not-needed` before archive;
 - approved `ks-*` return evidence exists when durable knowledge was required;
 - allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh completed or are explicitly not applicable.
 
@@ -50,7 +52,7 @@ Do not create a repair specification for every failed gate.
 
 ## Knowledge delegate-return
 
-When disposition is `required`, invoke the approved keep-summarizing owner with accepted implementation, validation, handoff, review, and decision evidence. Review owns approved persistence delegation; executor disposition evidence never invokes a `ks-*` skill. Validate structural-value result, written or updated durable paths or evidence-backed no-write rationale, index rebuild status, blockers, and completion state. Resume only from that return evidence. Orchestration does not directly create, edit, promote, delete, or index durable knowledge.
+When the upstream disposition or aggregate accepted task dispositions make closure `required`, invoke the approved keep-summarizing owner with accepted implementation, validation, handoff, review, and decision evidence. Review owns approved persistence delegation; executor disposition evidence never invokes a `ks-*` skill. Validate structural-value result, written or updated durable paths or evidence-backed no-write rationale, index rebuild status, blockers, and completion state. Resume only from that return evidence. Orchestration does not directly create, edit, promote, delete, or index durable knowledge, and archive remains blocked until the validated return resolves required closure.
 
 ## Finalization
 

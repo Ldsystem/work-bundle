@@ -1,5 +1,56 @@
 from core import *
+from execution_context import evaluate_knowledge_closure_state, read_structured_artifact
 from specs import load_index, replace_front_matter_value
+
+
+def _plan_knowledge_field(body: str, label: str) -> str | None:
+    section = re.search(
+        r"^##\s+2\.1\s+Knowledge Base Update Carry Forward\s*$([\s\S]*?)(?=^##\s|\Z)",
+        body,
+        re.MULTILINE,
+    )
+    if not section:
+        return None
+    match = re.search(rf"^-\s+\*\*{re.escape(label)}\*\*:\s*([^\s]+)\s*$", section.group(1), re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _assert_archive_knowledge_gate(args: argparse.Namespace, plan_id: str, root_path: Path) -> None:
+    _, body = read_front_matter(root_path)
+    upstream = _plan_knowledge_field(body, "Disposition")
+    if upstream is None:
+        raise SystemExit("knowledge-blocked: plan has no Knowledge Base Update disposition")
+    closure_return = _plan_knowledge_field(body, "Closure return") or "missing"
+    task_ids: set[str] = set()
+    active_plan_dir = root_path.parent / plan_id
+    for task_path in sorted(active_plan_dir.glob("phase-*/*.md")):
+        task = read_structured_artifact(task_path)
+        task_id = str(task.get("id") or "").strip()
+        if task_id:
+            task_ids.add(task_id)
+    handoffs: list[dict[str, object]] = []
+    handoff_root = orchestration_root(args) / "handoff" / "executor"
+    for path in sorted(handoff_root.glob("*/*")):
+        if not path.is_file() or path.suffix not in {".yaml", ".yml"}:
+            continue
+        handoff = read_structured_artifact(path)
+        related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+        if (
+            related.get("plan") == plan_id
+            or handoff.get("related_plan") == plan_id
+            or related.get("task") in task_ids
+            or handoff.get("related_task") in task_ids
+        ):
+            handoffs.append(handoff)
+    gate = evaluate_knowledge_closure_state(
+        upstream_disposition=upstream,
+        accepted_task_handoffs=handoffs,
+        closure_return=closure_return,
+    )
+    if gate["archive_blocked"]:
+        triggers = ", ".join(f"{item['task']}:{item['action']}" for item in gate["triggers"])
+        detail = triggers or str(gate["disposition"])
+        raise SystemExit(f"knowledge-blocked: archive requires resolved durable closure ({detail})")
 
 def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
     root = orchestration_root(args) / "plan"
@@ -119,6 +170,7 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
     moved = []
 
     root_path = artifact_path_from_row(root_match, args)
+    _assert_archive_knowledge_gate(args, args.id, root_path)
     if is_relative_to(root_path, active_root):
         replace_front_matter_value(root_path, "status", "Completed")
         moved.append(move_to_archive(root_path, active_root, archived_root))
@@ -159,4 +211,3 @@ def cmd_write_task(args: argparse.Namespace) -> None:
     write_text_safely(target, content, args)
     index_plans(args)
     print(rel(target, args))
-

@@ -13,7 +13,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATION = REPO_ROOT / "scripts" / "orchestration"
 sys.path.insert(0, str(ORCHESTRATION))
 
+import execution_context  # noqa: E402
 from execution_context import build_review_package, build_task_brief  # noqa: E402
+
+
+ACCEPTED_AUTHORITY_PATH = ".work-bundle/knowledge/notes/accepted-authority.md"
+ACCEPTED_AUTHORITY = "AUTH-001"
 
 
 def git(path: Path, *args: str) -> str:
@@ -41,6 +46,9 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
     spec.write_text(
         "---\n"
         "id: spec-001\n"
+        "status: verified\n"
+        "source_knowledge:\n"
+        f"  - {ACCEPTED_AUTHORITY_PATH}\n"
         "---\n\n"
         "# Compiler contract\n\n"
         "- **REQ-003**: Retry exactly three times before returning failure.\n"
@@ -73,7 +81,7 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
         "truth_basis:\n"
         "  purpose: Compile a bounded executor packet.\n"
         "  as_is_evidence: [scripts/orchestration/execution_context.py]\n"
-        "  decision_authority: [REQ-003, CON-002]\n"
+        f"  decision_authority: [{ACCEPTED_AUTHORITY}]\n"
         "  expected_delta: [API-002]\n"
         "  conflict_status: clear\n"
         "files:\n"
@@ -134,7 +142,7 @@ def test_build_task_brief_resolves_source_ids_and_keeps_allocations_task_local(t
     assert "review_required: true" in packet
     assert "truth_basis:" in packet
     assert 'purpose: "Compile a bounded executor packet."' in packet
-    assert "REQ-003: Retry exactly three times before returning failure." in packet
+    assert ACCEPTED_AUTHORITY in packet
     assert "conflict_status: clear" in packet
 
 
@@ -159,21 +167,119 @@ def test_build_task_brief_routes_truth_basis_conflict_to_typed_blocker(tmp_path:
         build_task_brief(args(root, task))
 
 
-@pytest.mark.parametrize("authority", ["invented design decision", "REQ-777"])
-def test_build_task_brief_rejects_unallocated_decision_authority(
+def test_build_task_brief_accepts_explicit_none_relevant_decision_authority(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            f"decision_authority: [{ACCEPTED_AUTHORITY}]",
+            "decision_authority: [none-relevant]",
+        ),
+        encoding="utf-8",
+    )
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert "none-relevant" in packet
+
+
+def test_build_task_brief_rejects_none_relevant_from_unverified_specification(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    spec.write_text(spec.read_text(encoding="utf-8").replace("status: verified", "status: draft"), encoding="utf-8")
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            f"decision_authority: [{ACCEPTED_AUTHORITY}]", "decision_authority: [none-relevant]"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="requires a verified specification"):
+        build_task_brief(args(root, task))
+
+
+@pytest.mark.parametrize(
+    "authority",
+    [
+        "invented design decision",
+        "REQ-003",
+        ".work-bundle/knowledge/notes/candidate.md",
+        ".work-bundle/knowledge/notes/background.md",
+        ".work-bundle/knowledge/notes/blocked.md",
+        ".work-bundle/knowledge/notes/superseded.md",
+    ],
+)
+def test_build_task_brief_rejects_decision_authority_not_carried_by_verified_spec(
     tmp_path: Path, authority: str
 ) -> None:
     root, _, task = workspace(tmp_path)
     task.write_text(
         task.read_text(encoding="utf-8").replace(
-            "decision_authority: [REQ-003, CON-002]",
-            f"decision_authority: [REQ-003, {authority}]",
+            f"decision_authority: [{ACCEPTED_AUTHORITY}]",
+            f"decision_authority: [{authority}]",
         ),
         encoding="utf-8",
     )
 
-    with pytest.raises(SystemExit, match="decision_authority.*allocated source_ids"):
+    with pytest.raises(SystemExit, match="decision_authority.*verified specification authority"):
         build_task_brief(args(root, task))
+
+
+def test_build_task_brief_does_not_allocate_aliases_for_non_authority_source_context(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            "# Compiler contract",
+            "# Compiler contract\n\n## Source Context\n\n- **Candidate**: `.work-bundle/knowledge/notes/candidate.md` remains non-authority.",
+        ),
+        encoding="utf-8",
+    )
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            ACCEPTED_AUTHORITY, "AUTH-002"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="decision_authority.*verified specification authority"):
+        build_task_brief(args(root, task))
+
+
+@pytest.mark.parametrize(
+    ("upstream", "review_verdict", "action", "closure_return", "expected"),
+    [
+        ("not-needed", "accept", "update", "missing", ("required", True)),
+        ("not-needed", "accept", "supersede", "completed", ("completed", False)),
+        ("not-needed", "accept", "reclassify", "not-needed", ("not-needed", False)),
+        ("not-needed", "repair", "update", "missing", ("not-needed", False)),
+        ("not-needed", "accept", "none", "missing", ("not-needed", False)),
+        ("required", "accept", "none", "blocked", ("blocked", True)),
+    ],
+)
+def test_final_knowledge_closure_is_driven_by_accepted_task_dispositions(
+    upstream: str,
+    review_verdict: str,
+    action: str,
+    closure_return: str,
+    expected: tuple[str, bool],
+) -> None:
+    handoffs = [
+        {
+            "related": {"task": "task-004"},
+            "acceptance_review": {"verdict": review_verdict},
+            "knowledge_disposition": {
+                "action": action,
+                "reason": "Task-local evidence.",
+                "affected_authority": [] if action == "none" else [ACCEPTED_AUTHORITY],
+            },
+        }
+    ]
+
+    result = execution_context.evaluate_knowledge_closure_state(
+        upstream_disposition=upstream,
+        accepted_task_handoffs=handoffs,
+        closure_return=closure_return,
+    )
+
+    assert (result["disposition"], result["archive_blocked"]) == expected
 
 
 def test_build_task_brief_preserves_review_not_required_from_task_contract(tmp_path: Path) -> None:

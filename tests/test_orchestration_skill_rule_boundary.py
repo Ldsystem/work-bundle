@@ -72,7 +72,10 @@ def test_specification_uses_compact_semantic_convergence_and_workspace_policy() 
 def test_planner_allocates_methodology_capability_and_bounded_context() -> None:
     text = read("skills/orch-create-implementation-plan/SKILL.md")
     for token in [
-        "Prefer the fewest phases and tasks",
+        "minimum orchestration overhead",
+        "independently falsifiable",
+        "bounded failure radius",
+        "Do not split one mechanical increment",
         "source-ID coverage",
         "dev-systematic-debugging",
         "dev-test-driven-development",
@@ -137,6 +140,10 @@ def test_final_review_is_workflow_audit_not_code_review() -> None:
         "repair specification",
         "Do not broadly inspect source",
         "Do not create a repair specification for every failed gate",
+        "aggregate accepted task dispositions",
+        "accepted `update`, `supersede`, or `reclassify`",
+        "rejected task dispositions",
+        "archive remains blocked",
     ]:
         assert token in text
 

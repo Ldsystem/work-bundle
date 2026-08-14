@@ -65,8 +65,11 @@ Use a compact source-spec ID map. Do not paste long specification sections into 
 ## 2.1 Knowledge Base Update Carry Forward
 
 - **Disposition**: required|not-needed|completed|blocked
+- **Closure return**: missing|completed|not-needed|blocked
 - **Source**: [Source specification Knowledge Base Update section or review decision.]
 - **Review Gate**: [How review should resolve or validate the disposition before archive.]
+
+`Closure return` starts as `missing`. Final review updates it only from validated keep-summarizing return evidence. `archive-plan` aggregates accepted executor-result dispositions and fails `knowledge-blocked` when an accepted `update`, `supersede`, or `reclassify` requires closure but this return remains `missing` or `blocked`; rejected dispositions and accepted `none` do not trigger promotion.
 
 ## 3. Phase Map
 
@@ -76,7 +79,7 @@ Use a compact source-spec ID map. Do not paste long specification sections into 
 
 ## 3.1 Compactness Check
 
-Plans must use the fewest phases and tasks that preserve complete requirement coverage, exact dependencies, disjoint write scopes, validation ownership, handoff requirements, and review gates. Do not split phases or tasks only to mirror template sections, lifecycle labels, or repeated prose.
+Plans use the minimum orchestration overhead that preserves complete requirement coverage, Truth Basis continuity, independently falsifiable and testable increments, short evidence loops, exact dependencies, disjoint write scopes, validation ownership, bounded failure radius, handoff requirements, and review boundaries. Do not split one mechanical increment when it already satisfies those constraints, and do not split phases or tasks only to mirror template sections, lifecycle labels, file count, or repeated prose.
 
 Every executable task declares the same five-field Truth Basis. When a consequential simplification or compatibility assumption exists, make the earliest ordinary task cheaply falsify it before broad edits. Do not add a risk score, checkpoint phase, or parallel lifecycle.
 

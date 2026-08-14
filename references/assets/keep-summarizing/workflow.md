@@ -72,7 +72,7 @@ For orchestration gateway use, run `scripts/ks.py query --project <slug> --query
 
 Orchestration must retrieve durable knowledge through `ks-what-is-helpful` gateway mode and must not browse `.work-bundle/knowledge/**` directly. `orch-execute-plan` remains a no-retrieval stage: execution consumes carried spec, plan, phase, task, declared handoff, and task-scoped source/test context only, and must not invoke the gateway.
 
-All implementation methods consume the same Truth Basis: purpose, as-is evidence, accepted decision authority, expected delta, and conflict status. After a meaningful validated move, record `none`, `update`, `supersede`, or `reclassify`. Heavy executors return task-local evidence only; they do not name knowledge paths or invoke `ks-*`. The final orchestration review owns any approved keep-summarizing delegation and validates its return evidence.
+All implementation methods consume the same Truth Basis: purpose, as-is evidence, accepted decision authority, expected delta, and conflict status. After a meaningful validated move, record `none`, `update`, `supersede`, or `reclassify`. The lightweight completion owner performs bounded retrieval after preflight and source grounding, records accepted authority or evidence-backed `none relevant`, and owns approved keep-summarizing closure for its disposable plan. Heavy executors remain no-retrieval and return task-local evidence only; they do not name knowledge paths or invoke `ks-*`. The final orchestration review owns approved keep-summarizing delegation and validates return evidence only for the heavy path.
 
 ## Project Registry
 

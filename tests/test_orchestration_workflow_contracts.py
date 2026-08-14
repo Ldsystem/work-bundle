@@ -85,9 +85,88 @@ def test_specification_contract_uses_semantic_loop_and_workspace_policy() -> Non
         "isolation: required|preferred|existing",
         "semantic_loop:",
         "dev-semantic-convergence",
+        "front-matter `source_knowledge` contains accepted authority only",
+        "Candidate, background, blocked, and superseded",
     ]:
         assert token in contract
     assert "Extra evidence loop" not in contract
+
+
+def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    plan_root = tmp_path / ".work-bundle/orchestration/plan/active"
+    handoff_root = tmp_path / ".work-bundle/orchestration/handoff/executor/active"
+    plan_root.mkdir(parents=True)
+    handoff_root.mkdir(parents=True)
+    (plan_root / "plan.md").write_text(
+        "---\nid: plan-001\nstatus: Completed\n---\n\n"
+        "## 2.1 Knowledge Base Update Carry Forward\n\n"
+        "- **Disposition**: not-needed\n"
+        "- **Closure return**: missing\n",
+        encoding="utf-8",
+    )
+    task = plan_root / "plan-001/phase-001/task.md"
+    task.parent.mkdir(parents=True)
+    task.write_text(
+        "---\nid: task-001\nplan_id: plan-001\nphase_id: phase-001\nstatus: Completed\n---\n",
+        encoding="utf-8",
+    )
+    (handoff_root / "accepted.yaml").write_text(
+        "id: handoff-001\ntype: executor-result\nstatus: active\n"
+        "related: {task: task-001}\n"
+        "acceptance_review: {verdict: accept}\n"
+        "knowledge_disposition:\n"
+        "  action: update\n"
+        "  reason: Stable authority changed.\n"
+        "  affected_authority: [AUTH-001]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="knowledge-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-001"))
+
+    assert (plan_root / "plan.md").is_file()
+
+
+@pytest.mark.parametrize(
+    ("verdict", "action", "closure_return"),
+    [
+        ("repair", "update", "missing"),
+        ("accept", "none", "missing"),
+        ("accept", "reclassify", "completed"),
+    ],
+)
+def test_archive_plan_allows_only_resolved_or_non_triggering_dispositions(
+    tmp_path: Path, verdict: str, action: str, closure_return: str
+) -> None:
+    from plans import cmd_archive_plan
+
+    plan_root = tmp_path / ".work-bundle/orchestration/plan/active"
+    handoff_root = tmp_path / ".work-bundle/orchestration/handoff/executor/active"
+    plan_root.mkdir(parents=True)
+    handoff_root.mkdir(parents=True)
+    (plan_root / "plan.md").write_text(
+        "---\nid: plan-001\nstatus: Completed\n---\n\n"
+        "## 2.1 Knowledge Base Update Carry Forward\n\n"
+        "- **Disposition**: not-needed\n"
+        f"- **Closure return**: {closure_return}\n",
+        encoding="utf-8",
+    )
+    (handoff_root / "task.yaml").write_text(
+        "id: handoff-001\ntype: executor-result\nstatus: active\n"
+        "related: {plan: plan-001, task: task-001}\n"
+        f"acceptance_review: {{verdict: {verdict}}}\n"
+        "knowledge_disposition:\n"
+        f"  action: {action}\n"
+        "  reason: Task-local evidence.\n"
+        f"  affected_authority: {'[]' if action == 'none' else '[AUTH-001]'}\n",
+        encoding="utf-8",
+    )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-001"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan.md").is_file()
 
 
 def test_task_contract_compiles_methodology_capability_and_review() -> None:
@@ -100,7 +179,9 @@ def test_task_contract_compiles_methodology_capability_and_review() -> None:
         "expected_delta:",
         "conflict_status: clear|escalate",
         "decision-blocked",
-        "must be an accepted ID already present in the task's `source_ids`",
+        "semantically distinct from generic `source_ids`",
+        "none-relevant",
+        "verified specification's accepted `source_knowledge`",
         "methodology:",
         "tdd|systematic-debugging|direct|loop-coding",
         "executor_profile:",
@@ -147,6 +228,8 @@ def test_workflow_separates_durable_artifacts_from_runtime_packets() -> None:
         "earliest ordinary task",
         "knowledge disposition",
         "review owns approved persistence",
+        "minimum orchestration overhead",
+        "accepted task dispositions",
     ]:
         assert token in workflow
 
@@ -178,6 +261,9 @@ def test_review_rule_uses_typed_resume_routing() -> None:
         "plan repair only for a decomposition defect",
         "specification repair only for a requirement, design, or authority defect",
         "Do not create a repair specification for every failed review gate",
+        "accepted `update`, `supersede`, or `reclassify`",
+        "rejected dispositions",
+        "archive",
     ]:
         assert token in rule
 

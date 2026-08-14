@@ -12,7 +12,7 @@ Plan only from a verified active specification with converged semantics, resolve
 ## Planning workflow
 
 1. Use the specification and bounded repository evidence. Add upstream/downstream or validation scope only when current evidence proves it.
-2. Prefer the fewest phases and tasks preserving safe execution, Truth Basis continuity, validation ownership, and review independence.
+2. Use the minimum orchestration overhead that preserves Truth Basis continuity, independently falsifiable and testable increments, short evidence loops, exact dependencies, disjoint write scopes, validation ownership, bounded failure radius, and review boundaries. Do not split one mechanical increment when it already satisfies those constraints.
 3. Give every task exact source IDs, a five-field Truth Basis, scope, interfaces, dependencies, steps, evidence, methodology, allocated rules/skills, executor profile, and review requirement.
 4. Carry execution-workspace isolation, hydration, and cleanup policy into task and executor context.
 5. Use a common contract group before safe parallel work. Contract-decoupled participants depend on the common contract group and accepted prior handoffs, not sibling in-progress implementation output. Create explicit barrier metadata with barrier ID, readiness evidence, and convergence owner. Cross-branch or joint validation belongs to a post-barrier convergence task.
@@ -61,7 +61,7 @@ acceptance_review:
 truth_basis:
   purpose: <bounded outcome>
   as_is_evidence: []
-  decision_authority: [<allocated source IDs>]
+  decision_authority: [none-relevant | <AUTH-NNN alias allocated from verified specification source_knowledge>]
   expected_delta: []
   conflict_status: clear | escalate
 ```

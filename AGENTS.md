@@ -27,8 +27,8 @@ must:
 - resolve project registry from `$work_bundle_config_root/bootstrap.yaml` -> `project_registry`
 - resolve skill registry from `$work_bundle_config_root/bootstrap.yaml` -> `skill_registry`
 - resolve effective `prefer_subagent` as `.work-bundle/project.yaml` -> `prefer_subagent`, then `$work_bundle_config_root/bootstrap.yaml` -> `prefer_subagent`, then `false`
-- before material implementation, establish or consume one Truth Basis containing purpose, as-is evidence, accepted decision authority, expected delta, and conflict status; lightweight work keeps it ephemeral while heavy execution compiles it from accepted artifacts
-- after each meaningful validated move, record a knowledge disposition of `none`, `update`, `supersede`, or `reclassify`; executors return task-local evidence only and final review owns approved `ks-*` persistence follow-up
+- before material implementation, establish or consume one Truth Basis containing purpose, as-is evidence, accepted decision authority, expected delta, and conflict status; after preflight and source grounding, lightweight planning runs one bounded `ks-what-is-helpful` gateway and records accepted authority or evidence-backed `none relevant`, while heavy execution compiles carried authority without executor retrieval
+- after each meaningful validated move, record a knowledge disposition of `none`, `update`, `supersede`, or `reclassify`; the lightweight completion owner resolves its approved `ks-*` follow-up, while heavy executors return task-local evidence only and final orchestration review owns heavy-path persistence follow-up
 - treat `prefer_subagent` as permission to prefer sub-agent scheduling only when normal execution safety, write-scope, dependency, and fallback checks pass
 - use `work_bundle_root` only for toolkit assets, builtin skills, builtin rules, and references
 - use `work_bundle_config_root` only for non-project runtime state produced by tool use

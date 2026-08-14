@@ -14,7 +14,7 @@ source_ids: [REQ-001, AC-001]
 truth_basis:
   purpose: [one bounded intended outcome]
   as_is_evidence: [[exact source, test, or harness evidence]]
-  decision_authority: [[accepted source IDs]]
+  decision_authority: [none-relevant | [AUTH-NNN aliases]]
   expected_delta: [[observable post-change behavior]]
   conflict_status: clear|escalate
 source_files:
@@ -66,7 +66,7 @@ allocated_skills:
 
 ## Truth Basis
 
-The front-matter `truth_basis` is mandatory and uses the same five fields as the lightweight path. Every `decision_authority` entry must be an accepted ID already present in the task's `source_ids`; arbitrary prose and unallocated linked-spec IDs fail closed. The compiler resolves those IDs only from linked accepted specifications, carries the exact basis into the disposable task brief and review package, and returns the existing `decision-blocked` route when `conflict_status` is `escalate`. Executors do not retrieve durable knowledge to rebuild this authority.
+The front-matter `truth_basis` is mandatory and uses the same five fields as the lightweight path. `decision_authority` is semantically distinct from generic `source_ids`: it is exactly `[none-relevant]` when verified reconciliation found no applicable durable authority, or a non-empty list of `AUTH-NNN` aliases allocated in order from the verified specification's accepted `source_knowledge`. The aliases trace to specification reconciliation without placing knowledge paths in executor packets. Arbitrary prose, generic requirement IDs, candidate/background/blocked authority, and superseded authority fail closed. The compiler carries the exact basis into the disposable task brief and review package and returns the existing `decision-blocked` route when `conflict_status` is `escalate`. Executors do not retrieve durable knowledge to rebuild this authority.
 
 ## Source references
 

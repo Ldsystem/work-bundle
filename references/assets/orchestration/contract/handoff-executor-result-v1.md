@@ -153,7 +153,7 @@ allocation_evidence:
 - `id`, `type`, `status`, `project`, `created_at`, `related`, and `result` are always required.
 - `changes.files` is required when files, symbols, artifacts, schemas, commands, or docs changed or were inspected as the task output.
 - `validation.commands` is required when any command, test, lint, inspection, or manual verification was run or intentionally skipped.
-- `knowledge_disposition` is required for every completed or partial meaningful move. It records task-local evidence only and does not authorize durable-knowledge retrieval or writes. A change action requires affected authority drawn from allocated source IDs or exact paths already present in the compiled task scope; `none` requires an empty affected-authority list.
+- `knowledge_disposition` is required for every completed or partial meaningful move. It records task-local evidence only and does not authorize durable-knowledge retrieval or writes. A change action requires affected authority IDs or exact paths already present in the compiled task scope; `none` requires an empty affected-authority list.
 - `contract_decoupling` is required when a task is marked contract-decoupled or depends on a common contract group.
 - `barrier` is required when a task is a barrier participant or convergence owner.
 - `convergence` is required when the task owns post-barrier joint debug, integration checks, or cross-branch validation.

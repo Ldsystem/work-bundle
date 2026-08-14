@@ -17,7 +17,7 @@ Require compact executor-result handoffs before reporting execution complete or 
 ## Must
 
 - Require each completed or partial meaningful executor move to record a knowledge disposition of `none`, `update`, `supersede`, or `reclassify` with task-local evidence.
-- Reject executor disposition text that names knowledge paths, invokes any `ks-*` skill, cites unallocated authority, or uses paths outside the compiled task scope; final orchestration review owns approved persistence delegation.
+- Reject executor disposition text that names knowledge paths, invokes any `ks-*` skill, cites authority outside the compiled task scope, or uses paths outside that scope; final orchestration review owns approved persistence delegation.
 
 - Create an `executor-result` handoff before reporting a task, phase, or plan execution complete or blocked.
 - Default executor-result handoffs to sparse YAML. Use Markdown only when a real blocker, failure, or broad cross-repository impact needs narrative that YAML cannot express safely.

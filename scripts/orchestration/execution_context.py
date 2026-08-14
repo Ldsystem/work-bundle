@@ -338,11 +338,29 @@ def _resolve_reference(value: Any, records: dict[str, str], source_paths: list[P
     return value
 
 
+def _verified_specification_authority(source_paths: list[Path]) -> set[str]:
+    accepted: set[str] = set()
+    authority_index = 0
+    for source_path in source_paths:
+        metadata, _ = _read_structured(source_path)
+        if metadata.get("status") != "verified":
+            raise SystemExit(f"Task decision_authority requires a verified specification: {source_path}")
+        for entry in _as_list(metadata.get("source_knowledge")):
+            if isinstance(entry, str) and entry.strip():
+                authority_index += 1
+                accepted.add(f"AUTH-{authority_index:03d}")
+    return accepted
+
+
+def read_structured_artifact(path: Path) -> dict[str, Any]:
+    data, _ = _read_structured(path)
+    return data
+
+
 def _compile_truth_basis(
     task: dict[str, Any],
     records: dict[str, str],
     source_paths: list[Path],
-    source_ids: list[str],
 ) -> dict[str, Any]:
     raw = task.get("truth_basis")
     if not isinstance(raw, dict):
@@ -360,11 +378,17 @@ def _compile_truth_basis(
             raise SystemExit(f"Task Truth Basis {field} must be a non-empty string list")
         list_fields[field] = values
     decision_authority = list_fields["decision_authority"]
-    if any(
-        not SOURCE_ID_RE.fullmatch(value) or value not in source_ids
-        for value in decision_authority
-    ):
-        raise SystemExit("Task Truth Basis decision_authority must use allocated source_ids")
+    accepted_authority = _verified_specification_authority(source_paths)
+    if decision_authority == ["none-relevant"]:
+        compiled_authority = decision_authority
+    else:
+        if "none-relevant" in decision_authority or any(
+            value not in accepted_authority for value in decision_authority
+        ):
+            raise SystemExit(
+                "Task Truth Basis decision_authority must use none-relevant or verified specification authority"
+            )
+        compiled_authority = decision_authority
     conflict_status = raw.get("conflict_status")
     if conflict_status not in {"clear", "escalate"}:
         raise SystemExit("Task Truth Basis conflict_status must be clear or escalate")
@@ -373,10 +397,51 @@ def _compile_truth_basis(
     return {
         "purpose": purpose.strip(),
         "as_is_evidence": _resolve_reference(list_fields["as_is_evidence"], records, source_paths),
-        "decision_authority": _resolve_reference(list_fields["decision_authority"], records, source_paths),
+        "decision_authority": compiled_authority,
         "expected_delta": _resolve_reference(list_fields["expected_delta"], records, source_paths),
         "conflict_status": conflict_status,
     }
+
+
+def evaluate_knowledge_closure_state(
+    *,
+    upstream_disposition: str,
+    accepted_task_handoffs: list[dict[str, Any]],
+    closure_return: str = "missing",
+) -> dict[str, Any]:
+    if upstream_disposition not in {"required", "not-needed", "completed", "blocked"}:
+        raise SystemExit("Invalid upstream Knowledge Base Update disposition")
+    if closure_return not in {"missing", "completed", "not-needed", "blocked"}:
+        raise SystemExit("Invalid knowledge closure return state")
+
+    triggers: list[dict[str, str]] = []
+    for handoff in accepted_task_handoffs:
+        review = handoff.get("acceptance_review")
+        if not isinstance(review, dict) or review.get("verdict") != "accept":
+            continue
+        disposition = handoff.get("knowledge_disposition")
+        if not isinstance(disposition, dict):
+            raise SystemExit("Accepted task handoff knowledge disposition is required")
+        action = disposition.get("action")
+        if action is None and "action" in disposition:
+            action = "none"
+        if action not in KNOWLEDGE_DISPOSITION_ACTIONS:
+            raise SystemExit("Accepted task handoff knowledge disposition action is invalid")
+        if action != "none":
+            related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+            triggers.append({"task": str(related.get("task") or "unknown"), "action": str(action)})
+
+    closure_required = upstream_disposition in {"required", "blocked"} or bool(triggers)
+    if not closure_required:
+        disposition = upstream_disposition
+        if disposition == "completed":
+            return {"disposition": "completed", "archive_blocked": False, "triggers": triggers}
+        return {"disposition": "not-needed", "archive_blocked": False, "triggers": triggers}
+    if closure_return in {"completed", "not-needed"}:
+        return {"disposition": closure_return, "archive_blocked": False, "triggers": triggers}
+    if closure_return == "blocked":
+        return {"disposition": "blocked", "archive_blocked": True, "triggers": triggers}
+    return {"disposition": "required", "archive_blocked": True, "triggers": triggers}
 
 
 def _validated_knowledge_disposition(
@@ -587,7 +652,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         "requirements": [f"{sid}: {records[sid]}" for sid in source_ids if not sid.startswith(("CON-", "API-", "IFACE-", "TEST-"))],
         "constraints": [f"{sid}: {records[sid]}" for sid in source_ids if sid.startswith("CON-")],
     }
-    truth_basis = _compile_truth_basis(task, records, source_paths, source_ids)
+    truth_basis = _compile_truth_basis(task, records, source_paths)
     validation = _resolve_reference(validation_value, records, source_paths)
     acceptance_review = task.get("acceptance_review")
     if acceptance_review in (None, {}):

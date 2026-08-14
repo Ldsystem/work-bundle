@@ -34,6 +34,31 @@
       "id": "dev-grounded-direct-adversarial",
       "prompt": "A configuration-only mechanical edit has no meaningful TDD surface and produces no durable conclusion.",
       "expected_output": "Uses direct execution after a compact clear Truth Basis, exact deterministic validation, and knowledge_disposition action none; it does not force TDD or heavy artifacts."
+    },
+    {
+      "id": "dev-lightweight-gateway-relevant-authority",
+      "prompt": "A lightweight plan has grounded source evidence and the bounded knowledge gateway finds relevant authority.",
+      "expected_output": "Invokes ks-what-is-helpful after preflight and source grounding, carries the accepted authority into the compact Truth Basis, and keeps the plan ephemeral."
+    },
+    {
+      "id": "dev-lightweight-gateway-none-relevant",
+      "prompt": "A lightweight plan's bounded knowledge gateway finds none relevant to the settled mechanical change.",
+      "expected_output": "Records evidence-backed none relevant and continues without inventing authority or creating heavy artifacts."
+    },
+    {
+      "id": "dev-lightweight-gateway-conflict",
+      "prompt": "A lightweight plan's bounded gateway finds authority that materially conflicts with the requested delta.",
+      "expected_output": "Sets conflict_status to escalate and stops for authority repair instead of letting current source or preference override the conflict."
+    },
+    {
+      "id": "dev-lightweight-durable-update",
+      "prompt": "After validation, a lightweight task records a durable update disposition.",
+      "expected_output": "The lightweight completion owner invokes the approved ks lifecycle, validates its return evidence and index status, and does not complete before closure."
+    },
+    {
+      "id": "dev-lightweight-no-write",
+      "prompt": "After validation, a lightweight task records none and the gateway established no relevant durable change.",
+      "expected_output": "The lightweight completion owner records the evidence-backed no-write result and completes without invoking a ks writer."
     }
   ]
 }

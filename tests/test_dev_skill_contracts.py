@@ -157,6 +157,10 @@ def test_mechanical_task_plan_contract_escalates_and_uses_exact_sections() -> No
         "none | update | supersede | reclassify",
         "verify RED",
         "verify GREEN",
+        "ks-what-is-helpful",
+        "lightweight completion owner",
+        "none relevant",
+        "no-write",
     ]:
         assert token in text
 
@@ -165,10 +169,10 @@ def test_development_pressure_evals_cover_grounding_and_adversarial_boundary() -
     cases = json.loads(
         (REPO_ROOT / "references/evals/development/evals.json").read_text(encoding="utf-8")
     )["evals"]
-    assert len(cases) >= 7
+    assert len(cases) >= 12
     prompts = "\n".join(case["prompt"] for case in cases)
     expected = "\n".join(case["expected_output"] for case in cases)
-    for token in ["lightweight", "contradicts", "failing test", "bug", "multi-repository", "Tests pass", "configuration-only"]:
+    for token in ["lightweight", "contradicts", "failing test", "bug", "multi-repository", "Tests pass", "configuration-only", "relevant authority", "none relevant", "durable update"]:
         assert token in prompts
     for token in [
         "Truth Basis",
@@ -179,6 +183,9 @@ def test_development_pressure_evals_cover_grounding_and_adversarial_boundary() -
         "knowledge_disposition",
         "does not force TDD",
         "silently widening debugging scope",
+        "ks-what-is-helpful",
+        "lightweight completion owner",
+        "no-write",
     ]:
         assert token in expected
 

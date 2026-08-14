@@ -16,6 +16,8 @@ execution_workspace:
   cleanup: after_integration|manual
 ---
 
+The front-matter `source_knowledge` contains accepted authority only, as established by bounded retrieval and Source Context reconciliation. Candidate, background, blocked, and superseded knowledge remains classified in Source Context or Open Questions and must not appear in this carried-authority list. Downstream planning allocates deterministic `AUTH-NNN` aliases by list order so executor packets remain traceable without exposing knowledge paths.
+
 # Introduction
 
 [A short concise introduction to the specification and the goal it is intended to achieve.]
