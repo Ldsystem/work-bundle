@@ -189,6 +189,7 @@ def test_init_project_creates_structure_without_git_actions_and_is_idempotent(tm
 
     assert not (project / "rules/contract.yaml").exists()
     assert (project / ".work-bundle/rules/index.yaml").is_file()
+    assert (project / ".work-bundle/rules/index.yaml").read_text(encoding="utf-8") == "rules: []\n"
     assert not (project / "rules/index.yaml").exists()
     assert init_data["git_actions"] == []
     assert init_data["transaction"]["state"] == "published"
