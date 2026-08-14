@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +48,12 @@ def test_systematic_debugging_requires_root_cause_before_fix() -> None:
         "root-cause fix",
         "Verify",
         "documented containment",
+        "Truth Basis",
+        "purpose",
+        "as-is evidence",
+        "decision authority",
+        "expected delta",
+        "conflict status",
     ]:
         assert token in text
     assert "Do not implement a fix before establishing the root cause" in text
@@ -70,6 +77,8 @@ def test_tdd_contract_names_cycle_applicability_and_exemptions() -> None:
         "non-testable mechanical artifacts",
         "behavior-preserving refactor",
         "characterization coverage",
+        "GROUND",
+        "revalidate truth and impact",
     ]:
         assert token in text
 
@@ -89,6 +98,10 @@ def test_code_review_contract_is_independent_and_emits_exact_shape() -> None:
         "severity: blocking | advisory",
         "scope: specification | correctness | quality | validation | rule",
         "finding: <compact evidence-backed text>",
+        "grounded intent",
+        "decision authority",
+        "test oracle",
+        "knowledge disposition",
     ]:
         assert token in text
 
@@ -106,6 +119,12 @@ def test_mechanical_task_plan_contract_escalates_and_uses_exact_sections() -> No
         "parallel barriers",
         "# Mechanical Execution Plan",
         "## Goal",
+        "## Truth Basis",
+        "Purpose:",
+        "As-is evidence:",
+        "Decision authority:",
+        "Expected delta:",
+        "Conflict status: clear | escalate",
         "## Method",
         "tdd | systematic-debugging | direct | loop-coding",
         "Bug work starts with `systematic-debugging` until diagnosis",
@@ -125,10 +144,33 @@ def test_mechanical_task_plan_contract_escalates_and_uses_exact_sections() -> No
         "4. If verification fails",
         "5. Commit if permitted",
         "## Completion evidence",
+        "## Knowledge disposition",
+        "none | update | supersede | reclassify",
         "verify RED",
         "verify GREEN",
     ]:
         assert token in text
+
+
+def test_development_pressure_evals_cover_grounding_and_adversarial_boundary() -> None:
+    cases = json.loads(
+        (REPO_ROOT / "references/evals/development/evals.json").read_text(encoding="utf-8")
+    )["evals"]
+    assert len(cases) >= 6
+    prompts = "\n".join(case["prompt"] for case in cases)
+    expected = "\n".join(case["expected_output"] for case in cases)
+    for token in ["lightweight", "contradicts", "failing test", "bug", "Tests pass", "configuration-only"]:
+        assert token in prompts
+    for token in [
+        "Truth Basis",
+        "conflict_status",
+        "GROUND",
+        "root-cause",
+        "test-oracle",
+        "knowledge_disposition",
+        "does not force TDD",
+    ]:
+        assert token in expected
 
 
 def test_create_skill_contract_uses_pressure_first_iteration_and_real_gates() -> None:

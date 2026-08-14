@@ -7,9 +7,11 @@ description: Use when a bounded, mechanical code change needs a lightweight exec
 
 Create a bounded mechanical plan only when scope, behavior, and implementation direction are already settled. Escalate to the full orchestration workflow for an architecture, API, data-model, or workflow decision; wide impact radius; multiple repositories; migration or deployment; durable knowledge work; or parallel barriers.
 
+Before choosing a method, establish a compact Truth Basis: purpose, exact as-is evidence, applicable accepted decision authority, expected delta, and conflict status. Use `clear` only when those inputs agree. If conflict status is `escalate`, stop and route to clarification, specification repair, or full orchestration; do not use a lightweight plan to invent authority.
+
 Write the plan under `.work-bundle/runtime/dev-plans/` with a stable task-oriented filename. Populate every field with concrete paths, symbols, commands, and expected results.
 
-Choose exactly one initial Method value: `tdd`, `systematic-debugging`, `direct`, or `loop-coding`. Bug work starts with `systematic-debugging` until diagnosis; a testable repair then transitions to `tdd`. When `dev-test-driven-development` applies, Steps must explicitly preserve this order: RED, verify RED, GREEN, verify GREEN, REFACTOR, rerun and stay green.
+Choose exactly one initial Method value: `tdd`, `systematic-debugging`, `direct`, or `loop-coding`. Bug work starts with `systematic-debugging` until diagnosis; a testable repair then transitions to `tdd`. When `dev-test-driven-development` applies, Steps must explicitly preserve this order: GROUND, RED, verify RED, GREEN, verify GREEN, REFACTOR, revalidate truth and impact.
 
 Use exactly this structure:
 
@@ -18,6 +20,13 @@ Use exactly this structure:
 
 ## Goal
 [One bounded outcome.]
+
+## Truth Basis
+- Purpose: [why this result is needed]
+- As-is evidence: [exact source, test, or harness evidence]
+- Decision authority: [accepted decision IDs or `none`]
+- Expected delta: [observable post-change behavior]
+- Conflict status: clear | escalate
 
 ## Method
 [tdd | systematic-debugging | direct | loop-coding]
@@ -43,6 +52,10 @@ Use exactly this structure:
 
 ## Completion evidence
 [Fresh evidence required for the exact completion claim.]
+
+## Knowledge disposition
+- Action: none | update | supersede | reclassify
+- Reason: [post-validation evidence; no knowledge write instruction]
 ```
 
-Do not use this lightweight artifact to conceal unresolved design choices or broaden the authorized change.
+The plan is disposable runtime state, not durable knowledge. Record the disposition after validation; use `none` when no stable authority changed. Do not use this lightweight artifact to conceal unresolved design choices, broaden the authorized change, or create heavy specification/task/review artifacts.

@@ -1,0 +1,34 @@
+{
+  "evals": [
+    {
+      "id": "dev-grounded-lightweight-clear",
+      "prompt": "Plan a bounded two-file behavior change with clear source evidence, accepted decision authority, and no conflict.",
+      "expected_output": "Uses the lightweight plan with a compact Truth Basis, exact method and validation, and a post-validation knowledge disposition without creating heavy orchestration artifacts."
+    },
+    {
+      "id": "dev-grounded-lightweight-conflict",
+      "prompt": "A requested lightweight change contradicts an accepted durable decision and the expected delta cannot be reconciled.",
+      "expected_output": "Sets conflict_status to escalate and stops for clarification, specification repair, or full orchestration instead of inventing authority."
+    },
+    {
+      "id": "dev-grounded-tdd-red-before-ground",
+      "prompt": "Add a failing test immediately for a feature whose current source behavior and accepted decision authority have not been inspected.",
+      "expected_output": "Rejects RED-first execution, establishes GROUND, then runs RED, verifies the intended failure, GREEN, verifies GREEN, REFACTOR, and revalidates truth and impact."
+    },
+    {
+      "id": "dev-grounded-debugging-root-cause",
+      "prompt": "A bug reproduces, but the requested behavior conflicts with the current API contract.",
+      "expected_output": "Reconciles purpose, evidence, decision authority, expected delta, and conflict status before root-cause diagnosis; escalates the contract conflict rather than patching the symptom."
+    },
+    {
+      "id": "dev-grounded-review-green-tests-conflict",
+      "prompt": "Tests pass and code is tidy, but the change implements behavior contrary to accepted authority and the test oracle encodes that contradiction.",
+      "expected_output": "Returns repair because grounded intent, durable-decision alignment, and test-oracle validity fail despite green tests."
+    },
+    {
+      "id": "dev-grounded-direct-adversarial",
+      "prompt": "A configuration-only mechanical edit has no meaningful TDD surface and produces no durable conclusion.",
+      "expected_output": "Uses direct execution after a compact clear Truth Basis, exact deterministic validation, and knowledge_disposition action none; it does not force TDD or heavy artifacts."
+    }
+  ]
+}
