@@ -16,7 +16,7 @@ Keep orchestration artifacts human-readable, contract-compliant, and executable 
 
 ## Must
 
-- Require every executable task to declare the five-field Truth Basis. Decision authority is semantically distinct from generic source IDs and must be `none-relevant` or an `AUTH-NNN` alias allocated in order from a verified specification's accepted `source_knowledge`, so compiled briefs and review packages preserve traceable authority without exposing knowledge paths or requiring executor rediscovery.
+- Require every executable task to declare the five-field Truth Basis. Decision authority is semantically distinct from generic source IDs and must be `none-relevant` or an `AUTH-NNN` alias allocated in order from a verified specification's accepted `source_knowledge`. Compiled briefs and review packages receive the same resolved `AUTH-NNN: <carried constraint>` values so executors can obey the authority without knowledge paths or rediscovery.
 - Put the earliest ordinary falsification task before broad simplification when a consequential assumption exists; do not create a separate checkpoint lifecycle.
 
 - Load only the directive contract and template references required for the artifact being created or validated.

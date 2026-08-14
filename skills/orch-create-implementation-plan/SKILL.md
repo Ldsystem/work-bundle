@@ -66,6 +66,8 @@ truth_basis:
   conflict_status: clear | escalate
 ```
 
+The compiler resolves each allocated `AUTH-NNN` alias to `AUTH-NNN: <carried constraint>` from verified specification `source_knowledge` without exposing knowledge paths.
+
 ## Semantic convergence
 
 Use `dev-semantic-convergence` with these lenses:

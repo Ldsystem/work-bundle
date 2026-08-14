@@ -54,7 +54,7 @@ knowledge_disposition:
   action: none | update | supersede | reclassify
   reason: "Task-local post-validation evidence."
   affected_authority:
-    - source-id-or-authority-path
+    - AUTH-NNN-or-allocated-source-id-or-task-scope-path
 
 contract_decoupling:
   common_contract_group: CG-001
@@ -153,7 +153,7 @@ allocation_evidence:
 - `id`, `type`, `status`, `project`, `created_at`, `related`, and `result` are always required.
 - `changes.files` is required when files, symbols, artifacts, schemas, commands, or docs changed or were inspected as the task output.
 - `validation.commands` is required when any command, test, lint, inspection, or manual verification was run or intentionally skipped.
-- `knowledge_disposition` is required for every completed or partial meaningful move. It records task-local evidence only and does not authorize durable-knowledge retrieval or writes. A change action requires affected authority IDs or exact paths already present in the compiled task scope; `none` requires an empty affected-authority list.
+- `knowledge_disposition` is required for every completed or partial meaningful move. It records task-local evidence only and does not authorize durable-knowledge retrieval or writes. A change action requires allocated `AUTH-NNN` aliases from the task's accepted decision authority, allocated source IDs, or exact paths already present in the compiled task scope; `none` requires an empty affected-authority list. Invented or unallocated AUTH aliases fail closed.
 - `contract_decoupling` is required when a task is marked contract-decoupled or depends on a common contract group.
 - `barrier` is required when a task is a barrier participant or convergence owner.
 - `convergence` is required when the task owns post-barrier joint debug, integration checks, or cross-branch validation.

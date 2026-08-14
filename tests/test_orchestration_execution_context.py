@@ -19,6 +19,8 @@ from execution_context import build_review_package, build_task_brief  # noqa: E4
 
 ACCEPTED_AUTHORITY_PATH = ".work-bundle/knowledge/notes/accepted-authority.md"
 ACCEPTED_AUTHORITY = "AUTH-001"
+ACCEPTED_CONSTRAINT = "Executors must not retrieve durable knowledge to reconstruct authority."
+DECOY_KNOWLEDGE = "This decoy note must never appear in compiled authority."
 
 
 def git(path: Path, *args: str) -> str:
@@ -48,7 +50,8 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
         "id: spec-001\n"
         "status: verified\n"
         "source_knowledge:\n"
-        f"  - {ACCEPTED_AUTHORITY_PATH}\n"
+        f"  - path: {ACCEPTED_AUTHORITY_PATH}\n"
+        f"    constraint: {ACCEPTED_CONSTRAINT}\n"
         "---\n\n"
         "# Compiler contract\n\n"
         "- **REQ-003**: Retry exactly three times before returning failure.\n"
@@ -122,6 +125,49 @@ def args(root: Path, task: Path, **overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**values)
 
 
+def carry_accepted_constraint(spec: Path) -> None:
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            f"  - {ACCEPTED_AUTHORITY_PATH}\n",
+            f"  - path: {ACCEPTED_AUTHORITY_PATH}\n    constraint: {ACCEPTED_CONSTRAINT}\n",
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_decoy_knowledge(root: Path) -> Path:
+    knowledge = root / ACCEPTED_AUTHORITY_PATH
+    knowledge.parent.mkdir(parents=True, exist_ok=True)
+    knowledge.write_text(DECOY_KNOWLEDGE + "\n", encoding="utf-8")
+    return knowledge
+
+
+def committed_review_base(root: Path) -> str:
+    source = root / "src/compiler.py"
+    source.parent.mkdir()
+    source.write_text("def compile_task():\n    return 'old'\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    return git(root, "rev-parse", "HEAD")
+
+
+def write_executor_handoff(root: Path, disposition: str) -> Path:
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        "related: {task: task-004}\n"
+        "knowledge_disposition:\n"
+        + disposition,
+        encoding="utf-8",
+    )
+    return handoff
+
+
+COMPILED_AUTHORITY = f"{ACCEPTED_AUTHORITY}: {ACCEPTED_CONSTRAINT}"
+
+
 def test_build_task_brief_resolves_source_ids_and_keeps_allocations_task_local(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
 
@@ -143,6 +189,9 @@ def test_build_task_brief_resolves_source_ids_and_keeps_allocations_task_local(t
     assert "truth_basis:" in packet
     assert 'purpose: "Compile a bounded executor packet."' in packet
     assert ACCEPTED_AUTHORITY in packet
+    assert COMPILED_AUTHORITY in packet
+    assert ACCEPTED_CONSTRAINT in packet
+    assert ACCEPTED_AUTHORITY_PATH not in packet.split("truth_basis:", 1)[1].split("expected_delta:", 1)[0]
     assert "conflict_status: clear" in packet
 
 
@@ -580,4 +629,106 @@ def test_build_review_package_rejects_unbounded_knowledge_disposition(
     )
 
     with pytest.raises(SystemExit, match="knowledge disposition"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+def test_build_task_brief_compiles_auth_alias_with_carried_constraint(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    carry_accepted_constraint(spec)
+    write_decoy_knowledge(root)
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert COMPILED_AUTHORITY in packet
+    assert ACCEPTED_CONSTRAINT in packet
+    assert "decision_authority:" in packet
+    assert ACCEPTED_AUTHORITY_PATH not in packet.split("truth_basis:", 1)[1].split("expected_delta:", 1)[0]
+    assert DECOY_KNOWLEDGE not in packet
+
+
+def test_build_review_package_receives_same_resolved_auth_semantics(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    carry_accepted_constraint(spec)
+    write_decoy_knowledge(root)
+    base = committed_review_base(root)
+    handoff = write_executor_handoff(
+        root,
+        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
+    )
+
+    brief = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+    package = build_review_package(
+        args(root, task, handoff=str(handoff), base=base, head=base)
+    ).read_text(encoding="utf-8")
+
+    assert COMPILED_AUTHORITY in brief
+    assert COMPILED_AUTHORITY in package
+    assert ACCEPTED_CONSTRAINT in package
+    assert "## Accepted Truth Basis" in package
+    assert ACCEPTED_AUTHORITY_PATH not in package.split("## Accepted Truth Basis", 1)[1].split("## Allowed scope", 1)[0]
+    assert DECOY_KNOWLEDGE not in package
+
+
+def test_build_task_brief_compiles_auth_without_reading_durable_knowledge(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    carry_accepted_constraint(spec)
+    knowledge = write_decoy_knowledge(root)
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert COMPILED_AUTHORITY in packet
+    assert knowledge.read_text(encoding="utf-8") == DECOY_KNOWLEDGE + "\n"
+    assert DECOY_KNOWLEDGE not in packet
+    assert ACCEPTED_AUTHORITY_PATH not in packet.split("forbidden:", 1)[0]
+
+
+def test_build_task_brief_fails_closed_when_auth_lacks_carried_constraint(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            f"  - path: {ACCEPTED_AUTHORITY_PATH}\n    constraint: {ACCEPTED_CONSTRAINT}\n",
+            f"  - {ACCEPTED_AUTHORITY_PATH}\n",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="carried semantic constraint"):
+        build_task_brief(args(root, task))
+
+
+@pytest.mark.parametrize("action", ["update", "supersede", "reclassify"])
+def test_build_review_package_accepts_allocated_auth_in_knowledge_disposition(
+    tmp_path: Path, action: str
+) -> None:
+    root, spec, task = workspace(tmp_path)
+    carry_accepted_constraint(spec)
+    base = committed_review_base(root)
+    handoff = write_executor_handoff(
+        root,
+        f"  action: {action}\n  reason: Stable accepted authority changed.\n"
+        f"  affected_authority: [{ACCEPTED_AUTHORITY}]\n",
+    )
+
+    package = build_review_package(
+        args(root, task, handoff=str(handoff), base=base, head=base)
+    ).read_text(encoding="utf-8")
+
+    assert COMPILED_AUTHORITY in package
+    assert ACCEPTED_CONSTRAINT in package
+    assert f"action: {action}" in package
+    assert ACCEPTED_AUTHORITY in package
+    assert ACCEPTED_AUTHORITY_PATH not in package.split("## Knowledge disposition", 1)[1].split("## Allocated", 1)[0]
+
+
+def test_build_review_package_rejects_unallocated_auth_in_knowledge_disposition(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    carry_accepted_constraint(spec)
+    base = committed_review_base(root)
+    handoff = write_executor_handoff(
+        root,
+        "  action: update\n  reason: Stable accepted authority changed.\n"
+        "  affected_authority: [AUTH-002]\n",
+    )
+
+    with pytest.raises(SystemExit, match="unallocated decision authority"):
         build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))

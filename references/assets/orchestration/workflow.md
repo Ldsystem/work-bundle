@@ -51,7 +51,7 @@ semantic_loop:
 
 ## Compiled execution context
 
-Before normal bounded execution, `build-task-brief` compiles the task, its cited source IDs, and the same five-field Truth Basis into a self-contained ephemeral packet. The packet resolves exact requirements, constraints, interfaces, file scope, methodology, allocated rules, validation commands, workspace root, handoff contract, and review requirement. Missing source IDs fail closed. Decision authority is semantically distinct from generic source IDs and must be `none-relevant` or an `AUTH-NNN` alias allocated from verified specification reconciliation; aliases keep authority traceable without exposing knowledge paths. Invented, candidate, background, blocked, or superseded authority and any conflict block compilation.
+Before normal bounded execution, `build-task-brief` compiles the task, its cited source IDs, and the same five-field Truth Basis into a self-contained ephemeral packet. The packet resolves exact requirements, constraints, interfaces, file scope, methodology, allocated rules, validation commands, workspace root, handoff contract, and review requirement. Missing source IDs fail closed. Decision authority is semantically distinct from generic source IDs and must be `none-relevant` or an `AUTH-NNN` alias allocated from verified specification reconciliation; the compiler resolves each alias to `AUTH-NNN: <carried constraint>` without exposing knowledge paths. Invented, candidate, background, blocked, or superseded authority and any conflict block compilation.
 
 For pre-commit acceptance, `build-review-package --head worktree` includes tracked, staged, unstaged, and untracked changes under a stable worktree identity while withholding protected-path content.
 

@@ -21,7 +21,7 @@ Execution is a no-retrieval stage. Use the selected task, its compiled Truth Bas
 python3 scripts/orch.py build-task-brief --task <task-path>
 ```
 
-Missing source IDs; decision authority other than `none-relevant` or an `AUTH-NNN` alias carried by verified specification reconciliation; `conflict_status: escalate`; inconsistent scope; or unsafe workspace state fails closed with the existing typed blocker. Truth Basis conflict uses `decision-blocked`.
+Missing source IDs; decision authority other than `none-relevant` or an `AUTH-NNN` alias whose carried constraint was reconciled in the verified specification; `conflict_status: escalate`; inconsistent scope; or unsafe workspace state fails closed with the existing typed blocker. Truth Basis conflict uses `decision-blocked`. The compiled brief includes `AUTH-NNN: <carried constraint>`, not the alias alone.
 6. Choose the provider-neutral capability from the task profile. Partition only independent tasks with disjoint write scopes. Contract-decoupled participants validate against the common contract, accepted prior handoffs, and task-local files; they reach the named barrier before convergence work.
 7. When user/environment policy permits delegation, use visible multi-agent subagents for task ownership. Invisible helper workers may support bounded analysis only. If independent subagents are unavailable, use single-agent execution and mark later review `reviewer_independent: false`.
 8. Validate executor-result evidence shape, compile a bounded review package, and assign `dev-code-review` to an independent reviewer when possible. The scheduler does not perform code-quality review.

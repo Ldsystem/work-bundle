@@ -15,6 +15,7 @@ from core import is_relative_to, read_front_matter, resolve_workspace_root
 
 
 SOURCE_ID_RE = re.compile(r"^[A-Z][A-Z0-9_-]*-\d+$")
+AUTH_ALIAS_RE = re.compile(r"^AUTH-\d{3}$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 SENSITIVE_KEY_RE = re.compile(
     r"(?:^|[_-])(credential_values?|password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)(?:$|[_-])",
@@ -284,6 +285,8 @@ def _source_records(path: Path, body: str) -> dict[str, str]:
     records: dict[str, str] = {}
 
     def add(identifier: str, value: str) -> None:
+        if AUTH_ALIAS_RE.fullmatch(identifier):
+            return
         value = _strip_markup(value)
         if not value:
             return
@@ -338,18 +341,53 @@ def _resolve_reference(value: Any, records: dict[str, str], source_paths: list[P
     return value
 
 
-def _verified_specification_authority(source_paths: list[Path]) -> set[str]:
-    accepted: set[str] = set()
+def _nonempty_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _source_knowledge_entry(entry: Any) -> tuple[str | None, str | None]:
+    if isinstance(entry, str):
+        return _nonempty_text(entry), None
+    if isinstance(entry, dict):
+        return _nonempty_text(entry.get("path")), _nonempty_text(entry.get("constraint"))
+    return None, None
+
+
+def _constraint_exposes_knowledge_path(constraint: str) -> bool:
+    normalized = constraint.strip().removeprefix("./")
+    return (
+        normalized == ".work-bundle/knowledge"
+        or normalized.startswith(".work-bundle/knowledge/")
+        or ".work-bundle/knowledge/" in normalized
+    )
+
+
+def _verified_specification_authority(source_paths: list[Path]) -> dict[str, str]:
+    accepted: dict[str, str] = {}
     authority_index = 0
     for source_path in source_paths:
         metadata, _ = _read_structured(source_path)
         if metadata.get("status") != "verified":
             raise SystemExit(f"Task decision_authority requires a verified specification: {source_path}")
         for entry in _as_list(metadata.get("source_knowledge")):
-            if isinstance(entry, str) and entry.strip():
-                authority_index += 1
-                accepted.add(f"AUTH-{authority_index:03d}")
+            path, constraint = _source_knowledge_entry(entry)
+            if path is None and constraint is None:
+                continue
+            authority_index += 1
+            accepted[f"AUTH-{authority_index:03d}"] = constraint or ""
     return accepted
+
+
+def _allocated_decision_aliases(truth_basis: dict[str, Any]) -> set[str]:
+    aliases: set[str] = set()
+    for value in _as_list(truth_basis.get("decision_authority")):
+        alias = str(value).split(":", 1)[0].strip()
+        if AUTH_ALIAS_RE.fullmatch(alias):
+            aliases.add(alias)
+    return aliases
 
 
 def read_structured_artifact(path: Path) -> dict[str, Any]:
@@ -382,13 +420,26 @@ def _compile_truth_basis(
     if decision_authority == ["none-relevant"]:
         compiled_authority = decision_authority
     else:
-        if "none-relevant" in decision_authority or any(
-            value not in accepted_authority for value in decision_authority
-        ):
+        compiled_authority = []
+        if "none-relevant" in decision_authority:
             raise SystemExit(
                 "Task Truth Basis decision_authority must use none-relevant or verified specification authority"
             )
-        compiled_authority = decision_authority
+        for value in decision_authority:
+            if value not in accepted_authority:
+                raise SystemExit(
+                    "Task Truth Basis decision_authority must use none-relevant or verified specification authority"
+                )
+            constraint = accepted_authority[value]
+            if not constraint:
+                raise SystemExit(
+                    f"Task Truth Basis {value} is missing a carried semantic constraint from verified specification source_knowledge"
+                )
+            if _constraint_exposes_knowledge_path(constraint):
+                raise SystemExit(
+                    f"Task Truth Basis {value} carried constraint must not expose a knowledge path"
+                )
+            compiled_authority.append(f"{value}: {constraint}")
     conflict_status = raw.get("conflict_status")
     if conflict_status not in {"clear", "escalate"}:
         raise SystemExit("Task Truth Basis conflict_status must be clear or escalate")
@@ -445,7 +496,10 @@ def evaluate_knowledge_closure_state(
 
 
 def _validated_knowledge_disposition(
-    handoff: dict[str, Any], accepted_source_ids: list[str], accepted_authority_paths: list[str]
+    handoff: dict[str, Any],
+    accepted_source_ids: list[str],
+    accepted_authority_paths: list[str],
+    allocated_decision_aliases: set[str],
 ) -> dict[str, Any]:
     raw = handoff.get("knowledge_disposition")
     if not isinstance(raw, dict):
@@ -471,6 +525,10 @@ def _validated_knowledge_disposition(
     if KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE.search(disposition_text):
         raise SystemExit("Executor result knowledge disposition must not instruct knowledge access or writes")
     for authority in affected:
+        if AUTH_ALIAS_RE.fullmatch(authority):
+            if authority not in allocated_decision_aliases:
+                raise SystemExit("Executor result knowledge disposition cites unallocated decision authority")
+            continue
         if SOURCE_ID_RE.fullmatch(authority):
             if authority not in accepted_source_ids:
                 raise SystemExit("Executor result knowledge disposition cites unallocated source authority")
@@ -821,8 +879,12 @@ def build_review_package(args: argparse.Namespace) -> Path:
         str(value)
         for value in [*_as_list(task_files.get("read")), *_as_list(task_files.get("write"))]
     ]
+    truth_basis = task.get("truth_basis") if isinstance(task.get("truth_basis"), dict) else {}
     knowledge_disposition = _validated_knowledge_disposition(
-        handoff, list(task.get("source_ids", [])), accepted_authority_paths
+        handoff,
+        list(task.get("source_ids", [])),
+        accepted_authority_paths,
+        _allocated_decision_aliases(truth_basis),
     )
 
     base = _resolve_commit(root, str(args.base))
