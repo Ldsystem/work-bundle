@@ -191,13 +191,6 @@ rules:
     enforcement: must
     load: conditional
     requires: []
-  - id: rule-work-bundle-role-context
-    path: role-context.md
-    applies_when:
-      - v4 work-bundle operation requires role-context
-    enforcement: must
-    load: conditional
-    requires: []
   - id: rule-work-bundle-runtime-artifact-format
     path: runtime-artifact-format.md
     applies_when:

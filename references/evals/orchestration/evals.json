@@ -394,8 +394,12 @@
   ],
   "v4_evals": [
     {
-      "id": "v4-role-context-regression",
-      "description": "Validate v4 compact runtime and boundary behavior."
+      "id": "v4-obsolete-role-context-retirement",
+      "description": "Given a request to preserve deprecated role-context aliases for compatibility, require repository-wide consumer characterization and then remove the skill, rule, CLI, implementation, reference, and positive runtime guidance when no supported external consumer exists; retain only a negative non-reintroduction guard."
+    },
+    {
+      "id": "v4-stable-role-profile-adversarial-boundary",
+      "description": "Do not confuse stable role profile data used by project initialization and external-skill classification with the obsolete runtime role-context selection subsystem; remove only selection/routing behavior and rewrite positive role-context wording."
     }
   ]
 }

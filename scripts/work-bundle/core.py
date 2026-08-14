@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-CUSTOMIZED_SKILL_ROOT = Path('/Users/shenglong/Documents/Repository/work-bundle/skills')
+CUSTOMIZED_SKILL_ROOT = Path(__file__).resolve().parents[2] / 'skills'
 GLOBAL_SKILL_REGISTRY = '~/.work-bundle/skills/skill-registry.yaml'
 WORK_BUNDLE_CONFIG_ROOT_ENV = 'WB_CONFIG_ROOT'
 WORK_BUNDLE_ROOT_ENV = 'WB_WORK_BUNDLE_ROOT'
@@ -30,48 +30,8 @@ LEGACY_COMMAND_MIGRATIONS = {
     'validate-domain-profile': 'validate-project-metadata-profile',
 }
 ROLE_NAMES = ['project-manager', 'solution-architect', 'domain-analyst', 'ui-designer', 'frontend-developer', 'backend-developer', 'database-engineer', 'qa-reviewer', 'devops-engineer']
-ROLE_KEYWORDS = {
-    'project-manager': ['project', 'plan', 'timeline', 'delivery', 'coordination', 'stakeholder', 'scope'],
-    'solution-architect': ['architecture', 'design', 'boundary', 'tradeoff', 'integration', 'system'],
-    'domain-analyst': ['domain', 'business', 'customer', 'intent', 'process', 'requirement', 'semantics'],
-    'ui-designer': ['ui', 'ux', 'prototype', 'wireframe', 'visual', 'interaction', 'figma', 'journey'],
-    'frontend-developer': ['frontend', 'front-end', 'web', 'component', 'view', 'css', 'vue', 'react'],
-    'backend-developer': ['backend', 'back-end', 'api', 'service', 'server', 'endpoint', 'java', 'python'],
-    'database-engineer': ['data', 'database', 'schema', 'sql', 'etl', 'warehouse', 'migration'],
-    'qa-reviewer': ['qa', 'test', 'testing', 'quality', 'verification', 'validation', 'acceptance'],
-    'devops-engineer': ['devops', 'deployment', 'release', 'pipeline', 'ci', 'cd', 'operation', 'infra'],
-}
 # Retired v4 root stubs merged into rules/orchestration/: orchestration-boundary -> orch-orchestration-boundary; knowledge-boundary, retrieval-gateway -> orch-knowledge-gateway; execution-boundary -> orch-execute-plan skill-owned constraints; handoff-boundary -> orch-handoff-required; review-archive-boundary -> orch-review-completion
-RULES = ['repository-boundary', 'lifecycle-authority', 'role-context', 'skill-registry', 'domain-profile', 'doctor-readonly', 'runtime-artifact-format', 'security-exclusion']
-STAGE_MAP = {
-    'tender': ('domain-analyst', ['project-manager']),
-    'investigation': ('domain-analyst', ['solution-architect', 'project-manager']),
-    'customer-design': ('domain-analyst', ['ui-designer', 'project-manager', 'solution-architect']),
-    'bidding': ('project-manager', ['domain-analyst', 'solution-architect']),
-    'development-design': ('solution-architect', ['backend-developer', 'frontend-developer', 'database-engineer', 'qa-reviewer', 'ui-designer']),
-    'implementation': ('backend-developer', ['frontend-developer', 'database-engineer', 'qa-reviewer', 'solution-architect']),
-    'deployment': ('devops-engineer', ['database-engineer', 'qa-reviewer']),
-    'go-live-delivery': ('project-manager', ['qa-reviewer', 'devops-engineer', 'domain-analyst']),
-    'operation': ('devops-engineer', ['database-engineer', 'qa-reviewer', 'solution-architect']),
-    'repository-management': ('devops-engineer', ['solution-architect']),
-}
-LEAF_MAP = {
-    'development-design/data/schema': ('solution-architect', ['database-engineer']),
-    'development-design/implementation/backend': ('solution-architect', ['backend-developer', 'qa-reviewer']),
-    'development-design/implementation/frontend': ('solution-architect', ['frontend-developer', 'ui-designer', 'qa-reviewer']),
-    'customer-design/ui-prototype': ('domain-analyst', ['ui-designer']),
-    'implementation/tests': ('backend-developer', ['qa-reviewer']),
-    'repository-management/gitignore-repair': ('devops-engineer', ['solution-architect']),
-}
-DIRECTIVE_ALLOWED_SKILLS = {
-    'create-specification': ['create-specification', 'wb-initialize-project', 'wb-select-role-context'],
-    'create-implementation-plan': ['orchestrator', 'wb-select-role-context'],
-    'execute-plan': [],
-    'create-handoff': ['orchestrator', 'wb-select-role-context'],
-    'review-plan': ['orchestrator', 'wb-doctor'],
-    'create-document': ['orchestrator', 'wb-select-role-context'],
-    'wb-doctor': ['wb-doctor'],
-}
+RULES = ['repository-boundary', 'lifecycle-authority', 'skill-registry', 'domain-profile', 'doctor-readonly', 'runtime-artifact-format', 'security-exclusion']
 
 CLI_HELP_EPILOG = '''Canonical consolidated command surface:
   init-project <project-root> --mode <single-repository|multi-repository>
@@ -248,43 +208,3 @@ def resolve_effective_prefer_subagent(project_root: Path | None = None) -> dict[
         'global_bootstrap_path': str(bootstrap_path),
         'project_metadata_path': str(project_path) if project_path else None,
     }
-
-
-def role_duty_profile(project_root: Path, role: str) -> dict:
-    path = project_root / 'roles' / f'{role}.yaml'
-    text = read(path)
-    if not text:
-        return {'role': role, 'profile_found': False, 'profile_path': str(path), 'stance': None, 'capabilities': [], 'duties': [], 'must_resolve_from_context': []}
-    return {
-        'role': role,
-        'profile_found': True,
-        'profile_path': str(path),
-        'stance': first_match(r'^\s{2}stance:\s*(.+)$', text),
-        'capabilities': duty_items(text, 'skilled_at'),
-        'duties': duty_items(text, 'quality_focus'),
-        'must_resolve_from_context': duty_items(text, 'must_resolve_from_context'),
-    }
-
-
-def suggest_draft_role(stage: str, perspective: str) -> str:
-    scores = {role: 0 for role in ROLE_NAMES}
-    signals = f'{stage} {perspective}'.lower()
-    for role, keywords in ROLE_KEYWORDS.items():
-        for keyword in keywords:
-            if keyword in signals:
-                scores[role] += 1
-    if stage in STAGE_MAP:
-        primary, supporting = STAGE_MAP[stage]
-        scores[primary] += 2
-        for role in supporting:
-            scores[role] += 1
-    if perspective in LEAF_MAP:
-        primary, supporting = LEAF_MAP[perspective]
-        scores[primary] += 3
-        for role in supporting:
-            scores[role] += 2
-    ranked = sorted(scores.items(), key=lambda item: (-item[1], ROLE_NAMES.index(item[0])))
-    for role, score in ranked:
-        if score > 0:
-            return role
-    return 'solution-architect'

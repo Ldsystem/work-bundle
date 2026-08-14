@@ -1,3 +1,0 @@
-id: role-context-contract
-status: current
-required: [source, version, target_directive, lifecycle_stage, perspective, primary_role, supporting_roles, domain_profile, skill_registry, warnings, blocked]
