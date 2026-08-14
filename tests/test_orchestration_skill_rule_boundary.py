@@ -24,17 +24,30 @@ def test_runtime_rule_paths_exist_without_duplicated_loading_algorithm() -> None
             assert "Central `AGENTS.md` owns rule discovery and loading" in text
 
 
-def test_role_context_stays_deprecated() -> None:
-    for path in sorted(REPO_ROOT.glob("skills/orch-*/SKILL.md")):
-        text = path.read_text(encoding="utf-8")
-        assert "## Role Context" not in text
-        if path.parent.name in {
-            "orch-create-specification",
-            "orch-create-implementation-plan",
-            "orch-execute-plan",
-            "orch-review-plan",
-        }:
-            assert "Role-context is deprecated; do not invoke it from orch skills" in text
+def test_obsolete_role_context_surface_is_removed() -> None:
+    for relative in [
+        "skills/wb-select-role-context/SKILL.md",
+        "rules/role-context.md",
+        "references/wb-select-role-context-contract.yaml",
+        "scripts/work-bundle/role_context.py",
+    ]:
+        assert not (REPO_ROOT / relative).exists(), relative
+
+    for relative in [
+        "skills/orch-create-document/SKILL.md",
+        "skills/orch-create-handoff/SKILL.md",
+        "references/assets/keep-summarizing/workflow.md",
+        "scripts/work-bundle/README.md",
+        "scripts/work-bundle/core.py",
+        "scripts/work-bundle/dispatcher.py",
+        "scripts/work-bundle/metadata_profile.py",
+        "scripts/work-bundle/project.py",
+        "rules/index.yaml",
+    ]:
+        text = read(relative).lower()
+        assert "wb-select-role-context" not in text, relative
+        assert "role-context" not in text, relative
+        assert "role context" not in text, relative
 
 
 def test_specification_uses_compact_semantic_convergence_and_workspace_policy() -> None:
@@ -59,7 +72,10 @@ def test_specification_uses_compact_semantic_convergence_and_workspace_policy() 
 def test_planner_allocates_methodology_capability_and_bounded_context() -> None:
     text = read("skills/orch-create-implementation-plan/SKILL.md")
     for token in [
-        "Prefer the fewest phases and tasks",
+        "minimum orchestration overhead",
+        "independently falsifiable",
+        "bounded failure radius",
+        "Do not split one mechanical increment",
         "source-ID coverage",
         "dev-systematic-debugging",
         "dev-test-driven-development",
@@ -72,6 +88,10 @@ def test_planner_allocates_methodology_capability_and_bounded_context() -> None:
         "after_failed_repairs: 2",
         "common contract group",
         "post-barrier convergence task",
+        "Truth Basis",
+        "earliest ordinary task",
+        "cheaply falsify",
+        "Do not add a risk score",
     ]:
         assert token in text
 
@@ -98,6 +118,10 @@ def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> 
         "workspace-blocked",
         "no-index",
         "no-retrieval",
+        "Truth Basis",
+        "knowledge disposition",
+        "task-local evidence",
+        "review owns",
     ]:
         assert token in text
 
@@ -116,6 +140,10 @@ def test_final_review_is_workflow_audit_not_code_review() -> None:
         "repair specification",
         "Do not broadly inspect source",
         "Do not create a repair specification for every failed gate",
+        "aggregate accepted task dispositions",
+        "accepted `update`, `supersede`, or `reclassify`",
+        "rejected task dispositions",
+        "archive remains blocked",
     ]:
         assert token in text
 

@@ -1,4 +1,5 @@
 from core import *
+from execution_context import explicit_handoff_plan_identities
 from specs import replace_front_matter_value
 
 HANDOFF_EXTENSIONS = (".md", ".yaml", ".yml")
@@ -69,6 +70,53 @@ def _handoff_sequence_id(root: Path, prefix: str) -> str:
     return f"{prefix}-{date}-{(max(numbers) if numbers else 0) + 1:03d}"
 
 
+def _handoff_identity_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"null", "none", "~"}:
+        return None
+    return text
+
+
+def _task_scoped_related(existing: dict[str, object]) -> bool:
+    related = existing.get("related") if isinstance(existing.get("related"), dict) else {}
+    return bool(_handoff_identity_text(related.get("task")) or _handoff_identity_text(existing.get("related_task")))
+
+
+def _fill_missing_related_plan(content: str, plan_id: str) -> str:
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("related:"):
+            continue
+        rest = stripped[len("related:") :].strip()
+        if rest.startswith("{") and rest.endswith("}"):
+            inner = rest[1:-1].strip()
+            lines[index] = f"related: {{plan: {plan_id}, {inner}}}" if inner else f"related: {{plan: {plan_id}}}"
+            return "\n".join(lines).rstrip() + "\n"
+        if not rest:
+            lines.insert(index + 1, f"  plan: {plan_id}")
+            return "\n".join(lines).rstrip() + "\n"
+    raise SystemExit("Handoff plan identity missing: expected an explicit related.plan")
+
+
+def _reconcile_task_handoff_plan(content: str, existing: dict[str, object], fields: dict[str, object]) -> str:
+    if not _task_scoped_related(existing):
+        return content
+    identities = explicit_handoff_plan_identities(existing)
+    arg_plan = _handoff_identity_text(fields.get("related_plan"))
+    if len(identities) > 1:
+        raise SystemExit(f"Handoff plan identity conflict: {' vs '.join(identities)}")
+    if len(identities) == 1:
+        if arg_plan and identities[0] != arg_plan:
+            raise SystemExit(f"Handoff plan mismatch: expected {arg_plan}, got {identities[0]}")
+        return content
+    if not arg_plan:
+        raise SystemExit("Handoff plan identity missing: expected an explicit related.plan")
+    return _fill_missing_related_plan(content, arg_plan)
+
+
 def _ensure_yaml_metadata(content: str, fields: dict[str, object]) -> str:
     existing = _read_compact_yaml_metadata_from_text(content)
     lines: list[str] = []
@@ -85,6 +133,8 @@ def _ensure_yaml_metadata(content: str, fields: dict[str, object]) -> str:
                 f"  task: {fields['related_task']}",
             ]
         )
+    else:
+        content = _reconcile_task_handoff_plan(content, existing, fields)
     if not lines:
         return content
     return "\n".join(lines) + "\n\n" + content.strip() + "\n"

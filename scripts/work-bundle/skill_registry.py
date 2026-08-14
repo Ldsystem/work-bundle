@@ -12,9 +12,12 @@ def registry_entry_failures(text: str) -> list[str]:
 
     source_match = re.search(r'^\s*source:\s*([^#\n]+)', text, re.M)
     toolkit_root = resolve_work_bundle_root()
-    if source_match and toolkit_root:
+    if source_match:
         source = Path(source_match.group(1).strip().strip('"\'')).expanduser().resolve(strict=False)
-        if source.is_relative_to((toolkit_root / 'skills').resolve()):
+        built_in_roots = {CUSTOMIZED_SKILL_ROOT.resolve()}
+        if toolkit_root:
+            built_in_roots.add((toolkit_root / 'skills').resolve())
+        if any(source.is_relative_to(root) for root in built_in_roots):
             failures.append('built-in-work-bundle-skill-forbidden')
     return failures
 

@@ -11,7 +11,6 @@ from legacy import cmd_legacy_command_removed
 from metadata_profile import cmd_domain_profile
 from bootstrap_config import cmd_migrate_work_bundle_config
 from project import cmd_cleanup_member, cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_migrate_to_multi_repository, cmd_project, cmd_provision_member, cmd_register_project_command, cmd_session_start, cmd_set_prefer_subagent, cmd_show_project, cmd_validate_project
-from role_context import cmd_role_context
 from rules import cmd_create_rules, cmd_validate_rules
 from skill_registry import cmd_registry
 from violations import (
@@ -144,10 +143,6 @@ def main() -> int:
         return cmd_registry(parsed.args, validate=True)
     if command == 'register-skill':
         return cmd_registry(parsed.args)
-    if command == 'select-role-context':
-        return cmd_role_context(parsed.args)
-    if command == 'validate-role-context':
-        return cmd_role_context(parsed.args, validate=True)
     if command == 'merge-skill-hints':
         return cmd_merge_skill_hints(parsed.args)
     if command == 'integrity-check-report':

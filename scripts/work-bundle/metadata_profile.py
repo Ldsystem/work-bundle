@@ -12,7 +12,7 @@ generated_by: wb-initialize-project
 updated_at: 2026-05-25
 industry: agent-workflow-tooling
 business_context: Local-first agent knowledge and orchestration workflow tooling.
-core_domain_objects: [work-bundle, durable-knowledge, orchestration-artifact, skill, runtime-rule, role-context]
+core_domain_objects: [work-bundle, durable-knowledge, orchestration-artifact, skill, runtime-rule]
 core_lifecycles: [spec -> plan -> phase -> task -> execute -> handoff -> review]
 domain_constraints: [keep durable knowledge separate from orchestration artifacts, compact runtime files first]
 common_misunderstandings: [do not treat open questions as facts, do not let execute-plan retrieve knowledge]
@@ -62,4 +62,3 @@ def cmd_domain_profile(args: list[str], merge: bool = False, validate: bool = Fa
         write(Path(parsed.output), PROFILE.replace('explicit-source', parsed.input))
     out({'status': 'passed', 'output': parsed.output})
     return 0
-

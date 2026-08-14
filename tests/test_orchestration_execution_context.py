@@ -13,7 +13,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATION = REPO_ROOT / "scripts" / "orchestration"
 sys.path.insert(0, str(ORCHESTRATION))
 
+import execution_context  # noqa: E402
 from execution_context import build_review_package, build_task_brief  # noqa: E402
+
+
+ACCEPTED_AUTHORITY_PATH = ".work-bundle/knowledge/notes/accepted-authority.md"
+ACCEPTED_AUTHORITY = "AUTH-001"
+ACCEPTED_CONSTRAINT = "Executors must not retrieve durable knowledge to reconstruct authority."
+DECOY_KNOWLEDGE = "This decoy note must never appear in compiled authority."
 
 
 def git(path: Path, *args: str) -> str:
@@ -41,6 +48,10 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
     spec.write_text(
         "---\n"
         "id: spec-001\n"
+        "status: verified\n"
+        "source_knowledge:\n"
+        f"  - path: {ACCEPTED_AUTHORITY_PATH}\n"
+        f"    constraint: {ACCEPTED_CONSTRAINT}\n"
         "---\n\n"
         "# Compiler contract\n\n"
         "- **REQ-003**: Retry exactly three times before returning failure.\n"
@@ -70,6 +81,12 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
         "phase_id: phase-001\n"
         "goal: Compile a bounded executor packet.\n"
         "source_ids: [REQ-003, CON-002, API-002, TEST-004]\n"
+        "truth_basis:\n"
+        "  purpose: Compile a bounded executor packet.\n"
+        "  as_is_evidence: [scripts/orchestration/execution_context.py]\n"
+        f"  decision_authority: [{ACCEPTED_AUTHORITY}]\n"
+        "  expected_delta: [API-002]\n"
+        "  conflict_status: clear\n"
         "files:\n"
         "  read: [scripts/orchestration/core.py]\n"
         "  write: [scripts/orchestration/execution_context.py]\n"
@@ -108,6 +125,77 @@ def args(root: Path, task: Path, **overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**values)
 
 
+def carry_accepted_constraint(spec: Path) -> None:
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            f"  - {ACCEPTED_AUTHORITY_PATH}\n",
+            f"  - path: {ACCEPTED_AUTHORITY_PATH}\n    constraint: {ACCEPTED_CONSTRAINT}\n",
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_decoy_knowledge(root: Path) -> Path:
+    knowledge = root / ACCEPTED_AUTHORITY_PATH
+    knowledge.parent.mkdir(parents=True, exist_ok=True)
+    knowledge.write_text(DECOY_KNOWLEDGE + "\n", encoding="utf-8")
+    return knowledge
+
+
+def committed_review_base(root: Path) -> str:
+    source = root / "src/compiler.py"
+    source.parent.mkdir()
+    source.write_text("def compile_task():\n    return 'old'\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    return git(root, "rev-parse", "HEAD")
+
+
+def write_executor_handoff(root: Path, disposition: str) -> Path:
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        "related: {plan: plan-001, task: task-004}\n"
+        "knowledge_disposition:\n"
+        + disposition,
+        encoding="utf-8",
+    )
+    return handoff
+
+
+def retarget_plan(root: Path, task: Path, plan_id: str) -> None:
+    plan = root / ".work-bundle/orchestration/plan/active/compiler-plan.md"
+    plan.write_text(
+        plan.read_text(encoding="utf-8").replace("id: plan-001\n", f"id: {plan_id}\n"),
+        encoding="utf-8",
+    )
+    task.write_text(
+        task.read_text(encoding="utf-8").replace("plan_id: plan-001\n", f"plan_id: {plan_id}\n"),
+        encoding="utf-8",
+    )
+
+
+def write_related_handoff(root: Path, related_block: str) -> Path:
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        f"{related_block}"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n",
+        encoding="utf-8",
+    )
+    return handoff
+
+
+COMPILED_AUTHORITY = f"{ACCEPTED_AUTHORITY}: {ACCEPTED_CONSTRAINT}"
+
+
 def test_build_task_brief_resolves_source_ids_and_keeps_allocations_task_local(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
 
@@ -126,6 +214,149 @@ def test_build_task_brief_resolves_source_ids_and_keeps_allocations_task_local(t
     assert ".work-bundle/knowledge/notes" not in packet
     assert "handoff_contract: executor-result-v1" in packet
     assert "review_required: true" in packet
+    assert "truth_basis:" in packet
+    assert 'purpose: "Compile a bounded executor packet."' in packet
+    assert ACCEPTED_AUTHORITY in packet
+    assert COMPILED_AUTHORITY in packet
+    assert ACCEPTED_CONSTRAINT in packet
+    assert ACCEPTED_AUTHORITY_PATH not in packet.split("truth_basis:", 1)[1].split("expected_delta:", 1)[0]
+    assert "conflict_status: clear" in packet
+
+
+def test_build_task_brief_fails_closed_when_truth_basis_is_missing(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    content = task.read_text(encoding="utf-8")
+    content = re.sub(r"truth_basis:\n(?:  .*\n){5}", "", content)
+    task.write_text(content, encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Task Truth Basis is required"):
+        build_task_brief(args(root, task))
+
+
+def test_build_task_brief_routes_truth_basis_conflict_to_typed_blocker(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace("conflict_status: clear", "conflict_status: escalate"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="decision-blocked"):
+        build_task_brief(args(root, task))
+
+
+def test_build_task_brief_accepts_explicit_none_relevant_decision_authority(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            f"decision_authority: [{ACCEPTED_AUTHORITY}]",
+            "decision_authority: [none-relevant]",
+        ),
+        encoding="utf-8",
+    )
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert "none-relevant" in packet
+
+
+def test_build_task_brief_rejects_none_relevant_from_unverified_specification(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    spec.write_text(spec.read_text(encoding="utf-8").replace("status: verified", "status: draft"), encoding="utf-8")
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            f"decision_authority: [{ACCEPTED_AUTHORITY}]", "decision_authority: [none-relevant]"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="requires a verified specification"):
+        build_task_brief(args(root, task))
+
+
+@pytest.mark.parametrize(
+    "authority",
+    [
+        "invented design decision",
+        "REQ-003",
+        ".work-bundle/knowledge/notes/candidate.md",
+        ".work-bundle/knowledge/notes/background.md",
+        ".work-bundle/knowledge/notes/blocked.md",
+        ".work-bundle/knowledge/notes/superseded.md",
+    ],
+)
+def test_build_task_brief_rejects_decision_authority_not_carried_by_verified_spec(
+    tmp_path: Path, authority: str
+) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            f"decision_authority: [{ACCEPTED_AUTHORITY}]",
+            f"decision_authority: [{authority}]",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="decision_authority.*verified specification authority"):
+        build_task_brief(args(root, task))
+
+
+def test_build_task_brief_does_not_allocate_aliases_for_non_authority_source_context(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            "# Compiler contract",
+            "# Compiler contract\n\n## Source Context\n\n- **Candidate**: `.work-bundle/knowledge/notes/candidate.md` remains non-authority.",
+        ),
+        encoding="utf-8",
+    )
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            ACCEPTED_AUTHORITY, "AUTH-002"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="decision_authority.*verified specification authority"):
+        build_task_brief(args(root, task))
+
+
+@pytest.mark.parametrize(
+    ("upstream", "review_verdict", "action", "closure_return", "expected"),
+    [
+        ("not-needed", "accept", "update", "missing", ("required", True)),
+        ("not-needed", "accept", "supersede", "completed", ("completed", False)),
+        ("not-needed", "accept", "reclassify", "not-needed", ("not-needed", False)),
+        ("not-needed", "repair", "update", "missing", ("not-needed", False)),
+        ("not-needed", "accept", "none", "missing", ("not-needed", False)),
+        ("required", "accept", "none", "blocked", ("blocked", True)),
+    ],
+)
+def test_final_knowledge_closure_is_driven_by_accepted_task_dispositions(
+    upstream: str,
+    review_verdict: str,
+    action: str,
+    closure_return: str,
+    expected: tuple[str, bool],
+) -> None:
+    handoffs = [
+        {
+            "related": {"task": "task-004"},
+            "acceptance_review": {"verdict": review_verdict},
+            "knowledge_disposition": {
+                "action": action,
+                "reason": "Task-local evidence.",
+                "affected_authority": [] if action == "none" else [ACCEPTED_AUTHORITY],
+            },
+        }
+    ]
+
+    result = execution_context.evaluate_knowledge_closure_state(
+        upstream_disposition=upstream,
+        accepted_task_handoffs=handoffs,
+        closure_return=closure_return,
+    )
+
+    assert (result["disposition"], result["archive_blocked"]) == expected
 
 
 def test_build_task_brief_preserves_review_not_required_from_task_contract(tmp_path: Path) -> None:
@@ -255,6 +486,7 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
         "id: handoff-task-004\n"
         "type: executor-result\n"
         "related:\n"
+        "  plan: plan-001\n"
         "  task: task-004\n"
         "changes:\n"
         "  files:\n"
@@ -264,6 +496,10 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
         "    - {command: uv run --with pytest pytest -q tests/test_one.py, result: passed}\n"
         "unresolved:\n"
         "  - Confirm retry timing with the caller.\n"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n"
         "session_history: SHOULD-NOT-APPEAR\n",
         encoding="utf-8",
     )
@@ -286,6 +522,9 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
     assert "scoped-rule" in package
     assert "dev-test-driven-development" in package
     assert "## Review rubric" in package
+    assert "## Accepted Truth Basis" in package
+    assert "## Knowledge disposition" in package
+    assert "No stable authority changed." in package
     assert "SHOULD-NOT-APPEAR" not in package
     assert ".work-bundle/knowledge/notes" not in package
 
@@ -308,10 +547,14 @@ def test_build_review_package_includes_tracked_and_untracked_worktree_changes(tm
     handoff.write_text(
         "id: handoff-task-004\n"
         "type: executor-result\n"
-        "related: {task: task-004}\n"
+        "related: {plan: plan-001, task: task-004}\n"
         "validation:\n"
         "  commands:\n"
-        "    - {command: uv run pytest -q, result: passed}\n",
+        "    - {command: uv run pytest -q, result: passed}\n"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n",
         encoding="utf-8",
     )
 
@@ -341,7 +584,11 @@ def test_build_review_package_never_reads_tracked_protected_diff_content(tmp_pat
     handoff.write_text(
         "id: handoff-task-004\n"
         "type: executor-result\n"
-        "related: {task: task-004}\n",
+        "related: {plan: plan-001, task: task-004}\n"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n",
         encoding="utf-8",
     )
 
@@ -352,3 +599,223 @@ def test_build_review_package_never_reads_tracked_protected_diff_content(tmp_pat
     assert "credentials/credentials.yaml" in package
     assert "content withheld: protected path" in package
     assert "TRACKED-PROTECTED-CANARY" not in package
+
+
+def test_build_review_package_rejects_invalid_knowledge_disposition(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    source = root / "src/compiler.py"
+    source.parent.mkdir()
+    source.write_text("def compile_task():\n    return 'old'\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    base = git(root, "rev-parse", "HEAD")
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        "related: {plan: plan-001, task: task-004}\n"
+        "knowledge_disposition:\n"
+        "  action: write-now\n"
+        "  reason: Executor should persist knowledge.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="knowledge disposition action"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+@pytest.mark.parametrize(
+    "disposition",
+    [
+        "  action: update\n  reason: Stable authority changed.\n  affected_authority: []\n",
+        "  action: update\n  reason: Run ks-write-knowledge now.\n  affected_authority: [REQ-003]\n",
+        "  action: update\n  reason: Run ks-track-open-questions now.\n  affected_authority: [REQ-003]\n",
+        "  action: update\n  reason: Stable authority changed.\n  affected_authority: [.work-bundle/knowledge/notes/new.md]\n",
+        "  action: update\n  reason: Stable authority changed.\n  affected_authority: [../../outside/authority.md]\n",
+        "  action: update\n  reason: Stable authority changed.\n  affected_authority: [credentials/credentials.yaml]\n",
+    ],
+)
+def test_build_review_package_rejects_unbounded_knowledge_disposition(
+    tmp_path: Path, disposition: str
+) -> None:
+    root, _, task = workspace(tmp_path)
+    source = root / "src/compiler.py"
+    source.parent.mkdir()
+    source.write_text("def compile_task():\n    return 'old'\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    base = git(root, "rev-parse", "HEAD")
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        "related: {plan: plan-001, task: task-004}\n"
+        "knowledge_disposition:\n"
+        + disposition,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="knowledge disposition"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+def test_build_task_brief_compiles_auth_alias_with_carried_constraint(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    carry_accepted_constraint(spec)
+    write_decoy_knowledge(root)
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert COMPILED_AUTHORITY in packet
+    assert ACCEPTED_CONSTRAINT in packet
+    assert "decision_authority:" in packet
+    assert ACCEPTED_AUTHORITY_PATH not in packet.split("truth_basis:", 1)[1].split("expected_delta:", 1)[0]
+    assert DECOY_KNOWLEDGE not in packet
+
+
+def test_build_review_package_receives_same_resolved_auth_semantics(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    carry_accepted_constraint(spec)
+    write_decoy_knowledge(root)
+    base = committed_review_base(root)
+    handoff = write_executor_handoff(
+        root,
+        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
+    )
+
+    brief = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+    package = build_review_package(
+        args(root, task, handoff=str(handoff), base=base, head=base)
+    ).read_text(encoding="utf-8")
+
+    assert COMPILED_AUTHORITY in brief
+    assert COMPILED_AUTHORITY in package
+    assert ACCEPTED_CONSTRAINT in package
+    assert "## Accepted Truth Basis" in package
+    assert ACCEPTED_AUTHORITY_PATH not in package.split("## Accepted Truth Basis", 1)[1].split("## Allowed scope", 1)[0]
+    assert DECOY_KNOWLEDGE not in package
+
+
+def test_build_task_brief_compiles_auth_without_reading_durable_knowledge(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    carry_accepted_constraint(spec)
+    knowledge = write_decoy_knowledge(root)
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert COMPILED_AUTHORITY in packet
+    assert knowledge.read_text(encoding="utf-8") == DECOY_KNOWLEDGE + "\n"
+    assert DECOY_KNOWLEDGE not in packet
+    assert ACCEPTED_AUTHORITY_PATH not in packet.split("forbidden:", 1)[0]
+
+
+def test_build_task_brief_fails_closed_when_auth_lacks_carried_constraint(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            f"  - path: {ACCEPTED_AUTHORITY_PATH}\n    constraint: {ACCEPTED_CONSTRAINT}\n",
+            f"  - {ACCEPTED_AUTHORITY_PATH}\n",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="carried semantic constraint"):
+        build_task_brief(args(root, task))
+
+
+@pytest.mark.parametrize("action", ["update", "supersede", "reclassify"])
+def test_build_review_package_accepts_allocated_auth_in_knowledge_disposition(
+    tmp_path: Path, action: str
+) -> None:
+    root, spec, task = workspace(tmp_path)
+    carry_accepted_constraint(spec)
+    base = committed_review_base(root)
+    handoff = write_executor_handoff(
+        root,
+        f"  action: {action}\n  reason: Stable accepted authority changed.\n"
+        f"  affected_authority: [{ACCEPTED_AUTHORITY}]\n",
+    )
+
+    package = build_review_package(
+        args(root, task, handoff=str(handoff), base=base, head=base)
+    ).read_text(encoding="utf-8")
+
+    assert COMPILED_AUTHORITY in package
+    assert ACCEPTED_CONSTRAINT in package
+    assert f"action: {action}" in package
+    assert ACCEPTED_AUTHORITY in package
+    assert ACCEPTED_AUTHORITY_PATH not in package.split("## Knowledge disposition", 1)[1].split("## Allocated", 1)[0]
+
+
+def test_build_review_package_rejects_unallocated_auth_in_knowledge_disposition(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    carry_accepted_constraint(spec)
+    base = committed_review_base(root)
+    handoff = write_executor_handoff(
+        root,
+        "  action: update\n  reason: Stable accepted authority changed.\n"
+        "  affected_authority: [AUTH-002]\n",
+    )
+
+    with pytest.raises(SystemExit, match="unallocated decision authority"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+def test_build_review_package_rejects_missing_plan_identity(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    retarget_plan(root, task, "plan-B")
+    base = committed_review_base(root)
+    handoff = write_related_handoff(root, "related:\n  task: task-004\n")
+    review_target = root / ".work-bundle/runtime/execution/plan-B/task-004/review-package.md"
+
+    with pytest.raises(SystemExit, match="Handoff plan identity missing"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+    assert not review_target.exists()
+
+
+def test_build_review_package_rejects_null_plan_identity(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    retarget_plan(root, task, "plan-B")
+    base = committed_review_base(root)
+    handoff = write_related_handoff(root, "related:\n  plan: null\n  task: task-004\n")
+
+    with pytest.raises(SystemExit, match="Handoff plan identity missing"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+def test_build_review_package_rejects_wrong_explicit_plan(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    retarget_plan(root, task, "plan-B")
+    base = committed_review_base(root)
+    handoff = write_related_handoff(root, "related:\n  plan: plan-A\n  task: task-004\n")
+
+    with pytest.raises(SystemExit, match="Handoff plan mismatch: expected plan-B, got plan-A"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+def test_build_review_package_rejects_conflicting_plan_identities(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    retarget_plan(root, task, "plan-B")
+    base = committed_review_base(root)
+    handoff = write_related_handoff(
+        root,
+        "related:\n  plan: plan-B\n  task: task-004\nrelated_plan: plan-A\n",
+    )
+
+    with pytest.raises(SystemExit, match="Handoff plan identity conflict"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+def test_build_review_package_accepts_matching_plan_identity(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    retarget_plan(root, task, "plan-B")
+    base = committed_review_base(root)
+    handoff = write_related_handoff(root, "related:\n  plan: plan-B\n  task: task-004\n")
+
+    target = build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+    assert target == root / ".work-bundle/runtime/execution/plan-B/task-004/review-package.md"
+    assert target.is_file()

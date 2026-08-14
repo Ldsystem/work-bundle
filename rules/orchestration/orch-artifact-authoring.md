@@ -16,12 +16,15 @@ Keep orchestration artifacts human-readable, contract-compliant, and executable 
 
 ## Must
 
+- Require every executable task to declare the five-field Truth Basis. Decision authority is semantically distinct from generic source IDs and must be `none-relevant` or an `AUTH-NNN` alias allocated in order from a verified specification's accepted `source_knowledge`. Compiled briefs and review packages receive the same resolved `AUTH-NNN: <carried constraint>` values so executors can obey the authority without knowledge paths or rediscovery.
+- Put the earliest ordinary falsification task before broad simplification when a consequential assumption exists; do not create a separate checkpoint lifecycle.
+
 - Load only the directive contract and template references required for the artifact being created or validated.
 - Use human-readable Markdown for specifications, plans, phases, tasks, handoffs, and orchestration documents; keep compact YAML to front matter and index files where contracts require it.
 - Reference stable spec IDs such as `REQ-`, `CON-`, `AC-`, `OQ-`, and `API-` in plans, phases, and tasks instead of repeating full requirement prose.
 - Provide concrete source files, target files, target symbols, validation instructions, and completion criteria in every task.
 - Carry execution context forward through spec-ID references plus file-level instructions only.
-- Keep generated plans compact: use the fewest phases and tasks that preserve complete source-spec coverage, explicit dependencies, disjoint write scopes, validation ownership, handoff requirements, and review gates.
+- Keep generated plans compact through minimum orchestration overhead while preserving Truth Basis continuity, independently falsifiable and testable increments, short evidence loops, complete source-spec coverage, explicit dependencies, disjoint write scopes, validation ownership, bounded failure radius, handoff requirements, and review boundaries. Do not split one mechanical increment merely to reduce task size or file count.
 - When plans contain contract-decoupled parallel tasks, include common contract groups, barrier participant maps, readiness criteria, release conditions, convergence owners, and task-level forbidden peer validation instructions.
 - Keep source-context, extra-evidence-loop, open-question, Knowledge Base Update, and body-level `Quality gate: verified|blocked` sections in specifications when required by the specification contract.
 - Summarize spec intent at most once in a root plan, then cite IDs for downstream detail.

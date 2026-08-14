@@ -122,6 +122,8 @@ def test_project_context_preflight_rule_is_indexed_and_metadata_backed() -> None
     assert "accepted executor-result handoffs" in rule
     assert "record `no-index` or `not-indexed` fallback" in rule
     assert "do not initialize CodeGraph or run `codegraph sync`" in rule
+    assert "Truth Basis" in rule
+    assert "device-local observations" in rule
 
 
 def test_validate_rules_rejects_scoped_rules_root(tmp_path: Path) -> None:
@@ -629,6 +631,8 @@ def test_v4_portable_and_device_local_authority_contracts_converge() -> None:
     for artifact in (agents, agents_template, workflow, preflight_rule, registry_rule, initialize):
         assert "portable project/topology authority" in artifact
         assert "device" in artifact and "binding" in artifact
+    for artifact in (agents, agents_template, workflow):
+        assert "Truth Basis" in artifact
     assert "bootstrap.project_registry#device_bindings" in v4_contract
     assert "explicit-read-or-migration-only" in v4_contract
     assert 'registry/projects.yaml' not in control_plane

@@ -11,6 +11,8 @@ specification -> plan -> phase -> task -> execute -> executor-result -> task rev
 
 Durable orchestration artifacts live under `.work-bundle/orchestration/`. Disposable task briefs, review packages, and lightweight development plans live under `.work-bundle/runtime/`; they have no active/archive/index lifecycle. Durable project knowledge remains owned by approved `ks-*` flows under `.work-bundle/knowledge/`.
 
+Every development path uses the same five-field Truth Basis: purpose, as-is evidence, accepted decision authority, expected delta, and conflict status. Lightweight plans keep it compact and ephemeral. Heavy planning normalizes it in each task, then compiles it into the brief and review package. A material conflict stops through the existing typed route; no method invents authority.
+
 ## Semantic and coding methods
 
 Semantic artifacts use `dev-semantic-convergence`: draft, view through caller-defined lenses, repair only discovered defects, and repeat until unchanged or blocked. Specifications use user purpose, authority support, requirement consistency, impact radius, knowledge disposition, and execution-workspace lenses. Plans use source-ID coverage, dependencies, write scopes, validation ownership, allocation, barrier safety, and executor-context completeness.
@@ -35,7 +37,7 @@ execution_workspace:
 
 Specification creation decides policy only; it does not provision a worktree. Planning carries that policy into executable tasks.
 
-Plans keep durable artifacts normalized and DRY. Every executable task cites source IDs, exact file scope, dependencies, validation, methodology, allocated rules/skills, a provider-neutral executor profile, and acceptance-review requirements. Contract-decoupled parallel tasks share a stable contract group, validate only against that contract plus accepted handoffs and task-local files, reach a named barrier, and defer joint checks to the convergence owner.
+Plans keep durable artifacts normalized and DRY. Every executable task cites source IDs, the accepted Truth Basis, exact file scope, dependencies, validation, methodology, allocated rules/skills, a provider-neutral executor profile, and acceptance-review requirements. Decomposition uses minimum orchestration overhead while preserving Truth Basis continuity, independently falsifiable and testable increments, short evidence loops, dependencies, disjoint write scopes, validation ownership, bounded failure radius, and review boundaries; one sound mechanical increment is not split merely to minimize size. When simplification depends on a consequential assumption, the earliest ordinary task cheaply falsifies it before broad edits; do not add a checkpoint phase or risk-score lifecycle. Contract-decoupled parallel tasks share a stable contract group, validate only against that contract plus accepted handoffs and task-local files, reach a named barrier, and defer joint checks to the convergence owner.
 
 Generated specifications and plans record compact semantic convergence evidence:
 
@@ -49,7 +51,7 @@ semantic_loop:
 
 ## Compiled execution context
 
-Before normal bounded execution, `build-task-brief` compiles the task and its cited source IDs into a self-contained ephemeral packet. The packet resolves exact requirements, constraints, interfaces, file scope, methodology, allocated rules, validation commands, workspace root, handoff contract, and review requirement. Missing source IDs fail closed.
+Before normal bounded execution, `build-task-brief` compiles the task, its cited source IDs, and the same five-field Truth Basis into a self-contained ephemeral packet. The packet resolves exact requirements, constraints, interfaces, file scope, methodology, allocated rules, validation commands, workspace root, handoff contract, and review requirement. Missing source IDs fail closed. Decision authority is semantically distinct from generic source IDs and must be `none-relevant` or an `AUTH-NNN` alias allocated from verified specification reconciliation; the compiler resolves each alias to `AUTH-NNN: <carried constraint>` without exposing knowledge paths. Invented, candidate, background, blocked, or superseded authority and any conflict block compilation.
 
 For pre-commit acceptance, `build-review-package --head worktree` includes tracked, staged, unstaged, and untracked changes under a stable worktree identity while withholding protected-path content.
 
@@ -77,7 +79,7 @@ scheduler selects executable task
   -> accept | repair | blocked
 ```
 
-Executors own implementation, task-local verification, and executor-result evidence. Reviewers own acceptance judgment for requirement fit, correctness, edge cases, unnecessary complexity, allocated obligations, and validation sufficiency. Schedulers own dependencies, barriers, context compilation, delegation, and evidence shape; they do not perform code-quality review.
+Executors own implementation, task-local verification, and executor-result evidence, including a task-local knowledge disposition of `none`, `update`, `supersede`, or `reclassify`. They never invoke persistence or read knowledge. Reviewers own acceptance judgment for the accepted Truth Basis, requirement fit, correctness, edge cases, test oracle, disposition, unnecessary complexity, allocated obligations, and validation sufficiency. Schedulers own dependencies, barriers, context compilation, delegation, and evidence shape; they do not perform code-quality review.
 
 Visible multi-agent subagents are preferred only when user/environment policy allows and write scopes are disjoint. Invisible helper workers may support bounded analysis but never own delegated task implementation. When independent subagents are unavailable, record `reviewer_independent: false` and perform an explicit reduced-independence second pass.
 
@@ -105,10 +107,10 @@ Resume the step that owns the failure. Repair a task for rejected implementation
 
 `orch-review-plan` audits workflow completion, task acceptance evidence, handoff integrity, knowledge disposition, finalization gates, and archive readiness. It does not redo task code review or repair source code.
 
-Archive is allowed only after required task reviews are accepted, validation and handoffs are coherent, barriers converged, Knowledge Base Update disposition is `completed` or `not-needed`, approved `ks-*` return evidence exists when required, and allowed commit/CodeGraph/metadata/archive/index mechanics complete or are explicitly inapplicable.
+Final review aggregates accepted task dispositions from execution and task-review evidence. Any accepted `update`, `supersede`, or `reclassify` promotes durable closure to `required` even when the specification's upstream Knowledge Base Update state was `not-needed`; accepted `none` does not. Rejected task dispositions do not trigger closure. Archive is allowed only after required task reviews are accepted, validation and handoffs are coherent, barriers converged, the resulting Knowledge Base Update disposition is `completed` or `not-needed`, approved `ks-*` return evidence exists when required, and allowed commit/CodeGraph/metadata/archive/index mechanics complete or are explicitly inapplicable.
 
-Only approved keep-summarizing owners write durable knowledge. Review may invoke that owner and validate returned paths or an evidence-backed no-write result; it must not write knowledge directly.
+Only approved keep-summarizing owners write durable knowledge. Final orchestration review owns approved persistence delegation and may invoke that owner, then validate returned paths or an evidence-backed no-write result; executors and orchestration itself must not write knowledge directly.
 
 ## Lightweight development lane
 
-Use `dev-create-task-plan` for bounded mechanical work with stable decisions. It writes one disposable plan under `.work-bundle/runtime/dev-plans/` and creates no orchestration artifact tree. Escalate to full orchestration for unresolved architecture/API/data/workflow decisions, wide impact, multiple repositories, migration/deployment sequencing, durable-knowledge decisions, or parallel contract/barrier needs.
+Use `dev-create-task-plan` for bounded mechanical work with stable decisions. After preflight and source grounding it invokes one bounded `ks-what-is-helpful` gateway, carries accepted authority or evidence-backed `none relevant`, writes one disposable plan under `.work-bundle/runtime/dev-plans/`, and creates no orchestration artifact tree. Its lightweight completion owner records an evidence-backed no-write result for `none`; for `update`, `supersede`, or `reclassify`, it invokes the approved keep-summarizing lifecycle and validates return evidence before completion. Escalate to full orchestration for unresolved architecture/API/data/workflow decisions, wide impact, multiple repositories, migration/deployment sequencing, unresolved durable-knowledge decisions, or parallel contract/barrier needs.

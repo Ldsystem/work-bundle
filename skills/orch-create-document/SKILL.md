@@ -83,5 +83,3 @@ Use `scripts/orch.py` when deterministic helper behavior is needed.
 ## Boundary
 
 Platform write boundary and durable-knowledge prohibition: follow `orch-orchestration-boundary` (`rules/orchestration/orch-orchestration-boundary.md`).
-
-> **Deprecation:** The role-context subsystem is deprecated; see spec §0.9 in `spec-process-orch-skill-rule-boundary-optimization-20260611`. Do not invoke it from orch skills.

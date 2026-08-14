@@ -50,6 +50,46 @@ def test_handoff_helper_indexes_sparse_executor_result(tmp_path: Path) -> None:
     assert row["path"].endswith("handoff-exec-20990101-001-task-result.yaml")
 
 
+def test_write_handoff_fills_missing_task_plan_from_authorized_args(tmp_path: Path) -> None:
+    content = tmp_path / "handoff-content.txt"
+    content.write_text(
+        "related:\n  task: task-001\nresult:\n  state: completed\n  summary: ok\n",
+        encoding="utf-8",
+    )
+    cmd_write_handoff(
+        handoff_args(tmp_path, content_file=str(content), related_plan="plan-B", related_task="task-001")
+    )
+    row = next(item for item in index_handoffs(handoff_args(tmp_path)) if item["id"] == "handoff-exec-20990101-001")
+    written = (tmp_path / row["path"]).read_text(encoding="utf-8")
+    assert "plan: plan-B" in written
+    assert "task: task-001" in written
+
+
+def test_write_handoff_rejects_conflicting_plan_identity(tmp_path: Path) -> None:
+    content = tmp_path / "handoff-content.txt"
+    content.write_text(
+        "related:\n  plan: plan-A\n  task: task-001\nresult:\n  state: completed\n  summary: ok\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="Handoff plan mismatch"):
+        cmd_write_handoff(
+            handoff_args(tmp_path, content_file=str(content), related_plan="plan-B", related_task="task-001")
+        )
+
+
+def test_write_handoff_rejects_nested_and_flat_plan_conflict(tmp_path: Path) -> None:
+    content = tmp_path / "handoff-content.txt"
+    content.write_text(
+        "related:\n  plan: plan-B\n  task: task-001\nrelated_plan: plan-A\n"
+        "result:\n  state: completed\n  summary: ok\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="Handoff plan identity conflict"):
+        cmd_write_handoff(
+            handoff_args(tmp_path, content_file=str(content), related_plan="plan-B", related_task="task-001")
+        )
+
+
 def test_handoff_helper_rejects_active_orchestration_handoff(tmp_path: Path) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text("# retired\n", encoding="utf-8")
@@ -85,15 +125,214 @@ def test_specification_contract_uses_semantic_loop_and_workspace_policy() -> Non
         "isolation: required|preferred|existing",
         "semantic_loop:",
         "dev-semantic-convergence",
+        "front-matter `source_knowledge` contains accepted authority only",
+        "Candidate, background, blocked, and superseded",
+        "AUTH-NNN: <carried constraint>",
     ]:
         assert token in contract
     assert "Extra evidence loop" not in contract
+
+
+def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    plan_root = tmp_path / ".work-bundle/orchestration/plan/active"
+    handoff_root = tmp_path / ".work-bundle/orchestration/handoff/executor/active"
+    plan_root.mkdir(parents=True)
+    handoff_root.mkdir(parents=True)
+    (plan_root / "plan.md").write_text(
+        "---\nid: plan-001\nstatus: Completed\n---\n\n"
+        "## 2.1 Knowledge Base Update Carry Forward\n\n"
+        "- **Disposition**: not-needed\n"
+        "- **Closure return**: missing\n",
+        encoding="utf-8",
+    )
+    task = plan_root / "plan-001/phase-001/task.md"
+    task.parent.mkdir(parents=True)
+    task.write_text(
+        "---\nid: task-001\nplan_id: plan-001\nphase_id: phase-001\nstatus: Completed\n---\n",
+        encoding="utf-8",
+    )
+    (handoff_root / "accepted.yaml").write_text(
+        "id: handoff-001\ntype: executor-result\nstatus: active\n"
+        "related: {plan: plan-001, task: task-001}\n"
+        "acceptance_review: {verdict: accept}\n"
+        "knowledge_disposition:\n"
+        "  action: update\n"
+        "  reason: Stable authority changed.\n"
+        "  affected_authority: [AUTH-001]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="knowledge-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-001"))
+
+    assert (plan_root / "plan.md").is_file()
+
+
+@pytest.mark.parametrize(
+    ("verdict", "action", "closure_return"),
+    [
+        ("repair", "update", "missing"),
+        ("accept", "none", "missing"),
+        ("accept", "reclassify", "completed"),
+    ],
+)
+def test_archive_plan_allows_only_resolved_or_non_triggering_dispositions(
+    tmp_path: Path, verdict: str, action: str, closure_return: str
+) -> None:
+    from plans import cmd_archive_plan
+
+    plan_root = tmp_path / ".work-bundle/orchestration/plan/active"
+    handoff_root = tmp_path / ".work-bundle/orchestration/handoff/executor/active"
+    plan_root.mkdir(parents=True)
+    handoff_root.mkdir(parents=True)
+    (plan_root / "plan.md").write_text(
+        "---\nid: plan-001\nstatus: Completed\n---\n\n"
+        "## 2.1 Knowledge Base Update Carry Forward\n\n"
+        "- **Disposition**: not-needed\n"
+        f"- **Closure return**: {closure_return}\n",
+        encoding="utf-8",
+    )
+    (handoff_root / "task.yaml").write_text(
+        "id: handoff-001\ntype: executor-result\nstatus: active\n"
+        "related: {plan: plan-001, task: task-001}\n"
+        f"acceptance_review: {{verdict: {verdict}}}\n"
+        "knowledge_disposition:\n"
+        f"  action: {action}\n"
+        "  reason: Task-local evidence.\n"
+        f"  affected_authority: {'[]' if action == 'none' else '[AUTH-001]'}\n",
+        encoding="utf-8",
+    )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-001"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan.md").is_file()
+
+
+def _write_archive_plan(
+    tmp_path: Path,
+    plan_id: str,
+    *,
+    disposition: str = "not-needed",
+    closure_return: str = "missing",
+) -> None:
+    plan_root = tmp_path / ".work-bundle/orchestration/plan/active"
+    plan_root.mkdir(parents=True, exist_ok=True)
+    (plan_root / f"{plan_id}.md").write_text(
+        f"---\nid: {plan_id}\nstatus: Completed\n---\n\n"
+        "## 2.1 Knowledge Base Update Carry Forward\n\n"
+        f"- **Disposition**: {disposition}\n"
+        f"- **Closure return**: {closure_return}\n",
+        encoding="utf-8",
+    )
+    task = plan_root / f"{plan_id}/phase-001/task.md"
+    task.parent.mkdir(parents=True, exist_ok=True)
+    task.write_text(
+        f"---\nid: task-001\nplan_id: {plan_id}\nphase_id: phase-001\nstatus: Completed\n---\n",
+        encoding="utf-8",
+    )
+
+
+def _write_archive_handoff(
+    tmp_path: Path,
+    filename: str,
+    related: str,
+    *,
+    verdict: str = "accept",
+    action: str = "update",
+    location: str = "active",
+) -> None:
+    handoff_root = tmp_path / ".work-bundle/orchestration/handoff/executor" / location
+    handoff_root.mkdir(parents=True, exist_ok=True)
+    affected = "[]" if action == "none" else "[AUTH-001]"
+    (handoff_root / filename).write_text(
+        f"id: {filename.rsplit('.', 1)[0]}\ntype: executor-result\nstatus: {location}\n"
+        f"related: {related}\n"
+        f"acceptance_review: {{verdict: {verdict}}}\n"
+        "knowledge_disposition:\n"
+        f"  action: {action}\n"
+        "  reason: Task-local evidence.\n"
+        f"  affected_authority: {affected}\n",
+        encoding="utf-8",
+    )
+
+
+def test_archive_plan_ignores_foreign_plan_handoff_with_colliding_task_id(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    _write_archive_plan(tmp_path, "plan-A")
+    _write_archive_plan(tmp_path, "plan-B")
+    _write_archive_handoff(tmp_path, "plan-a.yaml", "{plan: plan-A, task: task-001}")
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
+    assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-A.md").is_file()
+
+
+def test_archive_plan_ignores_task_only_handoff_with_ambiguous_task_id(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    _write_archive_plan(tmp_path, "plan-B")
+    _write_archive_handoff(tmp_path, "task-only.yaml", "{task: task-001}")
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
+
+
+def test_archive_plan_ignores_archived_foreign_handoff_with_colliding_task_id(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    _write_archive_plan(tmp_path, "plan-A")
+    _write_archive_plan(tmp_path, "plan-B")
+    _write_archive_handoff(
+        tmp_path, "historical.yaml", "{plan: plan-A, task: task-001}", location="archived"
+    )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
+
+
+def test_archive_plan_same_plan_accepted_update_still_blocks_unresolved_closure(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    _write_archive_plan(tmp_path, "plan-B")
+    _write_archive_handoff(tmp_path, "plan-b.yaml", "{plan: plan-B, task: task-001}")
+
+    with pytest.raises(SystemExit, match="knowledge-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md").is_file()
+
+
+def test_archive_plan_same_plan_resolved_closure_allows_archive(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    _write_archive_plan(tmp_path, "plan-B", closure_return="completed")
+    _write_archive_handoff(tmp_path, "plan-b.yaml", "{plan: plan-B, task: task-001}")
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
 
 
 def test_task_contract_compiles_methodology_capability_and_review() -> None:
     contract = read("references/assets/orchestration/contract/task-v1.md")
     for token in [
         "source_ids:",
+        "truth_basis:",
+        "as_is_evidence:",
+        "decision_authority:",
+        "expected_delta:",
+        "conflict_status: clear|escalate",
+        "decision-blocked",
+        "semantically distinct from generic `source_ids`",
+        "none-relevant",
+        "verified specification's accepted `source_knowledge`",
+        "AUTH-NNN: <carried constraint>",
         "methodology:",
         "tdd|systematic-debugging|direct|loop-coding",
         "executor_profile:",
@@ -117,6 +356,15 @@ def test_executor_result_contract_carries_acceptance_review() -> None:
         "reviewed_head: commit-or-tree-identity",
         "scope: specification | correctness | quality | validation | rule",
         "Full specification, root-plan, and phase inspection is an escalation path",
+        "knowledge_disposition:",
+        "none | update | supersede | reclassify",
+        "review owns any approved persistence follow-up",
+        "must not name knowledge paths or any `ks-*` skill",
+        "exact paths already present in the compiled task scope",
+        "allocated `AUTH-NNN` aliases",
+        "related.plan",
+        "must equal the assigned task's `plan_id` and `id`",
+        "fails closed before `build-review-package`",
     ]:
         assert token in contract
 
@@ -131,6 +379,13 @@ def test_workflow_separates_durable_artifacts_from_runtime_packets() -> None:
         "Missing source IDs fail closed",
         "Full specification, root-plan, and phase reading is an escalation path",
         "Execution remains no-retrieval",
+        "AUTH-NNN: <carried constraint>",
+        "same five-field Truth Basis",
+        "earliest ordinary task",
+        "knowledge disposition",
+        "review owns approved persistence",
+        "minimum orchestration overhead",
+        "accepted task dispositions",
     ]:
         assert token in workflow
 
@@ -145,6 +400,8 @@ def test_workflow_assigns_review_ownership_and_repair_loop() -> None:
         "After two failed low-cost repair rounds",
         "A task becomes `Completed` only when",
         "required `accept` review evidence",
+        "accepted Truth Basis",
+        "test oracle",
     ]:
         assert token in workflow
 
@@ -160,6 +417,9 @@ def test_review_rule_uses_typed_resume_routing() -> None:
         "plan repair only for a decomposition defect",
         "specification repair only for a requirement, design, or authority defect",
         "Do not create a repair specification for every failed review gate",
+        "accepted `update`, `supersede`, or `reclassify`",
+        "rejected dispositions",
+        "archive",
     ]:
         assert token in rule
 
@@ -203,6 +463,11 @@ def test_evals_cover_twenty_migration_behaviors() -> None:
         "before the final edit",
         "durable knowledge update is unresolved",
         "compiled brief is valid",
+        "ordinary characterization task",
+        "conflict_status escalate",
+        "asks to invoke a ks-* writer",
+        "implementation and tests do not match",
+        "device-local checkout observations disagree",
     ]:
         assert token in prompts
     for token in [

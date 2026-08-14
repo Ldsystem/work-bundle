@@ -34,6 +34,7 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 - Inspect every applicable `source_repositories[]` entry before specification evidence collection, implementation planning, execution, review, and project-scope metadata updates.
 - Treat each v4 portable repository joined to its device binding, each v3 `source_repositories[]` member binding, or each v2 compatibility entry as a separate `project_root` source boundary for preflight, CodeGraph checks, edits, validation, and delegation.
 - For Git-backed repositories, compare live Git evidence with portable v4 branch policy and device-local observations, v3 `expected_branch` and accepted `observed_head`, or v2 `working_branch` and `last_commit_id`, according to the metadata version being read.
+- Carry verified repository structure, branch/HEAD, baseline, and CodeGraph evidence into the as-is evidence of the current Truth Basis. If portable topology, device-local observations, live Git, or expected delta conflict materially, stop through the existing repository- or decision-blocked route before source edits.
 - For a managed worktree, verify `project_root` and absolute `git-common-dir` are under `workspace_root`; treat an external origin path as a read-only locator outside bounded provisioning or refresh.
 - Block on branch mismatch, missing required repository metadata, stale commit baseline not explained by accepted executor-result handoffs, inaccessible repositories, unresolved Git status, or unexplained dirty status.
 - Preserve accepted-handoff baseline semantics: only validated executor-result handoffs may explain expected dirty worktree changes during plan execution.
@@ -57,6 +58,7 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 ## Validation
 
 - Confirm metadata v4 portable topology was read from `$workspace_root/.work-bundle/project.yaml` and local paths/observations were read from the matching bootstrap-resolved `device_bindings` entry before repository evidence collection, planning, execution, or review.
+- Confirm the Truth Basis cites verified portable topology and device-local observations without moving local fields into v4 project metadata.
 - Confirm registry access, when needed, used the bootstrap-resolved `project_registry` path.
 - Confirm the active workspace, mode, portable repositories, local member project roots, and repository boundaries were identified from the correct authority for the active metadata version.
 - Confirm Git-backed repositories recorded expected branch, actual branch, expected commit, actual commit, branch status, commit status, and accepted-baseline status.

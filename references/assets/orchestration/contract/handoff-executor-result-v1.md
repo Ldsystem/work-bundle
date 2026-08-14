@@ -50,6 +50,12 @@ validation:
       result: passed | failed | skipped
       note: "Failure reason or skip reason only."
 
+knowledge_disposition:
+  action: none | update | supersede | reclassify
+  reason: "Task-local post-validation evidence."
+  affected_authority:
+    - AUTH-NNN-or-allocated-source-id-or-task-scope-path
+
 contract_decoupling:
   common_contract_group: CG-001
   common_contract_paths:
@@ -145,8 +151,10 @@ allocation_evidence:
 ## Required By Applicability
 
 - `id`, `type`, `status`, `project`, `created_at`, `related`, and `result` are always required.
+- For a task-scoped executor-result, `related.plan` and `related.task` are required and must equal the assigned task's `plan_id` and `id`. Nested `related.plan` and flat `related_plan` must resolve to exactly one identity. Missing, null, conflicting, or mismatched plan identity fails closed before `build-review-package` produces a review package. Do not infer plan identity from a local task ID.
 - `changes.files` is required when files, symbols, artifacts, schemas, commands, or docs changed or were inspected as the task output.
 - `validation.commands` is required when any command, test, lint, inspection, or manual verification was run or intentionally skipped.
+- `knowledge_disposition` is required for every completed or partial meaningful move. It records task-local evidence only and does not authorize durable-knowledge retrieval or writes. A change action requires allocated `AUTH-NNN` aliases from the task's accepted decision authority, allocated source IDs, or exact paths already present in the compiled task scope; `none` requires an empty affected-authority list. Invented or unallocated AUTH aliases fail closed.
 - `contract_decoupling` is required when a task is marked contract-decoupled or depends on a common contract group.
 - `barrier` is required when a task is a barrier participant or convergence owner.
 - `convergence` is required when the task owns post-barrier joint debug, integration checks, or cross-branch validation.
@@ -189,6 +197,7 @@ Compact handoffs must not weaken safety gates:
 - Task-fit evidence must prove the executor followed the compiled brief and assigned task. Full specification, root-plan, and phase inspection is an escalation path when compiled context is inconsistent.
 - Acceptance-review evidence must identify review independence, the reviewed tree, verdict, and blocking or advisory findings.
 - Executor-result handoffs must not retrieve or write `.work-bundle/knowledge/`.
+- `knowledge_disposition.action` is exactly `none`, `update`, `supersede`, or `reclassify`; reasons and affected authority must not name knowledge paths or any `ks-*` skill, and review owns any approved persistence follow-up.
 - Contract-decoupled handoffs must show validation against the common contract and accepted prior handoffs, not sibling in-progress implementation.
 - Barrier handoffs must show whether the participant reached the barrier or blocked before convergence work is scheduled.
 - Violation closure handoffs must use review-owned lifecycle evidence and must not delete violation evidence files.

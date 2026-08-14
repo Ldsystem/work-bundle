@@ -15,6 +15,7 @@ from core import is_relative_to, read_front_matter, resolve_workspace_root
 
 
 SOURCE_ID_RE = re.compile(r"^[A-Z][A-Z0-9_-]*-\d+$")
+AUTH_ALIAS_RE = re.compile(r"^AUTH-\d{3}$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 SENSITIVE_KEY_RE = re.compile(
     r"(?:^|[_-])(credential_values?|password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)(?:$|[_-])",
@@ -27,6 +28,18 @@ SENSITIVE_ASSIGNMENT_RE = re.compile(
 MAX_DIFF_BYTES = 120_000
 MAX_DIFF_LINES = 4_000
 WORKTREE_REFS = {"worktree", "working-tree", "working_tree"}
+TRUTH_BASIS_FIELDS = (
+    "purpose",
+    "as_is_evidence",
+    "decision_authority",
+    "expected_delta",
+    "conflict_status",
+)
+KNOWLEDGE_DISPOSITION_ACTIONS = {"none", "update", "supersede", "reclassify"}
+KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE = re.compile(
+    r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-[a-z0-9-]+\b)",
+    re.IGNORECASE,
+)
 
 
 def _split_top_level(value: str, delimiter: str = ",") -> list[str]:
@@ -272,6 +285,8 @@ def _source_records(path: Path, body: str) -> dict[str, str]:
     records: dict[str, str] = {}
 
     def add(identifier: str, value: str) -> None:
+        if AUTH_ALIAS_RE.fullmatch(identifier):
+            return
         value = _strip_markup(value)
         if not value:
             return
@@ -324,6 +339,243 @@ def _resolve_reference(value: Any, records: dict[str, str], source_paths: list[P
     if isinstance(value, dict):
         return {key: _resolve_reference(item, records, source_paths) for key, item in value.items()}
     return value
+
+
+def _nonempty_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _handoff_identity_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"null", "none", "~"}:
+        return None
+    return text
+
+
+def explicit_handoff_plan_identities(handoff: dict[str, Any]) -> list[str]:
+    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+    identities: list[str] = []
+    for raw in (related.get("plan"), handoff.get("related_plan")):
+        text = _handoff_identity_text(raw)
+        if text and text not in identities:
+            identities.append(text)
+    return identities
+
+
+def unique_explicit_handoff_plan_id(handoff: dict[str, Any]) -> str | None:
+    identities = explicit_handoff_plan_identities(handoff)
+    if len(identities) != 1:
+        return None
+    return identities[0]
+
+
+def _assert_task_handoff_identity(handoff: dict[str, Any], task_id: str, plan_id: str) -> None:
+    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+    related_task = related.get("task") or handoff.get("related_task")
+    if related_task != task_id:
+        raise SystemExit(f"Handoff task mismatch: expected {task_id}, got {related_task or 'missing'}")
+    identities = explicit_handoff_plan_identities(handoff)
+    if not identities:
+        raise SystemExit(f"Handoff plan identity missing: expected {plan_id}")
+    if len(identities) > 1:
+        raise SystemExit(f"Handoff plan identity conflict: {' vs '.join(identities)}")
+    if identities[0] != plan_id:
+        raise SystemExit(f"Handoff plan mismatch: expected {plan_id}, got {identities[0]}")
+
+
+def _source_knowledge_entry(entry: Any) -> tuple[str | None, str | None]:
+    if isinstance(entry, str):
+        return _nonempty_text(entry), None
+    if isinstance(entry, dict):
+        return _nonempty_text(entry.get("path")), _nonempty_text(entry.get("constraint"))
+    return None, None
+
+
+def _constraint_exposes_knowledge_path(constraint: str) -> bool:
+    normalized = constraint.strip().removeprefix("./")
+    return (
+        normalized == ".work-bundle/knowledge"
+        or normalized.startswith(".work-bundle/knowledge/")
+        or ".work-bundle/knowledge/" in normalized
+    )
+
+
+def _verified_specification_authority(source_paths: list[Path]) -> dict[str, str]:
+    accepted: dict[str, str] = {}
+    authority_index = 0
+    for source_path in source_paths:
+        metadata, _ = _read_structured(source_path)
+        if metadata.get("status") != "verified":
+            raise SystemExit(f"Task decision_authority requires a verified specification: {source_path}")
+        for entry in _as_list(metadata.get("source_knowledge")):
+            path, constraint = _source_knowledge_entry(entry)
+            if path is None and constraint is None:
+                continue
+            authority_index += 1
+            accepted[f"AUTH-{authority_index:03d}"] = constraint or ""
+    return accepted
+
+
+def _allocated_decision_aliases(truth_basis: dict[str, Any]) -> set[str]:
+    aliases: set[str] = set()
+    for value in _as_list(truth_basis.get("decision_authority")):
+        alias = str(value).split(":", 1)[0].strip()
+        if AUTH_ALIAS_RE.fullmatch(alias):
+            aliases.add(alias)
+    return aliases
+
+
+def read_structured_artifact(path: Path) -> dict[str, Any]:
+    data, _ = _read_structured(path)
+    return data
+
+
+def _compile_truth_basis(
+    task: dict[str, Any],
+    records: dict[str, str],
+    source_paths: list[Path],
+) -> dict[str, Any]:
+    raw = task.get("truth_basis")
+    if not isinstance(raw, dict):
+        raise SystemExit("Task Truth Basis is required")
+    missing = [field for field in TRUTH_BASIS_FIELDS if field not in raw]
+    if missing:
+        raise SystemExit(f"Task Truth Basis missing fields: {', '.join(missing)}")
+    purpose = raw.get("purpose")
+    if not isinstance(purpose, str) or not purpose.strip():
+        raise SystemExit("Task Truth Basis purpose must be non-empty")
+    list_fields: dict[str, list[Any]] = {}
+    for field in ("as_is_evidence", "decision_authority", "expected_delta"):
+        values = _as_list(raw.get(field))
+        if not values or any(not isinstance(value, str) or not value.strip() for value in values):
+            raise SystemExit(f"Task Truth Basis {field} must be a non-empty string list")
+        list_fields[field] = values
+    decision_authority = list_fields["decision_authority"]
+    accepted_authority = _verified_specification_authority(source_paths)
+    if decision_authority == ["none-relevant"]:
+        compiled_authority = decision_authority
+    else:
+        compiled_authority = []
+        if "none-relevant" in decision_authority:
+            raise SystemExit(
+                "Task Truth Basis decision_authority must use none-relevant or verified specification authority"
+            )
+        for value in decision_authority:
+            if value not in accepted_authority:
+                raise SystemExit(
+                    "Task Truth Basis decision_authority must use none-relevant or verified specification authority"
+                )
+            constraint = accepted_authority[value]
+            if not constraint:
+                raise SystemExit(
+                    f"Task Truth Basis {value} is missing a carried semantic constraint from verified specification source_knowledge"
+                )
+            if _constraint_exposes_knowledge_path(constraint):
+                raise SystemExit(
+                    f"Task Truth Basis {value} carried constraint must not expose a knowledge path"
+                )
+            compiled_authority.append(f"{value}: {constraint}")
+    conflict_status = raw.get("conflict_status")
+    if conflict_status not in {"clear", "escalate"}:
+        raise SystemExit("Task Truth Basis conflict_status must be clear or escalate")
+    if conflict_status == "escalate":
+        raise SystemExit("decision-blocked: Task Truth Basis conflict requires authority repair")
+    return {
+        "purpose": purpose.strip(),
+        "as_is_evidence": _resolve_reference(list_fields["as_is_evidence"], records, source_paths),
+        "decision_authority": compiled_authority,
+        "expected_delta": _resolve_reference(list_fields["expected_delta"], records, source_paths),
+        "conflict_status": conflict_status,
+    }
+
+
+def evaluate_knowledge_closure_state(
+    *,
+    upstream_disposition: str,
+    accepted_task_handoffs: list[dict[str, Any]],
+    closure_return: str = "missing",
+) -> dict[str, Any]:
+    if upstream_disposition not in {"required", "not-needed", "completed", "blocked"}:
+        raise SystemExit("Invalid upstream Knowledge Base Update disposition")
+    if closure_return not in {"missing", "completed", "not-needed", "blocked"}:
+        raise SystemExit("Invalid knowledge closure return state")
+
+    triggers: list[dict[str, str]] = []
+    for handoff in accepted_task_handoffs:
+        review = handoff.get("acceptance_review")
+        if not isinstance(review, dict) or review.get("verdict") != "accept":
+            continue
+        disposition = handoff.get("knowledge_disposition")
+        if not isinstance(disposition, dict):
+            raise SystemExit("Accepted task handoff knowledge disposition is required")
+        action = disposition.get("action")
+        if action is None and "action" in disposition:
+            action = "none"
+        if action not in KNOWLEDGE_DISPOSITION_ACTIONS:
+            raise SystemExit("Accepted task handoff knowledge disposition action is invalid")
+        if action != "none":
+            related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+            triggers.append({"task": str(related.get("task") or "unknown"), "action": str(action)})
+
+    closure_required = upstream_disposition in {"required", "blocked"} or bool(triggers)
+    if not closure_required:
+        disposition = upstream_disposition
+        if disposition == "completed":
+            return {"disposition": "completed", "archive_blocked": False, "triggers": triggers}
+        return {"disposition": "not-needed", "archive_blocked": False, "triggers": triggers}
+    if closure_return in {"completed", "not-needed"}:
+        return {"disposition": closure_return, "archive_blocked": False, "triggers": triggers}
+    if closure_return == "blocked":
+        return {"disposition": "blocked", "archive_blocked": True, "triggers": triggers}
+    return {"disposition": "required", "archive_blocked": True, "triggers": triggers}
+
+
+def _validated_knowledge_disposition(
+    handoff: dict[str, Any],
+    accepted_source_ids: list[str],
+    accepted_authority_paths: list[str],
+    allocated_decision_aliases: set[str],
+) -> dict[str, Any]:
+    raw = handoff.get("knowledge_disposition")
+    if not isinstance(raw, dict):
+        raise SystemExit("Executor result knowledge disposition is required")
+    action = raw.get("action")
+    if action is None and "action" in raw:
+        action = "none"
+    if action not in KNOWLEDGE_DISPOSITION_ACTIONS:
+        raise SystemExit(
+            "Executor result knowledge disposition action must be none, update, supersede, or reclassify"
+        )
+    reason = raw.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise SystemExit("Executor result knowledge disposition reason must be non-empty")
+    affected = _as_list(raw.get("affected_authority"))
+    if any(not isinstance(value, str) or not value.strip() for value in affected):
+        raise SystemExit("Executor result affected_authority must contain only non-empty strings")
+    if action == "none" and affected:
+        raise SystemExit("Executor result knowledge disposition none must not name affected authority")
+    if action != "none" and not affected:
+        raise SystemExit("Executor result knowledge disposition change must name affected authority")
+    disposition_text = "\n".join([reason, *affected])
+    if KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE.search(disposition_text):
+        raise SystemExit("Executor result knowledge disposition must not instruct knowledge access or writes")
+    for authority in affected:
+        if AUTH_ALIAS_RE.fullmatch(authority):
+            if authority not in allocated_decision_aliases:
+                raise SystemExit("Executor result knowledge disposition cites unallocated decision authority")
+            continue
+        if SOURCE_ID_RE.fullmatch(authority):
+            if authority not in accepted_source_ids:
+                raise SystemExit("Executor result knowledge disposition cites unallocated source authority")
+            continue
+        if authority not in accepted_authority_paths:
+            raise SystemExit("Executor result knowledge disposition path must be in compiled task scope")
+    return {"action": action, "reason": reason.strip(), "affected_authority": affected}
 
 
 def _yaml_scalar(value: Any) -> str:
@@ -498,6 +750,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         "requirements": [f"{sid}: {records[sid]}" for sid in source_ids if not sid.startswith(("CON-", "API-", "IFACE-", "TEST-"))],
         "constraints": [f"{sid}: {records[sid]}" for sid in source_ids if sid.startswith("CON-")],
     }
+    truth_basis = _compile_truth_basis(task, records, source_paths)
     validation = _resolve_reference(validation_value, records, source_paths)
     acceptance_review = task.get("acceptance_review")
     if acceptance_review in (None, {}):
@@ -511,8 +764,10 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
     brief = {
         "task_brief": {
             "task_id": task_id,
+            "plan_id": plan_id,
             "source_ids": source_ids,
             "goal": resolved_goal,
+            "truth_basis": truth_basis,
             "requirements": source_by_kind["requirements"],
             "constraints": source_by_kind["constraints"],
             "interfaces": {
@@ -651,15 +906,27 @@ def build_review_package(args: argparse.Namespace) -> Path:
     root = resolve_workspace_root(args)
     task = brief_document["task_brief"]
     task_id = str(task["task_id"])
+    plan_id = str(task.get("plan_id") or "")
+    if not plan_id:
+        raise SystemExit(f"Task brief is missing plan_id for {task_id}")
     handoff_root = root / ".work-bundle/orchestration/handoff"
     handoff_path = _input_path(args.handoff, root, handoff_root, "handoff")
     handoff, _ = _read_structured(handoff_path)
     if handoff.get("type") != "executor-result":
         raise SystemExit(f"Handoff is not executor-result: {handoff_path}")
-    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
-    related_task = related.get("task") or handoff.get("related_task")
-    if related_task != task_id:
-        raise SystemExit(f"Handoff task mismatch: expected {task_id}, got {related_task or 'missing'}")
+    _assert_task_handoff_identity(handoff, task_id, plan_id)
+    task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
+    accepted_authority_paths = [
+        str(value)
+        for value in [*_as_list(task_files.get("read")), *_as_list(task_files.get("write"))]
+    ]
+    truth_basis = task.get("truth_basis") if isinstance(task.get("truth_basis"), dict) else {}
+    knowledge_disposition = _validated_knowledge_disposition(
+        handoff,
+        list(task.get("source_ids", [])),
+        accepted_authority_paths,
+        _allocated_decision_aliases(truth_basis),
+    )
 
     base = _resolve_commit(root, str(args.base))
     head, diff, name_status = _review_diff(root, base, str(args.head))
@@ -680,6 +947,7 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "changed_symbols": symbols,
         "validation": validation_commands,
         "unresolved": unresolved,
+        "knowledge_disposition": knowledge_disposition,
     }
     _assert_no_credential_values(evidence, "review evidence")
 
@@ -703,6 +971,9 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "## Required behavior",
         *_markdown_items(required),
         "",
+        "## Accepted Truth Basis",
+        *_markdown_items([task.get("truth_basis", {})]),
+        "",
         "## Allowed scope",
         *_markdown_items(allowed_scope),
         "",
@@ -714,6 +985,9 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "",
         "## Validation reported",
         *_markdown_items(validation_commands),
+        "",
+        "## Knowledge disposition",
+        *_markdown_items([knowledge_disposition]),
         "",
         "## Allocated rule and methodology assertions",
         *_markdown_items(assertions),
@@ -730,8 +1004,10 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "1. Required behavior is satisfied.",
         "2. No out-of-scope change is present.",
         "3. Methodology and allocated-rule obligations are satisfied.",
-        "4. Validation evidence is sufficient and task-scoped.",
-        "5. Code quality has no blocking defect.",
+        "4. Accepted purpose, source evidence, decision authority, expected delta, and test oracle agree.",
+        "5. Knowledge disposition is task-local, evidence-backed, and grants no persistence authority.",
+        "6. Validation evidence is sufficient and task-scoped.",
+        "7. Code quality has no blocking defect.",
     ]
     package = "\n".join(lines).rstrip() + "\n"
     _assert_no_credential_values(package, "review package")

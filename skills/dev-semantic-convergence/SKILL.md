@@ -7,6 +7,8 @@ description: Use when drafting or repairing specifications, plans, rules, skills
 
 Apply this loop only to semantic artifacts. The caller owns the artifact set, the caller-defined lenses, the round limit, and any authority hierarchy.
 
+Before `DRAFT`, establish or consume the caller's Truth Basis: purpose, as-is evidence, accepted decision authority, expected delta, and conflict status. Treat that basis as a required convergence lens. Stop as `blocker` when its inputs conflict; do not repair prose by inventing authority.
+
 ## Loop
 
 1. Mark the current artifact set `DRAFT`.

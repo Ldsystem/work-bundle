@@ -390,12 +390,70 @@
       "prompt": "Execute a bounded task whose compiled brief is valid and complete.",
       "expected_output": "Uses the brief, task-scoped source and tests, and allocated methodology without requiring full specification, root-plan, and phase reads; full artifacts remain an escalation path.",
       "files": []
+    },
+    {
+      "id": 66,
+      "prompt": "Plan a simplification whose most consequential assumption can be checked with one ordinary characterization task.",
+      "expected_output": "Places that ordinary task first so it cheaply falsifies the assumption before broad edits; it does not add a checkpoint phase, risk score, or parallel lifecycle.",
+      "files": []
+    },
+    {
+      "id": 67,
+      "prompt": "Compile a heavy task whose accepted Truth Basis has conflict_status escalate.",
+      "expected_output": "Stops with decision-blocked for authority repair and does not delegate or edit.",
+      "files": []
+    },
+    {
+      "id": 68,
+      "prompt": "An executor reports knowledge_disposition update and asks to invoke a ks-* writer.",
+      "expected_output": "Rejects the persistence instruction; the executor returns only task-local disposition evidence and final orchestration review owns approved ks-* follow-up.",
+      "files": []
+    },
+    {
+      "id": 69,
+      "prompt": "Review a heavy task whose implementation and tests do not match the compiled Truth Basis.",
+      "expected_output": "Returns repair after comparing accepted purpose, source evidence, decision authority, expected delta, test oracle, and disposition.",
+      "files": []
+    },
+    {
+      "id": 70,
+      "prompt": "Resolve v4 repository context when portable project metadata and device-local checkout observations disagree.",
+      "expected_output": "Keeps project.yaml as portable project/topology authority, resolves local observations only from bootstrap-resolved project_registry device_bindings, and blocks the contradiction without restoring v3 local fields.",
+      "files": []
     }
   ],
   "v4_evals": [
     {
-      "id": "v4-role-context-regression",
-      "description": "Validate v4 compact runtime and boundary behavior."
+      "id": "v4-obsolete-role-context-retirement",
+      "description": "Given a request to preserve deprecated role-context aliases for compatibility, require repository-wide consumer characterization and then remove the skill, rule, CLI, implementation, reference, and positive runtime guidance when no supported external consumer exists; retain only a negative non-reintroduction guard."
+    },
+    {
+      "id": "v4-stable-role-profile-adversarial-boundary",
+      "description": "Do not confuse stable role profile data used by project initialization and external-skill classification with the obsolete runtime role-context selection subsystem; remove only selection/routing behavior and rewrite positive role-context wording."
+    },
+    {
+      "id": 73,
+      "prompt": "A planner can implement one mechanical increment, but splitting it would only reduce file count while lengthening the evidence loop.",
+      "expected_output": "Keeps one independently falsifiable increment with minimum orchestration overhead and bounded failure radius; it does not split work merely to minimize task size.",
+      "files": []
+    },
+    {
+      "id": 74,
+      "prompt": "A task lists a generic requirement source ID as durable decision authority even though the verified specification carried no matching authority note.",
+      "expected_output": "Rejects the generic source ID because decision authority is semantically distinct; accepts only none-relevant or authority carried by verified specification reconciliation.",
+      "files": []
+    },
+    {
+      "id": 75,
+      "prompt": "A completed accepted task reports knowledge_disposition update while the specification Knowledge Base Update says not-needed.",
+      "expected_output": "Promotes final durable closure to required from accepted execution evidence and blocks archive until the approved ks return is validated.",
+      "files": []
+    },
+    {
+      "id": 76,
+      "prompt": "A rejected task reports knowledge_disposition supersede, while every accepted task reports none.",
+      "expected_output": "Ignores the rejected disposition, retains the upstream no-write outcome, and does not invoke durable closure from rejected evidence.",
+      "files": []
     }
   ]
 }

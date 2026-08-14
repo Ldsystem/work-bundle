@@ -1,0 +1,64 @@
+{
+  "evals": [
+    {
+      "id": "dev-grounded-lightweight-clear",
+      "prompt": "Plan a bounded two-file behavior change with clear source evidence, accepted decision authority, and no conflict.",
+      "expected_output": "Uses the lightweight plan with a compact Truth Basis, exact method and validation, and a post-validation knowledge disposition without creating heavy orchestration artifacts."
+    },
+    {
+      "id": "dev-grounded-lightweight-conflict",
+      "prompt": "A requested lightweight change contradicts an accepted durable decision and the expected delta cannot be reconciled.",
+      "expected_output": "Sets conflict_status to escalate and stops for clarification, specification repair, or full orchestration instead of inventing authority."
+    },
+    {
+      "id": "dev-grounded-tdd-red-before-ground",
+      "prompt": "Add a failing test immediately for a feature whose current source behavior and accepted decision authority have not been inspected.",
+      "expected_output": "Rejects RED-first execution, establishes GROUND, then runs RED, verifies the intended failure, GREEN, verifies GREEN, REFACTOR, and revalidates truth and impact."
+    },
+    {
+      "id": "dev-grounded-debugging-root-cause",
+      "prompt": "A bug reproduces, but the requested behavior conflicts with the current API contract.",
+      "expected_output": "Reconciles purpose, evidence, decision authority, expected delta, and conflict status before root-cause diagnosis; escalates the contract conflict rather than patching the symptom."
+    },
+    {
+      "id": "dev-grounded-debugging-scope-growth",
+      "prompt": "A local bug diagnosis reveals a multi-repository fix and a new API decision outside the accepted lightweight scope.",
+      "expected_output": "Stops implementation, records the expanded impact evidence, and escalates to a repaired plan or full orchestration instead of silently widening debugging scope."
+    },
+    {
+      "id": "dev-grounded-review-green-tests-conflict",
+      "prompt": "Tests pass and code is tidy, but the change implements behavior contrary to accepted authority and the test oracle encodes that contradiction.",
+      "expected_output": "Returns repair because grounded intent, durable-decision alignment, and test-oracle validity fail despite green tests."
+    },
+    {
+      "id": "dev-grounded-direct-adversarial",
+      "prompt": "A configuration-only mechanical edit has no meaningful TDD surface and produces no durable conclusion.",
+      "expected_output": "Uses direct execution after a compact clear Truth Basis, exact deterministic validation, and knowledge_disposition action none; it does not force TDD or heavy artifacts."
+    },
+    {
+      "id": "dev-lightweight-gateway-relevant-authority",
+      "prompt": "A lightweight plan has grounded source evidence and the bounded knowledge gateway finds relevant authority.",
+      "expected_output": "Invokes ks-what-is-helpful after preflight and source grounding, carries the accepted authority into the compact Truth Basis, and keeps the plan ephemeral."
+    },
+    {
+      "id": "dev-lightweight-gateway-none-relevant",
+      "prompt": "A lightweight plan's bounded knowledge gateway finds none relevant to the settled mechanical change.",
+      "expected_output": "Records evidence-backed none relevant and continues without inventing authority or creating heavy artifacts."
+    },
+    {
+      "id": "dev-lightweight-gateway-conflict",
+      "prompt": "A lightweight plan's bounded gateway finds authority that materially conflicts with the requested delta.",
+      "expected_output": "Sets conflict_status to escalate and stops for authority repair instead of letting current source or preference override the conflict."
+    },
+    {
+      "id": "dev-lightweight-durable-update",
+      "prompt": "After validation, a lightweight task records a durable update disposition.",
+      "expected_output": "The lightweight completion owner invokes the approved ks lifecycle, validates its return evidence and index status, and does not complete before closure."
+    },
+    {
+      "id": "dev-lightweight-no-write",
+      "prompt": "After validation, a lightweight task records none and the gateway established no relevant durable change.",
+      "expected_output": "The lightweight completion owner records the evidence-backed no-write result and completes without invoking a ks writer."
+    }
+  ]
+}

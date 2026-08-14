@@ -1186,7 +1186,7 @@ def ensure_project_layout(project_root: Path) -> list[str]:
         role_text = '\n'.join([
             f'id: {role}', 'status: current',
             'domain_profile: .work-bundle/project.yaml', 'duty_profile:',
-            '  stance: project-specific role context must be resolved before work',
+            '  stance: project-specific responsibilities must be resolved before work',
             '  skilled_at: []', '  quality_focus: []',
             '  must_resolve_from_context:', '    - project-metadata', '',
         ])

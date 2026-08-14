@@ -2,7 +2,7 @@
 
 Implementation modules in this directory are the manual maintenance surface for work-bundle helpers.
 
-The top-level `../wb.py` entrypoint remains for compatibility with existing agent instructions. Implementation is split by skill area (`rules.py`, `project.py`, `member.py`, `doctor.py`, `metadata_profile.py`, `skill_registry.py`, `role_context.py`, `integrity.py`), with `dispatcher.py` only wiring commands.
+The top-level `../wb.py` entrypoint remains for compatibility with existing agent instructions. Implementation is split by skill area (`rules.py`, `project.py`, `member.py`, `doctor.py`, `metadata_profile.py`, `skill_registry.py`, `integrity.py`), with `dispatcher.py` only wiring commands.
 
 Command examples:
 

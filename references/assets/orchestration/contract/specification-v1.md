@@ -6,7 +6,8 @@ status: draft
 date_created: [YYYY-MM-DD]
 last_updated: [Optional: YYYY-MM-DD]
 source_knowledge:
-  - .project-knowledge/notes/...
+  - path: .work-bundle/knowledge/notes/...
+    constraint: [task-relevant accepted decision or constraint]
 related_handoffs: []
 version: [Optional: e.g., 1.0, Date]
 tags: [Optional: List of relevant tags or categories, e.g., `infrastructure`, `process`, `design`, `app` etc]
@@ -15,6 +16,8 @@ execution_workspace:
   profile: default
   cleanup: after_integration|manual
 ---
+
+The front-matter `source_knowledge` contains accepted authority only, as established by bounded retrieval and Source Context reconciliation. Each accepted entry carries a provenance `path` and the already-reconciled task-relevant `constraint`. Candidate, background, blocked, and superseded knowledge remains classified in Source Context or Open Questions and must not appear in this carried-authority list. Downstream planning allocates deterministic `AUTH-NNN` aliases by list order so executor packets remain traceable without exposing knowledge paths. The compiler resolves each allocated alias to `AUTH-NNN: <carried constraint>` in the task brief and review package.
 
 # Introduction
 

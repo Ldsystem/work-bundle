@@ -11,6 +11,12 @@ last_updated: YYYY-MM-DD
 owner: [team/individual/agent]
 depends_on: []
 source_ids: [REQ-001, AC-001]
+truth_basis:
+  purpose: [one bounded intended outcome]
+  as_is_evidence: [[exact source, test, or harness evidence]]
+  decision_authority: [none-relevant | [AUTH-NNN aliases]]
+  expected_delta: [[observable post-change behavior]]
+  conflict_status: clear|escalate
 source_files:
   - [exact source file path]
 target_files:
@@ -58,6 +64,10 @@ allocated_skills:
 
 [One bounded outcome.]
 
+## Truth Basis
+
+The front-matter `truth_basis` is mandatory and uses the same five fields as the lightweight path. `decision_authority` is semantically distinct from generic `source_ids`: it is exactly `[none-relevant]` when verified reconciliation found no applicable durable authority, or a non-empty list of `AUTH-NNN` aliases allocated in order from the verified specification's accepted `source_knowledge`. The compiler resolves each allocated alias to `AUTH-NNN: <carried constraint>` from that specification mapping and copies the same resolved values into the disposable task brief and review package. Aliases stay traceable without placing knowledge paths in executor packets. Arbitrary prose, generic requirement IDs, candidate/background/blocked authority, and superseded authority fail closed. The compiler returns the existing `decision-blocked` route when `conflict_status` is `escalate`. Executors do not retrieve durable knowledge to rebuild this authority.
+
 ## Source references
 
 List stable source IDs and their task-local effect. Do not duplicate full specification prose.
@@ -95,6 +105,7 @@ For contract-decoupled work, name the common contract group, accepted prior hand
 
 - Implementation criteria are satisfied.
 - Fresh task validation evidence exists.
+- The compiled task brief and review package carry the same accepted Truth Basis.
 - A valid `executor-result-v1` handoff exists.
 - When `acceptance_review.required` is true, `acceptance_review.verdict` is `accept`.
 
