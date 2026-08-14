@@ -1,0 +1,46 @@
+metadata_version: 4
+authority_split:
+  portable: .work-bundle/project.yaml
+  device_local: bootstrap.project_registry#device_bindings
+  registry_resolution: $work_bundle_config_root/bootstrap.yaml -> project_registry
+  v3_compatibility:
+    project_metadata_local_state: explicit-read-or-migration-only
+workspace:
+  required: [id, slug, mode]
+  id:
+    stable_across_devices: true
+  mode:
+    allowed: [single-repository, multi-repository]
+source_repositories:
+  durable_identity: [id, remote.canonical]
+  workspace_binding:
+    single_repository:
+      type: root
+    multi_repository:
+      type: member
+      name: required
+    remote_only: absent
+  local_binding_fields_forbidden: [project_root, observed_head, observation_time, git_control_root]
+migration:
+  explicit: true
+  dry_run_proposal: true
+  exact_proposal_id_apply: true
+  remote_identity_required_for_git: true
+  single_repository:
+    source_checkout: workspace_root
+    control_plane_checkout: workspace_root/.work-bundle
+    source_excludes: [.work-bundle/]
+    tracked_agents_preserved: true
+    container_conversion_required: false
+attachment:
+  sequence: [clone-control-plane, validate-portable-metadata, resolve-root-binding, materialize-source-in-place, validate, publish-local-binding]
+  failed_root_materialization: rollback-source-git-and-created-source-paths
+  failed_member_materialization:
+    rollback: current-attach-owned-member-paths-only
+    preserve: [pre-existing-checkouts, user-supplied-checkouts, control-plane]
+    binding_publication: forbidden-on-failure
+control_plane:
+  sync_policy: manual
+  automatic_push_pull: false
+security:
+  portable_forbidden: [credentials, git, runtime, orchestration/execution-state, machine_bindings]

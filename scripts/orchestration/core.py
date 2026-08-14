@@ -57,20 +57,24 @@ def _walk_workspace_root(start: Path) -> Path | None:
     return None
 
 
-def _registry_workspace_candidates(start: Path) -> list[Path]:
+def project_registry_path() -> Path:
     config_root = Path(os.environ.get("WB_CONFIG_ROOT", Path.home() / ".work-bundle")).expanduser()
     bootstrap = config_root / "bootstrap.yaml"
-    if not bootstrap.is_file():
-        return []
-    registry_value = ""
-    for line in bootstrap.read_text(encoding="utf-8").splitlines():
-        if line.strip().startswith("project_registry:"):
-            registry_value = line.split(":", 1)[1].strip().strip("'\"")
-            break
-    if not registry_value:
-        return []
+    registry_value = "$work_bundle_config_root/registry/projects.yaml"
+    if bootstrap.is_file():
+        for line in bootstrap.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("project_registry:"):
+                registry_value = line.split(":", 1)[1].strip().strip("'\"")
+                break
     registry_value = registry_value.replace("$work_bundle_config_root", str(config_root))
-    registry = Path(registry_value).expanduser().resolve()
+    return Path(registry_value).expanduser().resolve()
+
+
+def _registry_workspace_candidates(start: Path) -> list[Path]:
+    config_root = Path(os.environ.get("WB_CONFIG_ROOT", Path.home() / ".work-bundle")).expanduser()
+    if not (config_root / "bootstrap.yaml").is_file():
+        return []
+    registry = project_registry_path()
     if not registry.is_file():
         return []
     projects: list[dict[str, object]] = []
@@ -131,9 +135,49 @@ def resolve_workspace_root(args: argparse.Namespace) -> Path:
 
 def _member_roots(root: Path) -> list[Path]:
     metadata = root / ".work-bundle" / "project.yaml"
+    text = metadata.read_text(encoding="utf-8")
+    if re.search(r"^metadata_version:\s*4\s*$", text, re.MULTILINE):
+        workspace_id = ""
+        in_workspace = False
+        for line in text.splitlines():
+            if line == "workspace:":
+                in_workspace = True
+                continue
+            if in_workspace and line and not line.startswith(" "):
+                break
+            if in_workspace and line.strip().startswith("id:"):
+                workspace_id = line.split(":", 1)[1].strip().strip("'\"")
+                break
+        registry = project_registry_path()
+        if not registry.is_file() or not workspace_id:
+            return []
+        roots: list[Path] = []
+        in_bindings = False
+        in_target = False
+        in_repositories = False
+        for line in registry.read_text(encoding="utf-8").splitlines():
+            if line == "device_bindings:":
+                in_bindings = True
+                continue
+            if in_bindings and line and not line.startswith(" "):
+                break
+            if not in_bindings:
+                continue
+            if re.match(r"^  [^\s].*:$", line):
+                in_target = line.strip()[:-1].strip("'\"") == workspace_id
+                in_repositories = False
+                continue
+            if in_target and line == "    repositories:":
+                in_repositories = True
+                continue
+            if in_target and in_repositories and line.startswith("        project_root:"):
+                value = line.split(":", 1)[1].strip().strip("'\"")
+                if value:
+                    roots.append(Path(value).expanduser().resolve())
+        return roots
     roots: list[Path] = []
     in_repositories = False
-    for line in metadata.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if line == "source_repositories:":
             in_repositories = True
             continue

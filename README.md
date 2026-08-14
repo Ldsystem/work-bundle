@@ -16,9 +16,11 @@ WorkBundle distinguishes four roots:
 - `references/` - shared design and runtime references
 - `.work-bundle/` - local agent knowledge and orchestration bundle
 
-A managed workspace uses singular `script/` with `script/index.yaml` for reusable utilities. Discovery does not authorize execution. The local-only `credentials/credentials.yaml` store is Git-ignored and must never be opened, printed, indexed, or transmitted through agent-visible surfaces; credential-backed work goes through `wb-credential-use` with redacted evidence only.
+A multi-repository workspace uses singular `script/` with `script/index.yaml` for reusable utilities. Discovery does not authorize execution. Its local-only `credentials/credentials.yaml` store is Git-ignored and must never be opened, printed, indexed, or transmitted through agent-visible surfaces; credential-backed work goes through `wb-credential-use` with redacted evidence only. Single-repository workspaces contain neither runtime folder; the mechanism templates remain under `references/assets/template/`.
 
 Both single- and multi-repository workspaces are current. Multi-repository members use workspace-local Git control stores and named worktrees; registered origin paths remain locators rather than normal writable checkouts.
+
+Portable control-plane v4 keeps the single-repository layout flat: the source repository owns `<workspace-root>/.git`, while the independently publishable WorkBundle control plane owns `<workspace-root>/.work-bundle/.git`. Its source entry uses `workspace_binding.type: root`; multi-repository entries use `workspace_binding.type: member` plus a member name. A fresh device clones the control plane into `.work-bundle/`, then `attach-workspace --materialize missing --apply` reconstructs the source checkout directly in the existing workspace root. It never requires converting a single repository into a child of a non-Git container.
 
 ## Skill Links
 

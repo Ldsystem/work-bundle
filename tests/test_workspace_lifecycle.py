@@ -30,8 +30,8 @@ def seed(root: Path) -> None:
     subprocess.run(['git', '-C', str(root), 'commit', '-q', '-m', 'seed'], check=True)
 
 
-def test_workspace_context_and_resources(tmp_path: Path) -> None:
-    WorkspaceContext(tmp_path, 'single-repository', tmp_path).validate()
+def test_multi_repository_workspace_context_and_resources(tmp_path: Path) -> None:
+    WorkspaceContext(tmp_path, 'multi-repository').validate()
     changed = ensure_workspace_resources(tmp_path)
     assert len(changed) == 2
     assert ensure_workspace_resources(tmp_path) == []

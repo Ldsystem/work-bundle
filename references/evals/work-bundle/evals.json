@@ -1,0 +1,47 @@
+{
+  "skill_name": "wb-initialize-project",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Migrate a v3 workspace when the member origin chain ends at a local repository, while the registry declares a network remote.",
+      "expected_output": "Loads all applicable migration rules in full, treats the registry remote as locator authority, produces a dry-run proposal with the network canonical remote, and does not edit the registry or any external Git config directly.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Migrate a v3 workspace when the live network remote and registry network remote conflict.",
+      "expected_output": "Stops with a typed canonical-remote conflict, asks the user which remote is authoritative, and reruns with the explicit dispatcher remote override only after the user decides; it does not choose silently.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Run doctor-project --repair --force on an already migrated metadata-version-4 workspace.",
+      "expected_output": "Routes to v4 control-plane validation and repair, preserves portable project.yaml bytes, and never rewrites the workspace back to v3 shape.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Initialize a new ordinary v3 single-repository workspace whose origin is already unambiguous.",
+      "expected_output": "Uses the ordinary init-project lifecycle, creates or preserves script/index.yaml and credentials/credentials.yaml with protected permissions, and does not invoke v4 migration remote override or control-plane publication behavior.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Initialize or attach a portable v4 single-repository workspace whose source Git repository is the workspace root.",
+      "expected_output": "Creates or preserves the workspace script and credential resources, excludes .work-bundle/ and credentials/ from the source Git repository without replacing existing exclusions, keeps portable metadata free of local paths, and does not classify those resources as topology drift.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Publish an existing clean control-plane repository when the commit succeeds but the remote rejects the push.",
+      "expected_output": "Restores the exact pre-operation HEAD, metadata bytes, origin configuration, clean worktree and index, leaves no rollback residue, and persists redacted transaction evidence; a dirty or otherwise unsafe pre-state fails closed with a typed recovery-required result.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "Attach and doctor a portable v4 multi-repository workspace when bootstrap points project_registry to a non-default path and a later attach step fails after creating member checkouts.",
+      "expected_output": "Uses project.yaml only for portable identity and topology, uses device_bindings in the bootstrap-resolved project registry for local paths and observations across attach, doctor, and preflight, and removes only member paths created by the failed attach while preserving user-supplied checkouts and the control plane.",
+      "files": []
+    }
+  ]
+}

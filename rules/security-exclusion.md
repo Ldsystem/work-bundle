@@ -17,7 +17,7 @@ Prevent credential material from entering agent-visible, tracked, indexed, deleg
 
 ## Must
 
-- Treat `$workspace_root/credentials/credentials.yaml` as a protected local-only store and the only permitted file in `credentials/`.
+- Permit `$workspace_root/credentials/credentials.yaml` in both single- and multi-repository modes as a protected local-only store and the only permitted file in `credentials/`.
 - Enforce directory mode `0700` and file mode `0600` where POSIX permissions apply; otherwise require an explicit equivalent protection or blocking diagnostic.
 - Keep `credentials/` ignored by Git and excluded from knowledge, orchestration content, registries, metadata content, indexes, CodeGraph, archives, caches, and backups.
 - Pass only credential ID, redacted target, requested operation, and authorization context to `wb-credential-use`; let its bounded local helper own value access and injection.
@@ -35,7 +35,7 @@ Prevent credential material from entering agent-visible, tracked, indexed, deleg
 
 ## Validation
 
-- Verify credential store shape and permissions without returning value-bearing fields.
+- In both workspace modes, verify credential store shape and permissions without returning value-bearing fields.
 - Verify Git ignore behavior and exclusion from all generic discovery and index surfaces.
 - Verify `read-only` rejects write use and critical or read-write use requires exact current-task authority.
 - Verify all public evidence is credential-ID-only and redacted and synthetic canary leakage count is zero.

@@ -5,8 +5,8 @@
 ```text
 <workspace-root>/
   AGENTS.md
-  script/index.yaml
-  credentials/credentials.yaml  # excluded from knowledge access
+  script/index.yaml              # multi-repository mode only
+  credentials/credentials.yaml  # multi-repository mode only; excluded from knowledge access
   <member-project-root>/
   .work-bundle/
   knowledge/
@@ -74,9 +74,9 @@ Orchestration must retrieve durable knowledge through `ks-what-is-helpful` gatew
 
 ## Project Registry
 
-Use `<workspace-root>/.work-bundle/project.yaml` as working-state authority for workspace metadata, member bindings, override inputs, copy restrictions, and resolution priority. Resolve the global project registry from `~/.work-bundle/bootstrap.yaml` only as a bounded cross-workspace locator fallback. Use workspace-root `AGENTS.md`, initialized from `references/assets/template/AGENTS.md`, for WorkBundle runtime entry rules. Resolve stable role context from `roles/` role profiles.
+For metadata v4, use `<workspace-root>/.work-bundle/project.yaml` as portable project/topology authority and use `device_bindings` in the bootstrap-resolved `project_registry` as device-local materialization and observation authority. Preserve project-metadata ownership of local checkout paths and observations only for explicit metadata-v3 reads and migrations. Use workspace-root `AGENTS.md`, initialized from `references/assets/template/AGENTS.md`, for WorkBundle runtime entry rules. Resolve stable role context from `roles/` role profiles.
 
-Reusable workspace utilities live under singular `<workspace-root>/script/` and are reusable only through `script/index.yaml`; toolkit plural `scripts/` remains separate. Never read, index, embed, summarize, copy, or expose `<workspace-root>/credentials/credentials.yaml`. Credential-backed operations belong to `wb-credential-use`, and only credential IDs plus redacted metadata may cross agent-visible surfaces.
+In both workspace modes, reusable workspace utilities live under singular `<workspace-root>/script/` and are reusable only through `script/index.yaml`; toolkit plural `scripts/` remains separate. The protected credential store lives at `<workspace-root>/credentials/credentials.yaml` in both modes and remains local-only. Never read, index, embed, summarize, copy, or expose it. Credential-backed operations belong to `wb-credential-use`, and only credential IDs plus redacted metadata may cross agent-visible surfaces.
 
 ## Structural-Value Test
 

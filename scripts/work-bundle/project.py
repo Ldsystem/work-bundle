@@ -35,13 +35,12 @@ AGENTS_RULE_END_MARKER = '\n'.join([
     '# Work Bundle RULE END',
     '# ========================',
 ])
-REQUIRED_PROJECT_GITIGNORE = ['.work-bundle/', 'AGENTS.md']
+REQUIRED_PROJECT_GITIGNORE = ['.work-bundle/', 'AGENTS.md', 'credentials/']
 PROJECT_METADATA_V3_REQUIRED_FIELDS = [
     'metadata_version',
     'authority',
     'workspace_root',
     'workspace_mode',
-    'workspace_resources',
     'project_root',
     'source_repository_roles',
     'operation_policy',
@@ -726,9 +725,11 @@ def _workspace_metadata_failures(project_root: Path, metadata_text: str) -> list
     if mode == 'single-repository' and Path(workspace_root).expanduser().resolve() != project_root.resolve():
         failures.append('workspace_root_contradiction')
     resource_section = '\n'.join(_yaml_section_lines(metadata_text, 'workspace_resources'))
-    if 'script/index.yaml' not in resource_section or 'credentials/credentials.yaml' not in resource_section:
-        failures.append('workspace_resources_invalid')
-    failures.extend(validate_script_index(Path(workspace_root).expanduser().resolve() if workspace_root else project_root))
+    resolved_workspace = Path(workspace_root).expanduser().resolve() if workspace_root else project_root
+    if mode in {'single-repository', 'multi-repository'}:
+        if 'script/index.yaml' not in resource_section or 'credentials/credentials.yaml' not in resource_section:
+            failures.append('workspace_resources_invalid')
+        failures.extend(validate_script_index(resolved_workspace))
     return failures
 
 
@@ -1151,9 +1152,16 @@ def _refresh_registered_project_metadata(current: str, rendered: str) -> str:
     for key, value in (
         ('metadata_version', PROJECT_METADATA_VERSION),
         ('authority', 'canonical'),
+        ('workspace_root', _yaml_scalar(rendered, 'workspace_root')),
+        ('workspace_mode', _yaml_scalar(rendered, 'workspace_mode')),
         ('project_root', _yaml_scalar(rendered, 'project_root')),
     ):
         lines, _ = _replace_or_append_scalar(lines, key, value)
+    lines, _ = _replace_top_level_block(
+        lines,
+        _top_level_block_text(rendered, 'workspace_resources'),
+        'workspace_resources',
+    )
     lines, _ = _replace_top_level_block(lines, _source_repository_roles_block(), 'source_repository_roles')
     lines, _ = _replace_top_level_block(lines, _source_repositories_block(merged_repositories), 'source_repositories')
     return '\n'.join(lines).rstrip() + '\n'
@@ -1214,6 +1222,7 @@ def apply_project(
     wb = project_root / '.work-bundle'
     knowledge = wb / 'knowledge'
     changed = ensure_project_layout(project_root)
+    changed.extend(ensure_workspace_resources((workspace_root or project_root).resolve()))
     knowledge_project = knowledge / 'project.yaml'
     if _template_overwrite(project_root, knowledge_project, force, scope) and write(
         knowledge_project, 'id: project\nstatus: current\n', overwrite=True
@@ -1274,7 +1283,6 @@ def repair_project(project_root: Path, force: bool = False, return_details: bool
         registry_entry_data=registry_entry_data,
         return_details=True,
     )
-    changed.extend(ensure_workspace_resources(project_root))
     data = inspect_project(project_root)
     metadata_path = project_root / '.work-bundle/project.yaml'
     if data.get('project_metadata_required_fields_missing') and not read(metadata_path).strip():
@@ -1313,7 +1321,7 @@ def _bootstrap_value(key: str, default: str) -> str:
 
 
 def project_registry_path() -> Path:
-    return Path(_bootstrap_value("project_registry", "$work_bundle_config_root/registry/projects.yaml")).expanduser().resolve()
+    return resolve_project_registry_path()
 
 
 def _set_yaml_scalar(path: Path, key: str, value: str) -> bool:
@@ -1905,7 +1913,7 @@ def _session_start_payload(project_root: Path) -> dict[str, object]:
     runtime = resolve_bootstrap_runtime()
     bootstrap_path = Path(str(runtime.get('global_bootstrap_path')))
     work_bundle_root = runtime.get('resolved_work_bundle_root')
-    registry_path = project_registry_path() if bootstrap_path.is_file() else work_bundle_config_root() / 'registry/projects.yaml'
+    registry_path = project_registry_path()
     metadata_path = project_root / '.work-bundle/project.yaml'
     agents_path = project_root / 'AGENTS.md'
     return {
@@ -2181,6 +2189,9 @@ def cmd_show_project(args: list[str]) -> int:
     parsed = parser.parse_args(args)
     selected_root = parsed.project_root or parsed.workspace_root or "."
     project_root = Path(selected_root).expanduser().resolve()
+    if _yaml_scalar(read(project_root / ".work-bundle/project.yaml"), "metadata_version") == "4":
+        from control_plane import cmd_doctor_workspace
+        return cmd_doctor_workspace([str(project_root)], command_name="show-project")
     data = inspect_project(project_root)
     entry, registry = find_registry_entry(project_root)
     failures = project_failures(data, strict=False, include_roles=False)
@@ -2202,6 +2213,9 @@ def cmd_validate_project(args: list[str]) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parsed = parser.parse_args(args)
     project_root = Path(parsed.project_root).expanduser().resolve()
+    if _yaml_scalar(read(project_root / ".work-bundle/project.yaml"), "metadata_version") == "4":
+        from control_plane import cmd_doctor_workspace
+        return cmd_doctor_workspace([str(project_root)], command_name="validate-project")
     data = inspect_project(project_root)
     entry, registry = find_registry_entry(project_root)
     failures = project_failures(data, strict=True, include_roles=False)
@@ -2548,6 +2562,10 @@ def cmd_doctor_project(args: list[str]) -> int:
     parser.add_argument('--repair', action='store_true')
     parsed = parser.parse_args(args)
     project_root = Path(parsed.project_root).expanduser().resolve()
+    if _yaml_scalar(read(project_root / ".work-bundle/project.yaml"), "metadata_version") == "4":
+        from control_plane import cmd_doctor_workspace
+        routed = [str(project_root)] + (["--repair"] if parsed.repair else [])
+        return cmd_doctor_workspace(routed, command_name="doctor-project")
     changed: list[str] = []
     agents_result: dict[str, object] = {
         'agents_status': 'not-run',

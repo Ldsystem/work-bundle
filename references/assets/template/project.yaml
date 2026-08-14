@@ -11,6 +11,7 @@ metadata_compatibility:
   migration_requires_explicit_apply: true
   preserves_unknown_fields: true
 
+# Workspace-owned resources for both single- and multi-repository modes.
 workspace_resources:
   script_index:
     path: script/index.yaml

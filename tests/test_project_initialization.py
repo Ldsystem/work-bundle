@@ -189,9 +189,17 @@ def test_init_project_creates_structure_without_git_actions_and_is_idempotent(tm
 
     assert not (project / "rules/contract.yaml").exists()
     assert (project / ".work-bundle/rules/index.yaml").is_file()
+    assert (project / ".work-bundle/rules/index.yaml").read_text(encoding="utf-8") == "rules: []\n"
     assert not (project / "rules/index.yaml").exists()
     assert init_data["git_actions"] == []
     assert init_data["transaction"]["state"] == "published"
+    assert (project / "script/index.yaml").is_file()
+    assert (project / "credentials/credentials.yaml").is_file()
+    assert (project / "credentials").stat().st_mode & 0o777 == 0o700
+    assert (project / "credentials/credentials.yaml").stat().st_mode & 0o777 == 0o600
+    assert "credentials/" in (project / ".gitignore").read_text(encoding="utf-8").splitlines()
+    metadata_text = (project / ".work-bundle/project.yaml").read_text(encoding="utf-8")
+    assert "workspace_resources:" in metadata_text
     assert subprocess.run(["git", "-C", str(project), "rev-parse", "--verify", "HEAD"], check=False, capture_output=True).returncode != 0
     assert git(project, "diff", "--cached", "--name-only") == ""
     assert not (project / ".work-bundle/knowledge/.git").exists()
@@ -388,18 +396,29 @@ def test_metadata_v2_topology_identity_disagreement_blocks(tmp_path: Path) -> No
     assert data["changed_files"] == []
 
 
-def test_doctor_repair_preserves_head_and_index(tmp_path: Path) -> None:
+def test_doctor_repair_preserves_head_and_single_repository_resources(tmp_path: Path) -> None:
     config_root, project = _init_fixture_project(tmp_path)
     head_before = git(project, "rev-parse", "HEAD")
     staged_before = git(project, "diff", "--cached", "--name-only")
-    (project / "script/index.yaml").unlink()
+    script_before = (project / "script/index.yaml").read_bytes()
+    credential_before = (project / "credentials/credentials.yaml").read_bytes()
     result = run_wb(config_root, "doctor-project", str(project), "--repair")
     data = json.loads(result.stdout)
     assert result.returncode == 0, result.stdout + result.stderr
     assert data["git_actions"] == []
-    assert str(project / "script/index.yaml") in data["changed_files"]
+    assert (project / "script/index.yaml").read_bytes() == script_before
+    assert (project / "credentials/credentials.yaml").read_bytes() == credential_before
     assert git(project, "rev-parse", "HEAD") == head_before
     assert git(project, "diff", "--cached", "--name-only") == staged_before
+
+
+def test_validate_single_repository_accepts_workspace_resource_directories(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    result = run_wb(config_root, "validate-project", str(project))
+    data = json.loads(result.stdout)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert data["failures"] == []
 
 
 def test_migrate_project_writes_report_without_breaking_validation(tmp_path: Path) -> None:
@@ -689,8 +708,10 @@ def test_registry_parser_tracks_projects_template_schema(tmp_path: Path) -> None
     template_path = REPO_ROOT / "references/assets/template/projects.yaml"
     template_text = template_path.read_text(encoding="utf-8")
     assert "source_repository_roles:" in template_text
-    assert "Locator only" in template_text
-    assert "Working-state authority" in template_text
+    assert "Locator authority in all versions" in template_text
+    assert "metadata v4 device_bindings" in template_text
+    assert "Metadata v4 portable project/topology authority" in template_text
+    assert "metadata v3 working-state authority" in template_text
     assert "projects:" in template_text
     for field in PROJECT_REGISTRY_ENTRY_FIELDS:
         assert field in template_text
@@ -1279,6 +1300,9 @@ def _init_multi_workspace(tmp_path: Path) -> tuple[Path, Path]:
         "multi",
     )
     assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+    assert (workspace / "script/index.yaml").is_file()
+    assert (workspace / "credentials/credentials.yaml").is_file()
+    assert "workspace_resources:" in (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
     return config_root, workspace
 
 

@@ -778,10 +778,6 @@ def apply_migration(
         _failure(fail_stage, 'copy-authority')
         if not verify_copy(source, target):
             raise MigrationError('WB_MIGRATION_COPY_MISMATCH')
-        if (source / 'script').is_dir():
-            script_target = target / 'script'
-            transaction.own(script_target)
-            _copy_tree(source / 'script', script_target)
         if (source / 'AGENTS.md').is_file():
             agents_target = target / 'AGENTS.md'
             transaction.own(agents_target)
@@ -888,9 +884,8 @@ def apply_migration(
             'member': member,
             'copied_inventory_and_digests': {
                 'work_bundle': _inventory_digest(source_snapshot['work_bundle_inventory']),
-                'script': _inventory_digest(source_snapshot['script_inventory']),
             },
-            'skipped_sensitive_and_transient_paths': ['credentials/credentials.yaml', *sorted(TRANSIENT_NAMES)],
+            'skipped_sensitive_and_transient_paths': ['credentials/credentials.yaml', 'script', *sorted(TRANSIENT_NAMES)],
             'script_index_validation': 'passed',
             'agents_merge_status': (
                 'managed-section-synchronized'

@@ -266,7 +266,7 @@ rules:
       - task requires source-code browsing, inspection, review, planning, repair, refactor, migration, or editing in a WorkBundle-registered project
       - task requires resolving workspace structure, member source repositories, work directories, project metadata, or repository structure before acting
       - orchestration workflow resolves project metadata before specification evidence, implementation planning, execution, review, or project scope updates
-      - repository preflight evaluates source repositories from `.work-bundle/project.yaml`
+      - repository preflight evaluates metadata-v4 portable repositories together with device-local bindings
       - agent checks branch baseline, commit baseline, registry locator, or CodeGraph support for a source repository
     enforcement: must
     load: conditional
