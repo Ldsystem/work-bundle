@@ -348,6 +348,46 @@ def _nonempty_text(value: Any) -> str | None:
     return text or None
 
 
+def _handoff_identity_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"null", "none", "~"}:
+        return None
+    return text
+
+
+def explicit_handoff_plan_identities(handoff: dict[str, Any]) -> list[str]:
+    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+    identities: list[str] = []
+    for raw in (related.get("plan"), handoff.get("related_plan")):
+        text = _handoff_identity_text(raw)
+        if text and text not in identities:
+            identities.append(text)
+    return identities
+
+
+def unique_explicit_handoff_plan_id(handoff: dict[str, Any]) -> str | None:
+    identities = explicit_handoff_plan_identities(handoff)
+    if len(identities) != 1:
+        return None
+    return identities[0]
+
+
+def _assert_task_handoff_identity(handoff: dict[str, Any], task_id: str, plan_id: str) -> None:
+    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+    related_task = related.get("task") or handoff.get("related_task")
+    if related_task != task_id:
+        raise SystemExit(f"Handoff task mismatch: expected {task_id}, got {related_task or 'missing'}")
+    identities = explicit_handoff_plan_identities(handoff)
+    if not identities:
+        raise SystemExit(f"Handoff plan identity missing: expected {plan_id}")
+    if len(identities) > 1:
+        raise SystemExit(f"Handoff plan identity conflict: {' vs '.join(identities)}")
+    if identities[0] != plan_id:
+        raise SystemExit(f"Handoff plan mismatch: expected {plan_id}, got {identities[0]}")
+
+
 def _source_knowledge_entry(entry: Any) -> tuple[str | None, str | None]:
     if isinstance(entry, str):
         return _nonempty_text(entry), None
@@ -724,6 +764,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
     brief = {
         "task_brief": {
             "task_id": task_id,
+            "plan_id": plan_id,
             "source_ids": source_ids,
             "goal": resolved_goal,
             "truth_basis": truth_basis,
@@ -865,15 +906,15 @@ def build_review_package(args: argparse.Namespace) -> Path:
     root = resolve_workspace_root(args)
     task = brief_document["task_brief"]
     task_id = str(task["task_id"])
+    plan_id = str(task.get("plan_id") or "")
+    if not plan_id:
+        raise SystemExit(f"Task brief is missing plan_id for {task_id}")
     handoff_root = root / ".work-bundle/orchestration/handoff"
     handoff_path = _input_path(args.handoff, root, handoff_root, "handoff")
     handoff, _ = _read_structured(handoff_path)
     if handoff.get("type") != "executor-result":
         raise SystemExit(f"Handoff is not executor-result: {handoff_path}")
-    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
-    related_task = related.get("task") or handoff.get("related_task")
-    if related_task != task_id:
-        raise SystemExit(f"Handoff task mismatch: expected {task_id}, got {related_task or 'missing'}")
+    _assert_task_handoff_identity(handoff, task_id, plan_id)
     task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
     accepted_authority_paths = [
         str(value)

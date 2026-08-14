@@ -1,5 +1,9 @@
 from core import *
-from execution_context import evaluate_knowledge_closure_state, read_structured_artifact
+from execution_context import (
+    evaluate_knowledge_closure_state,
+    read_structured_artifact,
+    unique_explicit_handoff_plan_id,
+)
 from specs import load_index, replace_front_matter_value
 
 
@@ -15,22 +19,6 @@ def _plan_knowledge_field(body: str, label: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _explicit_handoff_plan_id(handoff: dict[str, object]) -> str | None:
-    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
-    identities: list[str] = []
-    for raw in (related.get("plan"), handoff.get("related_plan")):
-        if raw is None:
-            continue
-        text = str(raw).strip()
-        if not text or text.lower() in {"null", "none", "~"}:
-            continue
-        if text not in identities:
-            identities.append(text)
-    if len(identities) != 1:
-        return None
-    return identities[0]
-
-
 def _assert_archive_knowledge_gate(args: argparse.Namespace, plan_id: str, root_path: Path) -> None:
     _, body = read_front_matter(root_path)
     upstream = _plan_knowledge_field(body, "Disposition")
@@ -43,7 +31,7 @@ def _assert_archive_knowledge_gate(args: argparse.Namespace, plan_id: str, root_
         if not path.is_file() or path.suffix not in {".yaml", ".yml"}:
             continue
         handoff = read_structured_artifact(path)
-        if _explicit_handoff_plan_id(handoff) != plan_id:
+        if unique_explicit_handoff_plan_id(handoff) != plan_id:
             continue
         handoffs.append(handoff)
     gate = evaluate_knowledge_closure_state(

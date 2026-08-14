@@ -50,6 +50,46 @@ def test_handoff_helper_indexes_sparse_executor_result(tmp_path: Path) -> None:
     assert row["path"].endswith("handoff-exec-20990101-001-task-result.yaml")
 
 
+def test_write_handoff_fills_missing_task_plan_from_authorized_args(tmp_path: Path) -> None:
+    content = tmp_path / "handoff-content.txt"
+    content.write_text(
+        "related:\n  task: task-001\nresult:\n  state: completed\n  summary: ok\n",
+        encoding="utf-8",
+    )
+    cmd_write_handoff(
+        handoff_args(tmp_path, content_file=str(content), related_plan="plan-B", related_task="task-001")
+    )
+    row = next(item for item in index_handoffs(handoff_args(tmp_path)) if item["id"] == "handoff-exec-20990101-001")
+    written = (tmp_path / row["path"]).read_text(encoding="utf-8")
+    assert "plan: plan-B" in written
+    assert "task: task-001" in written
+
+
+def test_write_handoff_rejects_conflicting_plan_identity(tmp_path: Path) -> None:
+    content = tmp_path / "handoff-content.txt"
+    content.write_text(
+        "related:\n  plan: plan-A\n  task: task-001\nresult:\n  state: completed\n  summary: ok\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="Handoff plan mismatch"):
+        cmd_write_handoff(
+            handoff_args(tmp_path, content_file=str(content), related_plan="plan-B", related_task="task-001")
+        )
+
+
+def test_write_handoff_rejects_nested_and_flat_plan_conflict(tmp_path: Path) -> None:
+    content = tmp_path / "handoff-content.txt"
+    content.write_text(
+        "related:\n  plan: plan-B\n  task: task-001\nrelated_plan: plan-A\n"
+        "result:\n  state: completed\n  summary: ok\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="Handoff plan identity conflict"):
+        cmd_write_handoff(
+            handoff_args(tmp_path, content_file=str(content), related_plan="plan-B", related_task="task-001")
+        )
+
+
 def test_handoff_helper_rejects_active_orchestration_handoff(tmp_path: Path) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text("# retired\n", encoding="utf-8")
@@ -322,6 +362,9 @@ def test_executor_result_contract_carries_acceptance_review() -> None:
         "must not name knowledge paths or any `ks-*` skill",
         "exact paths already present in the compiled task scope",
         "allocated `AUTH-NNN` aliases",
+        "related.plan",
+        "must equal the assigned task's `plan_id` and `id`",
+        "fails closed before `build-review-package`",
     ]:
         assert token in contract
 

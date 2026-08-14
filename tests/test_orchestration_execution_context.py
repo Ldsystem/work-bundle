@@ -157,9 +157,37 @@ def write_executor_handoff(root: Path, disposition: str) -> Path:
     handoff.write_text(
         "id: handoff-task-004\n"
         "type: executor-result\n"
-        "related: {task: task-004}\n"
+        "related: {plan: plan-001, task: task-004}\n"
         "knowledge_disposition:\n"
         + disposition,
+        encoding="utf-8",
+    )
+    return handoff
+
+
+def retarget_plan(root: Path, task: Path, plan_id: str) -> None:
+    plan = root / ".work-bundle/orchestration/plan/active/compiler-plan.md"
+    plan.write_text(
+        plan.read_text(encoding="utf-8").replace("id: plan-001\n", f"id: {plan_id}\n"),
+        encoding="utf-8",
+    )
+    task.write_text(
+        task.read_text(encoding="utf-8").replace("plan_id: plan-001\n", f"plan_id: {plan_id}\n"),
+        encoding="utf-8",
+    )
+
+
+def write_related_handoff(root: Path, related_block: str) -> Path:
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        f"{related_block}"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n",
         encoding="utf-8",
     )
     return handoff
@@ -458,6 +486,7 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
         "id: handoff-task-004\n"
         "type: executor-result\n"
         "related:\n"
+        "  plan: plan-001\n"
         "  task: task-004\n"
         "changes:\n"
         "  files:\n"
@@ -518,7 +547,7 @@ def test_build_review_package_includes_tracked_and_untracked_worktree_changes(tm
     handoff.write_text(
         "id: handoff-task-004\n"
         "type: executor-result\n"
-        "related: {task: task-004}\n"
+        "related: {plan: plan-001, task: task-004}\n"
         "validation:\n"
         "  commands:\n"
         "    - {command: uv run pytest -q, result: passed}\n"
@@ -555,7 +584,7 @@ def test_build_review_package_never_reads_tracked_protected_diff_content(tmp_pat
     handoff.write_text(
         "id: handoff-task-004\n"
         "type: executor-result\n"
-        "related: {task: task-004}\n"
+        "related: {plan: plan-001, task: task-004}\n"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
@@ -585,7 +614,7 @@ def test_build_review_package_rejects_invalid_knowledge_disposition(tmp_path: Pa
     handoff.write_text(
         "id: handoff-task-004\n"
         "type: executor-result\n"
-        "related: {task: task-004}\n"
+        "related: {plan: plan-001, task: task-004}\n"
         "knowledge_disposition:\n"
         "  action: write-now\n"
         "  reason: Executor should persist knowledge.\n",
@@ -622,7 +651,7 @@ def test_build_review_package_rejects_unbounded_knowledge_disposition(
     handoff.write_text(
         "id: handoff-task-004\n"
         "type: executor-result\n"
-        "related: {task: task-004}\n"
+        "related: {plan: plan-001, task: task-004}\n"
         "knowledge_disposition:\n"
         + disposition,
         encoding="utf-8",
@@ -732,3 +761,61 @@ def test_build_review_package_rejects_unallocated_auth_in_knowledge_disposition(
 
     with pytest.raises(SystemExit, match="unallocated decision authority"):
         build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+def test_build_review_package_rejects_missing_plan_identity(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    retarget_plan(root, task, "plan-B")
+    base = committed_review_base(root)
+    handoff = write_related_handoff(root, "related:\n  task: task-004\n")
+    review_target = root / ".work-bundle/runtime/execution/plan-B/task-004/review-package.md"
+
+    with pytest.raises(SystemExit, match="Handoff plan identity missing"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+    assert not review_target.exists()
+
+
+def test_build_review_package_rejects_null_plan_identity(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    retarget_plan(root, task, "plan-B")
+    base = committed_review_base(root)
+    handoff = write_related_handoff(root, "related:\n  plan: null\n  task: task-004\n")
+
+    with pytest.raises(SystemExit, match="Handoff plan identity missing"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+def test_build_review_package_rejects_wrong_explicit_plan(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    retarget_plan(root, task, "plan-B")
+    base = committed_review_base(root)
+    handoff = write_related_handoff(root, "related:\n  plan: plan-A\n  task: task-004\n")
+
+    with pytest.raises(SystemExit, match="Handoff plan mismatch: expected plan-B, got plan-A"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+def test_build_review_package_rejects_conflicting_plan_identities(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    retarget_plan(root, task, "plan-B")
+    base = committed_review_base(root)
+    handoff = write_related_handoff(
+        root,
+        "related:\n  plan: plan-B\n  task: task-004\nrelated_plan: plan-A\n",
+    )
+
+    with pytest.raises(SystemExit, match="Handoff plan identity conflict"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+def test_build_review_package_accepts_matching_plan_identity(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    retarget_plan(root, task, "plan-B")
+    base = committed_review_base(root)
+    handoff = write_related_handoff(root, "related:\n  plan: plan-B\n  task: task-004\n")
+
+    target = build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+    assert target == root / ".work-bundle/runtime/execution/plan-B/task-004/review-package.md"
+    assert target.is_file()

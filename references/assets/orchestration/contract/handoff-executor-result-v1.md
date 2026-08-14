@@ -151,6 +151,7 @@ allocation_evidence:
 ## Required By Applicability
 
 - `id`, `type`, `status`, `project`, `created_at`, `related`, and `result` are always required.
+- For a task-scoped executor-result, `related.plan` and `related.task` are required and must equal the assigned task's `plan_id` and `id`. Nested `related.plan` and flat `related_plan` must resolve to exactly one identity. Missing, null, conflicting, or mismatched plan identity fails closed before `build-review-package` produces a review package. Do not infer plan identity from a local task ID.
 - `changes.files` is required when files, symbols, artifacts, schemas, commands, or docs changed or were inspected as the task output.
 - `validation.commands` is required when any command, test, lint, inspection, or manual verification was run or intentionally skipped.
 - `knowledge_disposition` is required for every completed or partial meaningful move. It records task-local evidence only and does not authorize durable-knowledge retrieval or writes. A change action requires allocated `AUTH-NNN` aliases from the task's accepted decision authority, allocated source IDs, or exact paths already present in the compiled task scope; `none` requires an empty affected-authority list. Invented or unallocated AUTH aliases fail closed.
