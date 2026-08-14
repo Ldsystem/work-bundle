@@ -70,6 +70,12 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
         "phase_id: phase-001\n"
         "goal: Compile a bounded executor packet.\n"
         "source_ids: [REQ-003, CON-002, API-002, TEST-004]\n"
+        "truth_basis:\n"
+        "  purpose: Compile a bounded executor packet.\n"
+        "  as_is_evidence: [scripts/orchestration/execution_context.py]\n"
+        "  decision_authority: [REQ-003, CON-002]\n"
+        "  expected_delta: [API-002]\n"
+        "  conflict_status: clear\n"
         "files:\n"
         "  read: [scripts/orchestration/core.py]\n"
         "  write: [scripts/orchestration/execution_context.py]\n"
@@ -126,6 +132,31 @@ def test_build_task_brief_resolves_source_ids_and_keeps_allocations_task_local(t
     assert ".work-bundle/knowledge/notes" not in packet
     assert "handoff_contract: executor-result-v1" in packet
     assert "review_required: true" in packet
+    assert "truth_basis:" in packet
+    assert 'purpose: "Compile a bounded executor packet."' in packet
+    assert "REQ-003: Retry exactly three times before returning failure." in packet
+    assert "conflict_status: clear" in packet
+
+
+def test_build_task_brief_fails_closed_when_truth_basis_is_missing(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    content = task.read_text(encoding="utf-8")
+    content = re.sub(r"truth_basis:\n(?:  .*\n){5}", "", content)
+    task.write_text(content, encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Task Truth Basis is required"):
+        build_task_brief(args(root, task))
+
+
+def test_build_task_brief_routes_truth_basis_conflict_to_typed_blocker(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace("conflict_status: clear", "conflict_status: escalate"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="decision-blocked"):
+        build_task_brief(args(root, task))
 
 
 def test_build_task_brief_preserves_review_not_required_from_task_contract(tmp_path: Path) -> None:
@@ -264,6 +295,10 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
         "    - {command: uv run --with pytest pytest -q tests/test_one.py, result: passed}\n"
         "unresolved:\n"
         "  - Confirm retry timing with the caller.\n"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n"
         "session_history: SHOULD-NOT-APPEAR\n",
         encoding="utf-8",
     )
@@ -286,6 +321,9 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
     assert "scoped-rule" in package
     assert "dev-test-driven-development" in package
     assert "## Review rubric" in package
+    assert "## Accepted Truth Basis" in package
+    assert "## Knowledge disposition" in package
+    assert "No stable authority changed." in package
     assert "SHOULD-NOT-APPEAR" not in package
     assert ".work-bundle/knowledge/notes" not in package
 
@@ -311,7 +349,11 @@ def test_build_review_package_includes_tracked_and_untracked_worktree_changes(tm
         "related: {task: task-004}\n"
         "validation:\n"
         "  commands:\n"
-        "    - {command: uv run pytest -q, result: passed}\n",
+        "    - {command: uv run pytest -q, result: passed}\n"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n",
         encoding="utf-8",
     )
 
@@ -341,7 +383,11 @@ def test_build_review_package_never_reads_tracked_protected_diff_content(tmp_pat
     handoff.write_text(
         "id: handoff-task-004\n"
         "type: executor-result\n"
-        "related: {task: task-004}\n",
+        "related: {task: task-004}\n"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n",
         encoding="utf-8",
     )
 
@@ -352,3 +398,27 @@ def test_build_review_package_never_reads_tracked_protected_diff_content(tmp_pat
     assert "credentials/credentials.yaml" in package
     assert "content withheld: protected path" in package
     assert "TRACKED-PROTECTED-CANARY" not in package
+
+
+def test_build_review_package_rejects_invalid_knowledge_disposition(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    source = root / "src/compiler.py"
+    source.parent.mkdir()
+    source.write_text("def compile_task():\n    return 'old'\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    base = git(root, "rev-parse", "HEAD")
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        "related: {task: task-004}\n"
+        "knowledge_disposition:\n"
+        "  action: write-now\n"
+        "  reason: Executor should persist knowledge.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="knowledge disposition action"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))

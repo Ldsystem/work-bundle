@@ -94,6 +94,12 @@ def test_task_contract_compiles_methodology_capability_and_review() -> None:
     contract = read("references/assets/orchestration/contract/task-v1.md")
     for token in [
         "source_ids:",
+        "truth_basis:",
+        "as_is_evidence:",
+        "decision_authority:",
+        "expected_delta:",
+        "conflict_status: clear|escalate",
+        "decision-blocked",
         "methodology:",
         "tdd|systematic-debugging|direct|loop-coding",
         "executor_profile:",
@@ -117,6 +123,9 @@ def test_executor_result_contract_carries_acceptance_review() -> None:
         "reviewed_head: commit-or-tree-identity",
         "scope: specification | correctness | quality | validation | rule",
         "Full specification, root-plan, and phase inspection is an escalation path",
+        "knowledge_disposition:",
+        "none | update | supersede | reclassify",
+        "review owns any approved persistence follow-up",
     ]:
         assert token in contract
 

@@ -27,6 +27,14 @@ SENSITIVE_ASSIGNMENT_RE = re.compile(
 MAX_DIFF_BYTES = 120_000
 MAX_DIFF_LINES = 4_000
 WORKTREE_REFS = {"worktree", "working-tree", "working_tree"}
+TRUTH_BASIS_FIELDS = (
+    "purpose",
+    "as_is_evidence",
+    "decision_authority",
+    "expected_delta",
+    "conflict_status",
+)
+KNOWLEDGE_DISPOSITION_ACTIONS = {"none", "update", "supersede", "reclassify"}
 
 
 def _split_top_level(value: str, delimiter: str = ",") -> list[str]:
@@ -326,6 +334,58 @@ def _resolve_reference(value: Any, records: dict[str, str], source_paths: list[P
     return value
 
 
+def _compile_truth_basis(
+    task: dict[str, Any], records: dict[str, str], source_paths: list[Path]
+) -> dict[str, Any]:
+    raw = task.get("truth_basis")
+    if not isinstance(raw, dict):
+        raise SystemExit("Task Truth Basis is required")
+    missing = [field for field in TRUTH_BASIS_FIELDS if field not in raw]
+    if missing:
+        raise SystemExit(f"Task Truth Basis missing fields: {', '.join(missing)}")
+    purpose = raw.get("purpose")
+    if not isinstance(purpose, str) or not purpose.strip():
+        raise SystemExit("Task Truth Basis purpose must be non-empty")
+    list_fields: dict[str, list[Any]] = {}
+    for field in ("as_is_evidence", "decision_authority", "expected_delta"):
+        values = _as_list(raw.get(field))
+        if not values or any(not isinstance(value, str) or not value.strip() for value in values):
+            raise SystemExit(f"Task Truth Basis {field} must be a non-empty string list")
+        list_fields[field] = values
+    conflict_status = raw.get("conflict_status")
+    if conflict_status not in {"clear", "escalate"}:
+        raise SystemExit("Task Truth Basis conflict_status must be clear or escalate")
+    if conflict_status == "escalate":
+        raise SystemExit("decision-blocked: Task Truth Basis conflict requires authority repair")
+    return {
+        "purpose": purpose.strip(),
+        "as_is_evidence": _resolve_reference(list_fields["as_is_evidence"], records, source_paths),
+        "decision_authority": _resolve_reference(list_fields["decision_authority"], records, source_paths),
+        "expected_delta": _resolve_reference(list_fields["expected_delta"], records, source_paths),
+        "conflict_status": conflict_status,
+    }
+
+
+def _validated_knowledge_disposition(handoff: dict[str, Any]) -> dict[str, Any]:
+    raw = handoff.get("knowledge_disposition")
+    if not isinstance(raw, dict):
+        raise SystemExit("Executor result knowledge disposition is required")
+    action = raw.get("action")
+    if action is None and "action" in raw:
+        action = "none"
+    if action not in KNOWLEDGE_DISPOSITION_ACTIONS:
+        raise SystemExit(
+            "Executor result knowledge disposition action must be none, update, supersede, or reclassify"
+        )
+    reason = raw.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise SystemExit("Executor result knowledge disposition reason must be non-empty")
+    affected = _as_list(raw.get("affected_authority"))
+    if any(not isinstance(value, str) or not value.strip() for value in affected):
+        raise SystemExit("Executor result affected_authority must contain only non-empty strings")
+    return {"action": action, "reason": reason.strip(), "affected_authority": affected}
+
+
 def _yaml_scalar(value: Any) -> str:
     if value is True:
         return "true"
@@ -498,6 +558,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         "requirements": [f"{sid}: {records[sid]}" for sid in source_ids if not sid.startswith(("CON-", "API-", "IFACE-", "TEST-"))],
         "constraints": [f"{sid}: {records[sid]}" for sid in source_ids if sid.startswith("CON-")],
     }
+    truth_basis = _compile_truth_basis(task, records, source_paths)
     validation = _resolve_reference(validation_value, records, source_paths)
     acceptance_review = task.get("acceptance_review")
     if acceptance_review in (None, {}):
@@ -513,6 +574,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
             "task_id": task_id,
             "source_ids": source_ids,
             "goal": resolved_goal,
+            "truth_basis": truth_basis,
             "requirements": source_by_kind["requirements"],
             "constraints": source_by_kind["constraints"],
             "interfaces": {
@@ -660,6 +722,7 @@ def build_review_package(args: argparse.Namespace) -> Path:
     related_task = related.get("task") or handoff.get("related_task")
     if related_task != task_id:
         raise SystemExit(f"Handoff task mismatch: expected {task_id}, got {related_task or 'missing'}")
+    knowledge_disposition = _validated_knowledge_disposition(handoff)
 
     base = _resolve_commit(root, str(args.base))
     head, diff, name_status = _review_diff(root, base, str(args.head))
@@ -680,6 +743,7 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "changed_symbols": symbols,
         "validation": validation_commands,
         "unresolved": unresolved,
+        "knowledge_disposition": knowledge_disposition,
     }
     _assert_no_credential_values(evidence, "review evidence")
 
@@ -703,6 +767,9 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "## Required behavior",
         *_markdown_items(required),
         "",
+        "## Accepted Truth Basis",
+        *_markdown_items([task.get("truth_basis", {})]),
+        "",
         "## Allowed scope",
         *_markdown_items(allowed_scope),
         "",
@@ -714,6 +781,9 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "",
         "## Validation reported",
         *_markdown_items(validation_commands),
+        "",
+        "## Knowledge disposition",
+        *_markdown_items([knowledge_disposition]),
         "",
         "## Allocated rule and methodology assertions",
         *_markdown_items(assertions),
@@ -730,8 +800,10 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "1. Required behavior is satisfied.",
         "2. No out-of-scope change is present.",
         "3. Methodology and allocated-rule obligations are satisfied.",
-        "4. Validation evidence is sufficient and task-scoped.",
-        "5. Code quality has no blocking defect.",
+        "4. Accepted purpose, source evidence, decision authority, expected delta, and test oracle agree.",
+        "5. Knowledge disposition is task-local, evidence-backed, and grants no persistence authority.",
+        "6. Validation evidence is sufficient and task-scoped.",
+        "7. Code quality has no blocking defect.",
     ]
     package = "\n".join(lines).rstrip() + "\n"
     _assert_no_credential_values(package, "review package")
