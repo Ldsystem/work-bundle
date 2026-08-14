@@ -1,7 +1,10 @@
 metadata_version: 4
 authority_split:
   portable: .work-bundle/project.yaml
-  device_local: ~/.work-bundle/registry/projects.yaml#device_bindings
+  device_local: bootstrap.project_registry#device_bindings
+  registry_resolution: $work_bundle_config_root/bootstrap.yaml -> project_registry
+  v3_compatibility:
+    project_metadata_local_state: explicit-read-or-migration-only
 workspace:
   required: [id, slug, mode]
   id:
@@ -32,6 +35,10 @@ migration:
 attachment:
   sequence: [clone-control-plane, validate-portable-metadata, resolve-root-binding, materialize-source-in-place, validate, publish-local-binding]
   failed_root_materialization: rollback-source-git-and-created-source-paths
+  failed_member_materialization:
+    rollback: current-attach-owned-member-paths-only
+    preserve: [pre-existing-checkouts, user-supplied-checkouts, control-plane]
+    binding_publication: forbidden-on-failure
 control_plane:
   sync_policy: manual
   automatic_push_pull: false

@@ -156,6 +156,15 @@ def work_bundle_config_root() -> Path:
     return Path.home() / '.work-bundle'
 
 
+def resolve_project_registry_path() -> Path:
+    config_root = work_bundle_config_root()
+    bootstrap_path = config_root / GLOBAL_BOOTSTRAP_FILE_NAME
+    bootstrap = compact_yaml_map(read(bootstrap_path)) if bootstrap_path.is_file() else {}
+    value = bootstrap.get('project_registry', '$work_bundle_config_root/registry/projects.yaml')
+    value = value.replace('$work_bundle_config_root', str(config_root))
+    return Path(value).expanduser().resolve()
+
+
 def compact_yaml_map(text: str) -> dict[str, str]:
     data: dict[str, str] = {}
     for raw in text.splitlines():

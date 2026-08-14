@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
@@ -203,6 +204,32 @@ def migrate(config: Path, workspace: Path) -> dict[str, object]:
     )
     assert applied.returncode == 0, applied.stdout + applied.stderr
     return json.loads(applied.stdout)
+
+
+def portable_multi_workspace(
+    tmp_path: Path, repositories: list[tuple[str, Path]]
+) -> tuple[Path, bytes]:
+    source_config = config_root(tmp_path / "source-config")
+    source_workspace = tmp_path / "source-workspace"
+    args: list[str] = [
+        "init-workspace",
+        str(source_workspace),
+        "--mode",
+        "multi-repository",
+        "--slug",
+        "portable-multi",
+    ]
+    for repository_id, remote in repositories:
+        args.extend(["--repository", f"{repository_id}={remote}"])
+    args.append("--apply")
+    initialized = run_wb(source_config, *args)
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+
+    workspace = tmp_path / "attached-workspace"
+    shutil.copytree(source_workspace / ".work-bundle", workspace / ".work-bundle")
+    marker = workspace / ".work-bundle/knowledge/notes/control-marker.md"
+    marker.write_text("control plane preserved\n", encoding="utf-8")
+    return workspace, (workspace / ".work-bundle/project.yaml").read_bytes()
 
 
 def test_v3_to_v4_migration_is_deterministic_and_splits_local_state(tmp_path: Path) -> None:
@@ -947,6 +974,151 @@ def test_orchestration_preflight_resolves_v4_local_binding(tmp_path: Path) -> No
     repositories = json.loads(preflight.stdout)["repository_preflight"]["repositories"]
     assert [row["path"] for row in repositories] == [str(checkout.resolve())]
     assert repositories[0]["metadata"]["repository_id"] == "source-main"
+
+
+def test_v4_attach_doctor_and_preflight_share_bootstrap_resolved_registry(tmp_path: Path) -> None:
+    config = config_root(tmp_path / "config-root")
+    custom_registry = config / "custom/device-bindings.yaml"
+    custom_registry.parent.mkdir(parents=True)
+    custom_registry.write_text("projects: []\n", encoding="utf-8")
+    bootstrap = config / "bootstrap.yaml"
+    bootstrap.write_text(
+        bootstrap.read_text(encoding="utf-8").replace(
+            'project_registry: "$work_bundle_config_root/registry/projects.yaml"',
+            'project_registry: "$work_bundle_config_root/custom/device-bindings.yaml"',
+        ),
+        encoding="utf-8",
+    )
+    default_registry = config / "registry/projects.yaml"
+    default_before = default_registry.read_bytes()
+    remote, _, _ = make_remote(tmp_path / "source-fixture", "source-main")
+    workspace = tmp_path / "workspace"
+
+    initialized = run_wb(
+        config,
+        "init-workspace",
+        str(workspace),
+        "--mode",
+        "multi-repository",
+        "--slug",
+        "custom-registry",
+        "--repository",
+        f"source-main={remote}",
+        "--apply",
+    )
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+    attached = run_wb(config, "attach-workspace", str(workspace), "--materialize", "missing", "--apply")
+    assert attached.returncode == 0, attached.stdout + attached.stderr
+    doctor = run_wb(config, "doctor-workspace", str(workspace))
+    assert doctor.returncode == 0, doctor.stdout + doctor.stderr
+    preflight = run_orch(config, "repository-preflight", "--project-root", str(workspace))
+    assert preflight.returncode == 0, preflight.stdout + preflight.stderr
+
+    registry_text = custom_registry.read_text(encoding="utf-8")
+    workspace_id = json.loads(initialized.stdout)["workspace_id"]
+    assert workspace_id in registry_text
+    assert str((workspace / "source-main").resolve()) in registry_text
+    assert default_registry.read_bytes() == default_before
+    repositories = json.loads(preflight.stdout)["repository_preflight"]["repositories"]
+    assert [row["path"] for row in repositories] == [str((workspace / "source-main").resolve())]
+    assert repositories[0]["metadata"]["baseline_status"] == "local-observation"
+
+
+def test_multi_attach_remote_conflict_rolls_back_only_created_members(tmp_path: Path) -> None:
+    remote_a, _, _ = make_remote(tmp_path / "remote-a", "repo-a")
+    remote_b, _, _ = make_remote(tmp_path / "remote-b", "repo-b")
+    workspace, metadata_before = portable_multi_workspace(
+        tmp_path / "portable", [("repo-a", remote_a), ("repo-b", remote_b)]
+    )
+    config = config_root(tmp_path / "device-config")
+    wrong_remote, _, _ = make_remote(tmp_path / "existing", "existing-b")
+    existing = workspace / "repo-b"
+    subprocess.run(["git", "clone", str(wrong_remote), str(existing)], check=True, capture_output=True)
+    existing_head = git(existing, "rev-parse", "HEAD")
+
+    attached = run_wb(
+        config,
+        "attach-workspace",
+        str(workspace),
+        "--materialize",
+        "missing",
+        "--apply",
+    )
+
+    assert attached.returncode == 1
+    assert json.loads(attached.stdout)["failure_code"] == "WB_CONTROL_PLANE_REMOTE_CONFLICT"
+    assert not (workspace / "repo-a").exists()
+    assert existing.is_dir()
+    assert git(existing, "rev-parse", "HEAD") == existing_head
+    assert git(existing, "remote", "get-url", "origin") == str(wrong_remote)
+    assert (workspace / ".work-bundle/project.yaml").read_bytes() == metadata_before
+    assert (workspace / ".work-bundle/knowledge/notes/control-marker.md").read_text(encoding="utf-8") == "control plane preserved\n"
+    assert "device_bindings:" not in (config / "registry/projects.yaml").read_text(encoding="utf-8")
+
+
+def test_multi_attach_late_validation_failure_rolls_back_created_members(tmp_path: Path) -> None:
+    remote_a, _, _ = make_remote(tmp_path / "remote-a", "repo-a")
+    remote_b, _, _ = make_remote(tmp_path / "remote-b", "repo-b")
+    workspace, metadata_before = portable_multi_workspace(
+        tmp_path / "portable", [("repo-a", remote_a), ("repo-b", remote_b)]
+    )
+    config = config_root(tmp_path / "device-config")
+    fake_toolkit = tmp_path / "fake-toolkit"
+    template = fake_toolkit / "references/assets/template/AGENTS.md"
+    template.parent.mkdir(parents=True)
+    template.write_text(
+        "# ========================\n# Work Bundle RULE START\n# ========================\n"
+        "nested invalid section\n"
+        "# ========================\n# Work Bundle RULE END\n# ========================\n",
+        encoding="utf-8",
+    )
+    bootstrap = config / "bootstrap.yaml"
+    bootstrap.write_text(
+        bootstrap.read_text(encoding="utf-8").replace(str(REPO_ROOT), str(fake_toolkit)),
+        encoding="utf-8",
+    )
+
+    attached = run_wb(config, "attach-workspace", str(workspace), "--materialize", "missing", "--apply")
+
+    assert attached.returncode == 1
+    data = json.loads(attached.stdout)
+    assert data["failure_code"] == "WB_CONTROL_PLANE_AGENTS_SYNC_INVALID"
+    assert not (workspace / "repo-a").exists()
+    assert not (workspace / "repo-b").exists()
+    assert (workspace / ".work-bundle/project.yaml").read_bytes() == metadata_before
+    assert (workspace / ".work-bundle/knowledge/notes/control-marker.md").is_file()
+    assert "device_bindings:" not in (config / "registry/projects.yaml").read_text(encoding="utf-8")
+
+
+def test_multi_attach_registry_publication_failure_rolls_back_created_members(tmp_path: Path) -> None:
+    remote_a, _, _ = make_remote(tmp_path / "remote-a", "repo-a")
+    remote_b, _, _ = make_remote(tmp_path / "remote-b", "repo-b")
+    workspace, metadata_before = portable_multi_workspace(
+        tmp_path / "portable", [("repo-a", remote_a), ("repo-b", remote_b)]
+    )
+    config = config_root(tmp_path / "device-config")
+    blocked_parent = config / "blocked-registry"
+    blocked_parent.write_text("not a directory\n", encoding="utf-8")
+    bootstrap = config / "bootstrap.yaml"
+    bootstrap.write_text(
+        bootstrap.read_text(encoding="utf-8").replace(
+            'project_registry: "$work_bundle_config_root/registry/projects.yaml"',
+            'project_registry: "$work_bundle_config_root/blocked-registry/projects.yaml"',
+        ),
+        encoding="utf-8",
+    )
+    default_registry = config / "registry/projects.yaml"
+    default_before = default_registry.read_bytes()
+
+    attached = run_wb(config, "attach-workspace", str(workspace), "--materialize", "missing", "--apply")
+
+    assert attached.returncode == 1
+    assert json.loads(attached.stdout)["failure_code"] == "WB_CONTROL_PLANE_TRANSACTION_FAILED"
+    assert not (workspace / "repo-a").exists()
+    assert not (workspace / "repo-b").exists()
+    assert (workspace / ".work-bundle/project.yaml").read_bytes() == metadata_before
+    assert (workspace / ".work-bundle/knowledge/notes/control-marker.md").is_file()
+    assert default_registry.read_bytes() == default_before
 
 
 def test_doctor_repair_preserves_existing_and_unknown_local_binding_fields(tmp_path: Path) -> None:

@@ -5,13 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
 from typing import Iterable
 
-from core import resolve_workspace_root
+from core import project_registry_path, resolve_workspace_root
 
 
 STATUS_COMMAND = ["git", "status", "--porcelain=v1", "--untracked-files=all"]
@@ -93,8 +92,7 @@ def _workspace_id(text: str) -> str:
 
 
 def _device_binding_repositories(workspace_id: str) -> dict[str, dict[str, object]]:
-    config_root = Path(os.environ.get("WB_CONFIG_ROOT", Path.home() / ".work-bundle")).expanduser()
-    registry = config_root / "registry" / "projects.yaml"
+    registry = project_registry_path()
     if not registry.is_file() or not workspace_id:
         return {}
     in_bindings = False

@@ -87,18 +87,18 @@ An exact workspace-local checkout created by an older WorkBundle version may hav
 - Register every initialized project to `projects.yaml` as a new workspace slug or an existing workspace slug.
 - Derive the workspace slug from `--name` when provided; otherwise from the project root directory name (normalized lowercase alphanumeric with hyphens).
 - On slug or workspace-root match, merge registry entries and preserve existing aliases, origins, compatibility locators, and unknown fields unless explicitly replaced.
-- Keep the registry locator-oriented. It owns workspace slug/root and stable repository origin `id`, `origin_path`, `remote`, and Git capability; it does not own member path, expected branch, observed HEAD, cleanliness, lifecycle transaction, operation policy, or CodeGraph state.
+- Keep registry project entries locator-oriented. For metadata v4, the registry's separate `device_bindings` section owns device-local workspace/control-plane paths, member materialization paths, checkout kinds, and observations.
 - Model origins and workspace members independently. Multiple workspaces may register the same origin ID while owning independent local control stores, named worktrees, and distinct working branches.
 - Preserve every registered origin/member identity and unknown field during initialize, repair, registration, and migration; never collapse multi-member state to the command cwd.
-- When registering an origin or provisioning a member, update the bootstrap-resolved registry and `$workspace_root/.work-bundle/project.yaml` atomically or recoverably, publishing active state only after verification.
+- When changing durable topology, update its durable authorities atomically or recoverably. For metadata-v4 attach/doctor, preserve portable `project.yaml` and publish only the bootstrap-resolved device binding after verification.
 - Treat public member-provision success as a converged state: workspace-local checkout verified, metadata member published, and registry origin published. Never report success with pending publication states.
-- Carry a short role description in registry output/templates and workspace metadata: registry is locator-only; workspace metadata is working-state authority.
+- Carry version-aware role descriptions: metadata-v4 `project.yaml` is portable project/topology authority, metadata-v4 `device_bindings` are device-local materialization/observation authority, and metadata-v3 project metadata remains working-state authority only during explicit v3 reads or migrations.
 - Ask for the workspace slug decision only when it is missing and blocking.
 
 **Workspace metadata v3 and v2 compatibility:**
 
 - Render new or explicitly migrated `.work-bundle/project.yaml` with `metadata_version: 3`, `workspace_root`, explicit `workspace_mode`, workspace resource status, operation policy, and member bindings.
-- Keep `.work-bundle/project.yaml` as workspace-local authority for member working state, expected branch/base ref, observed HEAD/time, lifecycle state, operation policy, and CodeGraph state.
+- During explicit metadata-v3 reads and migrations only, keep `.work-bundle/project.yaml` as workspace-local authority for member working state, expected branch/base ref, observed HEAD/time, lifecycle state, operation policy, and CodeGraph state; never apply those local fields to metadata v4.
 - Read metadata v2 during the compatibility window, preserve unknown fields, and require inspect/dry-run/explicit apply before converting topology or moving worktrees.
 - Render `operation_policy.project_files` with non-destructive file operations and `operation_policy.git` with allowed read operations, permissive stage/commit/pull operations, and forbidden destructive operations including `reset --hard`, `clean -fd`, and `push --force`.
 - Render v3 `source_repositories[]` members with stable `id`, `project_root`, `origin_id`, checkout kind, workspace-local control-store binding, worktree name, expected branch, base ref, observed HEAD/time, baseline/lifecycle status, operation policy, and nested CodeGraph state.
@@ -131,7 +131,7 @@ An exact workspace-local checkout created by an older WorkBundle version may hav
 - Create or preserve required `.gitignore` entries.
 - Create or preserve the current project rule-store index at `.work-bundle/rules/index.yaml`; root `rules/index.yaml` is legacy-only and is not current project rule authority.
 - Create the declared `.work-bundle/knowledge` structure without staging, committing, or initializing Git; Git ownership requires a separate explicitly authorized workflow.
-- Bind registry IO to `references/assets/template/projects.yaml`; registry entries remain locators and project metadata owns working-state fields.
+- Bind registry IO to the bootstrap-resolved `project_registry` using `references/assets/template/projects.yaml`; metadata-v4 device bindings own local paths/observations, while metadata-v3 project metadata owns working-state fields only in explicit v3 compatibility workflows.
 - Fail mechanically when a required reference asset is missing; do not invent fallback content.
 
 **Validation scope:** mechanical checks only — file presence, directory structure, schema keys, registry status, metadata version, source repository fields, branch mismatch, stale baseline commit, registry/project repository ID mismatch, operation policy shape, CodeGraph metadata shape, and Git status. No semantic prose or bootstrap-artifact checks.
@@ -179,7 +179,7 @@ Use `migrate-project` only for unambiguous single-repository legacy layout upgra
 ## Output
 
 - Initialized, doctored, validated, registered, or migrated project workspace.
-- Updated bootstrap-resolved `projects.yaml` registry entry when registration runs.
+- Updated bootstrap-resolved project-registry locator or metadata-v4 device binding when its lifecycle command runs.
 - JSON command output with `status`, `failures`, registry status, metadata version/mode/resources/member evidence, redacted lifecycle transaction state, AGENTS sync evidence, and changed files where applicable. Compatibility reads retain existing v2 evidence fields until explicit migration.
 - For `set-prefer-subagent`, JSON command output with `status`, `scope`, `prefer_subagent`, `target_path`, `changed_files`, and `effective_prefer_subagent`.
 - Migration report and optional legacy-bootstrap archive paths under `.work-bundle/orchestration/docs/` when migration retires legacy artifacts.

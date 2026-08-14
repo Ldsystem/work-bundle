@@ -36,6 +36,12 @@
       "prompt": "Publish an existing clean control-plane repository when the commit succeeds but the remote rejects the push.",
       "expected_output": "Restores the exact pre-operation HEAD, metadata bytes, origin configuration, clean worktree and index, leaves no rollback residue, and persists redacted transaction evidence; a dirty or otherwise unsafe pre-state fails closed with a typed recovery-required result.",
       "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "Attach and doctor a portable v4 multi-repository workspace when bootstrap points project_registry to a non-default path and a later attach step fails after creating member checkouts.",
+      "expected_output": "Uses project.yaml only for portable identity and topology, uses device_bindings in the bootstrap-resolved project registry for local paths and observations across attach, doctor, and preflight, and removes only member paths created by the failed attach while preserving user-supplied checkouts and the control plane.",
+      "files": []
     }
   ]
 }

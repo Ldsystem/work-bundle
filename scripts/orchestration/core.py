@@ -57,20 +57,24 @@ def _walk_workspace_root(start: Path) -> Path | None:
     return None
 
 
-def _registry_workspace_candidates(start: Path) -> list[Path]:
+def project_registry_path() -> Path:
     config_root = Path(os.environ.get("WB_CONFIG_ROOT", Path.home() / ".work-bundle")).expanduser()
     bootstrap = config_root / "bootstrap.yaml"
-    if not bootstrap.is_file():
-        return []
-    registry_value = ""
-    for line in bootstrap.read_text(encoding="utf-8").splitlines():
-        if line.strip().startswith("project_registry:"):
-            registry_value = line.split(":", 1)[1].strip().strip("'\"")
-            break
-    if not registry_value:
-        return []
+    registry_value = "$work_bundle_config_root/registry/projects.yaml"
+    if bootstrap.is_file():
+        for line in bootstrap.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("project_registry:"):
+                registry_value = line.split(":", 1)[1].strip().strip("'\"")
+                break
     registry_value = registry_value.replace("$work_bundle_config_root", str(config_root))
-    registry = Path(registry_value).expanduser().resolve()
+    return Path(registry_value).expanduser().resolve()
+
+
+def _registry_workspace_candidates(start: Path) -> list[Path]:
+    config_root = Path(os.environ.get("WB_CONFIG_ROOT", Path.home() / ".work-bundle")).expanduser()
+    if not (config_root / "bootstrap.yaml").is_file():
+        return []
+    registry = project_registry_path()
     if not registry.is_file():
         return []
     projects: list[dict[str, object]] = []
@@ -144,8 +148,7 @@ def _member_roots(root: Path) -> list[Path]:
             if in_workspace and line.strip().startswith("id:"):
                 workspace_id = line.split(":", 1)[1].strip().strip("'\"")
                 break
-        config_root = Path(os.environ.get("WB_CONFIG_ROOT", Path.home() / ".work-bundle")).expanduser()
-        registry = config_root / "registry" / "projects.yaml"
+        registry = project_registry_path()
         if not registry.is_file() or not workspace_id:
             return []
         roots: list[Path] = []

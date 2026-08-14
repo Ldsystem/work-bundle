@@ -708,8 +708,10 @@ def test_registry_parser_tracks_projects_template_schema(tmp_path: Path) -> None
     template_path = REPO_ROOT / "references/assets/template/projects.yaml"
     template_text = template_path.read_text(encoding="utf-8")
     assert "source_repository_roles:" in template_text
-    assert "Locator only" in template_text
-    assert "Working-state authority" in template_text
+    assert "Locator authority in all versions" in template_text
+    assert "metadata v4 device_bindings" in template_text
+    assert "Metadata v4 portable project/topology authority" in template_text
+    assert "metadata v3 working-state authority" in template_text
     assert "projects:" in template_text
     for field in PROJECT_REGISTRY_ENTRY_FIELDS:
         assert field in template_text

@@ -1321,7 +1321,7 @@ def _bootstrap_value(key: str, default: str) -> str:
 
 
 def project_registry_path() -> Path:
-    return Path(_bootstrap_value("project_registry", "$work_bundle_config_root/registry/projects.yaml")).expanduser().resolve()
+    return resolve_project_registry_path()
 
 
 def _set_yaml_scalar(path: Path, key: str, value: str) -> bool:
@@ -1913,7 +1913,7 @@ def _session_start_payload(project_root: Path) -> dict[str, object]:
     runtime = resolve_bootstrap_runtime()
     bootstrap_path = Path(str(runtime.get('global_bootstrap_path')))
     work_bundle_root = runtime.get('resolved_work_bundle_root')
-    registry_path = project_registry_path() if bootstrap_path.is_file() else work_bundle_config_root() / 'registry/projects.yaml'
+    registry_path = project_registry_path()
     metadata_path = project_root / '.work-bundle/project.yaml'
     agents_path = project_root / 'AGENTS.md'
     return {

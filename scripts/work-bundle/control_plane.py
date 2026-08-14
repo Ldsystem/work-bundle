@@ -13,13 +13,11 @@ from typing import Iterable
 from urllib.parse import parse_qsl, urlsplit
 
 from core import (
-    GLOBAL_BOOTSTRAP_FILE_NAME,
-    compact_yaml_map,
     out,
     read,
+    resolve_project_registry_path,
     resolve_work_bundle_root,
     utc_now_rfc3339,
-    work_bundle_config_root,
 )
 from workspace_resources import _load_yaml, ensure_workspace_resources
 
@@ -306,12 +304,7 @@ def _resolved_declared_remote(value: object, repository_path: Path) -> str:
 
 
 def _registry_repository_remotes(workspace_root: Path) -> dict[str, str]:
-    config_root = work_bundle_config_root()
-    bootstrap = compact_yaml_map(read(config_root / GLOBAL_BOOTSTRAP_FILE_NAME))
-    registry_value = bootstrap.get(
-        "project_registry", "$work_bundle_config_root/registry/projects.yaml"
-    ).replace("$work_bundle_config_root", str(config_root))
-    registry = Path(registry_value).expanduser().resolve()
+    registry = resolve_project_registry_path()
     document = _load_yaml(read(registry)) if registry.is_file() else {}
     projects = document.get("projects") if isinstance(document, dict) else None
     if not isinstance(projects, list):
@@ -777,7 +770,7 @@ def _render_bindings(bindings: dict[str, dict[str, object]]) -> str:
 
 
 def _write_bindings(bindings: dict[str, dict[str, object]]) -> Path:
-    registry = work_bundle_config_root() / "registry" / "projects.yaml"
+    registry = resolve_project_registry_path()
     _atomic_write(registry, _bindings_document(bindings, read(registry) or "projects: []\n"))
     return registry
 
@@ -797,7 +790,7 @@ def _bindings_document(bindings: dict[str, dict[str, object]], original: str) ->
 
 
 def _registry_bindings() -> dict[str, dict[str, object]]:
-    return _parse_bindings(read(work_bundle_config_root() / "registry" / "projects.yaml"))
+    return _parse_bindings(read(resolve_project_registry_path()))
 
 
 def _binding_from_v3(
@@ -999,7 +992,7 @@ def cmd_init_workspace(args: list[str]) -> int:
         "observed_control_plane_head": "",
         "repositories": {},
     }
-    registry = work_bundle_config_root() / "registry/projects.yaml"
+    registry = resolve_project_registry_path()
     changed = _atomic_publish({
         metadata: rendered,
         control / ".gitignore": gitignore_text,
@@ -1318,7 +1311,7 @@ def cmd_migrate_control_plane(args: list[str]) -> int:
     except ControlPlaneError as exc:
         out({**base, "status": "issues-found", "failure_code": exc.code, "changed_files": []})
         return 1
-    registry = work_bundle_config_root() / "registry" / "projects.yaml"
+    registry = resolve_project_registry_path()
     registry_text = _bindings_document(bindings, read(registry) or "projects: []\n")
     payloads = {
         backup: before,
@@ -1360,11 +1353,15 @@ def _parse_repository_paths(values: list[str]) -> dict[str, Path]:
 
 
 def _materialize(remote: str, path: Path) -> None:
-    if path.exists():
+    if path.exists() or path.is_symlink():
         raise ControlPlaneError("WB_CONTROL_PLANE_MATERIALIZATION_PATH_EXISTS")
     path.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(["git", "clone", "--", remote, str(path)], check=False, capture_output=True, text=True)
     if result.returncode != 0:
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+        elif path.is_dir():
+            shutil.rmtree(path)
         raise ControlPlaneError("WB_CONTROL_PLANE_MATERIALIZATION_FAILED")
 
 
@@ -1500,12 +1497,24 @@ def _attach(
         key: dict(value) for key, value in existing_repositories.items() if isinstance(value, dict)
     }
     root_materialization_before: set[str] | None = None
+    owned_member_paths: list[Path] = []
     agents_path = workspace_root / "AGENTS.md"
     agents_before = agents_path.read_bytes() if agents_path.is_file() else None
     exclude_path = workspace_root / ".git/info/exclude"
     exclude_before = exclude_path.read_bytes() if exclude_path.is_file() else None
 
     def rollback_attach() -> None:
+        for owned_path in reversed(owned_member_paths):
+            try:
+                relative = owned_path.resolve().relative_to(workspace_root)
+            except ValueError:
+                continue
+            if not relative.parts or relative.parts[0] == ".work-bundle":
+                continue
+            if owned_path.is_symlink() or owned_path.is_file():
+                owned_path.unlink(missing_ok=True)
+            elif owned_path.is_dir():
+                shutil.rmtree(owned_path)
         if root_materialization_before is not None:
             _rollback_workspace_root_materialization(workspace_root, root_materialization_before)
         if agents_before is None:
@@ -1519,65 +1528,86 @@ def _attach(
             else:
                 exclude_path.parent.mkdir(parents=True, exist_ok=True)
                 exclude_path.write_bytes(exclude_before)
-    for repository in repositories:
-        repository_id = str(repository.get("id") or "")
-        remote = str(repository.get("canonical_remote") or "")
-        manual_locator = repository.get("locator_type") == "manual"
-        binding_type = str(repository.get("workspace_binding_type") or "")
-        candidate = repository_paths.get(repository_id)
-        if binding_type == "root" and candidate is not None and candidate != workspace_root:
-            return {
-                "status": "issues-found",
-                "failure_code": "WB_CONTROL_PLANE_ROOT_BINDING_PATH_MISMATCH",
-                "repository_id": repository_id,
-            }, 1
-        existing_repository = local_repositories.get(repository_id, {})
-        if candidate is None and existing_repository.get("project_root"):
-            bound_path = Path(str(existing_repository["project_root"])).expanduser().resolve()
-            if bound_path.exists():
-                candidate = bound_path
-        if binding_type == "root" and candidate is None and (workspace_root / ".git").exists():
-            candidate = workspace_root
-        if candidate is None and materialize in {"missing", "all"} and not manual_locator:
-            if apply:
-                candidate = workspace_root if binding_type == "root" else workspace_root / repository_id
-                if binding_type == "root":
-                    root_materialization_before = _materialize_workspace_root(
-                        remote, workspace_root, str(repository.get("default_branch") or "main")
-                    )
-                else:
-                    _materialize(remote, candidate)
-        state = "absent"
-        if candidate is not None and candidate.exists():
-            actual_remote = "" if manual_locator else _resolved_git_remote(candidate)
-            if not manual_locator and actual_remote != canonical_remote(remote):
-                return {
-                    "status": "issues-found",
-                    "failure_code": "WB_CONTROL_PLANE_REMOTE_CONFLICT",
-                    "repository_id": repository_id,
-                }, 1
-            if manual_locator:
-                state = "manual-existing"
-            elif binding_type == "root" and repository_id not in repository_paths and not existing_repository:
-                state = "materialized-root" if apply and materialize in {"missing", "all"} else "compatible-existing"
-            else:
-                state = "compatible-existing" if repository_id in repository_paths else "materialized-managed"
-            local_repositories[repository_id] = {
-                **existing_repository,
-                "project_root": str(candidate),
-                "checkout_kind": "manual" if manual_locator else ("workspace-root" if binding_type == "root" else ("external" if repository_id in repository_paths else "managed-worktree")),
-                "observed_branch": "" if manual_locator else _git(candidate, "branch", "--show-current"),
-                "observed_head": "" if manual_locator else _git(candidate, "rev-parse", "HEAD"),
-                "observed_at": utc_now_rfc3339(),
-                "git_common_dir": "" if manual_locator else _git(candidate, "rev-parse", "--git-common-dir"),
-            }
-            if not manual_locator:
-                readiness_failures.extend(
-                    _repository_execution_issues(candidate, str(repository.get("default_branch") or ""), repository_id)
+    try:
+        for repository in repositories:
+            repository_id = str(repository.get("id") or "")
+            remote = str(repository.get("canonical_remote") or "")
+            manual_locator = repository.get("locator_type") == "manual"
+            binding_type = str(repository.get("workspace_binding_type") or "")
+            binding_name = str(repository.get("workspace_binding_name") or repository_id)
+            candidate = repository_paths.get(repository_id)
+            if binding_type == "root" and candidate is not None and candidate != workspace_root:
+                raise ControlPlaneError(
+                    "WB_CONTROL_PLANE_ROOT_BINDING_PATH_MISMATCH",
+                    {"repository_id": repository_id},
                 )
-        else:
-            local_repositories.pop(repository_id, None)
-        states.append({"id": repository_id, "state": state, "required": bool(repository.get("required"))})
+            existing_repository = local_repositories.get(repository_id, {})
+            if candidate is None and existing_repository.get("project_root"):
+                bound_path = Path(str(existing_repository["project_root"])).expanduser().resolve()
+                if bound_path.exists():
+                    candidate = bound_path
+            if binding_type == "root" and candidate is None and (workspace_root / ".git").exists():
+                candidate = workspace_root
+            if binding_type != "root" and candidate is None:
+                default_candidate = (workspace_root / binding_name).resolve()
+                if default_candidate.parent != workspace_root or default_candidate.name == ".work-bundle":
+                    raise ControlPlaneError(
+                        "WB_CONTROL_PLANE_MATERIALIZATION_PATH_INVALID",
+                        {"repository_id": repository_id},
+                    )
+                if default_candidate.exists() or default_candidate.is_symlink():
+                    candidate = default_candidate
+            if candidate is None and materialize in {"missing", "all"} and not manual_locator:
+                if apply:
+                    candidate = workspace_root if binding_type == "root" else (workspace_root / binding_name).resolve()
+                    if binding_type == "root":
+                        root_materialization_before = _materialize_workspace_root(
+                            remote, workspace_root, str(repository.get("default_branch") or "main")
+                        )
+                    else:
+                        if candidate.parent != workspace_root or candidate.name == ".work-bundle":
+                            raise ControlPlaneError(
+                                "WB_CONTROL_PLANE_MATERIALIZATION_PATH_INVALID",
+                                {"repository_id": repository_id},
+                            )
+                        _materialize(remote, candidate)
+                        owned_member_paths.append(candidate)
+            state = "absent"
+            if candidate is not None and candidate.exists():
+                actual_remote = "" if manual_locator else _resolved_git_remote(candidate)
+                if not manual_locator and actual_remote != canonical_remote(remote):
+                    raise ControlPlaneError(
+                        "WB_CONTROL_PLANE_REMOTE_CONFLICT",
+                        {"repository_id": repository_id},
+                    )
+                if manual_locator:
+                    state = "manual-existing"
+                elif binding_type == "root" and repository_id not in repository_paths and not existing_repository:
+                    state = "materialized-root" if apply and materialize in {"missing", "all"} else "compatible-existing"
+                else:
+                    state = "materialized-managed" if candidate in owned_member_paths else "compatible-existing"
+                local_repositories[repository_id] = {
+                    **existing_repository,
+                    "project_root": str(candidate),
+                    "checkout_kind": "manual" if manual_locator else ("workspace-root" if binding_type == "root" else ("managed-worktree" if candidate.parent == workspace_root else "external")),
+                    "observed_branch": "" if manual_locator else _git(candidate, "branch", "--show-current"),
+                    "observed_head": "" if manual_locator else _git(candidate, "rev-parse", "HEAD"),
+                    "observed_at": utc_now_rfc3339(),
+                    "git_common_dir": "" if manual_locator else _git(candidate, "rev-parse", "--git-common-dir"),
+                }
+                if not manual_locator:
+                    readiness_failures.extend(
+                        _repository_execution_issues(candidate, str(repository.get("default_branch") or ""), repository_id)
+                    )
+            else:
+                local_repositories.pop(repository_id, None)
+            states.append({"id": repository_id, "state": state, "required": bool(repository.get("required"))})
+    except ControlPlaneError:
+        rollback_attach()
+        raise
+    except OSError as exc:
+        rollback_attach()
+        raise ControlPlaneError("WB_CONTROL_PLANE_TRANSACTION_FAILED") from exc
     if apply:
         try:
             changed = ensure_workspace_resources(workspace_root)
@@ -1612,9 +1642,12 @@ def _attach(
                         project_root, str(portable.get("default_branch") or ""), repository_id
                     )
                 )
-        except (ControlPlaneError, OSError):
+        except ControlPlaneError:
             rollback_attach()
             raise
+        except OSError as exc:
+            rollback_attach()
+            raise ControlPlaneError("WB_CONTROL_PLANE_TRANSACTION_FAILED") from exc
     else:
         changed = []
     ready = all(not row["required"] or row["state"] != "absent" for row in states) and not readiness_failures
@@ -1634,12 +1667,13 @@ def _attach(
             final_failures.append("WB_CONTROL_PLANE_PROTECTED_PATH_TRACKED")
     if final_failures:
         rollback_attach()
-        return {
-            "status": "issues-found",
-            "failure_code": final_failures[0],
-            "final_validation_failures": final_failures,
-            "changed_files": sorted(set(changed)),
-        }, 1
+        raise ControlPlaneError(
+            final_failures[0],
+            {
+                "final_validation_failures": final_failures,
+                "changed_files": sorted(set(changed)),
+            },
+        )
     if apply:
         try:
             registry = _write_bindings(bindings)

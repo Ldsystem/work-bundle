@@ -1,6 +1,6 @@
 source_repository_roles:
-  registry: "Locator only: workspace slug/root and stable repository origin identity and locators."
-  project_metadata: "Working-state authority: member path, branch/HEAD observation, lifecycle transaction, operation policy, and CodeGraph state."
+  registry: "Locator authority in all versions; metadata v4 device_bindings also own device-local materialization paths and observations."
+  project_metadata: "Metadata v4 portable project/topology authority; metadata v3 working-state authority during explicit v3 reads and migrations."
 
 projects:
   - slug: <project-slug>
