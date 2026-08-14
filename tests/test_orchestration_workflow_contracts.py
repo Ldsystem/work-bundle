@@ -100,6 +100,7 @@ def test_task_contract_compiles_methodology_capability_and_review() -> None:
         "expected_delta:",
         "conflict_status: clear|escalate",
         "decision-blocked",
+        "must be an accepted ID already present in the task's `source_ids`",
         "methodology:",
         "tdd|systematic-debugging|direct|loop-coding",
         "executor_profile:",
@@ -126,6 +127,7 @@ def test_executor_result_contract_carries_acceptance_review() -> None:
         "knowledge_disposition:",
         "none | update | supersede | reclassify",
         "review owns any approved persistence follow-up",
+        "must not name knowledge paths or persistence skills",
     ]:
         assert token in contract
 

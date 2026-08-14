@@ -35,6 +35,10 @@ TRUTH_BASIS_FIELDS = (
     "conflict_status",
 )
 KNOWLEDGE_DISPOSITION_ACTIONS = {"none", "update", "supersede", "reclassify"}
+KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE = re.compile(
+    r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-(?:write-knowledge|manage-lifecycle|what-is-helpful)\b)",
+    re.IGNORECASE,
+)
 
 
 def _split_top_level(value: str, delimiter: str = ",") -> list[str]:
@@ -335,7 +339,10 @@ def _resolve_reference(value: Any, records: dict[str, str], source_paths: list[P
 
 
 def _compile_truth_basis(
-    task: dict[str, Any], records: dict[str, str], source_paths: list[Path]
+    task: dict[str, Any],
+    records: dict[str, str],
+    source_paths: list[Path],
+    source_ids: list[str],
 ) -> dict[str, Any]:
     raw = task.get("truth_basis")
     if not isinstance(raw, dict):
@@ -352,6 +359,12 @@ def _compile_truth_basis(
         if not values or any(not isinstance(value, str) or not value.strip() for value in values):
             raise SystemExit(f"Task Truth Basis {field} must be a non-empty string list")
         list_fields[field] = values
+    decision_authority = list_fields["decision_authority"]
+    if any(
+        not SOURCE_ID_RE.fullmatch(value) or value not in source_ids
+        for value in decision_authority
+    ):
+        raise SystemExit("Task Truth Basis decision_authority must use allocated source_ids")
     conflict_status = raw.get("conflict_status")
     if conflict_status not in {"clear", "escalate"}:
         raise SystemExit("Task Truth Basis conflict_status must be clear or escalate")
@@ -366,7 +379,9 @@ def _compile_truth_basis(
     }
 
 
-def _validated_knowledge_disposition(handoff: dict[str, Any]) -> dict[str, Any]:
+def _validated_knowledge_disposition(
+    handoff: dict[str, Any], accepted_source_ids: list[str]
+) -> dict[str, Any]:
     raw = handoff.get("knowledge_disposition")
     if not isinstance(raw, dict):
         raise SystemExit("Executor result knowledge disposition is required")
@@ -383,6 +398,20 @@ def _validated_knowledge_disposition(handoff: dict[str, Any]) -> dict[str, Any]:
     affected = _as_list(raw.get("affected_authority"))
     if any(not isinstance(value, str) or not value.strip() for value in affected):
         raise SystemExit("Executor result affected_authority must contain only non-empty strings")
+    if action == "none" and affected:
+        raise SystemExit("Executor result knowledge disposition none must not name affected authority")
+    if action != "none" and not affected:
+        raise SystemExit("Executor result knowledge disposition change must name affected authority")
+    disposition_text = "\n".join([reason, *affected])
+    if KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE.search(disposition_text):
+        raise SystemExit("Executor result knowledge disposition must not instruct knowledge access or writes")
+    for authority in affected:
+        if SOURCE_ID_RE.fullmatch(authority):
+            if authority not in accepted_source_ids:
+                raise SystemExit("Executor result knowledge disposition cites unallocated source authority")
+            continue
+        if "/" not in authority:
+            raise SystemExit("Executor result affected_authority must use source IDs or task-local paths")
     return {"action": action, "reason": reason.strip(), "affected_authority": affected}
 
 
@@ -558,7 +587,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         "requirements": [f"{sid}: {records[sid]}" for sid in source_ids if not sid.startswith(("CON-", "API-", "IFACE-", "TEST-"))],
         "constraints": [f"{sid}: {records[sid]}" for sid in source_ids if sid.startswith("CON-")],
     }
-    truth_basis = _compile_truth_basis(task, records, source_paths)
+    truth_basis = _compile_truth_basis(task, records, source_paths, source_ids)
     validation = _resolve_reference(validation_value, records, source_paths)
     acceptance_review = task.get("acceptance_review")
     if acceptance_review in (None, {}):
@@ -722,7 +751,7 @@ def build_review_package(args: argparse.Namespace) -> Path:
     related_task = related.get("task") or handoff.get("related_task")
     if related_task != task_id:
         raise SystemExit(f"Handoff task mismatch: expected {task_id}, got {related_task or 'missing'}")
-    knowledge_disposition = _validated_knowledge_disposition(handoff)
+    knowledge_disposition = _validated_knowledge_disposition(handoff, list(task.get("source_ids", [])))
 
     base = _resolve_commit(root, str(args.base))
     head, diff, name_status = _review_diff(root, base, str(args.head))

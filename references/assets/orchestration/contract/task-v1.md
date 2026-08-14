@@ -66,7 +66,7 @@ allocated_skills:
 
 ## Truth Basis
 
-The front-matter `truth_basis` is mandatory and uses the same five fields as the lightweight path. The compiler resolves source IDs only from linked accepted specifications, carries the exact basis into the disposable task brief and review package, and returns the existing `decision-blocked` route when `conflict_status` is `escalate`. Executors do not retrieve durable knowledge to rebuild this authority.
+The front-matter `truth_basis` is mandatory and uses the same five fields as the lightweight path. Every `decision_authority` entry must be an accepted ID already present in the task's `source_ids`; arbitrary prose and unallocated linked-spec IDs fail closed. The compiler resolves those IDs only from linked accepted specifications, carries the exact basis into the disposable task brief and review package, and returns the existing `decision-blocked` route when `conflict_status` is `escalate`. Executors do not retrieve durable knowledge to rebuild this authority.
 
 ## Source references
 

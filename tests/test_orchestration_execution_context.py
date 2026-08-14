@@ -159,6 +159,23 @@ def test_build_task_brief_routes_truth_basis_conflict_to_typed_blocker(tmp_path:
         build_task_brief(args(root, task))
 
 
+@pytest.mark.parametrize("authority", ["invented design decision", "REQ-777"])
+def test_build_task_brief_rejects_unallocated_decision_authority(
+    tmp_path: Path, authority: str
+) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            "decision_authority: [REQ-003, CON-002]",
+            f"decision_authority: [REQ-003, {authority}]",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="decision_authority.*allocated source_ids"):
+        build_task_brief(args(root, task))
+
+
 def test_build_task_brief_preserves_review_not_required_from_task_contract(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
     task.write_text(
@@ -421,4 +438,37 @@ def test_build_review_package_rejects_invalid_knowledge_disposition(tmp_path: Pa
     )
 
     with pytest.raises(SystemExit, match="knowledge disposition action"):
+        build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+
+
+@pytest.mark.parametrize(
+    "disposition",
+    [
+        "  action: update\n  reason: Stable authority changed.\n  affected_authority: []\n",
+        "  action: update\n  reason: Run ks-write-knowledge now.\n  affected_authority: [REQ-003]\n",
+        "  action: update\n  reason: Stable authority changed.\n  affected_authority: [.work-bundle/knowledge/notes/new.md]\n",
+    ],
+)
+def test_build_review_package_rejects_unbounded_knowledge_disposition(
+    tmp_path: Path, disposition: str
+) -> None:
+    root, _, task = workspace(tmp_path)
+    source = root / "src/compiler.py"
+    source.parent.mkdir()
+    source.write_text("def compile_task():\n    return 'old'\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    base = git(root, "rev-parse", "HEAD")
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        "related: {task: task-004}\n"
+        "knowledge_disposition:\n"
+        + disposition,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="knowledge disposition"):
         build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
