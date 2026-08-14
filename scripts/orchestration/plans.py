@@ -15,33 +15,37 @@ def _plan_knowledge_field(body: str, label: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _explicit_handoff_plan_id(handoff: dict[str, object]) -> str | None:
+    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+    identities: list[str] = []
+    for raw in (related.get("plan"), handoff.get("related_plan")):
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if not text or text.lower() in {"null", "none", "~"}:
+            continue
+        if text not in identities:
+            identities.append(text)
+    if len(identities) != 1:
+        return None
+    return identities[0]
+
+
 def _assert_archive_knowledge_gate(args: argparse.Namespace, plan_id: str, root_path: Path) -> None:
     _, body = read_front_matter(root_path)
     upstream = _plan_knowledge_field(body, "Disposition")
     if upstream is None:
         raise SystemExit("knowledge-blocked: plan has no Knowledge Base Update disposition")
     closure_return = _plan_knowledge_field(body, "Closure return") or "missing"
-    task_ids: set[str] = set()
-    active_plan_dir = root_path.parent / plan_id
-    for task_path in sorted(active_plan_dir.glob("phase-*/*.md")):
-        task = read_structured_artifact(task_path)
-        task_id = str(task.get("id") or "").strip()
-        if task_id:
-            task_ids.add(task_id)
     handoffs: list[dict[str, object]] = []
     handoff_root = orchestration_root(args) / "handoff" / "executor"
     for path in sorted(handoff_root.glob("*/*")):
         if not path.is_file() or path.suffix not in {".yaml", ".yml"}:
             continue
         handoff = read_structured_artifact(path)
-        related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
-        if (
-            related.get("plan") == plan_id
-            or handoff.get("related_plan") == plan_id
-            or related.get("task") in task_ids
-            or handoff.get("related_task") in task_ids
-        ):
-            handoffs.append(handoff)
+        if _explicit_handoff_plan_id(handoff) != plan_id:
+            continue
+        handoffs.append(handoff)
     gate = evaluate_knowledge_closure_state(
         upstream_disposition=upstream,
         accepted_task_handoffs=handoffs,
@@ -51,6 +55,7 @@ def _assert_archive_knowledge_gate(args: argparse.Namespace, plan_id: str, root_
         triggers = ", ".join(f"{item['task']}:{item['action']}" for item in gate["triggers"])
         detail = triggers or str(gate["disposition"])
         raise SystemExit(f"knowledge-blocked: archive requires resolved durable closure ({detail})")
+
 
 def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
     root = orchestration_root(args) / "plan"

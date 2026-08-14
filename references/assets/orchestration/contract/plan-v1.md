@@ -69,7 +69,7 @@ Use a compact source-spec ID map. Do not paste long specification sections into 
 - **Source**: [Source specification Knowledge Base Update section or review decision.]
 - **Review Gate**: [How review should resolve or validate the disposition before archive.]
 
-`Closure return` starts as `missing`. Final review updates it only from validated keep-summarizing return evidence. `archive-plan` aggregates accepted executor-result dispositions and fails `knowledge-blocked` when an accepted `update`, `supersede`, or `reclassify` requires closure but this return remains `missing` or `blocked`; rejected dispositions and accepted `none` do not trigger promotion.
+`Closure return` starts as `missing`. Final review updates it only from validated keep-summarizing return evidence. `archive-plan` aggregates accepted executor-result dispositions whose `related.plan` (or `related_plan`) unambiguously equals the current plan and fails `knowledge-blocked` when an accepted `update`, `supersede`, or `reclassify` requires closure but this return remains `missing` or `blocked`; rejected dispositions, accepted `none`, other-plan handoffs, and task-only handoffs do not trigger promotion.
 
 ## 3. Phase Map
 
