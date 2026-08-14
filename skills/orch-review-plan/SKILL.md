@@ -18,6 +18,7 @@ Verify:
 - specification, plan, phase, and task status coherence;
 - executor-result handoffs by applicability;
 - `acceptance_review.verdict: accept` wherever review was required;
+- accepted Truth Basis, implementation evidence, test oracle, and task-local knowledge disposition agree in each accepted review package;
 - planned validation evidence exists and is fresh for the accepted task result;
 - declared dependency, barrier, and convergence gates occurred;
 - Knowledge Base Update disposition is `completed` or `not-needed` before archive;
@@ -49,7 +50,7 @@ Do not create a repair specification for every failed gate.
 
 ## Knowledge delegate-return
 
-When disposition is `required`, invoke the approved keep-summarizing owner with accepted implementation, validation, handoff, review, and decision evidence. Validate its structural-value result, written or updated durable paths or evidence-backed no-write rationale, index rebuild status, blockers, and completion state. Resume the disposition audit only from that return evidence. Orchestration does not directly create, edit, promote, delete, or index durable knowledge.
+When disposition is `required`, invoke the approved keep-summarizing owner with accepted implementation, validation, handoff, review, and decision evidence. Review owns approved persistence delegation; executor disposition evidence never invokes a `ks-*` skill. Validate structural-value result, written or updated durable paths or evidence-backed no-write rationale, index rebuild status, blockers, and completion state. Resume only from that return evidence. Orchestration does not directly create, edit, promote, delete, or index durable knowledge.
 
 ## Finalization
 
@@ -66,4 +67,4 @@ Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules abov
 
 ## Boundary
 
-Follow `orch-orchestration-boundary` and `orch-review-completion`. Role-context is deprecated; do not invoke it from orch skills.
+Follow `orch-orchestration-boundary` and `orch-review-completion`.

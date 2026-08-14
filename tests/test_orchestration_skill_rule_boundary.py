@@ -85,6 +85,10 @@ def test_planner_allocates_methodology_capability_and_bounded_context() -> None:
         "after_failed_repairs: 2",
         "common contract group",
         "post-barrier convergence task",
+        "Truth Basis",
+        "earliest ordinary task",
+        "cheaply falsify",
+        "Do not add a risk score",
     ]:
         assert token in text
 
@@ -111,6 +115,10 @@ def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> 
         "workspace-blocked",
         "no-index",
         "no-retrieval",
+        "Truth Basis",
+        "knowledge disposition",
+        "task-local evidence",
+        "review owns",
     ]:
         assert token in text
 

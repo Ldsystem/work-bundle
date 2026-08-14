@@ -7,7 +7,7 @@ description: 'Execute a WorkBundle task, phase, or plan through compiled task br
 
 ## Execution Constraints (skill-owned)
 
-Execution is a no-retrieval stage. Use the selected task, cited specification values compiled into its brief, declared prior handoffs, task-scoped source/tests, and allocated methodology. Do not query or read `.work-bundle/knowledge/`.
+Execution is a no-retrieval stage. Use the selected task, its compiled Truth Basis and cited specification values, declared prior handoffs, task-scoped source/tests, and allocated methodology. Do not query or read `.work-bundle/knowledge/`.
 
 ## Scheduler-Owned Constraints
 
@@ -21,7 +21,7 @@ Execution is a no-retrieval stage. Use the selected task, cited specification va
 python3 scripts/orch.py build-task-brief --task <task-path>
 ```
 
-Missing source IDs, inconsistent scope, or unsafe workspace state fails closed with a typed blocker.
+Missing source IDs, unallocated decision authority, `conflict_status: escalate`, inconsistent scope, or unsafe workspace state fails closed with the existing typed blocker; Truth Basis conflict uses `decision-blocked`.
 6. Choose the provider-neutral capability from the task profile. Partition only independent tasks with disjoint write scopes. Contract-decoupled participants validate against the common contract, accepted prior handoffs, and task-local files; they reach the named barrier before convergence work.
 7. When user/environment policy permits delegation, use visible multi-agent subagents for task ownership. Invisible helper workers may support bounded analysis only. If independent subagents are unavailable, use single-agent execution and mark later review `reviewer_independent: false`.
 8. Validate executor-result evidence shape, compile a bounded review package, and assign `dev-code-review` to an independent reviewer when possible. The scheduler does not perform code-quality review.
@@ -33,7 +33,8 @@ Missing source IDs, inconsistent scope, or unsafe workspace state fails closed w
 - Apply `systematic-debugging` before proposing a root-cause fix for unexpected behavior.
 - Apply TDD to testable new/changed behavior and diagnosed fixes; use direct deterministic verification for non-testable mechanical artifacts.
 - Run fresh claim-relevant validation after the final edit.
-- Write a sparse `executor-result-v1` handoff containing task identity, changed paths, validation, repository/CodeGraph fallback, allocated obligations, unresolved blockers, and local task-fit evidence.
+- Write a sparse `executor-result-v1` handoff containing task identity, changed paths, validation, repository/CodeGraph fallback, allocated obligations, unresolved blockers, local task-fit evidence, and a knowledge disposition of `none`, `update`, `supersede`, or `reclassify`.
+- Knowledge disposition contains task-local evidence only. It must not name knowledge paths, invoke any `ks-*` skill, or authorize persistence; final orchestration review owns approved follow-up.
 - Do not perform acceptance judgment or mark a review-required task complete.
 - Trigger `wb-violation-evaluation` only for a new unintended WorkBundle-related conflict, error, failed validation, or contradictory workflow behavior. Stop once visible relatedness is established; no chain-of-thought or exhaustive tracing is required.
 
@@ -48,7 +49,7 @@ python3 scripts/orch.py build-review-package \
 
 Use `--head worktree` for pre-commit review; the compiler includes tracked, staged, unstaged, and untracked changes, assigns a stable worktree identity, and withholds protected-path content.
 
-The reviewer uses only the bounded package and `dev-code-review`. It returns `accept`, `repair`, or `blocked` with the reviewed tree identity and compact evidence-backed findings.
+The reviewer uses only the bounded package and `dev-code-review`. It compares the accepted Truth Basis, implementation, test oracle, and knowledge disposition, then returns `accept`, `repair`, or `blocked` with the reviewed tree identity and compact evidence-backed findings.
 
 On `repair`, return blocking findings with the same brief and current diff, make the smallest repair, rerun fresh task validation, regenerate the package from the original task base, and re-review. After two failed repair rounds, raise capability one tier when available. Repeated evidence of a decomposition or requirement defect stops retries and routes to plan or specification repair.
 
@@ -74,4 +75,4 @@ Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules abov
 
 ## Boundary
 
-Follow `orch-orchestration-boundary` and `orch-handoff-required`. Role-context is deprecated; do not invoke it from orch skills.
+Follow `orch-orchestration-boundary` and `orch-handoff-required`.

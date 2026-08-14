@@ -16,6 +16,9 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 
 ## Must
 
+- Confirm each required task review compared the accepted Truth Basis, implementation, test oracle, and task-local knowledge disposition before accepting the task.
+- Keep approved `ks-*` persistence delegation review-owned; executor disposition evidence never authorizes knowledge retrieval or writes.
+
 - Audit spec, plan, phase, task, handoff, and accepted task-review status coherence.
 - Require fresh planned validation evidence and an `accept` task-review verdict wherever review is required.
 - Verify declared dependency, barrier, and convergence gates from recorded evidence.

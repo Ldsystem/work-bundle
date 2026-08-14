@@ -72,6 +72,8 @@ For orchestration gateway use, run `scripts/ks.py query --project <slug> --query
 
 Orchestration must retrieve durable knowledge through `ks-what-is-helpful` gateway mode and must not browse `.work-bundle/knowledge/**` directly. `orch-execute-plan` remains a no-retrieval stage: execution consumes carried spec, plan, phase, task, declared handoff, and task-scoped source/test context only, and must not invoke the gateway.
 
+All implementation methods consume the same Truth Basis: purpose, as-is evidence, accepted decision authority, expected delta, and conflict status. After a meaningful validated move, record `none`, `update`, `supersede`, or `reclassify`. Heavy executors return task-local evidence only; they do not name knowledge paths or invoke `ks-*`. The final orchestration review owns any approved keep-summarizing delegation and validates its return evidence.
+
 ## Project Registry
 
 For metadata v4, use `<workspace-root>/.work-bundle/project.yaml` as portable project/topology authority and use `device_bindings` in the bootstrap-resolved `project_registry` as device-local materialization and observation authority. Preserve project-metadata ownership of local checkout paths and observations only for explicit metadata-v3 reads and migrations. Use workspace-root `AGENTS.md`, initialized from `references/assets/template/AGENTS.md`, for WorkBundle runtime entry rules. Stable role profiles remain project data for explicit consumers; they do not select or alter runtime authority.

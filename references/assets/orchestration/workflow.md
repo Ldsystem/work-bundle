@@ -11,6 +11,8 @@ specification -> plan -> phase -> task -> execute -> executor-result -> task rev
 
 Durable orchestration artifacts live under `.work-bundle/orchestration/`. Disposable task briefs, review packages, and lightweight development plans live under `.work-bundle/runtime/`; they have no active/archive/index lifecycle. Durable project knowledge remains owned by approved `ks-*` flows under `.work-bundle/knowledge/`.
 
+Every development path uses the same five-field Truth Basis: purpose, as-is evidence, accepted decision authority, expected delta, and conflict status. Lightweight plans keep it compact and ephemeral. Heavy planning normalizes it in each task, then compiles it into the brief and review package. A material conflict stops through the existing typed route; no method invents authority.
+
 ## Semantic and coding methods
 
 Semantic artifacts use `dev-semantic-convergence`: draft, view through caller-defined lenses, repair only discovered defects, and repeat until unchanged or blocked. Specifications use user purpose, authority support, requirement consistency, impact radius, knowledge disposition, and execution-workspace lenses. Plans use source-ID coverage, dependencies, write scopes, validation ownership, allocation, barrier safety, and executor-context completeness.
@@ -35,7 +37,7 @@ execution_workspace:
 
 Specification creation decides policy only; it does not provision a worktree. Planning carries that policy into executable tasks.
 
-Plans keep durable artifacts normalized and DRY. Every executable task cites source IDs, exact file scope, dependencies, validation, methodology, allocated rules/skills, a provider-neutral executor profile, and acceptance-review requirements. Contract-decoupled parallel tasks share a stable contract group, validate only against that contract plus accepted handoffs and task-local files, reach a named barrier, and defer joint checks to the convergence owner.
+Plans keep durable artifacts normalized and DRY. Every executable task cites source IDs, the accepted Truth Basis, exact file scope, dependencies, validation, methodology, allocated rules/skills, a provider-neutral executor profile, and acceptance-review requirements. When simplification depends on a consequential assumption, the earliest ordinary task cheaply falsifies it before broad edits; do not add a checkpoint phase or risk-score lifecycle. Contract-decoupled parallel tasks share a stable contract group, validate only against that contract plus accepted handoffs and task-local files, reach a named barrier, and defer joint checks to the convergence owner.
 
 Generated specifications and plans record compact semantic convergence evidence:
 
@@ -49,7 +51,7 @@ semantic_loop:
 
 ## Compiled execution context
 
-Before normal bounded execution, `build-task-brief` compiles the task and its cited source IDs into a self-contained ephemeral packet. The packet resolves exact requirements, constraints, interfaces, file scope, methodology, allocated rules, validation commands, workspace root, handoff contract, and review requirement. Missing source IDs fail closed.
+Before normal bounded execution, `build-task-brief` compiles the task, its cited source IDs, and the same five-field Truth Basis into a self-contained ephemeral packet. The packet resolves exact requirements, constraints, interfaces, file scope, methodology, allocated rules, validation commands, workspace root, handoff contract, and review requirement. Missing source IDs fail closed; unallocated decision authority or conflict also blocks compilation.
 
 For pre-commit acceptance, `build-review-package --head worktree` includes tracked, staged, unstaged, and untracked changes under a stable worktree identity while withholding protected-path content.
 
@@ -77,7 +79,7 @@ scheduler selects executable task
   -> accept | repair | blocked
 ```
 
-Executors own implementation, task-local verification, and executor-result evidence. Reviewers own acceptance judgment for requirement fit, correctness, edge cases, unnecessary complexity, allocated obligations, and validation sufficiency. Schedulers own dependencies, barriers, context compilation, delegation, and evidence shape; they do not perform code-quality review.
+Executors own implementation, task-local verification, and executor-result evidence, including a task-local knowledge disposition of `none`, `update`, `supersede`, or `reclassify`. They never invoke persistence or read knowledge. Reviewers own acceptance judgment for the accepted Truth Basis, requirement fit, correctness, edge cases, test oracle, disposition, unnecessary complexity, allocated obligations, and validation sufficiency. Schedulers own dependencies, barriers, context compilation, delegation, and evidence shape; they do not perform code-quality review.
 
 Visible multi-agent subagents are preferred only when user/environment policy allows and write scopes are disjoint. Invisible helper workers may support bounded analysis but never own delegated task implementation. When independent subagents are unavailable, record `reviewer_independent: false` and perform an explicit reduced-independence second pass.
 
@@ -107,7 +109,7 @@ Resume the step that owns the failure. Repair a task for rejected implementation
 
 Archive is allowed only after required task reviews are accepted, validation and handoffs are coherent, barriers converged, Knowledge Base Update disposition is `completed` or `not-needed`, approved `ks-*` return evidence exists when required, and allowed commit/CodeGraph/metadata/archive/index mechanics complete or are explicitly inapplicable.
 
-Only approved keep-summarizing owners write durable knowledge. Review may invoke that owner and validate returned paths or an evidence-backed no-write result; it must not write knowledge directly.
+Only approved keep-summarizing owners write durable knowledge. Final orchestration review owns approved persistence delegation and may invoke that owner, then validate returned paths or an evidence-backed no-write result; executors and orchestration itself must not write knowledge directly.
 
 ## Lightweight development lane
 

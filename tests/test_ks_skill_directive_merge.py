@@ -115,3 +115,17 @@ def test_workflow_and_evals_use_orch_skill_names() -> None:
         assert "`orchestrator` `create-document`" not in blob
     assert "orch-create-document" in workflow
     assert "orch-create-document" in evals
+
+
+def test_workflow_carries_truth_basis_and_review_owned_disposition() -> None:
+    workflow = (REPO_ROOT / "references/assets/keep-summarizing/workflow.md").read_text(
+        encoding="utf-8"
+    )
+    for token in [
+        "Truth Basis",
+        "none`, `update`, `supersede`, or `reclassify",
+        "task-local evidence",
+        "final orchestration review",
+        "device_bindings",
+    ]:
+        assert token in workflow

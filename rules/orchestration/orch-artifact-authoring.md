@@ -16,6 +16,9 @@ Keep orchestration artifacts human-readable, contract-compliant, and executable 
 
 ## Must
 
+- Require every executable task to declare the five-field Truth Basis and allocated decision-authority source IDs so compiled briefs and review packages carry accepted authority without executor rediscovery.
+- Put the earliest ordinary falsification task before broad simplification when a consequential assumption exists; do not create a separate checkpoint lifecycle.
+
 - Load only the directive contract and template references required for the artifact being created or validated.
 - Use human-readable Markdown for specifications, plans, phases, tasks, handoffs, and orchestration documents; keep compact YAML to front matter and index files where contracts require it.
 - Reference stable spec IDs such as `REQ-`, `CON-`, `AC-`, `OQ-`, and `API-` in plans, phases, and tasks instead of repeating full requirement prose.

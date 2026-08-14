@@ -143,6 +143,10 @@ def test_workflow_separates_durable_artifacts_from_runtime_packets() -> None:
         "Missing source IDs fail closed",
         "Full specification, root-plan, and phase reading is an escalation path",
         "Execution remains no-retrieval",
+        "same five-field Truth Basis",
+        "earliest ordinary task",
+        "knowledge disposition",
+        "review owns approved persistence",
     ]:
         assert token in workflow
 
@@ -157,6 +161,8 @@ def test_workflow_assigns_review_ownership_and_repair_loop() -> None:
         "After two failed low-cost repair rounds",
         "A task becomes `Completed` only when",
         "required `accept` review evidence",
+        "accepted Truth Basis",
+        "test oracle",
     ]:
         assert token in workflow
 
@@ -215,6 +221,11 @@ def test_evals_cover_twenty_migration_behaviors() -> None:
         "before the final edit",
         "durable knowledge update is unresolved",
         "compiled brief is valid",
+        "ordinary characterization task",
+        "conflict_status escalate",
+        "asks to invoke a ks-* writer",
+        "implementation and tests do not match",
+        "device-local checkout observations disagree",
     ]:
         assert token in prompts
     for token in [

@@ -78,6 +78,8 @@ Use a compact source-spec ID map. Do not paste long specification sections into 
 
 Plans must use the fewest phases and tasks that preserve complete requirement coverage, exact dependencies, disjoint write scopes, validation ownership, handoff requirements, and review gates. Do not split phases or tasks only to mirror template sections, lifecycle labels, or repeated prose.
 
+Every executable task declares the same five-field Truth Basis. When a consequential simplification or compatibility assumption exists, make the earliest ordinary task cheaply falsify it before broad edits. Do not add a risk score, checkpoint phase, or parallel lifecycle.
+
 ## 4. Desired Files
 
 | ID | File Type | Path | Purpose | Operation | Related Phase |
@@ -134,6 +136,7 @@ How to make tasks parallel: create or confirm a stable boundary artifact before 
 | VERIFY-004 | Every task, phase, and plan completion path requires `create-handoff` with a compact, sparse YAML `executor-result` handoff whose body stays applicability-based. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-005 | `allocated_rules` and `allocated_skills` cover all material rule/skill conditions from the source specification, affected files, operation type, CodeGraph/Git needs, validation tasks, and any non-WorkBundle rule/skill sources already visible to the agent. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 | VERIFY-006 | Compactness, contract group clarity, barrier correctness, co-worker isolation, convergence validation, and contract-only handoff criteria are present where parallel branches share a contract. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
+| VERIFY-007 | Each task carries allocated Truth Basis authority and the earliest ordinary task falsifies consequential assumptions before broad simplification. | plan/phase/task | passed|repaired|blocked | [Same-turn repair or source-spec repair blocker.] |
 
 If any generated artifact drifts from the source specification, omits required spec-ID coverage, contains inconsistent paths or dependencies, lacks validation, lacks allocated rule/skill coverage, or lacks handoff criteria, repair the generated artifacts in the same planning turn and repeat this verification. If the source specification itself has unresolved questions, missing stable IDs, missing evidence, or contradictory instructions, stop for specification repair instead of inventing plan content.
 

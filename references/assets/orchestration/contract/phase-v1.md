@@ -121,6 +121,8 @@ Record phase-level verification against the source specification and root plan.
 
 Repair generated phase or child-task drift, missing spec-ID alignment, dependency mistakes, unsafe parallelization, validation gaps, allocation gaps, and handoff gaps in the same planning turn. Stop for specification repair when the source spec cannot support a deterministic phase.
 
+Phase ordering must preserve Truth Basis continuity. An ordinary proof task that falsifies a consequential assumption precedes dependent broad edits without becoming a new checkpoint lifecycle.
+
 ## 6. Completion Criteria
 
 - **DONE-REQ-001**: [Requirement validation result and evidence.]

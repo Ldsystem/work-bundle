@@ -31,6 +31,12 @@ def test_semantic_convergence_contract_is_bounded_and_reports_compact_result() -
         "result:",
         "rounds:",
         "repaired:",
+        "Truth Basis",
+        "purpose",
+        "as-is evidence",
+        "decision authority",
+        "expected delta",
+        "conflict status",
     ]:
         assert token in text
     assert "semantic artifacts" in text

@@ -67,4 +67,4 @@ Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules abov
 
 ## Boundary
 
-Follow `orch-orchestration-boundary`. Role-context is deprecated; do not invoke it from orch skills.
+Follow `orch-orchestration-boundary`.
