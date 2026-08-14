@@ -591,6 +591,26 @@ def test_initialize_project_v4_migration_guardrails_and_pressure_scenarios() -> 
     prompts = "\n".join(item["prompt"] for item in evals["evals"])
     assert "live network remote and registry network remote conflict" in prompts
     assert "ordinary v3 single-repository workspace" in prompts
+    assert "portable v4 single-repository workspace" in prompts
+    assert "remote rejects the push" in prompts
+    assert "In both workspace modes, create or preserve `$workspace_root/script/index.yaml`" in initialize
+    assert "In both workspace modes, create or preserve `$workspace_root/credentials/credentials.yaml`" in initialize
+
+
+def test_single_repository_workspace_resource_contracts_converge() -> None:
+    metadata_contract = (REPO_ROOT / "references/wb-workspace-metadata-v3-contract.yaml").read_text(encoding="utf-8")
+    credential_contract = (REPO_ROOT / "references/wb-credential-use-contract.yaml").read_text(encoding="utf-8")
+    security_rule = (REPO_ROOT / "rules/security-exclusion.md").read_text(encoding="utf-8")
+    script_rule = (REPO_ROOT / "rules/work-bundle/wb-script-instruction.md").read_text(encoding="utf-8")
+
+    assert "workspace_modes: [single-repository, multi-repository]" in credential_contract
+    assert "workspace_resources: forbidden" not in metadata_contract
+    assert "forbidden_runtime_paths: [script, credentials]" not in metadata_contract
+    assert "in both single- and multi-repository modes" in security_rule
+    assert "Permit workspace utilities in both single- and multi-repository modes" in script_rule
+    assert "multi-repository-only" not in "\n".join(
+        (credential_contract, security_rule, script_rule)
+    )
 
 
 def test_workspace_ecosystem_documentation_and_external_registry_boundary() -> None:

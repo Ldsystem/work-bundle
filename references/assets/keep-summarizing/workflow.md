@@ -76,7 +76,7 @@ Orchestration must retrieve durable knowledge through `ks-what-is-helpful` gatew
 
 Use `<workspace-root>/.work-bundle/project.yaml` as working-state authority for workspace metadata, member bindings, override inputs, copy restrictions, and resolution priority. Resolve the global project registry from `~/.work-bundle/bootstrap.yaml` only as a bounded cross-workspace locator fallback. Use workspace-root `AGENTS.md`, initialized from `references/assets/template/AGENTS.md`, for WorkBundle runtime entry rules. Resolve stable role context from `roles/` role profiles.
 
-In multi-repository mode, reusable workspace utilities live under singular `<workspace-root>/script/` and are reusable only through `script/index.yaml`; toolkit plural `scripts/` remains separate. The protected credential store is also multi-repository-only. Single-repository workspaces contain neither runtime folder. Never read, index, embed, summarize, copy, or expose `<workspace-root>/credentials/credentials.yaml`. Credential-backed operations belong to `wb-credential-use`, and only credential IDs plus redacted metadata may cross agent-visible surfaces.
+In both workspace modes, reusable workspace utilities live under singular `<workspace-root>/script/` and are reusable only through `script/index.yaml`; toolkit plural `scripts/` remains separate. The protected credential store lives at `<workspace-root>/credentials/credentials.yaml` in both modes and remains local-only. Never read, index, embed, summarize, copy, or expose it. Credential-backed operations belong to `wb-credential-use`, and only credential IDs plus redacted metadata may cross agent-visible surfaces.
 
 ## Structural-Value Test
 

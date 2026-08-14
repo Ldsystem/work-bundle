@@ -18,8 +18,7 @@ workspace:
     single-repository:
       workspace_root_equals_project_root: true
       lifecycle_status: current
-      workspace_resources: forbidden
-      forbidden_runtime_paths: [script, credentials]
+      workspace_resources: required
     multi-repository:
       member_project_roots_within_workspace_root: true
       workspace_resources: required

@@ -11,7 +11,7 @@ metadata_compatibility:
   migration_requires_explicit_apply: true
   preserves_unknown_fields: true
 
-# Multi-repository only. The lifecycle renderer omits this block for single-repository mode.
+# Workspace-owned resources for both single- and multi-repository modes.
 workspace_resources:
   script_index:
     path: script/index.yaml

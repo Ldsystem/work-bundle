@@ -9,6 +9,8 @@ import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "scripts/work-bundle"))
+from workspace_resources import CREDENTIAL_TEMPLATE, SCRIPT_INDEX_TEMPLATE
 
 
 def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -134,8 +136,10 @@ def make_v3_single_workspace(tmp_path: Path, *, tracked_agents: bool = False) ->
     git(workspace, "config", "user.email", "test@example.com")
     git(workspace, "config", "user.name", "Test")
     (workspace / "README.md").write_text("# same-root source\n", encoding="utf-8")
+    (workspace / "script").mkdir()
+    (workspace / "script/index.yaml").write_text(SCRIPT_INDEX_TEMPLATE, encoding="utf-8")
     (workspace / ".gitignore").write_text(".work-bundle/\nAGENTS.md\n", encoding="utf-8")
-    source_paths = ["README.md", ".gitignore"]
+    source_paths = ["README.md", ".gitignore", "script/index.yaml"]
     if tracked_agents:
         (workspace / "AGENTS.md").write_text("user-owned agent guidance\n", encoding="utf-8")
         source_paths.append("AGENTS.md")
@@ -572,6 +576,109 @@ def test_single_repository_migration_keeps_same_root_and_preserves_tracked_agent
     assert (workspace / "AGENTS.md").read_bytes() == agents_before
     assert git(workspace, "status", "--porcelain=v1", "--untracked-files=all") == ""
     assert git(workspace, "check-ignore", "--no-index", ".work-bundle/project.yaml") == ".work-bundle/project.yaml"
+
+
+def test_single_repository_init_creates_workspace_resources(tmp_path: Path) -> None:
+    config = config_root(tmp_path / "config-root")
+    remote, workspace, _ = make_remote(tmp_path / "source-fixture", "source")
+
+    initialized = run_wb(
+        config,
+        "init-workspace",
+        str(workspace),
+        "--mode",
+        "single-repository",
+        "--slug",
+        "single-demo",
+        "--repository",
+        f"source-main={remote}",
+        "--apply",
+    )
+
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+    assert (workspace / "script/index.yaml").read_text(encoding="utf-8") == SCRIPT_INDEX_TEMPLATE
+    credential_file = workspace / "credentials/credentials.yaml"
+    assert credential_file.read_text(encoding="utf-8") == CREDENTIAL_TEMPLATE
+    assert credential_file.parent.stat().st_mode & 0o777 == 0o700
+    assert credential_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_single_repository_init_preserves_workspace_resources(tmp_path: Path) -> None:
+    config = config_root(tmp_path / "config-root")
+    remote, workspace, _ = make_remote(tmp_path / "source-fixture", "source")
+    script_index = workspace / "script/index.yaml"
+    credential_file = workspace / "credentials/credentials.yaml"
+    script_index.parent.mkdir(parents=True)
+    script_index.write_text(SCRIPT_INDEX_TEMPLATE + "# preserve-script\n", encoding="utf-8")
+    credential_file.parent.mkdir(parents=True)
+    credential_file.write_text(CREDENTIAL_TEMPLATE + "# preserve-credential\n", encoding="utf-8")
+    script_before = script_index.read_bytes()
+    credential_before = credential_file.read_bytes()
+    exclude = workspace / ".git/info/exclude"
+    exclude.write_text("# preserve-existing-exclude\n", encoding="utf-8")
+
+    initialized = run_wb(
+        config,
+        "init-workspace",
+        str(workspace),
+        "--mode",
+        "single-repository",
+        "--slug",
+        "single-demo",
+        "--repository",
+        f"source-main={remote}",
+        "--apply",
+    )
+
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+    assert script_index.read_bytes() == script_before
+    assert credential_file.read_bytes() == credential_before
+    assert credential_file.parent.stat().st_mode & 0o777 == 0o700
+    assert credential_file.stat().st_mode & 0o777 == 0o600
+    exclude_text = exclude.read_text(encoding="utf-8")
+    assert "# preserve-existing-exclude" in exclude_text
+    assert ".work-bundle/" in exclude_text
+    assert "credentials/" in exclude_text
+    metadata = (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
+    assert "workspace_root:" not in metadata
+    assert "project_root:" not in metadata
+    assert "git_control_root:" not in metadata
+    assert git(workspace, "check-ignore", "--no-index", ".work-bundle/project.yaml") == ".work-bundle/project.yaml"
+    assert git(workspace, "check-ignore", "--no-index", "credentials/credentials.yaml") == "credentials/credentials.yaml"
+    assert subprocess.run(
+        ["git", "-C", str(workspace), "check-ignore", "--no-index", "script/index.yaml"],
+        check=False,
+        capture_output=True,
+        text=True,
+    ).returncode == 1
+    new_utility = workspace / "script/new-utility.py"
+    new_utility.write_text("print('visible')\n", encoding="utf-8")
+    assert "script/new-utility.py" in git(workspace, "status", "--porcelain=v1", "--untracked-files=all")
+
+
+def test_single_repository_attach_creates_resources_without_topology_drift(tmp_path: Path) -> None:
+    config_a = config_root(tmp_path / "config-a")
+    workspace, _, _ = make_v3_single_workspace(tmp_path / "fixture")
+    (workspace / "script/index.yaml").unlink()
+    git(workspace, "add", "script/index.yaml")
+    git(workspace, "commit", "-q", "-m", "remove workspace resources for attach repair")
+    migrate(config_a, workspace)
+    script_index = workspace / "script/index.yaml"
+    credential_file = workspace / "credentials/credentials.yaml"
+    assert not script_index.exists()
+    assert not credential_file.exists()
+
+    config_b = config_root(tmp_path / "config-b")
+    attached = run_wb(config_b, "attach-workspace", str(workspace), "--materialize", "none", "--apply")
+    assert attached.returncode == 0, attached.stdout + attached.stderr
+    assert script_index.read_text(encoding="utf-8") == SCRIPT_INDEX_TEMPLATE
+    assert credential_file.read_text(encoding="utf-8") == CREDENTIAL_TEMPLATE
+    assert credential_file.parent.stat().st_mode & 0o777 == 0o700
+    assert credential_file.stat().st_mode & 0o777 == 0o600
+    assert "credentials/" in (workspace / ".git/info/exclude").read_text(encoding="utf-8")
+    doctor = run_wb(config_b, "doctor-workspace", str(workspace))
+    assert doctor.returncode == 0, doctor.stdout + doctor.stderr
+    assert json.loads(doctor.stdout)["portable"]["failures"] == []
 
 
 def test_single_repository_fresh_attach_materializes_source_into_workspace_root(tmp_path: Path) -> None:
@@ -1135,6 +1242,164 @@ def test_publish_failure_restores_metadata_and_writes_recovery_evidence(tmp_path
     assert metadata.read_bytes() == before
     assert not (workspace / ".work-bundle/.git").exists()
     assert Path(data["transaction_evidence"]).is_file()
+
+
+def test_publish_push_failure_restores_exact_existing_control_plane_git_state(tmp_path: Path) -> None:
+    config = config_root(tmp_path / "config-root")
+    source_remote, _, _ = make_remote(tmp_path / "source-fixture", "source")
+    workspace = tmp_path / "workspace"
+    initialized = run_wb(
+        config,
+        "init-workspace",
+        str(workspace),
+        "--slug",
+        "demo",
+        "--repository",
+        f"source-main={source_remote}",
+        "--apply",
+    )
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+    control = workspace / ".work-bundle"
+    old_remote = tmp_path / "old-control.git"
+    rejecting_remote = tmp_path / "rejecting-control.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(old_remote)], check=True)
+    subprocess.run(["git", "init", "--bare", "-q", str(rejecting_remote)], check=True)
+    hook = rejecting_remote / "hooks/pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    git(control, "init", "-q", "-b", "main")
+    git(control, "config", "user.email", "test@example.com")
+    git(control, "config", "user.name", "Test")
+    git(control, "remote", "add", "origin", str(old_remote))
+    git(control, "add", ".")
+    git(control, "commit", "-q", "-m", "baseline")
+    head_before = git(control, "rev-parse", "HEAD")
+    metadata = control / "project.yaml"
+    metadata_before = metadata.read_bytes()
+    origin_before = git(control, "remote", "get-url", "origin")
+    status_before = git(control, "status", "--porcelain=v1", "--untracked-files=all")
+    staged_before = git(control, "diff", "--cached", "--name-status")
+
+    failed = run_wb(
+        config,
+        "publish-control-plane",
+        str(workspace),
+        "--remote",
+        str(rejecting_remote),
+        "--apply",
+    )
+
+    assert failed.returncode == 1
+    data = json.loads(failed.stdout)
+    assert data["failure_code"] == "WB_CONTROL_PLANE_GIT_OPERATION_FAILED"
+    assert git(control, "rev-parse", "HEAD") == head_before
+    assert metadata.read_bytes() == metadata_before
+    assert git(control, "remote", "get-url", "origin") == origin_before
+    assert git(control, "status", "--porcelain=v1", "--untracked-files=all") == status_before == ""
+    assert git(control, "diff", "--cached", "--name-status") == staged_before == ""
+    evidence = Path(data["transaction_evidence"])
+    assert evidence.is_file()
+    evidence_data = json.loads(evidence.read_text(encoding="utf-8"))
+    assert evidence_data["state"] == "rolled-back"
+    assert evidence_data["recovery_required"] is False
+
+
+def test_publish_existing_dirty_control_plane_fails_closed_without_mutation(tmp_path: Path) -> None:
+    config = config_root(tmp_path / "config-root")
+    source_remote, _, _ = make_remote(tmp_path / "source-fixture", "source")
+    workspace = tmp_path / "workspace"
+    assert run_wb(
+        config,
+        "init-workspace",
+        str(workspace),
+        "--slug",
+        "demo",
+        "--repository",
+        f"source-main={source_remote}",
+        "--apply",
+    ).returncode == 0
+    control = workspace / ".work-bundle"
+    remote = tmp_path / "control.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    git(control, "init", "-q", "-b", "main")
+    git(control, "config", "user.email", "test@example.com")
+    git(control, "config", "user.name", "Test")
+    git(control, "add", ".")
+    git(control, "commit", "-q", "-m", "baseline")
+    dirty = control / "knowledge/notes/dirty.md"
+    dirty.write_text("user change\n", encoding="utf-8")
+    head_before = git(control, "rev-parse", "HEAD")
+    metadata_before = (control / "project.yaml").read_bytes()
+    status_before = git(control, "status", "--porcelain=v1", "--untracked-files=all")
+
+    failed = run_wb(
+        config,
+        "publish-control-plane",
+        str(workspace),
+        "--remote",
+        str(remote),
+        "--apply",
+    )
+
+    assert failed.returncode == 1
+    data = json.loads(failed.stdout)
+    assert data["failure_code"] == "WB_CONTROL_PLANE_PUBLISH_RECOVERY_REQUIRED"
+    assert git(control, "rev-parse", "HEAD") == head_before
+    assert (control / "project.yaml").read_bytes() == metadata_before
+    assert git(control, "status", "--porcelain=v1", "--untracked-files=all") == status_before
+    assert dirty.read_text(encoding="utf-8") == "user change\n"
+    evidence = json.loads(Path(data["transaction_evidence"]).read_text(encoding="utf-8"))
+    assert evidence["state"] == "recovery-required"
+    assert evidence["recovery_required"] is True
+
+
+def test_publish_failed_git_snapshot_fails_closed_without_mutation(tmp_path: Path) -> None:
+    config = config_root(tmp_path / "config-root")
+    source_remote, _, _ = make_remote(tmp_path / "source-fixture", "source")
+    workspace = tmp_path / "workspace"
+    assert run_wb(
+        config,
+        "init-workspace",
+        str(workspace),
+        "--slug",
+        "demo",
+        "--repository",
+        f"source-main={source_remote}",
+        "--apply",
+    ).returncode == 0
+    control = workspace / ".work-bundle"
+    remote = tmp_path / "control.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    git(control, "init", "-q", "-b", "main")
+    git(control, "config", "user.email", "test@example.com")
+    git(control, "config", "user.name", "Test")
+    git(control, "add", ".")
+    git(control, "commit", "-q", "-m", "baseline")
+    head_before = git(control, "rev-parse", "HEAD")
+    metadata_before = (control / "project.yaml").read_bytes()
+    index = control / ".git/index"
+    index.write_bytes(b"not-a-git-index\n")
+    index_before = index.read_bytes()
+
+    failed = run_wb(
+        config,
+        "publish-control-plane",
+        str(workspace),
+        "--remote",
+        str(remote),
+        "--apply",
+    )
+
+    assert failed.returncode == 1
+    data = json.loads(failed.stdout)
+    assert data["failure_code"] == "WB_CONTROL_PLANE_PUBLISH_RECOVERY_REQUIRED"
+    assert git(control, "rev-parse", "HEAD") == head_before
+    assert (control / "project.yaml").read_bytes() == metadata_before
+    assert index.read_bytes() == index_before
+    evidence = json.loads(Path(data["transaction_evidence"]).read_text(encoding="utf-8"))
+    assert "status_snapshot_failed" in evidence["snapshot_failures"]
+    assert "index_snapshot_failed" in evidence["snapshot_failures"]
+    assert evidence["recovery_required"] is True
 
 
 def test_attach_and_doctor_report_wrong_branch_and_dirty_checkout_not_ready(tmp_path: Path) -> None:

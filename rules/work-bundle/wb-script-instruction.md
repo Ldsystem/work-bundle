@@ -24,13 +24,14 @@ Keep scripts mechanical and bounded so skills, rules, lifecycle design, architec
 - Keep `scripts/work-bundle/project.py` as the canonical owner for project registration, project metadata initialization, and `/wb-initialize-project` file creation.
 - Keep commands idempotent and preserve user-authored content.
 - Read domain catalogs from references instead of redefining them inside scripts.
-- Treat toolkit/source `scripts/` and multi-repository workspace utility `$workspace_root/script/` as distinct roots with distinct ownership.
-- Permit workspace utilities only in multi-repository mode. In single-repository mode, keep mechanism templates under `references/` and reject a runtime `script/` directory as topology drift.
-- In multi-repository mode, inspect `$workspace_root/script/index.yaml` before creating or running a reusable workspace utility and inspect the referenced file before first use or after its digest changes.
+- Treat toolkit/source `scripts/` and workspace utility `$workspace_root/script/` as distinct roots with distinct ownership in both workspace modes.
+- Permit workspace utilities in both single- and multi-repository modes.
+- In single-repository mode, preserve the overlapping source repository's established tracking policy for `script/`; do not silently ignore or untrack it.
+- In both workspace modes, inspect `$workspace_root/script/index.yaml` before creating or running a reusable workspace utility and inspect the referenced file before first use or after its digest changes.
 - Register every reusable workspace utility in `script/index.yaml` in the same workflow with the v1 contract fields, including operation class and declared credential IDs.
 - Reject duplicate IDs, stale or escaping paths, orphan reusable utilities, and undeclared credential use mechanically; do not execute a utility as part of validation.
 - Parse `script/index.yaml` structurally and reject symlinked utilities, invalid operation values, malformed invocation/dependency shapes, and entries missing the complete v1 required-field set.
-- Preserve existing multi-repository index entries and user utility files during initialize, doctor, and migration.
+- Preserve existing index entries and user utility files in both workspace modes during initialize, doctor, and migration.
 
 ## Must Not
 
@@ -47,7 +48,7 @@ Keep scripts mechanical and bounded so skills, rules, lifecycle design, architec
 - Inspect changed scripts for semantic judgment or cross-skill ownership.
 - Verify project lifecycle behavior routes through `scripts/work-bundle/project.py`.
 - Verify script commands report mechanical diagnostics and remain idempotent.
-- Verify single-repository workspaces have no runtime `script/`; for multi-repository workspaces verify every indexed workspace utility path resolves beneath `$workspace_root/script/`, every reusable utility is indexed, and index validation performs no execution.
+- In both workspace modes, verify every indexed workspace utility path resolves beneath `$workspace_root/script/`, every reusable utility is indexed, and index validation performs no execution.
 - Verify mutation, network, credential, and destructive behavior still uses task authority, operation policy, and confirmation gates.
 
 ## On Violation

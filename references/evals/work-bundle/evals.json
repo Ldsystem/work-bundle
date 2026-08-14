@@ -22,7 +22,19 @@
     {
       "id": 4,
       "prompt": "Initialize a new ordinary v3 single-repository workspace whose origin is already unambiguous.",
-      "expected_output": "Uses the ordinary init-project lifecycle without invoking v4 migration remote override or control-plane publication behavior.",
+      "expected_output": "Uses the ordinary init-project lifecycle, creates or preserves script/index.yaml and credentials/credentials.yaml with protected permissions, and does not invoke v4 migration remote override or control-plane publication behavior.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Initialize or attach a portable v4 single-repository workspace whose source Git repository is the workspace root.",
+      "expected_output": "Creates or preserves the workspace script and credential resources, excludes .work-bundle/ and credentials/ from the source Git repository without replacing existing exclusions, keeps portable metadata free of local paths, and does not classify those resources as topology drift.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Publish an existing clean control-plane repository when the commit succeeds but the remote rejects the push.",
+      "expected_output": "Restores the exact pre-operation HEAD, metadata bytes, origin configuration, clean worktree and index, leaves no rollback residue, and persists redacted transaction evidence; a dirty or otherwise unsafe pre-state fails closed with a typed recovery-required result.",
       "files": []
     }
   ]

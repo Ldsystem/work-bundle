@@ -11,7 +11,7 @@ Initialize, doctor, validate, register, inspect, or migrate a project as a work-
 
 ## Inputs
 
-- `workspace_root`: authority root that owns `.work-bundle/` and `AGENTS.md`; in multi-repository mode it also owns `script/`, `credentials/`, and managed members.
+- `workspace_root`: authority root that owns `.work-bundle/`, `AGENTS.md`, `script/`, and `credentials/`; in multi-repository mode it also owns managed members.
 - `project_root`: one concrete source repository checkout; equal to `workspace_root` in single-repository mode and a member path in multi-repository mode.
 - Explicit `mode`: `single-repository` or `multi-repository` for new initialization.
 - `~/.work-bundle/bootstrap.yaml` for `project_registry` and `work_bundle_root` resolution.
@@ -119,9 +119,9 @@ An exact workspace-local checkout created by an older WorkBundle version may hav
   - `orchestration/handoff/executor/{active,archived}`
   - `orchestration/{docs,principles,templates,reviews,execution-state}`
 - Directory membership is driven by `references/wb-initialize-project-default-work-bundle-tree.yaml`.
-- In multi-repository mode, create or preserve `$workspace_root/script/index.yaml` from its empty v1 template and never auto-execute indexed utilities.
-- In multi-repository mode, create or preserve `$workspace_root/credentials/credentials.yaml` as the sole credential-directory file, enforce protection, and keep the directory Git-ignored without reading values.
-- In single-repository mode, do not create `script/`, `credentials/`, or a `workspace_resources` metadata block; validation reports their presence as topology drift. Keep the reusable mechanism templates under `references/assets/template/`.
+- In both workspace modes, create or preserve `$workspace_root/script/index.yaml` from its empty v1 template and never auto-execute indexed utilities.
+- In both workspace modes, create or preserve `$workspace_root/credentials/credentials.yaml` as the sole credential-directory file, enforce protection, and keep the directory Git-ignored without reading values.
+- In both workspace modes, render and validate the `workspace_resources` metadata block. In single-repository mode, keep `script/` available to the source repository's established tracking policy while excluding `credentials/` and `.work-bundle/` without replacing existing ignore content or untracking user-owned paths.
 - In multi-repository mode place runtime Git control stores beneath `$workspace_root/.work-bundle/git/` and exclude them from workspace-management commits and broad scans.
 - Render `.work-bundle/project.yaml` from `references/assets/template/project.yaml`.
 - Render `.work-bundle/project.yaml` with metadata v3 workspace/member state from mechanical Git and per-member `.codegraph/` inspection.

@@ -35,7 +35,7 @@ AGENTS_RULE_END_MARKER = '\n'.join([
     '# Work Bundle RULE END',
     '# ========================',
 ])
-REQUIRED_PROJECT_GITIGNORE = ['.work-bundle/', 'AGENTS.md']
+REQUIRED_PROJECT_GITIGNORE = ['.work-bundle/', 'AGENTS.md', 'credentials/']
 PROJECT_METADATA_V3_REQUIRED_FIELDS = [
     'metadata_version',
     'authority',
@@ -284,8 +284,6 @@ def _render_project_metadata(
         _source_repositories_block(repositories),
         'source_repositories',
     )
-    if mode == 'single-repository':
-        rendered_lines, _ = _replace_top_level_block(rendered_lines, '', 'workspace_resources')
     rendered_lines, _ = _replace_top_level_block(
         rendered_lines,
         _source_repository_roles_block(),
@@ -728,17 +726,10 @@ def _workspace_metadata_failures(project_root: Path, metadata_text: str) -> list
         failures.append('workspace_root_contradiction')
     resource_section = '\n'.join(_yaml_section_lines(metadata_text, 'workspace_resources'))
     resolved_workspace = Path(workspace_root).expanduser().resolve() if workspace_root else project_root
-    if mode == 'multi-repository':
+    if mode in {'single-repository', 'multi-repository'}:
         if 'script/index.yaml' not in resource_section or 'credentials/credentials.yaml' not in resource_section:
             failures.append('workspace_resources_invalid')
         failures.extend(validate_script_index(resolved_workspace))
-    elif mode == 'single-repository':
-        if resource_section:
-            failures.append('single_repository_workspace_resources_forbidden')
-        if (resolved_workspace / 'script').exists():
-            failures.append('single_repository_script_directory_forbidden')
-        if (resolved_workspace / 'credentials').exists():
-            failures.append('single_repository_credentials_directory_forbidden')
     return failures
 
 
@@ -1231,6 +1222,7 @@ def apply_project(
     wb = project_root / '.work-bundle'
     knowledge = wb / 'knowledge'
     changed = ensure_project_layout(project_root)
+    changed.extend(ensure_workspace_resources((workspace_root or project_root).resolve()))
     knowledge_project = knowledge / 'project.yaml'
     if _template_overwrite(project_root, knowledge_project, force, scope) and write(
         knowledge_project, 'id: project\nstatus: current\n', overwrite=True
@@ -2107,7 +2099,7 @@ def cmd_init_project(args: list[str]) -> int:
         'dry_run': parsed.dry_run,
     }
     if not parsed.dry_run:
-        resource_changes = ensure_workspace_resources(workspace_root) if mode == 'multi-repository' else []
+        resource_changes = ensure_workspace_resources(workspace_root)
         existing_entry, _ = find_registry_entry(project_root)
         try:
             changed, agents_result = apply_project(

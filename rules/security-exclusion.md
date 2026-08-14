@@ -17,7 +17,7 @@ Prevent credential material from entering agent-visible, tracked, indexed, deleg
 
 ## Must
 
-- Permit `$workspace_root/credentials/credentials.yaml` only in multi-repository mode, where it is a protected local-only store and the only permitted file in `credentials/`. In single-repository mode the runtime directory is forbidden and the credential schema remains a reference template only.
+- Permit `$workspace_root/credentials/credentials.yaml` in both single- and multi-repository modes as a protected local-only store and the only permitted file in `credentials/`.
 - Enforce directory mode `0700` and file mode `0600` where POSIX permissions apply; otherwise require an explicit equivalent protection or blocking diagnostic.
 - Keep `credentials/` ignored by Git and excluded from knowledge, orchestration content, registries, metadata content, indexes, CodeGraph, archives, caches, and backups.
 - Pass only credential ID, redacted target, requested operation, and authorization context to `wb-credential-use`; let its bounded local helper own value access and injection.
@@ -35,7 +35,7 @@ Prevent credential material from entering agent-visible, tracked, indexed, deleg
 
 ## Validation
 
-- Verify single-repository workspaces have no runtime credential store; in multi-repository mode verify credential store shape and permissions without returning value-bearing fields.
+- In both workspace modes, verify credential store shape and permissions without returning value-bearing fields.
 - Verify Git ignore behavior and exclusion from all generic discovery and index surfaces.
 - Verify `read-only` rejects write use and critical or read-write use requires exact current-task authority.
 - Verify all public evidence is credential-ID-only and redacted and synthetic canary leakage count is zero.

@@ -1010,8 +1010,7 @@ def cmd_init_workspace(args: list[str]) -> int:
         if not path.exists():
             path.mkdir(parents=True)
             changed.append(str(path))
-    if parsed.mode == "multi-repository":
-        changed.extend(ensure_workspace_resources(workspace_root))
+    changed.extend(ensure_workspace_resources(workspace_root))
     changed.extend(_sync_agents(workspace_root))
     if parsed.mode == "single-repository" and (workspace_root / ".git").exists():
         if _ensure_source_local_excludes(workspace_root):
@@ -1083,8 +1082,54 @@ def cmd_publish_control_plane(args: list[str]) -> int:
         return 0
     metadata_before = text
     git_existed = (control / ".git").exists()
-    previous_origin = _git(control, "remote", "get-url", "origin") if git_existed else ""
-    previous_head = _git(control, "rev-parse", "HEAD") if git_existed else ""
+    snapshot_failures: list[str] = []
+    previous_origin = ""
+    previous_head = ""
+    previous_status = ""
+    previous_staged = ""
+    config_locator = ""
+    if git_existed:
+        snapshot_commands = {
+            "head": ("rev-parse", "--verify", "HEAD"),
+            "status": ("status", "--porcelain=v1", "--untracked-files=all"),
+            "index": ("diff", "--cached", "--name-status"),
+            "config": ("rev-parse", "--git-path", "config"),
+            "remotes": ("remote",),
+        }
+        snapshots: dict[str, subprocess.CompletedProcess[str]] = {
+            name: subprocess.run(
+                ["git", "-C", str(control), *command],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            for name, command in snapshot_commands.items()
+        }
+        snapshot_failures.extend(
+            f"{name}_snapshot_failed"
+            for name, result in snapshots.items()
+            if result.returncode != 0
+        )
+        previous_head = snapshots["head"].stdout.strip() if snapshots["head"].returncode == 0 else ""
+        previous_status = snapshots["status"].stdout.strip() if snapshots["status"].returncode == 0 else ""
+        previous_staged = snapshots["index"].stdout.strip() if snapshots["index"].returncode == 0 else ""
+        config_locator = snapshots["config"].stdout.strip() if snapshots["config"].returncode == 0 else ""
+        remotes = snapshots["remotes"].stdout.splitlines() if snapshots["remotes"].returncode == 0 else []
+        if "origin" in remotes:
+            origin_result = subprocess.run(
+                ["git", "-C", str(control), "remote", "get-url", "origin"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if origin_result.returncode != 0:
+                snapshot_failures.append("origin_snapshot_failed")
+            else:
+                previous_origin = origin_result.stdout.strip()
+    config_path = Path(config_locator)
+    if config_locator and not config_path.is_absolute():
+        config_path = control / config_path
+    config_before = config_path.read_bytes() if git_existed and config_path.is_file() else None
     evidence_base = {
         "operation": "publish-control-plane",
         "workspace_id": _workspace_id(text),
@@ -1092,6 +1137,26 @@ def cmd_publish_control_plane(args: list[str]) -> int:
         "previous_origin_configured": bool(previous_origin),
         "remote": remote,
     }
+    if git_existed and (
+        snapshot_failures or not previous_head or previous_status or previous_staged or config_before is None
+    ):
+        evidence = _publish_evidence(
+            control,
+            {
+                **evidence_base,
+                "state": "recovery-required",
+                "failure_code": "WB_CONTROL_PLANE_PUBLISH_RECOVERY_REQUIRED",
+                "snapshot_failures": snapshot_failures,
+                "recovery_required": True,
+            },
+        )
+        out({
+            "command": "publish-control-plane",
+            "status": "issues-found",
+            "failure_code": "WB_CONTROL_PLANE_PUBLISH_RECOVERY_REQUIRED",
+            "transaction_evidence": str(evidence),
+        })
+        return 1
     try:
         probe = subprocess.run(["git", "ls-remote", "--", remote], check=False, capture_output=True, text=True)
         if probe.returncode != 0:
@@ -1113,17 +1178,44 @@ def cmd_publish_control_plane(args: list[str]) -> int:
             _run_git_checked(control, "commit", "-q", "-m", "chore: publish WorkBundle control plane")
         _run_git_checked(control, "push", "-q", "-u", "origin", "HEAD:main")
     except ControlPlaneError as exc:
-        _atomic_write(metadata, metadata_before)
+        rollback_failures: list[str] = []
         if not git_existed and (control / ".git").is_dir():
+            _atomic_write(metadata, metadata_before)
             shutil.rmtree(control / ".git")
         elif git_existed:
-            current_origin = _git(control, "remote", "get-url", "origin")
-            if previous_origin:
-                subprocess.run(["git", "-C", str(control), "remote", "set-url" if current_origin else "add", "origin", previous_origin], check=False, capture_output=True)
-            elif current_origin:
-                subprocess.run(["git", "-C", str(control), "remote", "remove", "origin"], check=False, capture_output=True)
-        evidence = _publish_evidence(control, {**evidence_base, "state": "failed", "failure_code": exc.code, "recovery_required": bool(git_existed and previous_head and _git(control, "rev-parse", "HEAD") != previous_head)})
-        out({"command": "publish-control-plane", "status": "issues-found", "failure_code": exc.code, "transaction_evidence": str(evidence), **exc.details})
+            reset = subprocess.run(
+                ["git", "-C", str(control), "reset", "--hard", previous_head],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if reset.returncode != 0:
+                rollback_failures.append("head_reset_failed")
+            if config_before is not None:
+                config_path.write_bytes(config_before)
+            if metadata.read_text(encoding="utf-8") != metadata_before:
+                _atomic_write(metadata, metadata_before)
+            if _git(control, "rev-parse", "HEAD") != previous_head:
+                rollback_failures.append("head_mismatch")
+            if metadata.read_text(encoding="utf-8") != metadata_before:
+                rollback_failures.append("metadata_mismatch")
+            if _git(control, "remote", "get-url", "origin") != previous_origin:
+                rollback_failures.append("origin_mismatch")
+            if _git(control, "status", "--porcelain=v1", "--untracked-files=all") != previous_status:
+                rollback_failures.append("worktree_mismatch")
+            if _git(control, "diff", "--cached", "--name-status") != previous_staged:
+                rollback_failures.append("index_mismatch")
+        recovery_required = bool(rollback_failures)
+        failure_code = "WB_CONTROL_PLANE_PUBLISH_RECOVERY_REQUIRED" if recovery_required else exc.code
+        evidence = _publish_evidence(control, {
+            **evidence_base,
+            "state": "recovery-required" if recovery_required else "rolled-back",
+            "failure_code": failure_code,
+            "original_failure_code": exc.code,
+            "rollback_failures": rollback_failures,
+            "recovery_required": recovery_required,
+        })
+        out({"command": "publish-control-plane", "status": "issues-found", "failure_code": failure_code, "transaction_evidence": str(evidence), **exc.details})
         return 1
     evidence = _publish_evidence(control, {**evidence_base, "state": "published", "control_plane_head": _git(control, "rev-parse", "HEAD"), "recovery_required": False})
     out({"command": "publish-control-plane", "status": "passed", "dry_run": False, "remote": remote, "control_plane_head": _git(control, "rev-parse", "HEAD"), "transaction_evidence": str(evidence), "git_actions": ["init", "configure-origin", "commit", "push"]})
@@ -1292,7 +1384,7 @@ def _ensure_source_local_excludes(workspace_root: Path) -> bool:
     exclude = workspace_root / ".git/info/exclude"
     current = read(exclude)
     additions: list[str] = []
-    for pattern in (".work-bundle/",):
+    for pattern in (".work-bundle/", "credentials/"):
         if pattern not in {line.strip() for line in current.splitlines()}:
             additions.append(pattern)
     if not additions:
@@ -1488,7 +1580,7 @@ def _attach(
         states.append({"id": repository_id, "state": state, "required": bool(repository.get("required"))})
     if apply:
         try:
-            changed = ensure_workspace_resources(workspace_root) if workspace_mode == "multi-repository" else []
+            changed = ensure_workspace_resources(workspace_root)
             for relative in (".work-bundle/git", ".work-bundle/runtime", ".work-bundle/orchestration/execution-state"):
                 path = workspace_root / relative
                 if not path.exists():
@@ -1529,11 +1621,7 @@ def _attach(
     final_failures: list[str] = []
     if apply:
         final_failures.extend(_portable_failures(read(metadata_path)))
-        required_resources = (
-            ("script/index.yaml", "credentials/credentials.yaml", "AGENTS.md")
-            if workspace_mode == "multi-repository"
-            else ("AGENTS.md",)
-        )
+        required_resources = ("script/index.yaml", "credentials/credentials.yaml", "AGENTS.md")
         final_failures.extend(
             f"WB_CONTROL_PLANE_RESOURCE_MISSING:{relative}"
             for relative in required_resources
