@@ -16,4 +16,6 @@ Debug in an evidence-led sequence:
 7. **Implement the root-cause fix.** Make the smallest production change that corrects the cause, not merely the visible symptom; transition to TDD when the repair has a meaningful test surface.
 8. **Verify.** Rerun the reproduction and relevant regression coverage, revalidate the Truth Basis and impact, and record an evidence-backed knowledge disposition.
 
+If diagnosis shows that scope grows beyond the accepted files, interfaces, or expected delta, stop implementation and update the plan. Escalate to full orchestration for wide impact, multiple repositories, migration/deployment, durable policy, or a new architecture, API, data-model, or workflow decision. Do not let root-cause discovery silently authorize a broader fix.
+
 Do not implement a fix before establishing the root cause. The only exception is documented containment needed to limit immediate harm; label it temporary, preserve diagnostic evidence, and continue root-cause work before calling the issue fixed.

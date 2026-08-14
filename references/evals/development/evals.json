@@ -21,6 +21,11 @@
       "expected_output": "Reconciles purpose, evidence, decision authority, expected delta, and conflict status before root-cause diagnosis; escalates the contract conflict rather than patching the symptom."
     },
     {
+      "id": "dev-grounded-debugging-scope-growth",
+      "prompt": "A local bug diagnosis reveals a multi-repository fix and a new API decision outside the accepted lightweight scope.",
+      "expected_output": "Stops implementation, records the expanded impact evidence, and escalates to a repaired plan or full orchestration instead of silently widening debugging scope."
+    },
+    {
       "id": "dev-grounded-review-green-tests-conflict",
       "prompt": "Tests pass and code is tidy, but the change implements behavior contrary to accepted authority and the test oracle encodes that contradiction.",
       "expected_output": "Returns repair because grounded intent, durable-decision alignment, and test-oracle validity fail despite green tests."

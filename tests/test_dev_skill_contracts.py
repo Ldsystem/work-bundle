@@ -54,6 +54,9 @@ def test_systematic_debugging_requires_root_cause_before_fix() -> None:
         "decision authority",
         "expected delta",
         "conflict status",
+        "scope grows",
+        "multiple repositories",
+        "full orchestration",
     ]:
         assert token in text
     assert "Do not implement a fix before establishing the root cause" in text
@@ -156,10 +159,10 @@ def test_development_pressure_evals_cover_grounding_and_adversarial_boundary() -
     cases = json.loads(
         (REPO_ROOT / "references/evals/development/evals.json").read_text(encoding="utf-8")
     )["evals"]
-    assert len(cases) >= 6
+    assert len(cases) >= 7
     prompts = "\n".join(case["prompt"] for case in cases)
     expected = "\n".join(case["expected_output"] for case in cases)
-    for token in ["lightweight", "contradicts", "failing test", "bug", "Tests pass", "configuration-only"]:
+    for token in ["lightweight", "contradicts", "failing test", "bug", "multi-repository", "Tests pass", "configuration-only"]:
         assert token in prompts
     for token in [
         "Truth Basis",
@@ -169,6 +172,7 @@ def test_development_pressure_evals_cover_grounding_and_adversarial_boundary() -
         "test-oracle",
         "knowledge_disposition",
         "does not force TDD",
+        "silently widening debugging scope",
     ]:
         assert token in expected
 
