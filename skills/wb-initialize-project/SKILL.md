@@ -39,6 +39,10 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 | Register only | `register-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--name <name>]` |
 | Inspect metadata migration | `migrate-project <root> [--name <name>] --dry-run` |
 | Apply metadata migration | `migrate-project <root> [--name <name>] [--force] [--accepted-proposal-id <id>] --apply` |
+| Inspect portable-control migration | `migrate-control-plane <workspace-root> [--repository-remote <id>=<canonical-remote>] --dry-run` |
+| Apply portable-control migration | `migrate-control-plane <workspace-root> [--repository-remote <id>=<canonical-remote>] --accepted-proposal-id <id> --apply` |
+| Attach portable workspace | `attach-workspace <workspace-root> [--materialize <none|missing|all>] [--repository-path <id>=<path>] (--dry-run|--apply)` |
+| Doctor portable workspace | `doctor-workspace <workspace-root> [--repair]` |
 | Provision member | `provision-member --workspace-root <workspace-root> [--workspace-slug <slug>] --origin <origin-root> --repository-id <id> --working-branch <branch> --base-ref <ref> [--dry-run|--apply]` |
 | Cleanup member | `cleanup-member --workspace-root <workspace-root> --repository-id <id> (--dry-run|--apply)` |
 | Set sub-agent preference | `set-prefer-subagent <true|false|enable|disable|on|off> --scope <global|project> [--project-root <project-root>]` |
@@ -46,6 +50,8 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 `initialize-project` remains a compatibility alias for `init-project`; prefer `init-project` in new instructions.
 
 Existing command names and `--project-root` remain supported for single-repository projects. New creation must reject a missing or contradictory mode/root combination rather than silently infer topology. Single-repository mode is current and fully supported, not legacy or transitional.
+
+**Portable v4 migration guardrails:** before `migrate-control-plane`, load every applicable rule body in full, including project context, registry authority, lifecycle, repository boundary, security exclusion, and violation routing. Do not sample those rules by keyword. Resolve canonical remotes from explicit `--repository-remote` input, registry locator authority, and the live origin chain. When authoritative network remotes conflict, stop and ask the user which remote is canonical; rerun the exact dry-run with `--repository-remote` after the decision. During this workflow, do not edit the project registry directly and do not change an external repository's Git config. `show-project`, `validate-project`, and `doctor-project` route metadata-version-4 workspaces to v4 control-plane validation; repair must never rewrite portable v4 metadata into v3 shape.
 
 **Preserve behavior (default):** commands preserve existing non-empty files and user-authored `AGENTS.md` content outside the WorkBundle managed section. Re-running `init-project` on a healthy project reports `changed_files: []`.
 

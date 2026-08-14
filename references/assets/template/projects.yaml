@@ -24,7 +24,11 @@ projects:
         remote: ""
         git_repository: <boolean type, indicates whether the source repository is Git-backed>
     compatibility:
-      readable_project_metadata_versions: [2, 3]
+      readable_project_metadata_versions: [2, 3, 4]
       source_repositories_role: locator-only
     status: active
     updated_at: 2026-05-18
+
+# Metadata v4 device-local realizations are keyed by stable workspace ID.
+# Portable project.yaml remains the durable topology authority.
+device_bindings: {}

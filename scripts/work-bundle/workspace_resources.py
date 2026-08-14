@@ -101,7 +101,7 @@ def _scalar(value: str) -> object:
         if not isinstance(parsed, str):
             raise ValueError('quoted scalar is not a string')
         return parsed
-    if any(token in value for token in ('{', '}', '&', '*', '!!')):
+    if any(token in value for token in ('{', '}')) or value.startswith(('&', '*', '!')):
         raise ValueError('unsupported YAML token')
     return value
 

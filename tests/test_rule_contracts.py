@@ -579,6 +579,20 @@ def test_initialize_project_guidance_matches_create_rule_project_scope() -> None
     assert "`.work-bundle/project.yaml`, `rules/index.yaml`" not in initialize
 
 
+def test_initialize_project_v4_migration_guardrails_and_pressure_scenarios() -> None:
+    initialize = (REPO_ROOT / "skills/wb-initialize-project/SKILL.md").read_text(encoding="utf-8")
+    evals = json.loads((REPO_ROOT / "references/evals/work-bundle/evals.json").read_text(encoding="utf-8"))
+
+    assert "migrate-control-plane" in initialize
+    assert "--repository-remote" in initialize
+    assert "load every applicable rule body in full" in initialize
+    assert "do not edit the project registry directly" in initialize
+    assert "do not change an external repository's Git config" in initialize
+    prompts = "\n".join(item["prompt"] for item in evals["evals"])
+    assert "live network remote and registry network remote conflict" in prompts
+    assert "ordinary v3 single-repository workspace" in prompts
+
+
 def test_workspace_ecosystem_documentation_and_external_registry_boundary() -> None:
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     scripts_readme = (REPO_ROOT / "scripts/work-bundle/README.md").read_text(encoding="utf-8")

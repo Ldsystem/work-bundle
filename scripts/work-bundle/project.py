@@ -2197,6 +2197,9 @@ def cmd_show_project(args: list[str]) -> int:
     parsed = parser.parse_args(args)
     selected_root = parsed.project_root or parsed.workspace_root or "."
     project_root = Path(selected_root).expanduser().resolve()
+    if _yaml_scalar(read(project_root / ".work-bundle/project.yaml"), "metadata_version") == "4":
+        from control_plane import cmd_doctor_workspace
+        return cmd_doctor_workspace([str(project_root)], command_name="show-project")
     data = inspect_project(project_root)
     entry, registry = find_registry_entry(project_root)
     failures = project_failures(data, strict=False, include_roles=False)
@@ -2218,6 +2221,9 @@ def cmd_validate_project(args: list[str]) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parsed = parser.parse_args(args)
     project_root = Path(parsed.project_root).expanduser().resolve()
+    if _yaml_scalar(read(project_root / ".work-bundle/project.yaml"), "metadata_version") == "4":
+        from control_plane import cmd_doctor_workspace
+        return cmd_doctor_workspace([str(project_root)], command_name="validate-project")
     data = inspect_project(project_root)
     entry, registry = find_registry_entry(project_root)
     failures = project_failures(data, strict=True, include_roles=False)
@@ -2564,6 +2570,10 @@ def cmd_doctor_project(args: list[str]) -> int:
     parser.add_argument('--repair', action='store_true')
     parsed = parser.parse_args(args)
     project_root = Path(parsed.project_root).expanduser().resolve()
+    if _yaml_scalar(read(project_root / ".work-bundle/project.yaml"), "metadata_version") == "4":
+        from control_plane import cmd_doctor_workspace
+        routed = [str(project_root)] + (["--repair"] if parsed.repair else [])
+        return cmd_doctor_workspace(routed, command_name="doctor-project")
     changed: list[str] = []
     agents_result: dict[str, object] = {
         'agents_status': 'not-run',
