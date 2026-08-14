@@ -36,7 +36,7 @@ TRUTH_BASIS_FIELDS = (
 )
 KNOWLEDGE_DISPOSITION_ACTIONS = {"none", "update", "supersede", "reclassify"}
 KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE = re.compile(
-    r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-(?:write-knowledge|manage-lifecycle|what-is-helpful)\b)",
+    r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-[a-z0-9-]+\b)",
     re.IGNORECASE,
 )
 
@@ -380,7 +380,7 @@ def _compile_truth_basis(
 
 
 def _validated_knowledge_disposition(
-    handoff: dict[str, Any], accepted_source_ids: list[str]
+    handoff: dict[str, Any], accepted_source_ids: list[str], accepted_authority_paths: list[str]
 ) -> dict[str, Any]:
     raw = handoff.get("knowledge_disposition")
     if not isinstance(raw, dict):
@@ -410,8 +410,8 @@ def _validated_knowledge_disposition(
             if authority not in accepted_source_ids:
                 raise SystemExit("Executor result knowledge disposition cites unallocated source authority")
             continue
-        if "/" not in authority:
-            raise SystemExit("Executor result affected_authority must use source IDs or task-local paths")
+        if authority not in accepted_authority_paths:
+            raise SystemExit("Executor result knowledge disposition path must be in compiled task scope")
     return {"action": action, "reason": reason.strip(), "affected_authority": affected}
 
 
@@ -751,7 +751,14 @@ def build_review_package(args: argparse.Namespace) -> Path:
     related_task = related.get("task") or handoff.get("related_task")
     if related_task != task_id:
         raise SystemExit(f"Handoff task mismatch: expected {task_id}, got {related_task or 'missing'}")
-    knowledge_disposition = _validated_knowledge_disposition(handoff, list(task.get("source_ids", [])))
+    task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
+    accepted_authority_paths = [
+        str(value)
+        for value in [*_as_list(task_files.get("read")), *_as_list(task_files.get("write"))]
+    ]
+    knowledge_disposition = _validated_knowledge_disposition(
+        handoff, list(task.get("source_ids", [])), accepted_authority_paths
+    )
 
     base = _resolve_commit(root, str(args.base))
     head, diff, name_status = _review_diff(root, base, str(args.head))

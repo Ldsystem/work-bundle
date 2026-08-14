@@ -127,7 +127,8 @@ def test_executor_result_contract_carries_acceptance_review() -> None:
         "knowledge_disposition:",
         "none | update | supersede | reclassify",
         "review owns any approved persistence follow-up",
-        "must not name knowledge paths or persistence skills",
+        "must not name knowledge paths or any `ks-*` skill",
+        "exact paths already present in the compiled task scope",
     ]:
         assert token in contract
 

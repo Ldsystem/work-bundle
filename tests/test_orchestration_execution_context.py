@@ -446,7 +446,10 @@ def test_build_review_package_rejects_invalid_knowledge_disposition(tmp_path: Pa
     [
         "  action: update\n  reason: Stable authority changed.\n  affected_authority: []\n",
         "  action: update\n  reason: Run ks-write-knowledge now.\n  affected_authority: [REQ-003]\n",
+        "  action: update\n  reason: Run ks-track-open-questions now.\n  affected_authority: [REQ-003]\n",
         "  action: update\n  reason: Stable authority changed.\n  affected_authority: [.work-bundle/knowledge/notes/new.md]\n",
+        "  action: update\n  reason: Stable authority changed.\n  affected_authority: [../../outside/authority.md]\n",
+        "  action: update\n  reason: Stable authority changed.\n  affected_authority: [credentials/credentials.yaml]\n",
     ],
 )
 def test_build_review_package_rejects_unbounded_knowledge_disposition(
