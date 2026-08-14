@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Iterable
 
-from core import resolve_workspace_root
+from core import project_registry_path, resolve_workspace_root
 
 
 STATUS_COMMAND = ["git", "status", "--porcelain=v1", "--untracked-files=all"]
@@ -72,16 +73,139 @@ def _parse_value(value: str) -> object:
     return value
 
 
+def _metadata_scalar(text: str, key: str) -> str:
+    match = re.search(rf"^{re.escape(key)}:\s*(.*?)\s*$", text, re.MULTILINE)
+    return match.group(1).strip().strip("'\"") if match else ""
+
+
+def _workspace_id(text: str) -> str:
+    in_workspace = False
+    for line in text.splitlines():
+        if line == "workspace:":
+            in_workspace = True
+            continue
+        if in_workspace and line and not line.startswith(" "):
+            break
+        if in_workspace and line.strip().startswith("id:"):
+            return line.split(":", 1)[1].strip().strip("'\"")
+    return ""
+
+
+def _device_binding_repositories(workspace_id: str) -> dict[str, dict[str, object]]:
+    registry = project_registry_path()
+    if not registry.is_file() or not workspace_id:
+        return {}
+    in_bindings = False
+    in_workspace = False
+    in_repositories = False
+    current_repository = ""
+    repositories: dict[str, dict[str, object]] = {}
+    for line in registry.read_text(encoding="utf-8").splitlines():
+        if line == "device_bindings:":
+            in_bindings = True
+            continue
+        if in_bindings and line and not line.startswith(" "):
+            break
+        if not in_bindings:
+            continue
+        if re.match(r"^  [^\s].*:$", line):
+            current_id = line.strip()[:-1].strip("'\"")
+            in_workspace = current_id == workspace_id
+            in_repositories = False
+            current_repository = ""
+            continue
+        if not in_workspace:
+            continue
+        if line == "    repositories:":
+            in_repositories = True
+            continue
+        if in_repositories and re.match(r"^      [^\s].*:$", line):
+            current_repository = line.strip()[:-1].strip("'\"")
+            repositories[current_repository] = {"id": current_repository}
+            continue
+        if in_repositories and current_repository and line.startswith("        ") and ":" in line:
+            key, value = line.strip().split(":", 1)
+            repositories[current_repository][key] = _parse_value(value)
+    return repositories
+
+
+def _v4_metadata_repository_entries(root: Path, text: str) -> list[dict[str, object]]:
+    local = _device_binding_repositories(_workspace_id(text))
+    entries: list[dict[str, object]] = []
+    in_repositories = False
+    current: dict[str, object] | None = None
+    nested_key = ""
+    for line in text.splitlines():
+        if line == "source_repositories:":
+            in_repositories = True
+            continue
+        if in_repositories and line and not line.startswith(" "):
+            break
+        if not in_repositories or not line.strip():
+            continue
+        if line.startswith("  - "):
+            if current is not None:
+                entries.append(current)
+            current = {}
+            nested_key = ""
+            key, value = line.strip()[2:].split(":", 1)
+            current[key] = _parse_value(value)
+            continue
+        if current is None:
+            continue
+        if line.startswith("    ") and not line.startswith("      ") and ":" in line:
+            key, value = line.strip().split(":", 1)
+            nested_key = key if not value.strip() else ""
+            if value.strip():
+                current[key] = _parse_value(value)
+            continue
+        if line.startswith("      ") and ":" in line:
+            key, value = line.strip().split(":", 1)
+            if nested_key == "remote" and key == "canonical":
+                current["remote"] = _parse_value(value)
+            elif nested_key == "materialization" and key == "required":
+                current["materialization_required"] = _parse_value(value)
+    if current is not None:
+        entries.append(current)
+    resolved: list[dict[str, object]] = []
+    for entry in entries:
+        repository_id = str(entry.get("id") or "")
+        binding = local.get(repository_id)
+        if not binding or not binding.get("project_root"):
+            continue
+        entry.update(binding)
+        entry["project_root"] = binding["project_root"]
+        entry["path"] = binding["project_root"]
+        entry["git_repository"] = True
+        entry["expected_branch"] = entry.get("default_branch") or binding.get("observed_branch") or ""
+        # A device observation is current evidence, never the expected task baseline.
+        entry["observed_head"] = ""
+        entry["baseline_status"] = "local-observation"
+        project_path = Path(str(binding["project_root"])).expanduser().resolve()
+        codegraph_present = (project_path / ".codegraph").is_dir()
+        entry["codegraph"] = {
+            "supported": codegraph_present,
+            "index_present": codegraph_present,
+            "status": "indexed" if codegraph_present else "not-indexed",
+            "reason": "" if codegraph_present else "no-index",
+        }
+        resolved.append(entry)
+    return resolved
+
+
 def _metadata_repository_entries(root: Path) -> list[dict[str, object]]:
     metadata = root / ".work-bundle" / "project.yaml"
     if not metadata.exists():
         return []
+    text = metadata.read_text(encoding="utf-8")
+    if _metadata_scalar(text, "metadata_version") == "4":
+        return _v4_metadata_repository_entries(root, text)
     repositories: list[dict[str, object]] = []
     in_source_repositories = False
     current: dict[str, object] | None = None
     current_nested: dict[str, object] | None = None
     nested_key: str | None = None
-    for line in metadata.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if line == "source_repositories:":
             in_source_repositories = True
             continue
@@ -294,7 +418,9 @@ def inspect_repository_state(
         commit_status = "not-applicable"
         if bool(metadata.get("git_repository")):
             branch_status = "matched" if expected_branch == actual_branch else "mismatch"
-            if expected_head:
+            if str(metadata.get("baseline_status") or "") == "local-observation":
+                commit_status = "current-observation"
+            elif expected_head:
                 commit_status = "matched" if expected_head == actual_head else "stale"
             elif str(metadata.get("baseline_status") or "") == "unborn":
                 commit_status = "unborn"

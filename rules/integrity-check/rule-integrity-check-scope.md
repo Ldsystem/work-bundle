@@ -17,7 +17,7 @@ requires: []
 
 - validate only system roots by default: ~/.work-bundle and <work-bundle-root>
 - treat project-local .work-bundle directories as out-of-scope unless explicitly requested
-- validate project registry at ~/.work-bundle/registry/projects.yaml as critical authority
+- validate the project registry resolved from `$work_bundle_config_root/bootstrap.yaml` -> `project_registry` as critical authority
 
 ## Must Not
 

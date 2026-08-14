@@ -114,7 +114,9 @@ def test_project_context_preflight_rule_is_indexed_and_metadata_backed() -> None
     assert "id: wb-project-context-preflight" in index
     assert "path: work-bundle/wb-project-context-preflight.md" in index
     assert "$project_root/.work-bundle/project.yaml" in rule
-    assert "$work_bundle_config_root/registry/projects.yaml" in rule
+    assert "bootstrap-resolved `project_registry`" in rule
+    assert "portable project/topology authority" in rule
+    assert "device-local" in rule and "device_bindings" in rule
     assert "working_branch" in rule
     assert "last_commit_id" in rule
     assert "accepted executor-result handoffs" in rule
@@ -577,6 +579,72 @@ def test_initialize_project_guidance_matches_create_rule_project_scope() -> None
     assert legacy_root_mentions
     assert all(("legacy" in line.lower() or "migration" in line.lower()) for line in legacy_root_mentions)
     assert "`.work-bundle/project.yaml`, `rules/index.yaml`" not in initialize
+
+
+def test_initialize_project_v4_migration_guardrails_and_pressure_scenarios() -> None:
+    initialize = (REPO_ROOT / "skills/wb-initialize-project/SKILL.md").read_text(encoding="utf-8")
+    evals = json.loads((REPO_ROOT / "references/evals/work-bundle/evals.json").read_text(encoding="utf-8"))
+
+    assert "migrate-control-plane" in initialize
+    assert "--repository-remote" in initialize
+    assert "load every applicable rule body in full" in initialize
+    assert "do not edit the project registry directly" in initialize
+    assert "do not change an external repository's Git config" in initialize
+    prompts = "\n".join(item["prompt"] for item in evals["evals"])
+    assert "live network remote and registry network remote conflict" in prompts
+    assert "ordinary v3 single-repository workspace" in prompts
+    assert "portable v4 single-repository workspace" in prompts
+    assert "remote rejects the push" in prompts
+    assert "In both workspace modes, create or preserve `$workspace_root/script/index.yaml`" in initialize
+    assert "In both workspace modes, create or preserve `$workspace_root/credentials/credentials.yaml`" in initialize
+
+
+def test_single_repository_workspace_resource_contracts_converge() -> None:
+    metadata_contract = (REPO_ROOT / "references/wb-workspace-metadata-v3-contract.yaml").read_text(encoding="utf-8")
+    credential_contract = (REPO_ROOT / "references/wb-credential-use-contract.yaml").read_text(encoding="utf-8")
+    security_rule = (REPO_ROOT / "rules/security-exclusion.md").read_text(encoding="utf-8")
+    script_rule = (REPO_ROOT / "rules/work-bundle/wb-script-instruction.md").read_text(encoding="utf-8")
+
+    assert "workspace_modes: [single-repository, multi-repository]" in credential_contract
+    assert "workspace_resources: forbidden" not in metadata_contract
+    assert "forbidden_runtime_paths: [script, credentials]" not in metadata_contract
+    assert "in both single- and multi-repository modes" in security_rule
+    assert "Permit workspace utilities in both single- and multi-repository modes" in script_rule
+    assert "multi-repository-only" not in "\n".join(
+        (credential_contract, security_rule, script_rule)
+    )
+
+
+def test_v4_portable_and_device_local_authority_contracts_converge() -> None:
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    agents_template = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
+    workflow = (REPO_ROOT / "references/assets/keep-summarizing/workflow.md").read_text(encoding="utf-8")
+    v4_contract = (REPO_ROOT / "references/wb-workspace-metadata-v4-contract.yaml").read_text(encoding="utf-8")
+    preflight_rule = (REPO_ROOT / "rules/work-bundle/wb-project-context-preflight.md").read_text(encoding="utf-8")
+    registry_rule = (REPO_ROOT / "rules/work-bundle/wb-project-registry.md").read_text(encoding="utf-8")
+    initialize = (REPO_ROOT / "skills/wb-initialize-project/SKILL.md").read_text(encoding="utf-8")
+    control_plane = (REPO_ROOT / "scripts/work-bundle/control_plane.py").read_text(encoding="utf-8")
+    repository_preflight = (REPO_ROOT / "scripts/orchestration/repository_preflight.py").read_text(encoding="utf-8")
+
+    for artifact in (agents, agents_template, workflow, preflight_rule, registry_rule, initialize):
+        assert "portable project/topology authority" in artifact
+        assert "device" in artifact and "binding" in artifact
+    assert "bootstrap.project_registry#device_bindings" in v4_contract
+    assert "explicit-read-or-migration-only" in v4_contract
+    assert 'registry/projects.yaml' not in control_plane
+    assert 'registry/projects.yaml' not in repository_preflight
+    assert "resolve_project_registry_path" in control_plane
+    assert "project_registry_path" in repository_preflight
+
+
+def test_initialize_project_pressure_scenario_covers_v4_authority_and_member_rollback() -> None:
+    evals = json.loads((REPO_ROOT / "references/evals/work-bundle/evals.json").read_text(encoding="utf-8"))
+    scenarios = {item["id"]: item for item in evals["evals"]}
+
+    assert 7 in scenarios
+    expected = scenarios[7]["expected_output"]
+    assert "bootstrap-resolved project registry" in expected
+    assert "removes only member paths created by the failed attach" in expected
 
 
 def test_workspace_ecosystem_documentation_and_external_registry_boundary() -> None:

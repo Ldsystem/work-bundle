@@ -1,8 +1,6 @@
 id: default-work-bundle-tree
 status: current
 roots:
-  - script
-  - credentials
   - roles
   - rules
   - .work-bundle/git
@@ -23,7 +21,7 @@ roots:
   - .work-bundle/orchestration/templates
   - .work-bundle/orchestration/reviews
   - .work-bundle/orchestration/execution-state
-files:
+multi_repository_workspace_resources:
   - path: script/index.yaml
     template: references/assets/template/script-index.yaml
     preserve_non_empty: true

@@ -1,0 +1,11 @@
+# WorkBundle portable control-plane local-only state
+git/
+runtime/
+orchestration/execution-state/
+*.secret
+*.key
+*.pem
+.env
+.env.*
+*.log
+.DS_Store

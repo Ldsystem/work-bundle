@@ -79,6 +79,12 @@ CLI_HELP_EPILOG = '''Canonical consolidated command surface:
   validate-project <project-root> --dry-run
   doctor-project <project-root> [--repair] [--force]
   migrate-project <project-root> --dry-run
+  migrate-control-plane <workspace-root> (--dry-run|--apply --accepted-proposal-id <id>)
+  init-workspace <workspace-root> --slug <slug> --repository <id=remote> (--dry-run|--apply)
+  publish-control-plane <workspace-root> --remote <git-remote> (--dry-run|--apply)
+  attach-workspace <workspace-root> [--materialize none|missing|all] (--dry-run|--apply)
+  doctor-workspace <workspace-root> [--repair]
+  detach-workspace <workspace-root> --apply
   migrate-to-multi-repository <source-project-root> --target-workspace-root <target> [--origin <git-origin>] ...
   provision-member --workspace-root <workspace-root> --origin <git-origin> ... (--dry-run|--apply)
   cleanup-member --workspace-root <workspace-root> --repository-id <id> (--dry-run|--apply)
@@ -148,6 +154,15 @@ def work_bundle_config_root() -> Path:
     if override:
         return Path(override).expanduser().resolve()
     return Path.home() / '.work-bundle'
+
+
+def resolve_project_registry_path() -> Path:
+    config_root = work_bundle_config_root()
+    bootstrap_path = config_root / GLOBAL_BOOTSTRAP_FILE_NAME
+    bootstrap = compact_yaml_map(read(bootstrap_path)) if bootstrap_path.is_file() else {}
+    value = bootstrap.get('project_registry', '$work_bundle_config_root/registry/projects.yaml')
+    value = value.replace('$work_bundle_config_root', str(config_root))
+    return Path(value).expanduser().resolve()
 
 
 def compact_yaml_map(text: str) -> dict[str, str]:

@@ -23,6 +23,14 @@ from violations import (
 )
 from credential import CredentialError, list_metadata
 from execution_workspace import cmd_execution_workspace
+from control_plane import (
+    cmd_attach_workspace,
+    cmd_detach_workspace,
+    cmd_doctor_workspace,
+    cmd_init_workspace,
+    cmd_migrate_control_plane,
+    cmd_publish_control_plane,
+)
 
 
 def main() -> int:
@@ -60,6 +68,18 @@ def main() -> int:
         return cmd_show_project(parsed.args)
     if command == 'migrate-project':
         return cmd_migrate_project(parsed.args)
+    if command == 'migrate-control-plane':
+        return cmd_migrate_control_plane(parsed.args)
+    if command == 'init-workspace':
+        return cmd_init_workspace(parsed.args)
+    if command == 'publish-control-plane':
+        return cmd_publish_control_plane(parsed.args)
+    if command == 'attach-workspace':
+        return cmd_attach_workspace(parsed.args)
+    if command == 'doctor-workspace':
+        return cmd_doctor_workspace(parsed.args)
+    if command == 'detach-workspace':
+        return cmd_detach_workspace(parsed.args)
     if command == 'migrate-to-multi-repository':
         return cmd_migrate_to_multi_repository(parsed.args)
     if command == 'doctor-project':
