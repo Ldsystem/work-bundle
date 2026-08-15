@@ -312,6 +312,13 @@ def _git_commit_file(root: Path, relative: str, content: str, message: str) -> s
     return git(root, "rev-parse", "HEAD")
 
 
+def _git_write_tree(root: Path) -> str:
+    from test_orchestration_execution_context import git
+
+    git(root, "add", "-A")
+    return git(root, "write-tree")
+
+
 def _write_follow_on_executor_handoff(
     root: Path,
     *,
@@ -319,11 +326,14 @@ def _write_follow_on_executor_handoff(
     created_at: str,
     write_file: str = FOLLOW_ON_WRITE_SCOPE_FILE,
     extra_command: str | None = None,
+    extra_result: str = "passed",
     actual_commit: str | None = None,
+    reviewed_head: str | None = None,
 ) -> Path:
     from test_orchestration_execution_context import TASK_VALIDATION_COMMAND
 
-    extra = "" if extra_command is None else f"    - {{command: {extra_command}, result: passed}}\n"
+    extra = "" if extra_command is None else f"    - {{command: {extra_command}, result: {extra_result}}}\n"
+    review = "" if reviewed_head is None else f"acceptance_review: {{reviewed_head: {reviewed_head}}}\n"
     repository = ""
     if actual_commit:
         repository = (
@@ -348,6 +358,7 @@ def _write_follow_on_executor_handoff(
         "  commands:\n"
         f"    - {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
         f"{extra}"
+        f"{review}"
         f"{repository}"
         "knowledge_disposition:\n"
         "  action: none\n"
@@ -993,6 +1004,112 @@ def test_same_day_out_of_id_order_fresh_rerun_allows_archive(tmp_path: Path) -> 
         extra_command=command,
         actual_commit=later,
     )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
+
+
+def test_historical_failed_plan_acceptance_does_not_poison_fresh_head_pass(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import WRITE_SCOPE_FILE, workspace
+
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    _write_follow_on_plan_task(root, task_id="task-010", write_file=WRITE_SCOPE_FILE)
+    first = _git_commit_file(root, WRITE_SCOPE_FILE, "def compile_task():\n    return 'broken'\n", "task-010-fail")
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-010",
+        created_at="2026-08-16",
+        write_file=WRITE_SCOPE_FILE,
+        extra_command=command,
+        extra_result="failed",
+        actual_commit=first,
+    )
+    _write_follow_on_plan_task(root, task_id="task-002")
+    later = _git_commit_file(
+        root,
+        FOLLOW_ON_WRITE_SCOPE_FILE,
+        "def archive_plan():\n    return 'repaired'\n",
+        "task-002-pass",
+    )
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-002",
+        created_at="2026-08-16",
+        extra_command=command,
+        actual_commit=later,
+    )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
+
+
+def test_same_tree_contradictory_plan_acceptance_still_blocks_archive(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import WRITE_SCOPE_FILE, workspace
+
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    head = _git_commit_file(root, WRITE_SCOPE_FILE, "def compile_task():\n    return 'now'\n", "terminal")
+    _write_follow_on_plan_task(root, task_id="task-010", write_file=WRITE_SCOPE_FILE)
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-010",
+        created_at="2026-08-16",
+        write_file=WRITE_SCOPE_FILE,
+        extra_command=command,
+        extra_result="failed",
+        actual_commit=head,
+    )
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-004",
+        created_at="2026-08-16",
+        write_file=WRITE_SCOPE_FILE,
+        extra_command=command,
+        actual_commit=head,
+    )
+
+    with pytest.raises(SystemExit, match="acceptance-blocked:.*contradictory"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+
+def test_precommit_tree_pass_survives_same_tree_finalization_commit(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import WRITE_SCOPE_FILE, git, workspace
+
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    first = _git_commit_file(root, WRITE_SCOPE_FILE, "def compile_task():\n    return 'base'\n", "task-010")
+    _write_follow_on_plan_task(root, task_id="task-010", write_file=WRITE_SCOPE_FILE)
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-010",
+        created_at="2026-08-16",
+        write_file=WRITE_SCOPE_FILE,
+        extra_command=command,
+        actual_commit=first,
+    )
+    _write_follow_on_plan_task(root, task_id="task-002")
+    (root / FOLLOW_ON_WRITE_SCOPE_FILE).write_text("def archive_plan():\n    return 'final'\n", encoding="utf-8")
+    tree = _git_write_tree(root)
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-002",
+        created_at="2026-08-16",
+        extra_command=command,
+        reviewed_head=tree,
+    )
+    git(root, "commit", "-qm", "finalize")
 
     cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
 

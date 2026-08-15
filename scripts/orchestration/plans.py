@@ -150,9 +150,9 @@ _MATERIAL_CHANGE_ACTIONS = {"created", "modified", "deleted"}
 _MATERIAL_RESULT_STATES = {"completed", "partial"}
 
 
-def _git_commit_id(root: Path, spec: str) -> str | None:
+def _git_tree_id(root: Path, spec: str) -> str | None:
     result = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--verify", spec],
+        ["git", "-C", str(root), "rev-parse", "--verify", f"{spec}^{{tree}}"],
         capture_output=True,
         text=True,
         check=False,
@@ -162,12 +162,12 @@ def _git_commit_id(root: Path, spec: str) -> str | None:
     return result.stdout.strip() or None
 
 
-def _handoff_recorded_commits(handoff: dict[str, object]) -> list[str]:
-    commits: list[str] = []
+def _handoff_recorded_identities(handoff: dict[str, object]) -> list[str]:
+    identities: list[str] = []
     review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
     reviewed_head = str(review.get("reviewed_head") or "").strip()
     if reviewed_head:
-        commits.append(reviewed_head)
+        identities.append(reviewed_head)
     repositories = handoff.get("repository")
     if isinstance(repositories, dict):
         repositories = [repositories]
@@ -178,16 +178,24 @@ def _handoff_recorded_commits(handoff: dict[str, object]) -> list[str]:
             metadata = repository.get("metadata") if isinstance(repository.get("metadata"), dict) else {}
             actual_commit = str(metadata.get("actual_commit") or "").strip()
             if actual_commit:
-                commits.append(actual_commit)
-    return commits
+                identities.append(actual_commit)
+    return identities
 
 
-def _verified_handoff_commit(root: Path, handoff: dict[str, object]) -> str | None:
-    for commit in _handoff_recorded_commits(handoff):
-        resolved = _git_commit_id(root, f"{commit}^{{commit}}")
-        if resolved:
-            return resolved
+def _verified_handoff_tree(root: Path, handoff: dict[str, object]) -> str | None:
+    for identity in _handoff_recorded_identities(handoff):
+        tree = _git_tree_id(root, identity)
+        if tree:
+            return tree
     return None
+
+
+def _acceptance_result_detail(results: set[str]) -> str:
+    if not results:
+        return "missing"
+    if len(results) > 1:
+        return "contradictory"
+    return next(iter(results))
 
 
 def _handoff_command_result(handoff: dict[str, object], command: str) -> str | None:
@@ -225,41 +233,35 @@ def _assert_archive_plan_acceptance(
     commands = _declared_integration_commands(body)
     if not commands:
         return
-    recorded: dict[str, set[str]] = {}
-    for handoff, _brief in validated:
-        validation = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
-        raw_commands = validation.get("commands")
-        items = raw_commands if isinstance(raw_commands, list) else []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            command = str(item.get("command") or "").strip()
-            if command:
-                recorded.setdefault(command, set()).add(str(item.get("result") or ""))
-    material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
     git_root = project_root(args)
-    head = _git_commit_id(git_root, "HEAD")
+    terminal_tree = _git_tree_id(git_root, "HEAD")
+    material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
     for command in commands:
-        results = recorded.get(command, set())
-        if results != {"passed"}:
-            if not results:
-                detail = "missing"
-            elif len(results) > 1:
-                detail = "contradictory"
-            else:
-                detail = next(iter(results))
-            raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is {detail}")
-        if len(material) <= 1:
-            continue
-        fresh = False
+        terminal_results: set[str] = set()
+        other_results: set[str] = set()
         for handoff, _brief in validated:
-            if _handoff_command_result(handoff, command) != "passed":
+            result = _handoff_command_result(handoff, command)
+            if result is None:
                 continue
-            if head and _verified_handoff_commit(git_root, handoff) == head:
-                fresh = True
-                break
-        if not fresh:
+            tree = _verified_handoff_tree(git_root, handoff)
+            if terminal_tree and tree == terminal_tree:
+                terminal_results.add(result)
+            else:
+                other_results.add(result)
+        judged = terminal_results or other_results
+        if terminal_results:
+            if terminal_results == {"passed"}:
+                continue
+            raise SystemExit(
+                f"acceptance-blocked: declared plan-level acceptance {command} is {_acceptance_result_detail(terminal_results)}"
+            )
+        if judged == {"passed"}:
+            if len(material) <= 1:
+                continue
             raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is stale")
+        raise SystemExit(
+            f"acceptance-blocked: declared plan-level acceptance {command} is {_acceptance_result_detail(judged)}"
+        )
 
 
 def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
