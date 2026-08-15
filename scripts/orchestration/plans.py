@@ -1,3 +1,5 @@
+import subprocess
+
 from core import *
 from execution_context import (
     cmd_validate_executor_result,
@@ -148,10 +150,55 @@ _MATERIAL_CHANGE_ACTIONS = {"created", "modified", "deleted"}
 _MATERIAL_RESULT_STATES = {"completed", "partial"}
 
 
-def _handoff_order_key(handoff: dict[str, object]) -> tuple[str, str, str]:
-    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
-    stamp = str(handoff.get("updated_at") or handoff.get("created_at") or "")
-    return (stamp, str(related.get("task") or ""), str(handoff.get("id") or ""))
+def _git_commit_id(root: Path, spec: str) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", spec],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _handoff_recorded_commits(handoff: dict[str, object]) -> list[str]:
+    commits: list[str] = []
+    review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
+    reviewed_head = str(review.get("reviewed_head") or "").strip()
+    if reviewed_head:
+        commits.append(reviewed_head)
+    repositories = handoff.get("repository")
+    if isinstance(repositories, dict):
+        repositories = [repositories]
+    if isinstance(repositories, list):
+        for repository in repositories:
+            if not isinstance(repository, dict):
+                continue
+            metadata = repository.get("metadata") if isinstance(repository.get("metadata"), dict) else {}
+            actual_commit = str(metadata.get("actual_commit") or "").strip()
+            if actual_commit:
+                commits.append(actual_commit)
+    return commits
+
+
+def _verified_handoff_commit(root: Path, handoff: dict[str, object]) -> str | None:
+    for commit in _handoff_recorded_commits(handoff):
+        resolved = _git_commit_id(root, f"{commit}^{{commit}}")
+        if resolved:
+            return resolved
+    return None
+
+
+def _handoff_command_result(handoff: dict[str, object], command: str) -> str | None:
+    validation = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
+    items = validation.get("commands") if isinstance(validation.get("commands"), list) else []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("command") or "").strip() == command:
+            return str(item.get("result") or "")
+    return None
 
 
 def _handoff_has_material_changes(handoff: dict[str, object], brief: dict[str, object]) -> bool:
@@ -178,10 +225,8 @@ def _assert_archive_plan_acceptance(
     commands = _declared_integration_commands(body)
     if not commands:
         return
-    ordered = sorted(validated, key=lambda pair: _handoff_order_key(pair[0]))
     recorded: dict[str, set[str]] = {}
-    last_pass_index: dict[str, int] = {}
-    for index, (handoff, _brief) in enumerate(ordered):
+    for handoff, _brief in validated:
         validation = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
         raw_commands = validation.get("commands")
         items = raw_commands if isinstance(raw_commands, list) else []
@@ -189,12 +234,11 @@ def _assert_archive_plan_acceptance(
             if not isinstance(item, dict):
                 continue
             command = str(item.get("command") or "").strip()
-            if not command:
-                continue
-            result = str(item.get("result") or "")
-            recorded.setdefault(command, set()).add(result)
-            if result == "passed":
-                last_pass_index[command] = index
+            if command:
+                recorded.setdefault(command, set()).add(str(item.get("result") or ""))
+    material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
+    git_root = project_root(args)
+    head = _git_commit_id(git_root, "HEAD")
     for command in commands:
         results = recorded.get(command, set())
         if results != {"passed"}:
@@ -205,12 +249,17 @@ def _assert_archive_plan_acceptance(
             else:
                 detail = next(iter(results))
             raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is {detail}")
-        last_pass = last_pass_index.get(command)
-        if last_pass is None:
-            raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is missing")
-        for later_handoff, later_brief in ordered[last_pass + 1 :]:
-            if _handoff_has_material_changes(later_handoff, later_brief):
-                raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is stale")
+        if len(material) <= 1:
+            continue
+        fresh = False
+        for handoff, _brief in validated:
+            if _handoff_command_result(handoff, command) != "passed":
+                continue
+            if head and _verified_handoff_commit(git_root, handoff) == head:
+                fresh = True
+                break
+        if not fresh:
+            raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is stale")
 
 
 def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:

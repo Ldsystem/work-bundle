@@ -301,6 +301,17 @@ def _write_follow_on_plan_task(
     return task
 
 
+def _git_commit_file(root: Path, relative: str, content: str, message: str) -> str:
+    from test_orchestration_execution_context import git
+
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    git(root, "add", "--", relative)
+    git(root, "commit", "-qm", message)
+    return git(root, "rev-parse", "HEAD")
+
+
 def _write_follow_on_executor_handoff(
     root: Path,
     *,
@@ -308,10 +319,19 @@ def _write_follow_on_executor_handoff(
     created_at: str,
     write_file: str = FOLLOW_ON_WRITE_SCOPE_FILE,
     extra_command: str | None = None,
+    actual_commit: str | None = None,
 ) -> Path:
     from test_orchestration_execution_context import TASK_VALIDATION_COMMAND
 
     extra = "" if extra_command is None else f"    - {{command: {extra_command}, result: passed}}\n"
+    repository = ""
+    if actual_commit:
+        repository = (
+            "repository:\n"
+            f"  - root: {root}\n"
+            "    metadata:\n"
+            f"      actual_commit: {actual_commit}\n"
+        )
     handoff = root / f".work-bundle/orchestration/handoff/executor/active/handoff-{task_id}.yaml"
     handoff.parent.mkdir(parents=True, exist_ok=True)
     handoff.write_text(
@@ -328,6 +348,7 @@ def _write_follow_on_executor_handoff(
         "  commands:\n"
         f"    - {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
         f"{extra}"
+        f"{repository}"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
@@ -865,19 +886,112 @@ def test_stale_plan_acceptance_after_later_material_task_blocks_archive(tmp_path
 
 def test_fresh_plan_acceptance_rerun_after_later_task_allows_archive(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
-    from test_orchestration_execution_context import workspace
+    from test_orchestration_execution_context import WRITE_SCOPE_FILE, workspace
 
     command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
     root, _, _ = workspace(tmp_path)
     _append_plan_knowledge(root, closure_return="missing")
     _append_plan_integration_command(root, command)
+    first = _git_commit_file(root, WRITE_SCOPE_FILE, "def compile_task():\n    return 'old'\n", "task-004")
     _write_earlier_integration_pass(root, command, created_at="2026-08-15")
+    earlier = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    earlier.write_text(
+        earlier.read_text(encoding="utf-8")
+        + "repository:\n"
+        f"  - root: {root}\n"
+        "    metadata:\n"
+        f"      actual_commit: {first}\n",
+        encoding="utf-8",
+    )
     _write_follow_on_plan_task(root)
+    later = _git_commit_file(
+        root,
+        FOLLOW_ON_WRITE_SCOPE_FILE,
+        "def archive_plan():\n    return 'fresh'\n",
+        "task-005",
+    )
     _write_follow_on_executor_handoff(
         root,
         task_id="task-005",
         created_at="2026-08-16",
         extra_command=command,
+        actual_commit=later,
+    )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
+
+
+def test_same_day_out_of_id_order_stale_plan_acceptance_blocks_archive(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import WRITE_SCOPE_FILE, workspace
+
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    _write_follow_on_plan_task(root, task_id="task-010", write_file=WRITE_SCOPE_FILE)
+    first = _git_commit_file(root, WRITE_SCOPE_FILE, "def compile_task():\n    return 'first'\n", "task-010")
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-010",
+        created_at="2026-08-16",
+        write_file=WRITE_SCOPE_FILE,
+        extra_command=command,
+        actual_commit=first,
+    )
+    _write_follow_on_plan_task(root, task_id="task-002")
+    later = _git_commit_file(
+        root,
+        FOLLOW_ON_WRITE_SCOPE_FILE,
+        "def archive_plan():\n    return 'later'\n",
+        "task-002",
+    )
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-002",
+        created_at="2026-08-16",
+        actual_commit=later,
+    )
+
+    with pytest.raises(SystemExit, match="acceptance-blocked:.*is stale"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
+
+
+def test_same_day_out_of_id_order_fresh_rerun_allows_archive(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import WRITE_SCOPE_FILE, workspace
+
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    _write_follow_on_plan_task(root, task_id="task-010", write_file=WRITE_SCOPE_FILE)
+    first = _git_commit_file(root, WRITE_SCOPE_FILE, "def compile_task():\n    return 'first'\n", "task-010")
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-010",
+        created_at="2026-08-16",
+        write_file=WRITE_SCOPE_FILE,
+        extra_command=command,
+        actual_commit=first,
+    )
+    _write_follow_on_plan_task(root, task_id="task-002")
+    later = _git_commit_file(
+        root,
+        FOLLOW_ON_WRITE_SCOPE_FILE,
+        "def archive_plan():\n    return 'later'\n",
+        "task-002",
+    )
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-002",
+        created_at="2026-08-16",
+        extra_command=command,
+        actual_commit=later,
     )
 
     cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
