@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import json
 from pathlib import Path
@@ -11,6 +13,11 @@ ORCH_ROOT = REPO_ROOT / "scripts" / "orchestration"
 sys.path.insert(0, str(ORCH_ROOT))
 
 from doctor import check_active_handoff_contract
+from execution_context import (
+    build_review_package,
+    evaluate_knowledge_closure_state,
+    validate_executor_result_for_task,
+)
 from handoffs import cmd_write_handoff, index_handoffs
 
 
@@ -38,6 +45,41 @@ def handoff_args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
     }
     values.update(overrides)
     return argparse.Namespace(**values)
+
+
+def _task_brief(*, plan_id: str = "plan-001", task_id: str = "task-001") -> dict[str, object]:
+    return {
+        "task_id": task_id,
+        "plan_id": plan_id,
+        "source_ids": [],
+        "files": {"read": [], "write": []},
+        "truth_basis": {},
+        "validation": [],
+    }
+
+
+def _completed_executor_result(
+    *,
+    plan: str | None = "plan-001",
+    task: str = "task-001",
+    acceptance_review: dict[str, object] | None = None,
+) -> dict[str, object]:
+    related: dict[str, object] = {"task": task}
+    if plan is not None:
+        related["plan"] = plan
+    handoff: dict[str, object] = {
+        "type": "executor-result",
+        "related": related,
+        "result": {"state": "completed"},
+        "knowledge_disposition": {
+            "action": "none",
+            "reason": "No stable authority changed.",
+            "affected_authority": [],
+        },
+    }
+    if acceptance_review is not None:
+        handoff["acceptance_review"] = acceptance_review
+    return handoff
 
 
 def test_handoff_helper_indexes_sparse_executor_result(tmp_path: Path) -> None:
@@ -239,17 +281,21 @@ def _write_archive_handoff(
     filename: str,
     related: str,
     *,
-    verdict: str = "accept",
+    verdict: str | None = "accept",
     action: str = "update",
     location: str = "active",
+    result_state: str | None = None,
 ) -> None:
     handoff_root = tmp_path / ".work-bundle/orchestration/handoff/executor" / location
     handoff_root.mkdir(parents=True, exist_ok=True)
     affected = "[]" if action == "none" else "[AUTH-001]"
+    review_line = "" if verdict is None else f"acceptance_review: {{verdict: {verdict}}}\n"
+    result_line = "" if result_state is None else f"result: {{state: {result_state}}}\n"
     (handoff_root / filename).write_text(
         f"id: {filename.rsplit('.', 1)[0]}\ntype: executor-result\nstatus: {location}\n"
         f"related: {related}\n"
-        f"acceptance_review: {{verdict: {verdict}}}\n"
+        f"{result_line}"
+        f"{review_line}"
         "knowledge_disposition:\n"
         f"  action: {action}\n"
         "  reason: Task-local evidence.\n"
@@ -364,7 +410,8 @@ def test_executor_result_contract_carries_acceptance_review() -> None:
         "allocated `AUTH-NNN` aliases",
         "related.plan",
         "must equal the assigned task's `plan_id` and `id`",
-        "fails closed before `build-review-package`",
+        "fails closed before `Completed` and before `build-review-package`",
+        "A review-required task cannot become `Completed` until the verdict is `accept`",
     ]:
         assert token in contract
 
@@ -399,7 +446,8 @@ def test_workflow_assigns_review_ownership_and_repair_loop() -> None:
         "reviewer_independent: false",
         "After two failed low-cost repair rounds",
         "A task becomes `Completed` only when",
-        "required `accept` review evidence",
+        "`Completed` does not require `verdict: accept` unless review was required",
+        "optional task review when acceptance_review.required: true",
         "accepted Truth Basis",
         "test oracle",
     ]:
@@ -485,3 +533,176 @@ def test_evals_cover_twenty_migration_behaviors() -> None:
         "full specification, root-plan, and phase reads",
     ]:
         assert token in expected
+
+
+def test_no_review_completed_handoff_does_not_require_accept_or_reviewer() -> None:
+    execute = read("skills/orch-execute-plan/SKILL.md")
+    for token in [
+        "`Completed` does not require `verdict: accept` unless review was required",
+        "assign `dev-code-review` only when `acceptance_review.required: true`",
+        "Skip this hop when review is not required",
+    ]:
+        assert token in execute
+    assert "verdict: accept" not in str(_completed_executor_result())
+
+    validated = validate_executor_result_for_task(_completed_executor_result(), _task_brief())
+    assert validated["result_state"] == "completed"
+    assert validated["knowledge_disposition"]["action"] == "none"
+
+
+def test_optional_review_package_does_not_absorb_sibling_task_files(tmp_path: Path) -> None:
+    from test_orchestration_execution_context import (
+        WRITE_SCOPE_FILE,
+        args as review_args,
+        git,
+        workspace,
+        write_executor_handoff,
+    )
+
+    root, _, task_b = workspace(tmp_path)
+    scoped = root / WRITE_SCOPE_FILE
+    scoped.parent.mkdir(parents=True, exist_ok=True)
+    scoped.write_text("def compile_task():\n    return 'old'\n", encoding="utf-8")
+    task_a_file = root / "src/task_a.py"
+    task_a_file.parent.mkdir(parents=True, exist_ok=True)
+    task_a_file.write_text("TASK_A_OLD = 1\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    base = git(root, "rev-parse", "HEAD")
+    scoped.write_text("def compile_task():\n    return 'task-b'\n", encoding="utf-8")
+    task_a_file.write_text("TASK_A_NEW = 2\n", encoding="utf-8")
+    handoff = write_executor_handoff(
+        root,
+        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
+    )
+
+    package = build_review_package(
+        review_args(root, task_b, handoff=str(handoff), base=base, head="worktree")
+    ).read_text(encoding="utf-8")
+    diff = package.split("## Diff", 1)[1].split("## Out-of-scope changes", 1)[0]
+    diagnostics = package.split("## Out-of-scope changes", 1)[1].split("## ", 1)[0]
+
+    assert "## Out-of-scope changes" in package
+    assert "return 'task-b'" in diff
+    assert "TASK_A_NEW" not in diff
+    assert "src/task_a.py" not in diff
+    assert "src/task_a.py" in diagnostics
+    assert WRITE_SCOPE_FILE in package.split("## Changed files", 1)[1].split("## ", 1)[0]
+
+
+def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer() -> None:
+    review = read("skills/orch-review-plan/SKILL.md")
+    workflow = read("references/assets/orchestration/workflow.md")
+    for token in [
+        "declared plan-level/integration acceptance from recorded validation evidence",
+        "do not start another implementation-review agent to produce plan-level acceptance",
+        "Archive remains blocked while any required knowledge, validation, review",
+    ]:
+        assert token in review
+    for token in [
+        "declared plan-level/integration acceptance is recorded",
+        "It does not redo task code review, reread implementation for code quality, or start another implementation-review agent",
+        "Missing review verdicts are not a blocker when no task set `acceptance_review.required: true`",
+    ]:
+        assert token in workflow
+
+
+def test_archive_plan_no_review_completed_update_blocks_until_closure_return(
+    tmp_path: Path,
+) -> None:
+    from plans import cmd_archive_plan
+
+    _write_archive_plan(tmp_path, "plan-B")
+    _write_archive_handoff(
+        tmp_path,
+        "plan-b.yaml",
+        "{plan: plan-B, task: task-001}",
+        verdict=None,
+        result_state="completed",
+    )
+
+    with pytest.raises(SystemExit, match="knowledge-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md").is_file()
+
+
+def test_missing_or_wrong_plan_identity_cannot_complete_without_review_package() -> None:
+    missing = _completed_executor_result(plan=None)
+    with pytest.raises(SystemExit, match="Handoff plan identity missing"):
+        validate_executor_result_for_task(missing, _task_brief())
+
+    mismatched = _completed_executor_result(plan="plan-A")
+    with pytest.raises(SystemExit, match="Handoff plan mismatch: expected plan-001, got plan-A"):
+        validate_executor_result_for_task(mismatched, _task_brief())
+
+
+def test_review_required_task_fails_closed_until_independent_accept() -> None:
+    execute = read("skills/orch-execute-plan/SKILL.md")
+    review = read("skills/orch-review-plan/SKILL.md")
+    contract = read("references/assets/orchestration/contract/handoff-executor-result-v1.md")
+    for token in [
+        "Do not perform acceptance judgment or mark a review-required task complete",
+        "`Completed` does not require `verdict: accept` unless review was required",
+    ]:
+        assert token in execute
+    for token in [
+        "missing `acceptance_review.verdict` blocks only a task that explicitly required independent review",
+        "`acceptance_review.verdict: accept` only for those explicitly required reviews",
+    ]:
+        assert token in review
+    assert "A review-required task cannot become `Completed` until the verdict is `accept`" in contract
+
+    pending = {
+        "related": {"plan": "plan-001", "task": "task-001"},
+        "result": {"state": "completed"},
+        "acceptance_review": {"required": True, "verdict": "pending"},
+        "knowledge_disposition": {
+            "action": "update",
+            "reason": "Task-local evidence.",
+            "affected_authority": ["AUTH-001"],
+        },
+    }
+    closure = evaluate_knowledge_closure_state(
+        upstream_disposition="not-needed",
+        accepted_task_handoffs=[pending],
+        closure_return="missing",
+    )
+    assert (closure["disposition"], closure["archive_blocked"]) == ("not-needed", False)
+
+    review_required_handoff = _completed_executor_result(
+        acceptance_review={"required": True, "verdict": "pending"}
+    )
+    validated = validate_executor_result_for_task(review_required_handoff, _task_brief())
+    assert validated["result_state"] == "completed"
+
+
+def test_overlapping_writes_are_not_parallelizable() -> None:
+    execute = read("skills/orch-execute-plan/SKILL.md")
+    create = read("skills/orch-create-implementation-plan/SKILL.md")
+    workflow = read("references/assets/orchestration/workflow.md")
+    plan = read("references/assets/orchestration/contract/plan-v1.md")
+    assert "Partition only independent tasks with disjoint write scopes" in execute
+    assert "disjoint write scopes" in create
+    assert "write scopes are disjoint" in workflow
+    assert "disjoint write scopes" in workflow
+    assert "assign parallel tasks only when dependencies are satisfied and write scopes are disjoint" in plan
+    assert "unsafe parallelization is explicitly blocked by dependency or scope evidence" in plan
+
+
+def test_dev_create_task_plan_tests_omit_heavy_orchestration_requirements() -> None:
+    text = read("tests/test_dev_skill_contracts.py")
+    for token in [
+        "review-package",
+        "plan-acceptance",
+        "orchestration-tree",
+        "review package",
+        "plan-level acceptance",
+        "orchestration artifact tree",
+        "build-review-package",
+        "acceptance_review",
+    ]:
+        assert token not in text
+    assert "dev-create-task-plan" in text
+    assert ".work-bundle/runtime/dev-plans/" in text
+

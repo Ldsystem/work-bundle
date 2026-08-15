@@ -304,9 +304,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 "Before compilation, capability selection, delegation, or edits",
                 "every target repository",
                 "build-task-brief",
-                "build-review-package",
+                "validate-executor-result",
                 "reviewer_independent: false",
-                "acceptance_review.verdict: accept",
             ],
         ),
         (
@@ -350,7 +349,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             "orch-review-plan skill",
             [
                 "workflow audit and deterministic finalizer",
-                "acceptance_review.verdict: accept",
+                "compiled Truth Basis",
                 "Knowledge Base Update disposition is `completed` or `not-needed`",
                 "approved `ks-*` return evidence",
                 "Do not broadly inspect source",

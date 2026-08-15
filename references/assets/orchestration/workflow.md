@@ -3,7 +3,7 @@
 ## Artifact chain
 
 ```text
-specification -> plan -> phase -> task -> execute -> executor-result -> task review
+specification -> plan -> phase -> task -> execute -> executor-result -> [optional task review]
                                                                     |
                                                                     v
                                                final workflow audit and finalization
@@ -74,9 +74,12 @@ scheduler selects executable task
   -> implement with declared methodology
   -> run fresh task-local validation
   -> write executor-result handoff
-  -> compile bounded review package
-  -> independent dev-code-review
-  -> accept | repair | blocked
+  -> validate-executor-result
+  -> optional task review when acceptance_review.required: true
+     -> compile bounded review package
+     -> independent `dev-code-review`
+     -> accept | repair | blocked
+  -> Completed
 ```
 
 Executors own implementation, task-local verification, and executor-result evidence, including a task-local knowledge disposition of `none`, `update`, `supersede`, or `reclassify`. They never invoke persistence or read knowledge. Reviewers own acceptance judgment for the accepted Truth Basis, requirement fit, correctness, edge cases, test oracle, disposition, unnecessary complexity, allocated obligations, and validation sufficiency. Schedulers own dependencies, barriers, context compilation, delegation, and evidence shape; they do not perform code-quality review.
@@ -85,7 +88,7 @@ Visible multi-agent subagents are preferred only when user/environment policy al
 
 On `repair`, return blocking findings with the same brief and current diff, make the smallest repair, rerun claim-relevant validation, regenerate the package from the original base, and review again. After two failed low-cost repair rounds, escalate the capability tier; if evidence indicates a plan or specification defect, stop the retry loop and route the typed blocker.
 
-A task becomes `Completed` only when implementation criteria, fresh validation, a valid executor-result handoff, and required `accept` review evidence all exist. Phase and plan status derive from accepted children plus declared dependency and barrier gates.
+A task becomes `Completed` only when implementation criteria, fresh validation, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan status derive from accepted children plus declared dependency and barrier gates.
 
 ## Failure routing
 
@@ -105,9 +108,9 @@ Resume the step that owns the failure. Repair a task for rejected implementation
 
 ## Final workflow audit
 
-`orch-review-plan` audits workflow completion, task acceptance evidence, handoff integrity, knowledge disposition, finalization gates, and archive readiness. It does not redo task code review or repair source code.
+`orch-review-plan` audits workflow completion, required optional reviews, declared plan-level/integration acceptance, handoff integrity, knowledge disposition, finalization gates, and archive readiness. It checks declared completion evidence against the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints. It does not redo task code review, reread implementation for code quality, or start another implementation-review agent.
 
-Final review aggregates accepted task dispositions from execution and task-review evidence. Any accepted `update`, `supersede`, or `reclassify` promotes durable closure to `required` even when the specification's upstream Knowledge Base Update state was `not-needed`; accepted `none` does not. Rejected task dispositions do not trigger closure. Archive is allowed only after required task reviews are accepted, validation and handoffs are coherent, barriers converged, the resulting Knowledge Base Update disposition is `completed` or `not-needed`, approved `ks-*` return evidence exists when required, and allowed commit/CodeGraph/metadata/archive/index mechanics complete or are explicitly inapplicable.
+Final review aggregates accepted task dispositions from execution and task-review evidence. Any accepted `update`, `supersede`, or `reclassify` promotes durable closure to `required` even when the specification's upstream Knowledge Base Update state was `not-needed`; accepted `none` does not. Rejected task dispositions do not trigger closure. Archive is allowed only after required optional reviews are accepted, declared plan-level/integration acceptance is recorded, validation and handoffs are coherent, barriers converged, the resulting Knowledge Base Update disposition is `completed` or `not-needed`, approved `ks-*` return evidence exists when required, and allowed commit/CodeGraph/metadata/archive/index mechanics complete or are explicitly inapplicable. Missing review verdicts are not a blocker when no task set `acceptance_review.required: true`.
 
 Only approved keep-summarizing owners write durable knowledge. Final orchestration review owns approved persistence delegation and may invoke that owner, then validate returned paths or an evidence-backed no-write result; executors and orchestration itself must not write knowledge directly.
 
