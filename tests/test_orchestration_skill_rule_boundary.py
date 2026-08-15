@@ -85,6 +85,9 @@ def test_planner_allocates_methodology_capability_and_bounded_context() -> None:
         "judgment",
         "context_mode: compiled-brief",
         "acceptance_review:",
+        "acceptance_review.required: false",
+        "Do not infer",
+        "soft applicability prose",
         "after_failed_repairs: 2",
         "common contract group",
         "post-barrier convergence task",
@@ -103,12 +106,15 @@ def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> 
         "## Scheduler-Owned Constraints",
         "## Executor-Owned Constraints",
         "build-task-brief",
+        "validate-executor-result",
         "build-review-package",
         "dev-code-review",
         "The scheduler does not perform code-quality review",
         "reviewer_independent: false",
         "After two failed repair rounds",
-        "acceptance_review.verdict: accept",
+        "acceptance_review.required: true",
+        "review_required: true",
+        "does not require `verdict: accept`",
         "context-blocked",
         "repository-blocked",
         "decision-blocked",
@@ -131,7 +137,11 @@ def test_final_review_is_workflow_audit_not_code_review() -> None:
     for token in [
         "workflow audit",
         "Independent `dev-code-review` owns task-scoped implementation quality",
-        "acceptance_review.verdict: accept",
+        "compiled Truth Basis",
+        "AUTH constraints",
+        "universal task-review evidence",
+        "implementation-review agent",
+        "explicitly required",
         "review-blocked",
         "knowledge-blocked",
         "repository-blocked",
@@ -146,6 +156,32 @@ def test_final_review_is_workflow_audit_not_code_review() -> None:
         "archive remains blocked",
     ]:
         assert token in text
+
+
+def test_workflow_makes_task_review_optional_on_the_chain() -> None:
+    text = read("references/assets/orchestration/workflow.md")
+    for token in [
+        "optional task review",
+        "validate-executor-result",
+        "does not require `verdict: accept`",
+        "acceptance_review.required: true",
+    ]:
+        assert token in text
+    assert "-> independent dev-code-review" not in text
+
+
+def test_doctor_execute_path_requires_validate_not_universal_review() -> None:
+    text = read("scripts/orchestration/doctor.py")
+    start = text.index('skill_root / "orch-execute-plan" / "SKILL.md"')
+    first_list = text[start:].split("[", 1)[1].split("]", 1)[0]
+    assert "validate-executor-result" in first_list
+    assert "acceptance_review.verdict: accept" not in first_list
+    assert "build-review-package" not in first_list
+
+    review_start = text.index('skill_root / "orch-review-plan" / "SKILL.md"')
+    review_list = text[review_start:].split("[", 1)[1].split("]", 1)[0]
+    assert "acceptance_review.verdict: accept" not in review_list
+    assert "compiled Truth Basis" in review_list
 
 
 def test_orch_doctor_remains_read_only() -> None:

@@ -37,7 +37,7 @@ executor_profile:
     after_failed_repairs: 2
     next_capability: standard|judgment
 acceptance_review:
-  required: true
+  required: false
   reviewer_independent: false
   verdict: pending
   reviewed_head: ""
@@ -105,8 +105,10 @@ For contract-decoupled work, name the common contract group, accepted prior hand
 
 - Implementation criteria are satisfied.
 - Fresh task validation evidence exists.
-- The compiled task brief and review package carry the same accepted Truth Basis.
+- The compiled task brief carries the accepted Truth Basis. When review is required, the review package carries the same values.
 - A valid `executor-result-v1` handoff exists.
+- Shared completion validation has passed: task/plan identity, executor-result shape, fresh required validation, `knowledge_disposition`, and unresolved/blocker state.
+- When `acceptance_review.required` is false or omitted, `Completed` does not require an independent reviewer or `accept`.
 - When `acceptance_review.required` is true, `acceptance_review.verdict` is `accept`.
 
 ## Planning verification

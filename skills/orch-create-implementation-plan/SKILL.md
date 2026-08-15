@@ -16,7 +16,7 @@ Plan only from a verified active specification with converged semantics, resolve
 3. Give every task exact source IDs, a five-field Truth Basis, scope, interfaces, dependencies, steps, evidence, methodology, allocated rules/skills, executor profile, and review requirement.
 4. Carry execution-workspace isolation, hydration, and cleanup policy into task and executor context.
 5. Use a common contract group before safe parallel work. Contract-decoupled participants depend on the common contract group and accepted prior handoffs, not sibling in-progress implementation output. Create explicit barrier metadata with barrier ID, readiness evidence, and convergence owner. Cross-branch or joint validation belongs to a post-barrier convergence task.
-6. Require a compact `executor-result-v1` handoff and task review before a review-required task can complete.
+6. Require a compact `executor-result-v1` handoff. Default `acceptance_review.required: false`. Require task review only when the task sets `acceptance_review.required: true`. Do not infer that flag from soft applicability prose.
 7. When a consequential simplification or compatibility assumption exists, make the earliest ordinary task cheaply falsify it before broad edits. Do not add a risk score, checkpoint phase, or parallel lifecycle.
 
 ## Methodology allocation
@@ -28,7 +28,7 @@ diagnosed testable repair       -> dev-test-driven-development
 new/changed testable behavior   -> dev-test-driven-development
 behavior-preserving refactor    -> loop-coding with green characterization baseline
 configuration/generated/docs   -> direct with deterministic checks
-task acceptance                 -> dev-code-review
+optional task review (required true) -> dev-code-review
 ```
 
 ## Executor profile
@@ -53,7 +53,7 @@ executor_profile:
     after_failed_repairs: 2
     next_capability: standard | judgment
 acceptance_review:
-  required: true | false
+  required: false
   reviewer_independent: false
   verdict: pending | accept | repair | blocked
   reviewed_head: ""

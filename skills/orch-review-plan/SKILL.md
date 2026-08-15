@@ -7,9 +7,9 @@ description: 'Audit WorkBundle workflow completion, task acceptance evidence, ha
 
 ## Review question
 
-Did the approved WorkBundle workflow complete correctly, with required task acceptance evidence, handoffs, knowledge disposition, repository finalization, and archive readiness?
+Did the approved WorkBundle workflow complete correctly, with required optional reviews, declared plan-level/integration acceptance, handoffs, knowledge disposition, repository finalization, and archive readiness?
 
-This is a workflow audit and deterministic finalizer. Independent `dev-code-review` owns task-scoped implementation quality before task completion.
+This is a workflow audit and deterministic finalizer. Independent `dev-code-review` owns task-scoped implementation quality when review is explicitly required.
 
 ## Audit
 
@@ -17,8 +17,10 @@ Verify:
 
 - specification, plan, phase, and task status coherence;
 - executor-result handoffs by applicability;
-- `acceptance_review.verdict: accept` wherever review was required;
-- accepted Truth Basis, implementation evidence, test oracle, and task-local knowledge disposition agree in each accepted review package;
+- declared completion evidence corresponds to the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints;
+- missing `acceptance_review.verdict` blocks only a task that explicitly required independent review; do not require universal task-review evidence;
+- `acceptance_review.verdict: accept` only for those explicitly required reviews;
+- declared plan-level/integration acceptance from recorded validation evidence; do not start another implementation-review agent to produce plan-level acceptance;
 - aggregate accepted task dispositions before applying the final knowledge gate: any accepted `update`, `supersede`, or `reclassify` makes durable closure required even when the upstream specification said `not-needed`; accepted `none` and rejected task dispositions do not trigger closure;
 - record validated delegate-return state in the root plan's existing Knowledge Base Update `Closure return` field so the deterministic `archive-plan` helper enforces the same aggregate gate;
 - planned validation evidence exists and is fresh for the accepted task result;
@@ -27,7 +29,7 @@ Verify:
 - approved `ks-*` return evidence exists when durable knowledge was required;
 - allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh completed or are explicitly not applicable.
 
-Use project files only for bounded identity and finalization evidence. Do not broadly inspect source to decide code quality, redo task review, repair source/tests, or substitute file inspection for accepted review evidence.
+Use project files only for bounded identity and finalization evidence. Do not broadly inspect source to decide code quality, redo task review, reread implementation for code quality, repair source/tests, or start another implementation-review agent for plan-level acceptance.
 
 ## Typed routing
 

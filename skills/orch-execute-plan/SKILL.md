@@ -1,6 +1,6 @@
 ---
 name: orch-execute-plan
-description: 'Execute a WorkBundle task, phase, or plan through compiled task briefs, task-local methodology, independent acceptance review, and dependency-aware scheduling.'
+description: 'Execute a WorkBundle task, phase, or plan through compiled task briefs, task-local methodology, optional independent acceptance review, and dependency-aware scheduling.'
 ---
 
 # orch-execute-plan
@@ -24,7 +24,11 @@ python3 scripts/orch.py build-task-brief --task <task-path>
 Missing source IDs; decision authority other than `none-relevant` or an `AUTH-NNN` alias whose carried constraint was reconciled in the verified specification; `conflict_status: escalate`; inconsistent scope; or unsafe workspace state fails closed with the existing typed blocker. Truth Basis conflict uses `decision-blocked`. The compiled brief includes `AUTH-NNN: <carried constraint>`, not the alias alone.
 6. Choose the provider-neutral capability from the task profile. Partition only independent tasks with disjoint write scopes. Contract-decoupled participants validate against the common contract, accepted prior handoffs, and task-local files; they reach the named barrier before convergence work.
 7. When user/environment policy permits delegation, use visible multi-agent subagents for task ownership. Invisible helper workers may support bounded analysis only. If independent subagents are unavailable, use single-agent execution and mark later review `reviewer_independent: false`.
-8. Validate executor-result evidence shape, compile a bounded review package, and assign `dev-code-review` to an independent reviewer when possible. The scheduler does not perform code-quality review.
+8. Always validate the executor-result with the shared helper. Compile `build-review-package` and assign `dev-code-review` only when `acceptance_review.required: true` or compiled `review_required: true`. The scheduler does not perform code-quality review.
+
+```bash
+python3 scripts/orch.py validate-executor-result --task <task-path> --handoff <handoff-path>
+```
 
 ## Executor-Owned Constraints
 
@@ -40,7 +44,7 @@ Missing source IDs; decision authority other than `none-relevant` or an `AUTH-NN
 
 ## Independent task review
 
-Build the package from the task, handoff, and original base/current head:
+When `acceptance_review.required: true` or `review_required: true`, build the package from the task, handoff, and original base/current head. Skip this hop when review is not required.
 
 ```bash
 python3 scripts/orch.py build-review-package \
@@ -55,7 +59,7 @@ On `repair`, return blocking findings with the same brief and current diff, make
 
 ## Completion semantics
 
-A task becomes `Completed` only when implementation criteria, fresh validation, a valid executor-result handoff, and required `acceptance_review.verdict: accept` all exist. Phase and plan completion derive from accepted children and declared dependency, barrier, and convergence gates.
+A task becomes `Completed` only when implementation criteria, fresh validation, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan completion derive from accepted children and declared dependency, barrier, and convergence gates.
 
 Use typed blockers:
 

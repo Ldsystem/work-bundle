@@ -539,7 +539,14 @@ def test_orchestration_rules_require_contract_barrier_and_review_settlement_evid
     assert "barrier id, participant role, readiness `reached|blocked`" in handoff
     assert "every participant completed or blocked with executor-result handoffs before joint validation began" in handoff
 
-    assert "accepted task-review status coherence" in review
+    assert "fails closed before `Completed`" in handoff
+    assert "not only before `build-review-package`" in handoff
+
+    assert "compiled Truth Basis" in review
+    assert "AUTH constraints" in review
+    assert "universal task-review evidence" in review
+    assert "implementation-review agent" in review
+    assert "explicitly required" in review
     assert "Route missing handoff, status, validation, or review evidence to `review-blocked`" in review
     assert "Route incomplete durable knowledge work to `knowledge-blocked`" in review
     assert "Create or require plan repair only for a decomposition defect" in review
@@ -555,9 +562,13 @@ def test_execution_and_review_skills_carry_task003_flow_requirements() -> None:
     assert "accepted prior handoffs" in execute
     assert "reach the named barrier before convergence work" in execute
     assert "The scheduler does not perform code-quality review" in execute
-    assert "acceptance_review.verdict: accept" in execute
+    assert "validate-executor-result" in execute
+    assert "does not require `verdict: accept`" in execute
+    assert "acceptance_review.required: true" in execute
 
     assert "Independent `dev-code-review` owns task-scoped implementation quality" in review
+    assert "compiled Truth Basis" in review
+    assert "implementation-review agent" in review
     assert "Do not broadly inspect source" in review
     assert "knowledge-blocked" in review
     assert "repair plan only" in review
