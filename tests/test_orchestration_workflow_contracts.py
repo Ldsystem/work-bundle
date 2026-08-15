@@ -642,6 +642,44 @@ def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer
 
 def test_passing_declared_plan_acceptance_allows_archive_without_second_reviewer(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
+    from test_orchestration_execution_context import (
+        TASK_VALIDATION_COMMAND,
+        workspace,
+        write_executor_handoff,
+    )
+
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    plan = root / ".work-bundle/orchestration/plan/active/compiler-plan.md"
+    plan.write_text(
+        plan.read_text(encoding="utf-8")
+        + "\n## 7. Tests\n\n"
+        + "| ID | Test Type | Target | Related Phase | Can Run With | Command | Expected Result |\n"
+        + "|---|---|---|---|---|---|---|\n"
+        + f"| TEST-099 | integration | full harness | phase-001 | - | `{command}` | all tests pass |\n",
+        encoding="utf-8",
+    )
+    handoff = write_executor_handoff(
+        root,
+        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
+    )
+    handoff.write_text(
+        handoff.read_text(encoding="utf-8").replace(
+            f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n",
+            f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
+            f"    - {{command: {command}, result: passed}}\n",
+        ),
+        encoding="utf-8",
+    )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
+
+
+def test_unvalidated_handoff_cannot_satisfy_declared_plan_acceptance(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
 
     command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
     _write_archive_plan(tmp_path, "plan-B")
@@ -671,9 +709,52 @@ def test_passing_declared_plan_acceptance_allows_archive_without_second_reviewer
         encoding="utf-8",
     )
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+    with pytest.raises(SystemExit, match="acceptance-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
 
-    assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
+
+def test_contradictory_validated_plan_acceptance_blocks_archive(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import (
+        TASK_VALIDATION_COMMAND,
+        workspace,
+        write_executor_handoff,
+    )
+
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    plan = root / ".work-bundle/orchestration/plan/active/compiler-plan.md"
+    plan.write_text(
+        plan.read_text(encoding="utf-8")
+        + "\n## 7. Tests\n\n"
+        + "| ID | Test Type | Target | Related Phase | Can Run With | Command | Expected Result |\n"
+        + "|---|---|---|---|---|---|---|\n"
+        + f"| TEST-099 | integration | full harness | phase-001 | - | `{command}` | all tests pass |\n",
+        encoding="utf-8",
+    )
+    passed = write_executor_handoff(
+        root,
+        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
+    )
+    passed.write_text(
+        passed.read_text(encoding="utf-8").replace(
+            f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n",
+            f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
+            f"    - {{command: {command}, result: passed}}\n",
+        ),
+        encoding="utf-8",
+    )
+    failed = passed.parent / "handoff-task-004-failed.yaml"
+    failed.write_text(
+        passed.read_text(encoding="utf-8")
+        .replace("id: handoff-task-004\n", "id: handoff-task-004-failed\n")
+        .replace(f"- {{command: {command}, result: passed}}\n", f"- {{command: {command}, result: failed}}\n"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="acceptance-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
 
 
 def test_archive_plan_no_review_completed_update_blocks_until_closure_return(

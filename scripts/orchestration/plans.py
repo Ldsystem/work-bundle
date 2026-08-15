@@ -22,12 +22,34 @@ def _plan_knowledge_field(body: str, label: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _assert_archive_knowledge_gate(args: argparse.Namespace, plan_id: str, root_path: Path) -> None:
+def _assert_archive_knowledge_gate(
+    args: argparse.Namespace,
+    plan_id: str,
+    root_path: Path,
+    validated: list[tuple[dict[str, object], dict[str, object]]],
+) -> None:
     _, body = read_front_matter(root_path)
     upstream = _plan_knowledge_field(body, "Disposition")
     if upstream is None:
         raise SystemExit("knowledge-blocked: plan has no Knowledge Base Update disposition")
     closure_return = _plan_knowledge_field(body, "Closure return") or "missing"
+    handoffs = [handoff for handoff, _brief in validated]
+    review_required_by_task = {
+        str(brief.get("task_id") or ""): brief.get("review_required") is True for _handoff, brief in validated
+    }
+    gate = evaluate_knowledge_closure_state(
+        upstream_disposition=upstream,
+        accepted_task_handoffs=handoffs,
+        closure_return=closure_return,
+        review_required_by_task=review_required_by_task,
+    )
+    if gate["archive_blocked"]:
+        triggers = ", ".join(f"{item['task']}:{item['action']}" for item in gate["triggers"])
+        detail = triggers or str(gate["disposition"])
+        raise SystemExit(f"knowledge-blocked: archive requires resolved durable closure ({detail})")
+
+
+def _plan_executor_handoffs(args: argparse.Namespace, plan_id: str) -> list[dict[str, object]]:
     handoffs: list[dict[str, object]] = []
     handoff_root = orchestration_root(args) / "handoff" / "executor"
     for path in sorted(handoff_root.glob("*/*")):
@@ -36,18 +58,8 @@ def _assert_archive_knowledge_gate(args: argparse.Namespace, plan_id: str, root_
         handoff = read_structured_artifact(path)
         if unique_explicit_handoff_plan_id(handoff) != plan_id:
             continue
-        if not _validated_task_handoff_for_closure(args, plan_id, handoff):
-            continue
         handoffs.append(handoff)
-    gate = evaluate_knowledge_closure_state(
-        upstream_disposition=upstream,
-        accepted_task_handoffs=handoffs,
-        closure_return=closure_return,
-    )
-    if gate["archive_blocked"]:
-        triggers = ", ".join(f"{item['task']}:{item['action']}" for item in gate["triggers"])
-        detail = triggers or str(gate["disposition"])
-        raise SystemExit(f"knowledge-blocked: archive requires resolved durable closure ({detail})")
+    return handoffs
 
 
 def _find_plan_task_path(args: argparse.Namespace, plan_id: str, task_id: str) -> Path | None:
@@ -61,16 +73,16 @@ def _find_plan_task_path(args: argparse.Namespace, plan_id: str, task_id: str) -
     return artifact_path_from_row(matches[0], args)
 
 
-def _validated_task_handoff_for_closure(
+def _try_validate_task_handoff(
     args: argparse.Namespace, plan_id: str, handoff: dict[str, object]
-) -> bool:
+) -> tuple[dict[str, object], dict[str, object]] | None:
     related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
     task_id = related.get("task")
     if not task_id:
-        return False
+        return None
     task_path = _find_plan_task_path(args, plan_id, str(task_id))
     if task_path is None:
-        return False
+        return None
     compile_args = argparse.Namespace(
         project_root=getattr(args, "project_root", None),
         workspace_root=getattr(args, "workspace_root", None),
@@ -81,10 +93,22 @@ def _validated_task_handoff_for_closure(
     )
     try:
         _, brief_document = _compile_task_brief(compile_args)
-        validate_executor_result_for_task(handoff, brief_document["task_brief"])
+        brief = brief_document["task_brief"]
+        validate_executor_result_for_task(handoff, brief)
     except SystemExit:
-        return False
-    return True
+        return None
+    return handoff, brief
+
+
+def _validated_plan_task_handoffs(
+    args: argparse.Namespace, plan_id: str
+) -> list[tuple[dict[str, object], dict[str, object]]]:
+    validated: list[tuple[dict[str, object], dict[str, object]]] = []
+    for handoff in _plan_executor_handoffs(args, plan_id):
+        pair = _try_validate_task_handoff(args, plan_id, handoff)
+        if pair is not None:
+            validated.append(pair)
+    return validated
 
 
 def _plan_section_table(body: str, name: str) -> list[list[str]]:
@@ -120,19 +144,18 @@ def _declared_integration_commands(body: str) -> list[str]:
     return commands
 
 
-def _assert_archive_plan_acceptance(args: argparse.Namespace, plan_id: str, root_path: Path) -> None:
+def _assert_archive_plan_acceptance(
+    args: argparse.Namespace,
+    plan_id: str,
+    root_path: Path,
+    validated: list[tuple[dict[str, object], dict[str, object]]],
+) -> None:
     _, body = read_front_matter(root_path)
     commands = _declared_integration_commands(body)
     if not commands:
         return
-    recorded: dict[str, str] = {}
-    handoff_root = orchestration_root(args) / "handoff" / "executor"
-    for path in sorted(handoff_root.glob("*/*")):
-        if not path.is_file() or path.suffix not in {".yaml", ".yml"}:
-            continue
-        handoff = read_structured_artifact(path)
-        if unique_explicit_handoff_plan_id(handoff) != plan_id:
-            continue
+    recorded: dict[str, set[str]] = {}
+    for handoff, _brief in validated:
         validation = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
         raw_commands = validation.get("commands")
         items = raw_commands if isinstance(raw_commands, list) else []
@@ -141,12 +164,18 @@ def _assert_archive_plan_acceptance(args: argparse.Namespace, plan_id: str, root
                 continue
             command = str(item.get("command") or "").strip()
             if command:
-                recorded[command] = str(item.get("result") or "")
+                recorded.setdefault(command, set()).add(str(item.get("result") or ""))
     for command in commands:
-        result = recorded.get(command)
-        if result != "passed":
-            detail = result or "missing"
-            raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is {detail}")
+        results = recorded.get(command, set())
+        if results == {"passed"}:
+            continue
+        if not results:
+            detail = "missing"
+        elif len(results) > 1:
+            detail = "contradictory"
+        else:
+            detail = next(iter(results))
+        raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is {detail}")
 
 
 def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
@@ -285,8 +314,9 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
     moved = []
 
     root_path = artifact_path_from_row(root_match, args)
-    _assert_archive_knowledge_gate(args, args.id, root_path)
-    _assert_archive_plan_acceptance(args, args.id, root_path)
+    validated = _validated_plan_task_handoffs(args, args.id)
+    _assert_archive_knowledge_gate(args, args.id, root_path, validated)
+    _assert_archive_plan_acceptance(args, args.id, root_path, validated)
     if is_relative_to(root_path, active_root):
         replace_front_matter_value(root_path, "status", "Completed")
         moved.append(move_to_archive(root_path, active_root, archived_root))

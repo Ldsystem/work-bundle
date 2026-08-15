@@ -558,6 +558,7 @@ def evaluate_knowledge_closure_state(
     upstream_disposition: str,
     accepted_task_handoffs: list[dict[str, Any]],
     closure_return: str = "missing",
+    review_required_by_task: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     if upstream_disposition not in {"required", "not-needed", "completed", "blocked"}:
         raise SystemExit("Invalid upstream Knowledge Base Update disposition")
@@ -566,7 +567,12 @@ def evaluate_knowledge_closure_state(
 
     triggers: list[dict[str, str]] = []
     for handoff in accepted_task_handoffs:
-        if not _handoff_eligible_for_closure(handoff):
+        related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+        task_id = str(related.get("task") or "")
+        compiled_required = None
+        if review_required_by_task is not None and task_id in review_required_by_task:
+            compiled_required = review_required_by_task[task_id]
+        if not _handoff_eligible_for_closure(handoff, review_required=compiled_required):
             continue
         disposition = handoff.get("knowledge_disposition")
         if not isinstance(disposition, dict):
@@ -577,8 +583,7 @@ def evaluate_knowledge_closure_state(
         if action not in KNOWLEDGE_DISPOSITION_ACTIONS:
             raise SystemExit("Accepted task handoff knowledge disposition action is invalid")
         if action != "none":
-            related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
-            triggers.append({"task": str(related.get("task") or "unknown"), "action": str(action)})
+            triggers.append({"task": task_id or "unknown", "action": str(action)})
 
     closure_required = upstream_disposition in {"required", "blocked"} or bool(triggers)
     if not closure_required:
@@ -666,7 +671,7 @@ def validate_executor_result_for_task(handoff: dict[str, Any], task: dict[str, A
         _allocated_decision_aliases(truth_basis),
     )
     if state in {"completed", "partial"}:
-        _assert_task_fit_check(handoff, task_id)
+        _assert_task_fit_check(handoff, task_id, state)
         _assert_changed_paths_in_write_scope(handoff, task_files)
     _assert_handoff_review_matches_task(handoff, task, state)
     required_items = [
@@ -700,14 +705,19 @@ def validate_executor_result_for_task(handoff: dict[str, Any], task: dict[str, A
 
 
 def _acceptable_validation_results(item: dict[str, Any]) -> set[str]:
+    raw = item.get("acceptable_results")
+    if isinstance(raw, list) and raw:
+        allowed = {str(value).strip() for value in raw if str(value).strip()}
+        if not allowed.issubset({"passed", "skipped", "failed"}):
+            raise SystemExit("Task validation acceptable_results must be passed, skipped, or failed")
+        return allowed
     expected = str(item.get("expected") or "").strip().lower()
-    allowed = {"passed"}
-    if "skip" in expected:
-        allowed.add("skipped")
-    return allowed
+    if expected in {"skipped", "skip"}:
+        return {"passed", "skipped"}
+    return {"passed"}
 
 
-def _assert_task_fit_check(handoff: dict[str, Any], task_id: str) -> None:
+def _assert_task_fit_check(handoff: dict[str, Any], task_id: str, state: str) -> None:
     fit = handoff.get("task_fit_check")
     if not isinstance(fit, dict) or not fit:
         raise SystemExit("Executor result completed or partial state requires task_fit_check")
@@ -716,10 +726,10 @@ def _assert_task_fit_check(handoff: dict[str, Any], task_id: str) -> None:
         raise SystemExit(
             f"Executor result task_fit_check task mismatch: expected {task_id}, got {fit_task or 'missing'}"
         )
-    if fit.get("result") not in TASK_FIT_RESULTS:
-        raise SystemExit(
-            "Executor result task_fit_check result must be clean, repaired, unresolved, or skipped"
-        )
+    allowed = {"clean", "repaired"} if state == "completed" else TASK_FIT_RESULTS
+    if fit.get("result") not in allowed:
+        allowed_text = " or ".join(sorted(allowed))
+        raise SystemExit(f"Executor result task_fit_check result must be {allowed_text}")
 
 
 def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: dict[str, Any]) -> None:
@@ -736,8 +746,9 @@ def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: di
 def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str, Any], state: str) -> None:
     compiled_required = task.get("review_required") is True
     review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
-    if compiled_required and review.get("required") is not True:
-        raise SystemExit("Executor result cannot omit or contradict compiled review_required")
+    handoff_required = review.get("required") is True
+    if compiled_required != handoff_required:
+        raise SystemExit("Executor result acceptance_review.required must match compiled review_required")
     if compiled_required and state == "completed" and review.get("verdict") != "accept":
         raise SystemExit("Review-required task cannot complete without acceptance_review.verdict: accept")
 
