@@ -148,6 +148,7 @@ WRITE_SCOPE_FILE = "scripts/orchestration/execution_context.py"
 TASK_VALIDATION_COMMAND = "uv run --with pytest pytest -q tests/test_one.py"
 HANDOFF_COMPLETION = (
     "result: {state: completed}\n"
+    "task_fit_check: {task: task-004, result: clean}\n"
     "validation:\n"
     "  commands:\n"
     f"    - {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
@@ -356,6 +357,7 @@ def test_final_knowledge_closure_is_driven_by_accepted_task_dispositions(
     handoffs = [
         {
             "related": {"task": "task-004"},
+            "result": {"state": "completed"},
             "acceptance_review": {"verdict": review_verdict},
             "knowledge_disposition": {
                 "action": action,
@@ -504,6 +506,7 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
         "  plan: plan-001\n"
         "  task: task-004\n"
         "result: {state: partial}\n"
+        "task_fit_check: {task: task-004, result: unresolved}\n"
         "changes:\n"
         "  files:\n"
         f"    - {{path: {WRITE_SCOPE_FILE}, action: modified, symbols: [compile_task]}}\n"
@@ -869,8 +872,9 @@ def _read_handoff(path: Path) -> dict:
 
 
 @pytest.mark.parametrize("acceptance_review", ["", "acceptance_review: {}\n"])
+@pytest.mark.parametrize("archive", [False, True])
 def test_omitted_or_empty_acceptance_review_defaults_review_not_required(
-    tmp_path: Path, acceptance_review: str
+    tmp_path: Path, acceptance_review: str, archive: bool
 ) -> None:
     root, _, task = workspace(tmp_path)
     _omit_acceptance_review(task)
@@ -879,34 +883,12 @@ def test_omitted_or_empty_acceptance_review_defaults_review_not_required(
             task.read_text(encoding="utf-8").replace("validation:\n", f"{acceptance_review}validation:\n"),
             encoding="utf-8",
         )
-    archived = _archive_task(root, task)
+    target = _archive_task(root, task) if archive else task
 
-    packet = build_task_brief(args(root, archived)).read_text(encoding="utf-8")
+    packet = build_task_brief(args(root, target)).read_text(encoding="utf-8")
 
     assert "review_required: false" in packet
     assert "review_required: true" not in packet
-
-
-def test_active_omitted_acceptance_review_fails_with_cutover_diagnostic(tmp_path: Path) -> None:
-    root, _, task = workspace(tmp_path)
-    _omit_acceptance_review(task)
-
-    with pytest.raises(SystemExit, match=r"required:\s*true\|false"):
-        build_task_brief(args(root, task))
-
-
-def test_active_empty_acceptance_review_fails_with_cutover_diagnostic(tmp_path: Path) -> None:
-    root, _, task = workspace(tmp_path)
-    task.write_text(
-        task.read_text(encoding="utf-8").replace(
-            "acceptance_review:\n  required: false\n",
-            "acceptance_review: {}\n",
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(SystemExit, match=r"required:\s*true\|false"):
-        build_task_brief(args(root, task))
 
 
 def test_build_task_brief_fails_closed_for_directory_only_write_scope(tmp_path: Path) -> None:
@@ -936,6 +918,44 @@ def test_build_task_brief_fails_closed_for_module_only_write_scope(tmp_path: Pat
 
     with pytest.raises(SystemExit, match="directory|module"):
         build_task_brief(args(root, task))
+
+
+@pytest.mark.parametrize("write_path", ["Dockerfile", "Makefile", "LICENSE", ".gitignore"])
+def test_build_task_brief_allows_existing_extensionless_write_files(
+    tmp_path: Path, write_path: str
+) -> None:
+    root, _, task = workspace(tmp_path)
+    (root / write_path).write_text("exact-file\n", encoding="utf-8")
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            f"write: [{WRITE_SCOPE_FILE}]",
+            f"write: [{write_path}]",
+        ),
+        encoding="utf-8",
+    )
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert write_path in packet
+    assert "review_required: false" in packet
+
+
+@pytest.mark.parametrize("write_path", ["Dockerfile", "Makefile", "LICENSE", ".gitignore"])
+def test_build_task_brief_allows_new_extensionless_write_files(
+    tmp_path: Path, write_path: str
+) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            f"write: [{WRITE_SCOPE_FILE}]",
+            f"write: [{write_path}]",
+        ),
+        encoding="utf-8",
+    )
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert write_path in packet
 
 
 def test_validate_executor_result_rejects_missing_plan_without_review_package(tmp_path: Path) -> None:
@@ -997,6 +1017,7 @@ def test_validate_executor_result_rejects_missing_required_validation(tmp_path: 
         "type: executor-result\n"
         "related: {plan: plan-001, task: task-004}\n"
         "result: {state: completed}\n"
+        "task_fit_check: {task: task-004, result: clean}\n"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
@@ -1190,3 +1211,180 @@ def test_ineligible_result_states_do_not_promote_closure(state: str) -> None:
     )
 
     assert (result["disposition"], result["archive_blocked"]) == ("not-needed", False)
+
+
+def test_missing_result_state_is_not_closure_eligible() -> None:
+    handoffs = [
+        {
+            "related": {"plan": "plan-001", "task": "task-004"},
+            "result": {"state": None},
+            "acceptance_review": {"required": False},
+            "knowledge_disposition": {
+                "action": "update",
+                "reason": "Task-local evidence.",
+                "affected_authority": [ACCEPTED_AUTHORITY],
+            },
+        }
+    ]
+
+    result = execution_context.evaluate_knowledge_closure_state(
+        upstream_disposition="not-needed",
+        accepted_task_handoffs=handoffs,
+        closure_return="missing",
+    )
+
+    assert (result["disposition"], result["archive_blocked"]) == ("not-needed", False)
+
+
+def _completed_handoff_payload(
+    root: Path,
+    *,
+    validation_result: str = "passed",
+    extra: str = "",
+) -> Path:
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        "related: {plan: plan-001, task: task-004}\n"
+        "result: {state: completed}\n"
+        "task_fit_check: {task: task-004, result: clean}\n"
+        "validation:\n"
+        "  commands:\n"
+        f"    - {{command: {TASK_VALIDATION_COMMAND}, result: {validation_result}}}\n"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n"
+        f"{extra}",
+        encoding="utf-8",
+    )
+    return handoff
+
+
+def test_validate_executor_result_rejects_failed_required_command(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    handoff = _completed_handoff_payload(root, validation_result="failed")
+    brief = _compiled_brief(root, task)
+
+    with pytest.raises(SystemExit, match="failed|passed|validation"):
+        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+
+
+def test_validate_executor_result_rejects_skipped_required_command(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    handoff = _completed_handoff_payload(root, validation_result="skipped")
+    brief = _compiled_brief(root, task)
+
+    with pytest.raises(SystemExit, match="skipped|passed|validation"):
+        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+
+
+def test_validate_executor_result_allows_skipped_when_task_expected_skip(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            f"{{command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: exit 0}}",
+            f"{{command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: skipped when fixture unavailable}}",
+        ),
+        encoding="utf-8",
+    )
+    handoff = _completed_handoff_payload(root, validation_result="skipped")
+    brief = _compiled_brief(root, task)
+
+    validated = execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+
+    assert validated["result_state"] == "completed"
+
+
+def test_validate_executor_result_rejects_out_of_scope_changed_path(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    handoff = _completed_handoff_payload(
+        root,
+        extra=(
+            "changes:\n"
+            "  files:\n"
+            "    - {path: src/outsider.py}\n"
+        ),
+    )
+    brief = _compiled_brief(root, task)
+
+    with pytest.raises(SystemExit, match="write scope|out-of-scope|unauthorized"):
+        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+
+
+def test_validate_executor_result_rejects_missing_task_fit_check(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    handoff = write_executor_handoff(
+        root,
+        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
+    )
+    text = handoff.read_text(encoding="utf-8").replace(
+        "task_fit_check: {task: task-004, result: clean}\n",
+        "",
+    )
+    handoff.write_text(text, encoding="utf-8")
+    brief = _compiled_brief(root, task)
+
+    with pytest.raises(SystemExit, match="task_fit_check"):
+        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+
+
+def test_validate_executor_result_rejects_review_required_downgrade(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            "acceptance_review:\n  required: false\n",
+            "acceptance_review:\n  required: true\n",
+        ),
+        encoding="utf-8",
+    )
+    handoff = write_executor_handoff(
+        root,
+        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
+    )
+    brief = _compiled_brief(root, task)
+
+    with pytest.raises(SystemExit, match="review"):
+        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+
+
+def test_set_plan_status_completed_requires_validated_handoff(tmp_path: Path) -> None:
+    from plans import cmd_set_plan_status
+
+    root, _, task = workspace(tmp_path)
+    with pytest.raises(SystemExit, match="handoff"):
+        cmd_set_plan_status(
+            argparse.Namespace(
+                project_root=str(root),
+                id="task-004",
+                status="Completed",
+                kind="task",
+            )
+        )
+
+    failed = _completed_handoff_payload(root, validation_result="failed")
+    with pytest.raises(SystemExit, match="failed|passed|validation"):
+        cmd_set_plan_status(
+            argparse.Namespace(
+                project_root=str(root),
+                id="task-004",
+                status="Completed",
+                kind="task",
+                handoff=str(failed),
+            )
+        )
+
+    handoff = _completed_handoff_payload(root, validation_result="passed")
+    cmd_set_plan_status(
+        argparse.Namespace(
+            project_root=str(root),
+            id="task-004",
+            status="Completed",
+            kind="task",
+            handoff=str(handoff),
+        )
+    )
+    data, _ = execution_context._read_structured(task)
+    assert data["status"] == "Completed"

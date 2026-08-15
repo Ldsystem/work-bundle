@@ -55,6 +55,7 @@ def _task_brief(*, plan_id: str = "plan-001", task_id: str = "task-001") -> dict
         "files": {"read": [], "write": []},
         "truth_basis": {},
         "validation": [],
+        "review_required": False,
     }
 
 
@@ -71,6 +72,7 @@ def _completed_executor_result(
         "type": "executor-result",
         "related": related,
         "result": {"state": "completed"},
+        "task_fit_check": {"task": task, "result": "clean"},
         "knowledge_disposition": {
             "action": "none",
             "reason": "No stable authority changed.",
@@ -177,39 +179,19 @@ def test_specification_contract_uses_semantic_loop_and_workspace_policy() -> Non
 
 def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
+    from test_orchestration_execution_context import ACCEPTED_AUTHORITY, workspace, write_executor_handoff
 
-    plan_root = tmp_path / ".work-bundle/orchestration/plan/active"
-    handoff_root = tmp_path / ".work-bundle/orchestration/handoff/executor/active"
-    plan_root.mkdir(parents=True)
-    handoff_root.mkdir(parents=True)
-    (plan_root / "plan.md").write_text(
-        "---\nid: plan-001\nstatus: Completed\n---\n\n"
-        "## 2.1 Knowledge Base Update Carry Forward\n\n"
-        "- **Disposition**: not-needed\n"
-        "- **Closure return**: missing\n",
-        encoding="utf-8",
-    )
-    task = plan_root / "plan-001/phase-001/task.md"
-    task.parent.mkdir(parents=True)
-    task.write_text(
-        "---\nid: task-001\nplan_id: plan-001\nphase_id: phase-001\nstatus: Completed\n---\n",
-        encoding="utf-8",
-    )
-    (handoff_root / "accepted.yaml").write_text(
-        "id: handoff-001\ntype: executor-result\nstatus: active\n"
-        "related: {plan: plan-001, task: task-001}\n"
-        "acceptance_review: {verdict: accept}\n"
-        "knowledge_disposition:\n"
-        "  action: update\n"
-        "  reason: Stable authority changed.\n"
-        "  affected_authority: [AUTH-001]\n",
-        encoding="utf-8",
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    write_executor_handoff(
+        root,
+        f"  action: update\n  reason: Stable authority changed.\n  affected_authority: [{ACCEPTED_AUTHORITY}]\n",
     )
 
     with pytest.raises(SystemExit, match="knowledge-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-001"))
+        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
 
-    assert (plan_root / "plan.md").is_file()
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
 
 @pytest.mark.parametrize(
@@ -272,6 +254,17 @@ def _write_archive_plan(
     task.parent.mkdir(parents=True, exist_ok=True)
     task.write_text(
         f"---\nid: task-001\nplan_id: {plan_id}\nphase_id: phase-001\nstatus: Completed\n---\n",
+        encoding="utf-8",
+    )
+
+
+def _append_plan_knowledge(root: Path, *, closure_return: str = "missing") -> None:
+    plan = root / ".work-bundle/orchestration/plan/active/compiler-plan.md"
+    plan.write_text(
+        plan.read_text(encoding="utf-8")
+        + "\n## 2.1 Knowledge Base Update Carry Forward\n\n"
+        + "- **Disposition**: not-needed\n"
+        + f"- **Closure return**: {closure_return}\n",
         encoding="utf-8",
     )
 
@@ -344,14 +337,19 @@ def test_archive_plan_ignores_archived_foreign_handoff_with_colliding_task_id(tm
 
 def test_archive_plan_same_plan_accepted_update_still_blocks_unresolved_closure(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
+    from test_orchestration_execution_context import ACCEPTED_AUTHORITY, workspace, write_executor_handoff
 
-    _write_archive_plan(tmp_path, "plan-B")
-    _write_archive_handoff(tmp_path, "plan-b.yaml", "{plan: plan-B, task: task-001}")
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    write_executor_handoff(
+        root,
+        f"  action: update\n  reason: Task-local evidence.\n  affected_authority: [{ACCEPTED_AUTHORITY}]\n",
+    )
 
     with pytest.raises(SystemExit, match="knowledge-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
 
-    assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md").is_file()
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
 
 def test_archive_plan_same_plan_resolved_closure_allows_archive(tmp_path: Path) -> None:
@@ -590,7 +588,9 @@ def test_optional_review_package_does_not_absorb_sibling_task_files(tmp_path: Pa
     assert WRITE_SCOPE_FILE in package.split("## Changed files", 1)[1].split("## ", 1)[0]
 
 
-def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer() -> None:
+def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
     review = read("skills/orch-review-plan/SKILL.md")
     workflow = read("references/assets/orchestration/workflow.md")
     for token in [
@@ -606,10 +606,96 @@ def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer
     ]:
         assert token in workflow
 
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    _write_archive_plan(tmp_path, "plan-B")
+    plan = tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md"
+    plan.write_text(
+        plan.read_text(encoding="utf-8")
+        + "\n## 7. Tests\n\n"
+        + "| ID | Test Type | Target | Related Phase | Can Run With | Command | Expected Result |\n"
+        + "|---|---|---|---|---|---|---|\n"
+        + f"| TEST-099 | integration | full harness | phase-001 | - | `{command}` | all tests pass |\n",
+        encoding="utf-8",
+    )
+    _write_archive_handoff(
+        tmp_path,
+        "plan-b.yaml",
+        "{plan: plan-B, task: task-001}",
+        verdict=None,
+        action="none",
+        result_state="completed",
+    )
+    handoff = tmp_path / ".work-bundle/orchestration/handoff/executor/active/plan-b.yaml"
+    handoff.write_text(
+        handoff.read_text(encoding="utf-8")
+        + "validation:\n"
+        + "  commands:\n"
+        + f"    - {{command: {command}, result: failed}}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="acceptance-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md").is_file()
+
+
+def test_passing_declared_plan_acceptance_allows_archive_without_second_reviewer(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    _write_archive_plan(tmp_path, "plan-B")
+    plan = tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md"
+    plan.write_text(
+        plan.read_text(encoding="utf-8")
+        + "\n## 7. Tests\n\n"
+        + "| ID | Test Type | Target | Related Phase | Can Run With | Command | Expected Result |\n"
+        + "|---|---|---|---|---|---|---|\n"
+        + f"| TEST-099 | integration | full harness | phase-001 | - | `{command}` | all tests pass |\n",
+        encoding="utf-8",
+    )
+    _write_archive_handoff(
+        tmp_path,
+        "plan-b.yaml",
+        "{plan: plan-B, task: task-001}",
+        verdict=None,
+        action="none",
+        result_state="completed",
+    )
+    handoff = tmp_path / ".work-bundle/orchestration/handoff/executor/active/plan-b.yaml"
+    handoff.write_text(
+        handoff.read_text(encoding="utf-8")
+        + "validation:\n"
+        + "  commands:\n"
+        + f"    - {{command: {command}, result: passed}}\n",
+        encoding="utf-8",
+    )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
+
 
 def test_archive_plan_no_review_completed_update_blocks_until_closure_return(
     tmp_path: Path,
 ) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import ACCEPTED_AUTHORITY, workspace, write_executor_handoff
+
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    write_executor_handoff(
+        root,
+        f"  action: update\n  reason: Task-local evidence.\n  affected_authority: [{ACCEPTED_AUTHORITY}]\n",
+    )
+
+    with pytest.raises(SystemExit, match="knowledge-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
+
+
+def test_archive_plan_ignores_unvalidated_update_handoff(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
 
     _write_archive_plan(tmp_path, "plan-B")
@@ -621,10 +707,32 @@ def test_archive_plan_no_review_completed_update_blocks_until_closure_return(
         result_state="completed",
     )
 
-    with pytest.raises(SystemExit, match="knowledge-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
 
-    assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md").is_file()
+    assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
+
+
+def test_archive_plan_review_required_cannot_downgrade_via_omitted_required(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import ACCEPTED_AUTHORITY, workspace, write_executor_handoff
+
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            "acceptance_review:\n  required: false\n",
+            "acceptance_review:\n  required: true\n",
+        ),
+        encoding="utf-8",
+    )
+    _append_plan_knowledge(root, closure_return="missing")
+    write_executor_handoff(
+        root,
+        f"  action: update\n  reason: Task-local evidence.\n  affected_authority: [{ACCEPTED_AUTHORITY}]\n",
+    )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
 
 def test_missing_or_wrong_plan_identity_cannot_complete_without_review_package() -> None:
@@ -673,7 +781,15 @@ def test_review_required_task_fails_closed_until_independent_accept() -> None:
     review_required_handoff = _completed_executor_result(
         acceptance_review={"required": True, "verdict": "pending"}
     )
-    validated = validate_executor_result_for_task(review_required_handoff, _task_brief())
+    with pytest.raises(SystemExit, match="accept|review"):
+        validate_executor_result_for_task(
+            review_required_handoff, {**_task_brief(), "review_required": True}
+        )
+
+    accepted = _completed_executor_result(
+        acceptance_review={"required": True, "verdict": "accept"}
+    )
+    validated = validate_executor_result_for_task(accepted, {**_task_brief(), "review_required": True})
     assert validated["result_state"] == "completed"
 
 

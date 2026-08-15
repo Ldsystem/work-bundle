@@ -51,7 +51,7 @@ FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
     "knowledge_persistence",
 }
 VALID_RESULT_STATES = {"completed", "blocked", "partial", "failed"}
-ACTIVE_PLAN_TASK_PREFIX = ".work-bundle/orchestration/plan/active/"
+TASK_FIT_RESULTS = {"clean", "repaired", "unresolved", "skipped"}
 
 
 def _split_top_level(value: str, delimiter: str = ",") -> list[str]:
@@ -251,12 +251,14 @@ def _task_scope_paths(values: list[Any], root: Path, label: str) -> list[str]:
 
 def _directory_or_module_write_path(text: str, root: Path) -> bool:
     candidate = root / text
-    if text.endswith(("/", "\\")) or candidate.is_dir():
+    if text.endswith(("/", "\\")):
         return True
+    if candidate.exists():
+        return candidate.is_dir()
     dotted_module = "/" not in text and "\\" not in text and "." in text and not text.startswith(".")
     if dotted_module and Path(text).suffix not in {".py", ".md", ".ts", ".js", ".yaml", ".yml", ".json"}:
         return True
-    return not Path(text).suffix
+    return False
 
 
 def _artifact_id(data: dict[str, Any], key: str, path: Path) -> str:
@@ -434,14 +436,15 @@ def _handoff_ineligible_for_closure(handoff: dict[str, Any]) -> bool:
     return False
 
 
-def _handoff_eligible_for_closure(handoff: dict[str, Any]) -> bool:
+def _handoff_eligible_for_closure(handoff: dict[str, Any], *, review_required: bool | None = None) -> bool:
     if _handoff_ineligible_for_closure(handoff):
         return False
-    if _handoff_review_required(handoff):
+    required = _handoff_review_required(handoff) if review_required is None else review_required
+    if required:
         review = handoff.get("acceptance_review")
         return isinstance(review, dict) and review.get("verdict") == "accept"
     result = handoff.get("result") if isinstance(handoff.get("result"), dict) else {}
-    return result.get("state") in {None, "completed"}
+    return result.get("state") == "completed"
 
 
 def _source_knowledge_entry(entry: Any) -> tuple[str | None, str | None]:
@@ -662,29 +665,81 @@ def validate_executor_result_for_task(handoff: dict[str, Any], task: dict[str, A
         accepted_authority_paths,
         _allocated_decision_aliases(truth_basis),
     )
-    required_commands = [
-        str(item.get("command")).strip()
+    if state in {"completed", "partial"}:
+        _assert_task_fit_check(handoff, task_id)
+        _assert_changed_paths_in_write_scope(handoff, task_files)
+    _assert_handoff_review_matches_task(handoff, task, state)
+    required_items = [
+        item
         for item in _as_list(task.get("validation"))
         if isinstance(item, dict) and item.get("command")
     ]
-    if state == "completed" and required_commands:
+    if state == "completed" and required_items:
         reported = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
         reported_commands = {
             str(item.get("command", "")).strip(): item
             for item in _as_list(reported.get("commands"))
             if isinstance(item, dict)
         }
-        missing = [command for command in required_commands if command not in reported_commands]
-        if missing:
-            raise SystemExit(f"Executor result is missing fresh required validation: {missing[0]}")
-        for command in required_commands:
-            if reported_commands[command].get("result") not in {"passed", "failed", "skipped"}:
-                raise SystemExit(f"Executor result validation is missing a result for {command}")
+        for item in required_items:
+            command = str(item.get("command")).strip()
+            if command not in reported_commands:
+                raise SystemExit(f"Executor result is missing fresh required validation: {command}")
+            allowed = _acceptable_validation_results(item)
+            result_value = reported_commands[command].get("result")
+            if result_value not in allowed:
+                allowed_text = " or ".join(sorted(allowed))
+                raise SystemExit(
+                    f"Executor result validation for {command} must be {allowed_text}; got {result_value}"
+                )
     return {
         "knowledge_disposition": knowledge_disposition,
         "unresolved": unresolved,
         "result_state": state,
     }
+
+
+def _acceptable_validation_results(item: dict[str, Any]) -> set[str]:
+    expected = str(item.get("expected") or "").strip().lower()
+    allowed = {"passed"}
+    if "skip" in expected:
+        allowed.add("skipped")
+    return allowed
+
+
+def _assert_task_fit_check(handoff: dict[str, Any], task_id: str) -> None:
+    fit = handoff.get("task_fit_check")
+    if not isinstance(fit, dict) or not fit:
+        raise SystemExit("Executor result completed or partial state requires task_fit_check")
+    fit_task = fit.get("task") or fit.get("related_task")
+    if fit_task != task_id:
+        raise SystemExit(
+            f"Executor result task_fit_check task mismatch: expected {task_id}, got {fit_task or 'missing'}"
+        )
+    if fit.get("result") not in TASK_FIT_RESULTS:
+        raise SystemExit(
+            "Executor result task_fit_check result must be clean, repaired, unresolved, or skipped"
+        )
+
+
+def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: dict[str, Any]) -> None:
+    write_scope = {str(path).strip().removeprefix("./") for path in _as_list(task_files.get("write"))}
+    changes = handoff.get("changes") if isinstance(handoff.get("changes"), dict) else {}
+    for item in _as_list(changes.get("files")):
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip().removeprefix("./")
+        if path and path not in write_scope:
+            raise SystemExit(f"Executor result changed path is outside task write scope: {path}")
+
+
+def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str, Any], state: str) -> None:
+    compiled_required = task.get("review_required") is True
+    review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
+    if compiled_required and review.get("required") is not True:
+        raise SystemExit("Executor result cannot omit or contradict compiled review_required")
+    if compiled_required and state == "completed" and review.get("verdict") != "accept":
+        raise SystemExit("Review-required task cannot complete without acceptance_review.verdict: accept")
 
 
 def _yaml_scalar(value: Any) -> str:
@@ -862,18 +917,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
     truth_basis = _compile_truth_basis(task, records, source_paths)
     validation = _resolve_reference(validation_value, records, source_paths)
     acceptance_review = task.get("acceptance_review")
-    try:
-        task_relative = task_path.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        task_relative = task_path.as_posix()
-    is_active_task = task_relative.startswith(ACTIVE_PLAN_TASK_PREFIX)
     if acceptance_review in (None, {}):
-        if is_active_task:
-            raise SystemExit(
-                f"Active task omits acceptance_review.required: {task_path}. "
-                "Set acceptance_review.required: true|false. "
-                "Omitted no longer means required; active tasks must be explicit at cutover."
-            )
         review_required = False
     elif not isinstance(acceptance_review, dict):
         raise SystemExit(f"Task acceptance_review must be a mapping: {task_path}")

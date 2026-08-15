@@ -1,8 +1,11 @@
 from core import *
 from execution_context import (
+    cmd_validate_executor_result,
     evaluate_knowledge_closure_state,
     read_structured_artifact,
     unique_explicit_handoff_plan_id,
+    validate_executor_result_for_task,
+    _compile_task_brief,
 )
 from specs import load_index, replace_front_matter_value
 
@@ -33,6 +36,8 @@ def _assert_archive_knowledge_gate(args: argparse.Namespace, plan_id: str, root_
         handoff = read_structured_artifact(path)
         if unique_explicit_handoff_plan_id(handoff) != plan_id:
             continue
+        if not _validated_task_handoff_for_closure(args, plan_id, handoff):
+            continue
         handoffs.append(handoff)
     gate = evaluate_knowledge_closure_state(
         upstream_disposition=upstream,
@@ -43,6 +48,105 @@ def _assert_archive_knowledge_gate(args: argparse.Namespace, plan_id: str, root_
         triggers = ", ".join(f"{item['task']}:{item['action']}" for item in gate["triggers"])
         detail = triggers or str(gate["disposition"])
         raise SystemExit(f"knowledge-blocked: archive requires resolved durable closure ({detail})")
+
+
+def _find_plan_task_path(args: argparse.Namespace, plan_id: str, task_id: str) -> Path | None:
+    matches = [
+        row
+        for row in index_plans(args)
+        if row.get("type") == "task" and row.get("id") == task_id and row.get("plan_id") == plan_id
+    ]
+    if len(matches) != 1:
+        return None
+    return artifact_path_from_row(matches[0], args)
+
+
+def _validated_task_handoff_for_closure(
+    args: argparse.Namespace, plan_id: str, handoff: dict[str, object]
+) -> bool:
+    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+    task_id = related.get("task")
+    if not task_id:
+        return False
+    task_path = _find_plan_task_path(args, plan_id, str(task_id))
+    if task_path is None:
+        return False
+    compile_args = argparse.Namespace(
+        project_root=getattr(args, "project_root", None),
+        workspace_root=getattr(args, "workspace_root", None),
+        task=str(task_path),
+        handoff=None,
+        base=None,
+        head=None,
+    )
+    try:
+        _, brief_document = _compile_task_brief(compile_args)
+        validate_executor_result_for_task(handoff, brief_document["task_brief"])
+    except SystemExit:
+        return False
+    return True
+
+
+def _plan_section_table(body: str, name: str) -> list[list[str]]:
+    section = re.search(
+        rf"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?{re.escape(name)}\s*$([\s\S]*?)(?=^##\s|\Z)",
+        body,
+        re.MULTILINE,
+    )
+    if not section:
+        return []
+    rows: list[list[str]] = []
+    for line in section.group(1).splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if not cells or all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
+            continue
+        rows.append(cells)
+    return rows[1:] if rows else []
+
+
+def _declared_integration_commands(body: str) -> list[str]:
+    commands: list[str] = []
+    for cells in _plan_section_table(body, "Tests"):
+        if len(cells) < 6:
+            continue
+        test_type = cells[1].lower()
+        if "integration" not in test_type or "unit|integration" in test_type:
+            continue
+        command = cells[5].strip().strip("`")
+        if command and command not in {"-", "[command if applicable]"}:
+            commands.append(command)
+    return commands
+
+
+def _assert_archive_plan_acceptance(args: argparse.Namespace, plan_id: str, root_path: Path) -> None:
+    _, body = read_front_matter(root_path)
+    commands = _declared_integration_commands(body)
+    if not commands:
+        return
+    recorded: dict[str, str] = {}
+    handoff_root = orchestration_root(args) / "handoff" / "executor"
+    for path in sorted(handoff_root.glob("*/*")):
+        if not path.is_file() or path.suffix not in {".yaml", ".yml"}:
+            continue
+        handoff = read_structured_artifact(path)
+        if unique_explicit_handoff_plan_id(handoff) != plan_id:
+            continue
+        validation = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
+        raw_commands = validation.get("commands")
+        items = raw_commands if isinstance(raw_commands, list) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            command = str(item.get("command") or "").strip()
+            if command:
+                recorded[command] = str(item.get("result") or "")
+    for command in commands:
+        result = recorded.get(command)
+        if result != "passed":
+            detail = result or "missing"
+            raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is {detail}")
 
 
 def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
@@ -131,6 +235,22 @@ def cmd_list_plans(args: argparse.Namespace) -> None:
         print(json.dumps(row, ensure_ascii=False))
 
 
+def _assert_completed_task_handoff(args: argparse.Namespace, task_path: Path) -> None:
+    handoff = getattr(args, "handoff", None)
+    if not handoff:
+        raise SystemExit("set-plan-status Completed for a task requires --handoff")
+    cmd_validate_executor_result(
+        argparse.Namespace(
+            project_root=getattr(args, "project_root", None),
+            workspace_root=getattr(args, "workspace_root", None),
+            task=str(task_path),
+            handoff=str(handoff),
+            base=None,
+            head=None,
+        )
+    )
+
+
 def cmd_set_plan_status(args: argparse.Namespace) -> None:
     if args.status not in PLAN_STATUSES:
         raise SystemExit(f"Invalid plan status: {args.status}")
@@ -142,6 +262,8 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
         raise SystemExit(f"Multiple plan artifacts match {args.id}; pass --kind plan|phase|task")
     row = matches[0]
     path = artifact_path_from_row(row, args)
+    if args.status == "Completed" and row.get("type") == "task":
+        _assert_completed_task_handoff(args, path)
     replace_front_matter_value(path, "status", args.status)
     if args.status == "Deprecated":
         active_root = orchestration_root(args) / "plan" / "active"
@@ -164,6 +286,7 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
 
     root_path = artifact_path_from_row(root_match, args)
     _assert_archive_knowledge_gate(args, args.id, root_path)
+    _assert_archive_plan_acceptance(args, args.id, root_path)
     if is_relative_to(root_path, active_root):
         replace_front_matter_value(root_path, "status", "Completed")
         moved.append(move_to_archive(root_path, active_root, archived_root))
