@@ -144,6 +144,30 @@ def _declared_integration_commands(body: str) -> list[str]:
     return commands
 
 
+_MATERIAL_CHANGE_ACTIONS = {"created", "modified", "deleted"}
+_MATERIAL_RESULT_STATES = {"completed", "partial"}
+
+
+def _handoff_order_key(handoff: dict[str, object]) -> tuple[str, str, str]:
+    related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+    stamp = str(handoff.get("updated_at") or handoff.get("created_at") or "")
+    return (stamp, str(related.get("task") or ""), str(handoff.get("id") or ""))
+
+
+def _handoff_has_material_changes(handoff: dict[str, object], brief: dict[str, object]) -> bool:
+    changes = handoff.get("changes") if isinstance(handoff.get("changes"), dict) else {}
+    items = changes.get("files") if isinstance(changes.get("files"), list) else []
+    for item in items:
+        if isinstance(item, dict) and str(item.get("action") or "") in _MATERIAL_CHANGE_ACTIONS:
+            return True
+    result = handoff.get("result") if isinstance(handoff.get("result"), dict) else {}
+    if str(result.get("state") or "") not in _MATERIAL_RESULT_STATES:
+        return False
+    files = brief.get("files") if isinstance(brief.get("files"), dict) else {}
+    write = files.get("write")
+    return bool(write) if isinstance(write, list) else False
+
+
 def _assert_archive_plan_acceptance(
     args: argparse.Namespace,
     plan_id: str,
@@ -154,8 +178,10 @@ def _assert_archive_plan_acceptance(
     commands = _declared_integration_commands(body)
     if not commands:
         return
+    ordered = sorted(validated, key=lambda pair: _handoff_order_key(pair[0]))
     recorded: dict[str, set[str]] = {}
-    for handoff, _brief in validated:
+    last_pass_index: dict[str, int] = {}
+    for index, (handoff, _brief) in enumerate(ordered):
         validation = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
         raw_commands = validation.get("commands")
         items = raw_commands if isinstance(raw_commands, list) else []
@@ -163,19 +189,28 @@ def _assert_archive_plan_acceptance(
             if not isinstance(item, dict):
                 continue
             command = str(item.get("command") or "").strip()
-            if command:
-                recorded.setdefault(command, set()).add(str(item.get("result") or ""))
+            if not command:
+                continue
+            result = str(item.get("result") or "")
+            recorded.setdefault(command, set()).add(result)
+            if result == "passed":
+                last_pass_index[command] = index
     for command in commands:
         results = recorded.get(command, set())
-        if results == {"passed"}:
-            continue
-        if not results:
-            detail = "missing"
-        elif len(results) > 1:
-            detail = "contradictory"
-        else:
-            detail = next(iter(results))
-        raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is {detail}")
+        if results != {"passed"}:
+            if not results:
+                detail = "missing"
+            elif len(results) > 1:
+                detail = "contradictory"
+            else:
+                detail = next(iter(results))
+            raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is {detail}")
+        last_pass = last_pass_index.get(command)
+        if last_pass is None:
+            raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is missing")
+        for later_handoff, later_brief in ordered[last_pass + 1 :]:
+            if _handoff_has_material_changes(later_handoff, later_brief):
+                raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is stale")
 
 
 def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:

@@ -258,6 +258,9 @@ def _write_archive_plan(
     )
 
 
+FOLLOW_ON_WRITE_SCOPE_FILE = "scripts/orchestration/plans.py"
+
+
 def _append_plan_knowledge(root: Path, *, closure_return: str = "missing") -> None:
     plan = root / ".work-bundle/orchestration/plan/active/compiler-plan.md"
     plan.write_text(
@@ -267,6 +270,91 @@ def _append_plan_knowledge(root: Path, *, closure_return: str = "missing") -> No
         + f"- **Closure return**: {closure_return}\n",
         encoding="utf-8",
     )
+
+
+def _append_plan_integration_command(root: Path, command: str) -> None:
+    plan = root / ".work-bundle/orchestration/plan/active/compiler-plan.md"
+    plan.write_text(
+        plan.read_text(encoding="utf-8")
+        + "\n## 7. Tests\n\n"
+        + "| ID | Test Type | Target | Related Phase | Can Run With | Command | Expected Result |\n"
+        + "|---|---|---|---|---|---|---|\n"
+        + f"| TEST-099 | integration | full harness | phase-001 | - | `{command}` | all tests pass |\n",
+        encoding="utf-8",
+    )
+
+
+def _write_follow_on_plan_task(
+    root: Path, *, task_id: str = "task-005", write_file: str = FOLLOW_ON_WRITE_SCOPE_FILE
+) -> Path:
+    source = root / ".work-bundle/orchestration/plan/active/plan-001/phase-001/task-004.md"
+    task = source.with_name(f"{task_id}.md")
+    task.write_text(
+        source.read_text(encoding="utf-8")
+        .replace("id: task-004\n", f"id: {task_id}\n")
+        .replace(
+            "write: [scripts/orchestration/execution_context.py]\n",
+            f"write: [{write_file}]\n",
+        ),
+        encoding="utf-8",
+    )
+    return task
+
+
+def _write_follow_on_executor_handoff(
+    root: Path,
+    *,
+    task_id: str,
+    created_at: str,
+    write_file: str = FOLLOW_ON_WRITE_SCOPE_FILE,
+    extra_command: str | None = None,
+) -> Path:
+    from test_orchestration_execution_context import TASK_VALIDATION_COMMAND
+
+    extra = "" if extra_command is None else f"    - {{command: {extra_command}, result: passed}}\n"
+    handoff = root / f".work-bundle/orchestration/handoff/executor/active/handoff-{task_id}.yaml"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text(
+        f"id: handoff-{task_id}\n"
+        "type: executor-result\n"
+        f"created_at: {created_at}\n"
+        f"related: {{plan: plan-001, task: {task_id}}}\n"
+        "result: {state: completed}\n"
+        f"task_fit_check: {{task: {task_id}, result: clean}}\n"
+        "changes:\n"
+        "  files:\n"
+        f"    - {{path: {write_file}, action: modified}}\n"
+        "validation:\n"
+        "  commands:\n"
+        f"    - {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
+        f"{extra}"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n",
+        encoding="utf-8",
+    )
+    return handoff
+
+
+def _write_earlier_integration_pass(root: Path, command: str, *, created_at: str) -> Path:
+    from test_orchestration_execution_context import TASK_VALIDATION_COMMAND, write_executor_handoff
+
+    handoff = write_executor_handoff(
+        root,
+        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
+    )
+    handoff.write_text(
+        handoff.read_text(encoding="utf-8")
+        .replace("id: handoff-task-004\n", f"id: handoff-task-004\ncreated_at: {created_at}\n")
+        .replace(
+            f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n",
+            f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
+            f"    - {{command: {command}, result: passed}}\n",
+        ),
+        encoding="utf-8",
+    )
+    return handoff
 
 
 def _write_archive_handoff(
@@ -755,6 +843,46 @@ def test_contradictory_validated_plan_acceptance_blocks_archive(tmp_path: Path) 
 
     with pytest.raises(SystemExit, match="acceptance-blocked"):
         cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+
+def test_stale_plan_acceptance_after_later_material_task_blocks_archive(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import workspace
+
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    _write_earlier_integration_pass(root, command, created_at="2026-08-15")
+    _write_follow_on_plan_task(root)
+    _write_follow_on_executor_handoff(root, task_id="task-005", created_at="2026-08-16")
+
+    with pytest.raises(SystemExit, match="acceptance-blocked:.*is stale"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
+
+
+def test_fresh_plan_acceptance_rerun_after_later_task_allows_archive(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import workspace
+
+    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    _write_earlier_integration_pass(root, command, created_at="2026-08-15")
+    _write_follow_on_plan_task(root)
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-005",
+        created_at="2026-08-16",
+        extra_command=command,
+    )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
 
 def test_archive_plan_no_review_completed_update_blocks_until_closure_return(
