@@ -929,13 +929,19 @@ def test_validate_project_omits_pointer_diagnostics(tmp_path: Path) -> None:
 
 def test_wb_work_bundle_root_env_overrides_bootstrap(tmp_path: Path) -> None:
     work_bundle_root = _minimal_work_bundle_root(tmp_path)
-    config_root = bootstrap_config(tmp_path, work_bundle_root=REPO_ROOT)
+    config_root, project = _init_fixture_project(tmp_path)
+    metadata_version = ""
+    for line in (project / ".work-bundle/project.yaml").read_text(encoding="utf-8").splitlines():
+        if line.startswith("metadata_version:"):
+            metadata_version = line.split(":", 1)[1].strip()
+            break
+    assert metadata_version != "4"
     env = os.environ.copy()
     env["WB_CONFIG_ROOT"] = str(config_root)
     env["WB_WORK_BUNDLE_ROOT"] = str(work_bundle_root)
     result = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts/wb.py"), "show-project", "--project-root", str(REPO_ROOT)],
-        cwd=REPO_ROOT,
+        [sys.executable, str(REPO_ROOT / "scripts/wb.py"), "show-project", "--project-root", str(project)],
+        cwd=project,
         env=env,
         check=False,
         capture_output=True,
@@ -943,6 +949,7 @@ def test_wb_work_bundle_root_env_overrides_bootstrap(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     data = json.loads(result.stdout)
+    assert "path_model" in data
     assert data["path_model"]["work_bundle_root"] == str(work_bundle_root.resolve())
 
 
