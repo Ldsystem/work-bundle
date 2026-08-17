@@ -398,33 +398,6 @@ def load_state(
     }
 
 
-def record_task_binding_authority(
-    runtime_root: Path,
-    workspace_id: str,
-    execution_id: str,
-    repository_id: str,
-    *,
-    plan_id: str,
-    task_id: str,
-    authority: dict[str, object],
-) -> dict[str, object]:
-    """Store harness-owned task binding authority beside execution-workspace state."""
-    runtime_root = runtime_root.expanduser().resolve()
-    record = state_path(runtime_root, workspace_id, execution_id, repository_id)
-    state, identity = _read_record(record)
-    stored = state.get("task_binding_authority")
-    updated_authority = dict(stored) if isinstance(stored, dict) else {}
-    updated_authority[f"{plan_id}/{task_id}"] = authority
-    updated_state = dict(state)
-    updated_state["task_binding_authority"] = updated_authority
-    _write_state(record, updated_state, identity)
-    return {
-        "execution_workspace_state": updated_state,
-        "git_identity": identity,
-        "state_path": str(record),
-    }
-
-
 def _read_record(path: Path) -> tuple[dict[str, object], dict[str, str]]:
     if not path.is_file() or path.is_symlink():
         raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_MISSING")

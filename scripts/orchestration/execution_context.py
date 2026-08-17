@@ -5,12 +5,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import hmac
 import importlib.util
 import json
-import os
 import re
-import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -55,6 +52,7 @@ FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
     "deviations",
     "strategy_advice",
     "knowledge_persistence",
+    "baseline",
 }
 VALID_RESULT_STATES = {"completed", "blocked", "partial", "failed"}
 TASK_FIT_RESULTS = {"clean", "repaired", "unresolved", "skipped"}
@@ -675,93 +673,8 @@ def _write_binding(path: Path, binding: dict[str, Any]) -> None:
     path.write_text(json.dumps(binding, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _harness_mac_key_path(runtime_root: Path) -> Path:
-    return runtime_root.expanduser().resolve() / ".harness" / "task-baseline.mac-key"
-
-
-def _harness_mac_key(runtime_root: Path) -> bytes:
-    path = _harness_mac_key_path(runtime_root)
-    if path.exists():
-        if path.is_symlink() or not path.is_file():
-            raise SystemExit("Task execution binding baseline is not harness-owned")
-        key = path.read_bytes()
-        if len(key) < 32:
-            raise SystemExit("Task execution binding baseline is not harness-owned")
-        return key
-    path.parent.mkdir(parents=True, exist_ok=True)
-    key = secrets.token_bytes(32)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(str(path), flags, 0o400)
-    try:
-        os.write(fd, key)
-    finally:
-        os.close(fd)
-    os.chmod(path, 0o400)
-    return key
-
-
-def _binding_mac_payload(binding: dict[str, Any]) -> bytes:
-    execution_path = str(binding.get("execution_path") or "")
-    payload = {
-        "baseline": binding.get("baseline"),
-        "execution_path": str(Path(execution_path).resolve()) if execution_path else "",
-        "mutating": binding.get("mutating"),
-        "plan_id": binding.get("plan_id"),
-        "task_id": binding.get("task_id"),
-        "write_scope": [str(path) for path in _as_list(binding.get("write_scope"))],
-    }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
-def _binding_mac(binding: dict[str, Any]) -> str:
-    runtime_root = Path(str(binding.get("runtime_root") or ""))
-    return hmac.new(_harness_mac_key(runtime_root), _binding_mac_payload(binding), hashlib.sha256).hexdigest()
-
-
-def _assert_binding_mac(binding: dict[str, Any]) -> None:
-    authority = _lookup_binding_authority(binding)
-    stored = str(authority.get("baseline_mac") or "")
-    expected = _binding_mac(binding)
-    if not stored or not hmac.compare_digest(stored, expected):
-        raise SystemExit("Task execution binding baseline is not harness-owned")
-
-
 def _persist_binding(binding: dict[str, Any], control_root: Path) -> None:
-    path = _binding_path(control_root, str(binding["plan_id"]), str(binding["task_id"]))
-    _write_binding(path, binding)
-    on_disk = _read_binding_file(path)
-    try:
-        _execution_workspace_module().record_task_binding_authority(
-            Path(str(on_disk["runtime_root"])),
-            str(on_disk.get("workspace_id") or ""),
-            str(on_disk.get("execution_id") or ""),
-            str(on_disk.get("repository_id") or ""),
-            plan_id=str(on_disk.get("plan_id") or ""),
-            task_id=str(on_disk.get("task_id") or ""),
-            authority={"baseline_mac": _binding_mac(on_disk)},
-        )
-    except Exception as error:
-        raise SystemExit("Task execution binding provenance is missing harness-owned authority") from error
-
-
-def _lookup_binding_authority(binding: dict[str, Any]) -> dict[str, Any]:
-    try:
-        loaded = _execution_workspace_module().load_state(
-            Path(str(binding.get("runtime_root") or "")),
-            str(binding.get("workspace_id") or ""),
-            str(binding.get("execution_id") or ""),
-            str(binding.get("repository_id") or ""),
-        )
-    except Exception as error:
-        raise SystemExit("Task execution binding provenance is missing harness-owned authority") from error
-    state = loaded.get("execution_workspace_state") if isinstance(loaded.get("execution_workspace_state"), dict) else {}
-    stored = state.get("task_binding_authority") if isinstance(state.get("task_binding_authority"), dict) else {}
-    authority = stored.get(f"{binding.get('plan_id')}/{binding.get('task_id')}")
-    if not isinstance(authority, dict):
-        raise SystemExit("Task execution binding provenance is missing harness-owned authority")
-    return authority
+    _write_binding(_binding_path(control_root, str(binding["plan_id"]), str(binding["task_id"])), binding)
 
 
 def _read_binding_file(path: Path) -> dict[str, Any]:
@@ -809,7 +722,6 @@ def _assert_no_overlapping_mutating_siblings(control_root: Path, binding: dict[s
         other_path = Path(str(other.get("execution_path") or "")).resolve()
         if other_path != execution_path:
             continue
-        _assert_binding_mac(other)
         if other.get("mutating") is True:
             raise SystemExit(
                 "workspace-blocked: mutating sibling tasks on the same execution path must isolate via prepare_worktree or serialize"
@@ -846,7 +758,6 @@ def _verify_binding_provenance(binding: dict[str, Any]) -> dict[str, Any]:
     for key in ("source_repository", "git_common_dir", "git_dir", "branch_ref"):
         if stored_identity.get(key) != identity.get(key):
             raise SystemExit("Task execution binding Git provenance mismatch")
-    _assert_binding_mac(binding)
     return loaded
 
 

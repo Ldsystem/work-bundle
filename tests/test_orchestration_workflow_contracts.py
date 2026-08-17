@@ -676,7 +676,7 @@ def test_execute_plan_requires_bound_observation_and_isolate_or_serialize() -> N
     for token in [
         "harness-owned task execution binding",
         "capture the pre-task baseline once",
-        "supervisor MAC",
+        "cannot supply or replace that baseline",
         "bound execution repository",
         "isolate via prepare_worktree or serialize",
         "Git-state-neutral",
@@ -684,6 +684,7 @@ def test_execute_plan_requires_bound_observation_and_isolate_or_serialize() -> N
     ]:
         assert token in execute
     assert "mutating siblings on the same execution path isolate via prepare_worktree or serialize" in plan
+    assert "cannot supply or replace that baseline" in contract
     assert "corroboration" in contract
     assert "not independent proof" in contract or "not authority" in contract
 

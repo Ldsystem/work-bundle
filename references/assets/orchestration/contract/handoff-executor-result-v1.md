@@ -181,9 +181,10 @@ delegation: {}
 deviations: []
 strategy_advice: []
 knowledge_persistence: []
+baseline: {}
 ```
 
-Use `delegation_evidence` for compact delegation proof. Use `unresolved` and `task_fit_check.findings` for remaining issues instead of `deviations`.
+Use `delegation_evidence` for compact delegation proof. Use `unresolved` and `task_fit_check.findings` for remaining issues instead of `deviations`. Do not include a top-level `baseline`; the helper owns pre-task baseline capture, and executor-result cannot supply or replace that baseline.
 
 ## Safety Evidence
 
