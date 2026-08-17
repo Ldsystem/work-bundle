@@ -193,7 +193,7 @@ Compact handoffs must not weaken safety gates:
 - Metadata evidence must preserve repository id, expected and actual branch, expected and actual commit, branch status, commit status, and baseline status when project metadata preflight applies.
 - CodeGraph evidence must preserve no-index fallback, sync-failed, stale, or blocker facts when applicable.
 - Delegation evidence must preserve visible surface, visible reference when available, and `internal_spawn_used_for_task_delegation: false`.
-- Validation evidence must list exact commands or inspections and their result.
+- Validation evidence must list exact commands or inspections and their result. Executor-authored `result`, `exit_code`, or an equivalently named receipt block is corroboration, not independent proof and not authority for `Completed`. Direct helper observation in the bound worktree is the terminal evidence.
 - Task-fit evidence must prove the executor followed the compiled brief and assigned task. Full specification, root-plan, and phase inspection is an escalation path when compiled context is inconsistent.
 - Acceptance-review evidence must identify review independence, the reviewed tree, verdict, and blocking or advisory findings.
 - Executor-result handoffs must not retrieve or write `.work-bundle/knowledge/`.

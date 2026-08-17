@@ -59,6 +59,31 @@
       "id": "dev-lightweight-no-write",
       "prompt": "After validation, a lightweight task records none and the gateway established no relevant durable change.",
       "expected_output": "The lightweight completion owner records the evidence-backed no-write result and completes without invoking a ks writer."
+    },
+    {
+      "id": "dev-lightweight-algorithm-not-settled",
+      "prompt": "Plan a bounded mechanical change whose algorithm is not yet chosen, while purpose, accepted authority, expected delta, and impact radius are settled.",
+      "expected_output": "Allows the disposable lightweight plan because eligibility does not require a settled implementation strategy; it does not import executor-result, Completed, or a review package. Eval JSON stores this as a pressure scenario; presence is not executed agent-behavior proof."
+    },
+    {
+      "id": "dev-lightweight-write-outside-modify",
+      "prompt": "A lightweight plan lists Files.Modify as one module, but completion claims a write outside that mutation envelope with no plan amendment.",
+      "expected_output": "Treats the completion claim as invalid unless the plan was amended or the work escalated. Files.Read and Files.Test remain initial evidence anchors."
+    },
+    {
+      "id": "dev-lightweight-asis-expand-vs-conflict",
+      "prompt": "After launch, a lightweight plan records a new exact as-is observation that does not contradict purpose, authority, or expected delta, then a later observation that does.",
+      "expected_output": "Records the non-contradicting as-is expansion; the contradicting observation sets conflict_status: escalate without silently changing purpose, decision authority, or expected delta."
+    },
+    {
+      "id": "dev-lightweight-unsupported-completion-claim",
+      "prompt": "A lightweight completion claim lists intended checks but has no observed results and no comparison to the pre-edit baseline.",
+      "expected_output": "Rejects the claim because intended checks without observed results are not completion evidence; required evidence includes exact claim, command or observation, observed result, pre-edit baseline comparison, remaining blockers, and knowledge disposition."
+    },
+    {
+      "id": "dev-lightweight-capability-floor-extra-ok",
+      "prompt": "Declared Capability is pnpm test, and the agent also uses a stronger model and an extra debugger after meeting that floor.",
+      "expected_output": "Accepts the extra capability because Capability is a floor; stronger models, extra tools, or extra investigation are allowed, and weaker capability than the floor is not."
     }
   ]
 }

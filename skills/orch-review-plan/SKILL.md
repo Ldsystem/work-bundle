@@ -20,7 +20,7 @@ Verify:
 - declared completion evidence corresponds to the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints;
 - missing `acceptance_review.verdict` blocks only a task that explicitly required independent review; do not require universal task-review evidence;
 - `acceptance_review.verdict: accept` only for those explicitly required reviews;
-- declared plan-level/integration acceptance from recorded validation evidence; do not start another implementation-review agent to produce plan-level acceptance;
+- declared plan-level/integration acceptance observed on the final integrated workspace; do not start another implementation-review agent to produce plan-level acceptance;
 - aggregate accepted task dispositions before applying the final knowledge gate: any accepted `update`, `supersede`, or `reclassify` makes durable closure required even when the upstream specification said `not-needed`; accepted `none` and rejected task dispositions do not trigger closure;
 - record validated delegate-return state in the root plan's existing Knowledge Base Update `Closure return` field so the deterministic `archive-plan` helper enforces the same aggregate gate;
 - planned validation evidence exists and is fresh for the accepted task result;

@@ -1,6 +1,7 @@
 import subprocess
 
 from core import *
+from core import _member_roots
 from execution_context import (
     cmd_validate_executor_result,
     evaluate_knowledge_closure_state,
@@ -9,6 +10,7 @@ from execution_context import (
     validate_executor_result_for_task,
     _compile_task_brief,
 )
+from repository_preflight import capture_repository_evidence, task_caused_paths
 from specs import load_index, replace_front_matter_value
 
 
@@ -223,6 +225,51 @@ def _handoff_has_material_changes(handoff: dict[str, object], brief: dict[str, o
     return bool(write) if isinstance(write, list) else False
 
 
+def _resolve_final_plan_workspace(args: argparse.Namespace) -> Path:
+    workspace = resolve_workspace_root(args)
+    try:
+        members = _member_roots(workspace)
+    except OSError:
+        members = []
+    if len(members) > 1:
+        raise SystemExit("acceptance-blocked: final plan workspace is ambiguous")
+    target = members[0] if members else workspace
+    if not target.is_dir():
+        raise SystemExit("acceptance-blocked: final plan workspace is missing")
+    return target
+
+
+def _observe_archive_command(command: str, workspace: Path) -> str:
+    completed = subprocess.run(
+        command,
+        shell=True,
+        cwd=str(workspace),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return "passed" if completed.returncode == 0 else "failed"
+
+
+def _assert_archive_command_state_neutral(command: str, workspace: Path) -> None:
+    try:
+        pre = capture_repository_evidence(workspace)
+    except RuntimeError as error:
+        raise SystemExit(f"acceptance-blocked: {error}") from error
+    result = _observe_archive_command(command, workspace)
+    if result != "passed":
+        raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is {result}")
+    try:
+        post = capture_repository_evidence(workspace)
+    except RuntimeError as error:
+        raise SystemExit(f"acceptance-blocked: {error}") from error
+    caused = task_caused_paths(pre, post, workspace)
+    if caused or pre != post:
+        raise SystemExit(
+            "acceptance-blocked: declared plan-level acceptance mutated Git-observable state"
+        )
+
+
 def _assert_archive_plan_acceptance(
     args: argparse.Namespace,
     plan_id: str,
@@ -262,6 +309,9 @@ def _assert_archive_plan_acceptance(
         raise SystemExit(
             f"acceptance-blocked: declared plan-level acceptance {command} is {_acceptance_result_detail(judged)}"
         )
+    workspace = _resolve_final_plan_workspace(args)
+    for command in commands:
+        _assert_archive_command_state_neutral(command, workspace)
 
 
 def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:

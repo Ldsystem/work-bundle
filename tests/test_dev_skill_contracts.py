@@ -165,14 +165,73 @@ def test_mechanical_task_plan_contract_escalates_and_uses_exact_sections() -> No
         assert token in text
 
 
+def test_mechanical_task_plan_freezes_envelope_not_strategy() -> None:
+    text = skill_text("dev-create-task-plan")
+
+    assert "implementation direction are already settled" not in text
+    for token in [
+        "settled even if the internal algorithm is not chosen",
+        "Eligibility does not require the internal implementation strategy to be settled",
+        "Keep one disposable `.work-bundle/runtime/dev-plans/` artifact",
+        "Do not import executor-result",
+        "`Completed`",
+        "review package",
+        "archive helper",
+        "Knowledge Base Update",
+        "`Files.Read`",
+        "`Files.Test`",
+        "initial evidence anchors",
+        "`Files.Modify`",
+        "mutation envelope",
+        "Additional bounded reads",
+        "Writes outside",
+        "As-is evidence may be expanded",
+        "may not be silently changed",
+        "conflict_status: escalate",
+        "exact claim",
+        "observed result",
+        "pre-edit baseline",
+        "remaining blockers",
+        "Intended checks without observed results are not completion evidence",
+        "Capability is a floor",
+        "Stronger models",
+        "Weaker capability",
+    ]:
+        assert token in text
+
+
 def test_development_pressure_evals_cover_grounding_and_adversarial_boundary() -> None:
     cases = json.loads(
         (REPO_ROOT / "references/evals/development/evals.json").read_text(encoding="utf-8")
     )["evals"]
-    assert len(cases) >= 12
+    ids = {case["id"] for case in cases}
+    for required_id in [
+        "dev-lightweight-algorithm-not-settled",
+        "dev-lightweight-write-outside-modify",
+        "dev-lightweight-asis-expand-vs-conflict",
+        "dev-lightweight-unsupported-completion-claim",
+        "dev-lightweight-capability-floor-extra-ok",
+    ]:
+        assert required_id in ids
+    assert len(cases) >= 17
     prompts = "\n".join(case["prompt"] for case in cases)
     expected = "\n".join(case["expected_output"] for case in cases)
-    for token in ["lightweight", "contradicts", "failing test", "bug", "multi-repository", "Tests pass", "configuration-only", "relevant authority", "none relevant", "durable update"]:
+    for token in [
+        "lightweight",
+        "contradicts",
+        "failing test",
+        "bug",
+        "multi-repository",
+        "Tests pass",
+        "configuration-only",
+        "relevant authority",
+        "none relevant",
+        "durable update",
+        "algorithm is not yet chosen",
+        "write outside",
+        "intended checks",
+        "stronger model",
+    ]:
         assert token in prompts
     for token in [
         "Truth Basis",
@@ -186,6 +245,10 @@ def test_development_pressure_evals_cover_grounding_and_adversarial_boundary() -
         "ks-what-is-helpful",
         "lightweight completion owner",
         "no-write",
+        "does not require a settled implementation strategy",
+        "not completion evidence",
+        "Capability is a floor",
+        "presence is not executed agent-behavior proof",
     ]:
         assert token in expected
 

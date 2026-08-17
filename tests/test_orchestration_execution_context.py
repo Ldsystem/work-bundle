@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -122,6 +123,10 @@ def args(root: Path, task: Path, **overrides: object) -> argparse.Namespace:
         "handoff": None,
         "base": None,
         "head": None,
+        "workspace_id": None,
+        "execution_id": None,
+        "repository_id": None,
+        "execution_runtime_root": None,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -426,7 +431,6 @@ def test_build_task_brief_reads_current_task_contract_sections(tmp_path: Path) -
     content = content.replace("goal: Compile a bounded executor packet.\n", "")
     content = content.replace("  skills: [dev-test-driven-development]", "  required_skills: [dev-test-driven-development]")
     content = re.sub(r"interfaces:\n(?:  .*\n){2}", "", content)
-    content = re.sub(r"validation:\n  - .*\n", "", content)
     content = content.replace(
         "# Task\n",
         "# Task\n\n"
@@ -436,9 +440,10 @@ def test_build_task_brief_reads_current_task_contract_sections(tmp_path: Path) -
         "| --- | --- | --- |\n"
         "| API-002 | consumes | Exact compiler signature |\n\n"
         "## Validation\n\n"
+        "Non-authoritative presentation only.\n\n"
         "| Command or inspection | Proves | Expected |\n"
         "| --- | --- | --- |\n"
-        "| `uv run --with pytest pytest -q tests/test_one.py` | TEST-004 | exit 0 |\n",
+        "| `echo BODY-TABLE-IS-NOT-AUTHORITY` | CON-002 | failed |\n",
     )
     task.write_text(content, encoding="utf-8")
 
@@ -522,6 +527,7 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
         "session_history: SHOULD-NOT-APPEAR\n",
         encoding="utf-8",
     )
+    _enable_passing_observation(root, task, handoff)
 
     target = build_review_package(
         args(root, task, handoff=str(handoff), base=base, head=head)
@@ -581,6 +587,7 @@ def test_build_review_package_includes_tracked_and_untracked_worktree_changes(tm
         "  affected_authority: []\n",
         encoding="utf-8",
     )
+    _enable_passing_observation(root, task, handoff)
 
     target = build_review_package(
         args(root, task, handoff=str(handoff), base=base, head="worktree")
@@ -616,6 +623,7 @@ def test_build_review_package_never_reads_tracked_protected_diff_content(tmp_pat
         "  affected_authority: []\n",
         encoding="utf-8",
     )
+    _enable_passing_observation(root, task, handoff)
 
     package = build_review_package(
         args(root, task, handoff=str(handoff), base=base, head="worktree")
@@ -710,6 +718,7 @@ def test_build_review_package_receives_same_resolved_auth_semantics(tmp_path: Pa
         root,
         "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
     )
+    _enable_passing_observation(root, task, handoff)
 
     brief = build_task_brief(args(root, task)).read_text(encoding="utf-8")
     package = build_review_package(
@@ -763,6 +772,7 @@ def test_build_review_package_accepts_allocated_auth_in_knowledge_disposition(
         f"  action: {action}\n  reason: Stable accepted authority changed.\n"
         f"  affected_authority: [{ACCEPTED_AUTHORITY}]\n",
     )
+    _enable_passing_observation(root, task, handoff)
 
     package = build_review_package(
         args(root, task, handoff=str(handoff), base=base, head=base)
@@ -840,6 +850,7 @@ def test_build_review_package_accepts_matching_plan_identity(tmp_path: Path) -> 
     retarget_plan(root, task, "plan-B")
     base = committed_review_base(root)
     handoff = write_related_handoff(root, "related:\n  plan: plan-B\n  task: task-004\n")
+    _enable_passing_observation(root, task, handoff)
 
     target = build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
 
@@ -966,7 +977,7 @@ def test_validate_executor_result_rejects_missing_plan_without_review_package(tm
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="Handoff plan identity missing"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff_path), brief)
+        _validate_observed(_read_handoff(handoff_path), brief)
 
     assert not review_target.exists()
 
@@ -978,7 +989,7 @@ def test_validate_executor_result_rejects_mismatched_plan_without_review_package
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="Handoff plan mismatch: expected plan-B, got plan-A"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff_path), brief)
+        _validate_observed(_read_handoff(handoff_path), brief)
 
 
 def test_validate_executor_result_rejects_invalid_disposition_without_review_package(
@@ -992,7 +1003,7 @@ def test_validate_executor_result_rejects_invalid_disposition_without_review_pac
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="knowledge disposition action"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff_path), brief)
+        _validate_observed(_read_handoff(handoff_path), brief)
 
 
 def test_validate_executor_result_rejects_completed_result_with_unresolved(tmp_path: Path) -> None:
@@ -1005,7 +1016,7 @@ def test_validate_executor_result_rejects_completed_result_with_unresolved(tmp_p
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="unresolved|blocker"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff_path), brief)
+        _validate_observed(_read_handoff(handoff_path), brief)
 
 
 def test_validate_executor_result_rejects_missing_required_validation(tmp_path: Path) -> None:
@@ -1027,7 +1038,7 @@ def test_validate_executor_result_rejects_missing_required_validation(tmp_path: 
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="validation"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+        _validate_observed(_read_handoff(handoff), brief)
 
 
 def test_validate_executor_result_cli_rejects_missing_plan_identity(tmp_path: Path) -> None:
@@ -1062,10 +1073,7 @@ def test_review_package_keeps_sibling_and_rename_paths_as_out_of_scope_diagnosti
     scoped.write_text("def compile_task():\n    return 'scoped'\n", encoding="utf-8")
     sibling.write_text("SIBLING_NEW = 2\n", encoding="utf-8")
     git(root, "mv", "src/generated_companion.py", "src/generated_companion.renamed.py")
-    handoff = write_executor_handoff(
-        root,
-        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
-    )
+    handoff = _bind_passing_observation(root, task)
 
     package = build_review_package(
         args(root, task, handoff=str(handoff), base=base, head="worktree")
@@ -1098,10 +1106,7 @@ def test_review_package_overflow_fails_closed_on_write_scope_diff_only(
     base = git(root, "rev-parse", "HEAD")
     scoped.write_text("def compile_task():\n    return 'IN-SCOPE-OVERFLOW-PAYLOAD'\n", encoding="utf-8")
     outsider.write_text("OUTSIDE = '" + ("Y" * 400) + "'\n", encoding="utf-8")
-    handoff = write_executor_handoff(
-        root,
-        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
-    )
+    handoff = _bind_passing_observation(root, task)
 
     with pytest.raises(SystemExit, match="review-blocked|bounded package limit") as error:
         build_review_package(args(root, task, handoff=str(handoff), base=base, head="worktree"))
@@ -1127,10 +1132,7 @@ def test_review_package_does_not_overflow_on_out_of_scope_payload(
     base = git(root, "rev-parse", "HEAD")
     scoped.write_text("def compile_task():\n    return 'ok'\n", encoding="utf-8")
     outsider.write_text("OUTSIDE = '" + ("Z" * 4000) + "'\n", encoding="utf-8")
-    handoff = write_executor_handoff(
-        root,
-        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
-    )
+    handoff = _bind_passing_observation(root, task)
 
     package = build_review_package(
         args(root, task, handoff=str(handoff), base=base, head="worktree")
@@ -1269,7 +1271,7 @@ def test_validate_executor_result_rejects_failed_required_command(tmp_path: Path
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="failed|passed|validation"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+        _validate_observed(_read_handoff(handoff), brief)
 
 
 def test_validate_executor_result_rejects_skipped_required_command(tmp_path: Path) -> None:
@@ -1278,22 +1280,24 @@ def test_validate_executor_result_rejects_skipped_required_command(tmp_path: Pat
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="skipped|passed|validation"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+        _validate_observed(_read_handoff(handoff), brief)
 
 
 def test_validate_executor_result_allows_skipped_when_task_expected_skip(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
     task.write_text(
         task.read_text(encoding="utf-8").replace(
             f"{{command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: exit 0}}",
-            f"{{command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: exit 0, acceptable_results: [passed, skipped]}}",
+            f"{{command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: skipped, acceptable_results: [passed, skipped]}}",
         ),
         encoding="utf-8",
     )
     handoff = _completed_handoff_payload(root, validation_result="skipped")
     brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
 
-    validated = execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+    validated = _validate_observed(_read_handoff(handoff), brief)
 
     assert validated["result_state"] == "completed"
 
@@ -1311,7 +1315,7 @@ def test_validate_executor_result_does_not_treat_skip_substring_as_authorization
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="skipped|passed|validation"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+        _validate_observed(_read_handoff(handoff), brief)
 
 
 def test_validate_executor_result_rejects_unresolved_task_fit_for_completed(tmp_path: Path) -> None:
@@ -1330,7 +1334,7 @@ def test_validate_executor_result_rejects_unresolved_task_fit_for_completed(tmp_
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="task_fit_check|unresolved|clean|repaired"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+        _validate_observed(_read_handoff(handoff), brief)
 
 
 def test_validate_executor_result_rejects_skipped_task_fit_for_completed(tmp_path: Path) -> None:
@@ -1349,7 +1353,7 @@ def test_validate_executor_result_rejects_skipped_task_fit_for_completed(tmp_pat
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="task_fit_check|skipped|clean|repaired"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+        _validate_observed(_read_handoff(handoff), brief)
 
 
 def test_validate_executor_result_rejects_out_of_scope_changed_path(tmp_path: Path) -> None:
@@ -1365,7 +1369,7 @@ def test_validate_executor_result_rejects_out_of_scope_changed_path(tmp_path: Pa
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="write scope|out-of-scope|unauthorized"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+        _validate_observed(_read_handoff(handoff), brief)
 
 
 def test_validate_executor_result_rejects_missing_task_fit_check(tmp_path: Path) -> None:
@@ -1382,7 +1386,7 @@ def test_validate_executor_result_rejects_missing_task_fit_check(tmp_path: Path)
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="task_fit_check"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+        _validate_observed(_read_handoff(handoff), brief)
 
 
 def test_validate_executor_result_rejects_review_required_downgrade(tmp_path: Path) -> None:
@@ -1401,7 +1405,7 @@ def test_validate_executor_result_rejects_review_required_downgrade(tmp_path: Pa
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="review"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+        _validate_observed(_read_handoff(handoff), brief)
 
 
 def test_validate_executor_result_rejects_review_required_upgrade(tmp_path: Path) -> None:
@@ -1421,7 +1425,7 @@ def test_validate_executor_result_rejects_review_required_upgrade(tmp_path: Path
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="review"):
-        execution_context.validate_executor_result_for_task(_read_handoff(handoff), brief)
+        _validate_observed(_read_handoff(handoff), brief)
 
 
 def test_no_review_update_stays_closure_eligible_when_handoff_self_upgrades() -> None:
@@ -1475,6 +1479,11 @@ def test_set_plan_status_completed_requires_validated_handoff(tmp_path: Path) ->
         )
 
     handoff = _completed_handoff_payload(root, validation_result="passed")
+    _ensure_source_file(root)
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
     cmd_set_plan_status(
         argparse.Namespace(
             project_root=str(root),
@@ -1486,3 +1495,696 @@ def test_set_plan_status_completed_requires_validated_handoff(tmp_path: Path) ->
     )
     data, _ = execution_context._read_structured(task)
     assert data["status"] == "Completed"
+
+
+DEFAULT_TASK_VALIDATION = (
+    f"  - {{command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: exit 0}}\n"
+)
+UNTYPED_LEGACY_COMMAND = "echo LEGACY-UNTYPED-MUST-NOT-RUN"
+
+
+def _set_task_validation(task: Path, yaml_block: str, body: str = "") -> None:
+    content = task.read_text(encoding="utf-8").replace(
+        f"validation:\n{DEFAULT_TASK_VALIDATION}",
+        yaml_block,
+    )
+    if body:
+        content = content.replace("# Task\n", f"# Task\n\n{body}")
+    task.write_text(content, encoding="utf-8")
+
+
+def _capture_subprocess_after_setup(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    calls: list[str] = []
+    real_run = execution_context.subprocess.run
+
+    def _run(*argv: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        rendered = " ".join(str(part) for part in argv[0]) if argv and isinstance(argv[0], (list, tuple)) else " ".join(str(part) for part in argv)
+        calls.append(rendered)
+        if UNTYPED_LEGACY_COMMAND in rendered:
+            raise AssertionError(f"subprocess must not run untyped validation text: {rendered}")
+        return real_run(*argv, **kwargs)
+
+    monkeypatch.setattr(execution_context.subprocess, "run", _run)
+    return calls
+
+
+def test_structured_validation_kind_compiles_into_brief(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _set_task_validation(
+        task,
+        "validation:\n"
+        "  - kind: process\n"
+        f"    command: {TASK_VALIDATION_COMMAND}\n"
+        "    proves: TEST-004\n"
+        "    expected: passed\n"
+        "  - kind: inspection\n"
+        "    command: inspect-write-scope\n"
+        "    mechanism: named-harness-file-digest\n"
+        "    proves: CON-002\n"
+        "    expected: passed\n",
+    )
+
+    brief = _compiled_brief(root, task)
+    process_item, inspection_item = brief["validation"]
+
+    assert process_item["kind"] == "process"
+    assert process_item["command"] == TASK_VALIDATION_COMMAND
+    assert inspection_item["kind"] == "inspection"
+    assert inspection_item["mechanism"] == "named-harness-file-digest"
+    assert "Never write outside the assigned files." in inspection_item["proves"]
+
+
+def test_untyped_three_column_row_fails_closed_without_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _, task = workspace(tmp_path)
+    calls = _capture_subprocess_after_setup(monkeypatch)
+    _set_task_validation(
+        task,
+        "",
+        "## Validation\n\n"
+        "| Command or inspection | Proves | Expected |\n"
+        "| --- | --- | --- |\n"
+        f"| `{UNTYPED_LEGACY_COMMAND}` | TEST-004 | passed |\n",
+    )
+
+    with pytest.raises(SystemExit, match="legacy-untyped"):
+        build_task_brief(args(root, task))
+
+    assert not any(UNTYPED_LEGACY_COMMAND in call for call in calls)
+    assert not (root / ".work-bundle/runtime/execution/plan-001/task-004/task-brief.yaml").exists()
+
+
+def test_differing_body_validation_table_does_not_fail_when_yaml_is_present(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _set_task_validation(
+        task,
+        "validation:\n"
+        f"  - {{kind: process, command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: passed}}\n",
+        "## Validation\n\n"
+        "| Command or inspection | Proves | Expected |\n"
+        "| --- | --- | --- |\n"
+        "| `echo BODY-TABLE-MUST-NOT-BLOCK` | CON-002 | failed |\n",
+    )
+
+    brief = _compiled_brief(root, task)
+
+    assert len(brief["validation"]) == 1
+    assert brief["validation"][0]["kind"] == "process"
+    assert brief["validation"][0]["command"] == TASK_VALIDATION_COMMAND
+    assert "BODY-TABLE-MUST-NOT-BLOCK" not in str(brief["validation"])
+
+
+def test_executor_authored_kind_is_ignored(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _set_task_validation(
+        task,
+        "validation:\n"
+        "  - kind: inspection\n"
+        "    command: inspect-write-scope\n"
+        "    mechanism: named-harness-file-digest\n"
+        "    proves: TEST-004\n"
+        "    expected: passed\n",
+    )
+    handoff = _completed_handoff_payload(root)
+    payload = _read_handoff(handoff)
+    payload["validation"] = {
+        "commands": [{"command": "inspect-write-scope", "result": "passed", "kind": "process"}]
+    }
+    brief = _compiled_brief(root, task)
+
+    with pytest.raises(SystemExit, match="mechanism|inspection|kind"):
+        _validate_observed(payload, brief)
+
+    assert brief["validation"][0]["kind"] == "inspection"
+    assert brief["validation"][0]["mechanism"] == "named-harness-file-digest"
+
+
+def test_validation_proves_expected_and_acceptable_results_preserved(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _set_task_validation(
+        task,
+        "validation:\n"
+        f"  - {{kind: process, command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: skipped, acceptable_results: [passed, skipped]}}\n",
+    )
+    handoff = _completed_handoff_payload(root, validation_result="skipped")
+    brief = _compiled_brief(root, task)
+    item = brief["validation"][0]
+
+    assert item["kind"] == "process"
+    assert "Focused pytest exits with status 0." in item["proves"]
+    assert item["expected"] == "skipped"
+    assert item["acceptable_results"] == ["passed", "skipped"]
+
+    _ensure_source_file(root)
+    _bind_task_execution(root, brief)
+    validated = _validate_observed(_read_handoff(handoff), brief)
+
+    assert validated["result_state"] == "completed"
+
+
+def test_expected_skipped_without_acceptable_results_is_preserved(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _set_task_validation(
+        task,
+        "validation:\n"
+        f"  - {{kind: process, command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: skipped}}\n",
+    )
+    handoff = _completed_handoff_payload(root, validation_result="skipped")
+    brief = _compiled_brief(root, task)
+
+    assert brief["validation"][0]["expected"] == "skipped"
+    assert "acceptable_results" not in brief["validation"][0]
+
+    _ensure_source_file(root)
+    _bind_task_execution(root, brief)
+    validated = _validate_observed(_read_handoff(handoff), brief)
+
+    assert validated["result_state"] == "completed"
+
+
+def test_four_column_body_table_is_not_an_authority_compile_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _, task = workspace(tmp_path)
+    calls = _capture_subprocess_after_setup(monkeypatch)
+    _set_task_validation(
+        task,
+        "",
+        "## Validation\n\n"
+        "| Kind | Command or inspection | Proves | Expected |\n"
+        "| --- | --- | --- | --- |\n"
+        f"| process | `{UNTYPED_LEGACY_COMMAND}` | TEST-004 | passed |\n",
+    )
+
+    with pytest.raises(SystemExit, match="legacy-untyped"):
+        build_task_brief(args(root, task))
+
+    assert not any(UNTYPED_LEGACY_COMMAND in call for call in calls)
+    packet = root / ".work-bundle/runtime/execution/plan-001/task-004/task-brief.yaml"
+    assert not packet.exists()
+
+
+PASSING_PROCESS = "true"
+FAILING_PROCESS = "false"
+WORK_BUNDLE_SCRIPTS = REPO_ROOT / "scripts" / "work-bundle"
+
+
+def _execution_workspace():
+    if str(WORK_BUNDLE_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(WORK_BUNDLE_SCRIPTS))
+    import execution_workspace as module
+
+    return module
+
+
+def _ensure_source_file(root: Path, relative: str = WRITE_SCOPE_FILE, content: str = "def compile_task():\n    return 'old'\n") -> Path:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _ensure_git_head(root: Path) -> None:
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        git(root, "add", ".")
+        git(root, "commit", "-qm", "bind-base")
+
+
+def _bind_task_execution(
+    root: Path,
+    brief: dict,
+    *,
+    execution_root: Path | None = None,
+    runtime_root: Path | None = None,
+    workspace_id: str = "ws1",
+    execution_id: str = "exec1",
+    repository_id: str = "repo1",
+    capture_baseline: bool = True,
+    write_scope: list[str] | None = None,
+) -> dict:
+    execution_root = (execution_root or root).resolve()
+    runtime_root = (runtime_root or (root.parent / "ew-runtime")).resolve()
+    ignore = execution_root / ".gitignore"
+    existing = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
+    if ".work-bundle/" not in existing:
+        ignore.write_text(existing + ".work-bundle/\n", encoding="utf-8")
+    _ensure_git_head(execution_root)
+    ew = _execution_workspace()
+    record = ew.state_path(runtime_root, workspace_id, execution_id, repository_id)
+    if not record.exists():
+        ew.register_existing(
+            execution_root,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+            repository_id=repository_id,
+            created_for=str(brief.get("task_id") or "task-004"),
+            owner="harness",
+            runtime_root=runtime_root,
+        )
+    binding = execution_context.create_or_load_task_execution_binding(
+        control_root=root,
+        plan_id=str(brief["plan_id"]),
+        task_id=str(brief["task_id"]),
+        workspace_id=workspace_id,
+        execution_id=execution_id,
+        repository_id=repository_id,
+        runtime_root=runtime_root,
+        write_scope=write_scope or list((brief.get("files") or {}).get("write") or []),
+        forbidden_scope=list((brief.get("files") or {}).get("forbidden") or []),
+    )
+    if capture_baseline:
+        execution_context.capture_task_baseline_once(binding)
+        binding = execution_context.load_task_execution_binding(root, str(brief["plan_id"]), str(brief["task_id"]))
+    return binding
+
+
+def _bind_passing_observation(root: Path, task: Path) -> Path:
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    return _handoff_for_command(root, PASSING_PROCESS)
+
+
+def _enable_passing_observation(root: Path, task: Path, handoff: Path) -> None:
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    text = handoff.read_text(encoding="utf-8")
+    if TASK_VALIDATION_COMMAND in text:
+        handoff.write_text(text.replace(TASK_VALIDATION_COMMAND, json.dumps(PASSING_PROCESS)), encoding="utf-8")
+
+
+def _validate_observed(handoff: dict, brief: dict) -> dict:
+    return execution_context.validate_executor_result_for_task(handoff, brief, observe=True)
+
+
+def _set_process_validation(task: Path, command: str, **fields: object) -> None:
+    extra = "".join(f", {key}: {value}" for key, value in fields.items())
+    _set_task_validation(
+        task,
+        "validation:\n"
+        f"  - {{kind: process, command: {json.dumps(command)}, proves: TEST-004, expected: passed{extra}}}\n",
+    )
+
+
+def _handoff_for_command(root: Path, command: str, result: str = "passed", extra: str = "") -> Path:
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        "related: {plan: plan-001, task: task-004}\n"
+        "result: {state: completed}\n"
+        "task_fit_check: {task: task-004, result: clean}\n"
+        "validation:\n"
+        "  commands:\n"
+        f"    - {{command: {json.dumps(command)}, result: {result}}}\n"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n"
+        f"{extra}",
+        encoding="utf-8",
+    )
+    return handoff
+
+
+def test_completed_without_harness_provenance_fails_closed(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _set_process_validation(task, PASSING_PROCESS)
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+
+    with pytest.raises(SystemExit, match="harness|binding|provenance"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+
+def test_nonzero_process_fails_unless_acceptable_results_include_failed(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    _set_process_validation(task, FAILING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = _handoff_for_command(root, FAILING_PROCESS, result="failed")
+
+    with pytest.raises(SystemExit, match="failed|passed|acceptable"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            f"command: {json.dumps(FAILING_PROCESS)}, proves: TEST-004, expected: passed",
+            f"command: {json.dumps(FAILING_PROCESS)}, proves: TEST-004, expected: passed, acceptable_results: [failed]",
+        ),
+        encoding="utf-8",
+    )
+    brief = _compiled_brief(root, task)
+    validated = _validate_observed(_read_handoff(handoff), brief)
+    assert validated["result_state"] == "completed"
+
+    passed_label = _handoff_for_command(root, FAILING_PROCESS, result="passed")
+    with pytest.raises(SystemExit, match="passed|failed|observed"):
+        _validate_observed(_read_handoff(passed_label), brief)
+
+
+def test_expected_skipped_observes_skipped_without_running_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    _set_task_validation(
+        task,
+        "validation:\n"
+        f"  - {{kind: process, command: {json.dumps(FAILING_PROCESS)}, proves: TEST-004, expected: skipped}}\n",
+    )
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    calls = _capture_subprocess_after_setup(monkeypatch)
+    handoff = _handoff_for_command(root, FAILING_PROCESS, result="skipped")
+
+    validated = _validate_observed(_read_handoff(handoff), brief)
+
+    assert validated["result_state"] == "completed"
+    assert not any(FAILING_PROCESS in call for call in calls)
+
+
+def test_named_inspection_does_not_use_executor_exit_code(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    _set_task_validation(
+        task,
+        "validation:\n"
+        "  - kind: inspection\n"
+        "    command: inspect-write-scope\n"
+        "    mechanism: named-harness-file-digest\n"
+        "    proves: TEST-004\n"
+        "    expected: passed\n",
+    )
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = _handoff_for_command(root, "inspect-write-scope")
+    payload = _read_handoff(handoff)
+    payload["validation"] = {
+        "commands": [
+            {
+                "command": "inspect-write-scope",
+                "result": "passed",
+                "exit_code": 0,
+                "mechanism": "named-harness-file-digest",
+            }
+        ]
+    }
+
+    validated = _validate_observed(payload, brief)
+
+    assert validated["result_state"] == "completed"
+    assert "exit_code" not in str(validated.get("observed_validation") or {})
+
+
+def test_wrong_worktree_cannot_grant_completed(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    ew = _execution_workspace()
+    runtime = tmp_path / "ew-runtime"
+    other = ew.prepare_worktree(
+        root,
+        workspace_id="ws1",
+        execution_id="other-exec",
+        repository_id="repo1",
+        branch="codex/other-exec",
+        created_for="other-task",
+        runtime_root=runtime,
+    )
+    other_root = Path(str(other["execution_workspace_state"]["path"]))
+    _bind_task_execution(
+        root,
+        brief,
+        execution_root=other_root,
+        runtime_root=runtime,
+        execution_id="other-exec",
+    )
+    (other_root / "unauthorized-other.py").write_text("leak\n", encoding="utf-8")
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
+
+    with pytest.raises(SystemExit, match="write scope|unauthorized|delta"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+
+def test_control_root_observation_cannot_authorize_isolated_worktree(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    marker_command = "python3 -c \"import pathlib,sys; sys.exit(0 if pathlib.Path('bound-marker.txt').exists() else 2)\""
+    # quoted below via json.dumps in helpers
+    _set_process_validation(task, marker_command)
+    brief = _compiled_brief(root, task)
+    (root / "bound-marker.txt").write_text("control-only\n", encoding="utf-8")
+    ew = _execution_workspace()
+    runtime = tmp_path / "ew-runtime"
+    isolated = ew.prepare_worktree(
+        root,
+        workspace_id="ws1",
+        execution_id="iso-exec",
+        repository_id="repo1",
+        branch="codex/iso-exec",
+        created_for="task-004",
+        runtime_root=runtime,
+    )
+    isolated_root = Path(str(isolated["execution_workspace_state"]["path"]))
+    _bind_task_execution(
+        root,
+        brief,
+        execution_root=isolated_root,
+        runtime_root=runtime,
+        execution_id="iso-exec",
+    )
+    handoff = _handoff_for_command(root, marker_command)
+
+    with pytest.raises(SystemExit, match="failed|passed|observed|binding"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+
+def test_in_batch_mutation_is_validation_blocked(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    mutating = (
+        "python3 -c \"from pathlib import Path; "
+        f"p=Path('{WRITE_SCOPE_FILE}'); p.parent.mkdir(parents=True, exist_ok=True); "
+        "p.write_text(p.read_text()+'# mutated\\n' if p.exists() else '# mutated\\n')\""
+    )
+    _set_task_validation(
+        task,
+        "validation:\n"
+        f"  - {{kind: process, command: {json.dumps(PASSING_PROCESS)}, proves: TEST-004, expected: passed}}\n"
+        f"  - {{kind: process, command: {json.dumps(mutating)}, proves: TEST-004, expected: passed}}\n",
+    )
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text(
+        "id: handoff-task-004\n"
+        "type: executor-result\n"
+        "related: {plan: plan-001, task: task-004}\n"
+        "result: {state: completed}\n"
+        "task_fit_check: {task: task-004, result: clean}\n"
+        "validation:\n"
+        "  commands:\n"
+        f"    - {{command: {json.dumps(PASSING_PROCESS)}, result: passed}}\n"
+        f"    - {{command: {json.dumps(mutating)}, result: passed}}\n"
+        "knowledge_disposition:\n"
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="validation-blocked"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+
+def test_omitted_unauthorized_path_fails_closed(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    (root / "src/unauthorized.py").parent.mkdir(parents=True, exist_ok=True)
+    (root / "src/unauthorized.py").write_text("leak\n", encoding="utf-8")
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
+
+    with pytest.raises(SystemExit, match="write scope|unauthorized|delta"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+    reported = _handoff_for_command(
+        root,
+        PASSING_PROCESS,
+        extra="changes:\n  files:\n    - {path: src/unauthorized.py, action: created}\n",
+    )
+    with pytest.raises(SystemExit, match="write scope|unauthorized|delta"):
+        _validate_observed(_read_handoff(reported), brief)
+
+
+def test_further_edit_to_baseline_dirty_path_is_task_caused(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    scoped = _ensure_source_file(root)
+    outsider = root / "src/preexisting.py"
+    outsider.parent.mkdir(parents=True, exist_ok=True)
+    outsider.write_text("OLD\n", encoding="utf-8")
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    outsider.write_text("NEW\n", encoding="utf-8")
+    scoped.write_text("def compile_task():\n    return 'new'\n", encoding="utf-8")
+    handoff = _handoff_for_command(
+        root,
+        PASSING_PROCESS,
+        extra=f"changes:\n  files:\n    - {{path: {WRITE_SCOPE_FILE}, action: modified}}\n",
+    )
+
+    with pytest.raises(SystemExit, match="write scope|unauthorized|delta"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+
+def test_committed_delta_is_checked_when_worktree_is_clean(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    leaked = root / "src/committed_leak.py"
+    leaked.parent.mkdir(parents=True, exist_ok=True)
+    leaked.write_text("committed-leak\n", encoding="utf-8")
+    git(root, "add", "src/committed_leak.py")
+    git(root, "commit", "-qm", "task commit")
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
+
+    with pytest.raises(SystemExit, match="write scope|unauthorized|delta"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+
+def test_overlapping_mutating_siblings_in_shared_worktree_are_blocked(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    sibling = root / ".work-bundle/orchestration/plan/active/plan-001/phase-001/task-005.md"
+    sibling.write_text(task.read_text(encoding="utf-8").replace("id: task-004\n", "id: task-005\n"), encoding="utf-8")
+    _set_process_validation(task, PASSING_PROCESS)
+    _set_process_validation(sibling, PASSING_PROCESS)
+    brief_a = _compiled_brief(root, task)
+    brief_b = _compiled_brief(root, sibling)
+    _bind_task_execution(root, brief_a, execution_id="exec-a")
+
+    with pytest.raises(SystemExit, match="isolate|serialize|overlapping"):
+        _bind_task_execution(root, brief_b, execution_id="exec-b")
+
+
+def test_later_brief_rebuild_does_not_recapture_task_baseline(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    scoped = _ensure_source_file(root)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    binding = _bind_task_execution(root, brief)
+    original_head = binding["baseline"]["head"]
+    scoped.write_text("def compile_task():\n    return 'after-baseline'\n", encoding="utf-8")
+    git(root, "add", WRITE_SCOPE_FILE)
+    git(root, "commit", "-qm", "after baseline")
+    build_task_brief(args(root, task))
+    rebuilt = execution_context.capture_task_baseline_once(
+        execution_context.load_task_execution_binding(root, "plan-001", "task-004")
+    )
+
+    assert rebuilt["baseline"]["head"] == original_head
+    assert rebuilt["baseline"]["head"] != git(root, "rev-parse", "HEAD")
+
+    handoff = _handoff_for_command(
+        root,
+        PASSING_PROCESS,
+        extra=f"changes:\n  files:\n    - {{path: {WRITE_SCOPE_FILE}, action: modified}}\n",
+    )
+    validated = _validate_observed(_read_handoff(handoff), brief)
+    assert validated["result_state"] == "completed"
+
+
+def test_set_plan_status_completed_observes_bound_worktree(tmp_path: Path) -> None:
+    from plans import cmd_set_plan_status
+
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = _handoff_for_command(
+        root,
+        PASSING_PROCESS,
+        extra=f"changes:\n  files:\n    - {{path: {WRITE_SCOPE_FILE}, action: modified}}\n",
+    )
+
+    cmd_set_plan_status(
+        argparse.Namespace(
+            project_root=str(root),
+            id="task-004",
+            status="Completed",
+            kind="task",
+            handoff=str(handoff),
+            workspace_id=None,
+            execution_id=None,
+            repository_id=None,
+            execution_runtime_root=None,
+        )
+    )
+    data, _ = execution_context._read_structured(task)
+    assert data["status"] == "Completed"
+
+
+def test_executor_minted_harness_receipt_fails_closed(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
+    payload = _read_handoff(handoff)
+    payload["harness_receipt"] = {"result": "passed", "exit_code": 0}
+
+    with pytest.raises(SystemExit, match="harness_receipt|receipt"):
+        _validate_observed(payload, brief)
+
+
+def test_execution_workspace_module_loads_with_orchestration_only_sys_path() -> None:
+    script = r"""
+import sys
+from pathlib import Path
+
+orch = Path("scripts/orchestration").resolve()
+work_bundle = Path("scripts/work-bundle").resolve()
+sys.path.insert(0, str(orch))
+sys.path[:] = [
+    item for item in sys.path
+    if Path(item).resolve() != work_bundle
+]
+import execution_context
+execution_context._EW_MODULE = None
+module = execution_context._execution_workspace_module()
+assert callable(getattr(module, "load_state", None))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr

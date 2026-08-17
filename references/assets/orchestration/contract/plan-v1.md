@@ -110,6 +110,8 @@ Every executable task declares the same five-field Truth Basis. When a consequen
 |---|---|---|---|---|---|---|
 | TEST-001 | unit|integration|model-behavior|manual | `[file/module/function/API]` | phase-001 | - | `[command if applicable]` | [Measurable result.] |
 
+Harness-executed integration commands run against the final accepted plan workspace after ordinary task integration and must be Git-observable-state-neutral. Do not declare a plan-level `files.write` envelope.
+
 ## 7.1 Contract Groups, Barriers, And Convergence
 
 Use this section when parallel tasks share a stable common contract.
