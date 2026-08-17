@@ -2303,6 +2303,48 @@ def test_replaced_binding_baseline_fails_closed(tmp_path: Path) -> None:
         _validate_observed(_read_handoff(handoff), brief)
 
 
+def test_rewriting_binding_and_workspace_authority_without_mac_key_fails(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    binding = _bind_task_execution(root, brief)
+    leaked = root / "src/unauthorized.py"
+    leaked.parent.mkdir(parents=True, exist_ok=True)
+    leaked.write_text("leak\n", encoding="utf-8")
+    fake_baseline = execution_context.capture_repository_evidence(root)
+    binding_path = root / ".work-bundle/runtime/execution/plan-001/task-004/execution-binding.json"
+    document = json.loads(binding_path.read_text(encoding="utf-8"))
+    document["baseline"] = fake_baseline
+    binding_path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    ew = _execution_workspace()
+    state_file = Path(
+        ew.state_path(
+            Path(str(binding["runtime_root"])),
+            str(binding["workspace_id"]),
+            str(binding["execution_id"]),
+            str(binding["repository_id"]),
+        )
+    )
+    state_doc = json.loads(state_file.read_text(encoding="utf-8"))
+    authority = state_doc["execution_workspace_state"]["task_binding_authority"]["plan-001/task-004"]
+    authority["baseline_digest"] = hashlib.sha256(
+        json.dumps(fake_baseline, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    authority["baseline_mac"] = "0" * 64
+    authority["mutating"] = document.get("mutating")
+    state_doc["execution_workspace_state"]["task_binding_authority"]["plan-001/task-004"] = authority
+    state_file.write_text(json.dumps(state_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    key_path = Path(str(binding["runtime_root"])) / ".harness" / "task-baseline.mac-key"
+    assert not str(key_path).startswith(str(root))
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
+
+    with pytest.raises(SystemExit, match="baseline|integrity|harness-owned|provenance|mac"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+
 def test_named_inspection_without_digest_fails_closed(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
     _ensure_source_file(root)
