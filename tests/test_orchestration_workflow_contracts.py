@@ -682,7 +682,7 @@ def test_execute_plan_requires_bound_observation_and_isolate_or_serialize() -> N
         "validate-executor-result",
     ]:
         assert token in execute
-    assert "overlapping mutating siblings isolate via prepare_worktree or serialize" in plan
+    assert "mutating siblings on the same execution path isolate via prepare_worktree or serialize" in plan
     assert "corroboration" in contract
     assert "not independent proof" in contract or "not authority" in contract
 

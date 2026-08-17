@@ -672,6 +672,55 @@ def _write_binding(path: Path, binding: dict[str, Any]) -> None:
     path.write_text(json.dumps(binding, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _baseline_digest(baseline: Any) -> str | None:
+    if not isinstance(baseline, dict) or not baseline.get("head"):
+        return None
+    return hashlib.sha256(json.dumps(baseline, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _binding_authority_snapshot(binding: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "mutating": binding.get("mutating"),
+        "baseline_digest": _baseline_digest(binding.get("baseline")),
+        "write_scope": [str(path) for path in _as_list(binding.get("write_scope"))],
+        "execution_path": str(Path(str(binding.get("execution_path") or "")).resolve()) if binding.get("execution_path") else "",
+    }
+
+
+def _persist_binding(binding: dict[str, Any], control_root: Path) -> None:
+    _write_binding(_binding_path(control_root, str(binding["plan_id"]), str(binding["task_id"])), binding)
+    try:
+        _execution_workspace_module().record_task_binding_authority(
+            Path(str(binding["runtime_root"])),
+            str(binding.get("workspace_id") or ""),
+            str(binding.get("execution_id") or ""),
+            str(binding.get("repository_id") or ""),
+            plan_id=str(binding.get("plan_id") or ""),
+            task_id=str(binding.get("task_id") or ""),
+            authority=_binding_authority_snapshot(binding),
+        )
+    except Exception as error:
+        raise SystemExit("Task execution binding provenance is missing harness-owned authority") from error
+
+
+def _lookup_binding_authority(binding: dict[str, Any]) -> dict[str, Any]:
+    try:
+        loaded = _execution_workspace_module().load_state(
+            Path(str(binding.get("runtime_root") or "")),
+            str(binding.get("workspace_id") or ""),
+            str(binding.get("execution_id") or ""),
+            str(binding.get("repository_id") or ""),
+        )
+    except Exception as error:
+        raise SystemExit("Task execution binding provenance is missing harness-owned authority") from error
+    state = loaded.get("execution_workspace_state") if isinstance(loaded.get("execution_workspace_state"), dict) else {}
+    stored = state.get("task_binding_authority") if isinstance(state.get("task_binding_authority"), dict) else {}
+    authority = stored.get(f"{binding.get('plan_id')}/{binding.get('task_id')}")
+    if not isinstance(authority, dict):
+        raise SystemExit("Task execution binding provenance is missing harness-owned authority")
+    return authority
+
+
 def _read_binding_file(path: Path) -> dict[str, Any]:
     if not path.is_file() or path.is_symlink():
         raise SystemExit("Task execution binding is missing harness provenance")
@@ -709,18 +758,18 @@ def _scopes_overlap(left: list[str], right: list[str]) -> bool:
 
 def _assert_no_overlapping_mutating_siblings(control_root: Path, binding: dict[str, Any]) -> None:
     execution_path = Path(str(binding.get("execution_path") or "")).resolve()
-    write_scope = [str(path) for path in _as_list(binding.get("write_scope"))]
     for other in _iter_task_bindings(control_root):
         if other.get("plan_id") == binding.get("plan_id") and other.get("task_id") == binding.get("task_id"):
             continue
-        if other.get("mutating") is False:
+        if other.get("plan_id") != binding.get("plan_id"):
             continue
         other_path = Path(str(other.get("execution_path") or "")).resolve()
         if other_path != execution_path:
             continue
-        if _scopes_overlap(write_scope, [str(path) for path in _as_list(other.get("write_scope"))]):
+        authority = _lookup_binding_authority(other)
+        if authority.get("mutating") is True:
             raise SystemExit(
-                "workspace-blocked: overlapping mutating tasks must isolate via prepare_worktree or serialize"
+                "workspace-blocked: mutating sibling tasks on the same execution path must isolate via prepare_worktree or serialize"
             )
 
 
@@ -754,6 +803,14 @@ def _verify_binding_provenance(binding: dict[str, Any]) -> dict[str, Any]:
     for key in ("source_repository", "git_common_dir", "git_dir", "branch_ref"):
         if stored_identity.get(key) != identity.get(key):
             raise SystemExit("Task execution binding Git provenance mismatch")
+    authority = _lookup_binding_authority(binding)
+    expected = _binding_authority_snapshot(binding)
+    if authority.get("mutating") != expected["mutating"]:
+        raise SystemExit("Task execution binding mutating flag is not harness-owned")
+    if authority.get("baseline_digest") != expected["baseline_digest"]:
+        raise SystemExit("Task execution binding baseline is not harness-owned")
+    if authority.get("execution_path") != expected["execution_path"]:
+        raise SystemExit("Task execution binding path does not match execution-workspace provenance")
     return loaded
 
 
@@ -805,7 +862,7 @@ def create_or_load_task_execution_binding(
         "baseline": None,
     }
     _assert_no_overlapping_mutating_siblings(control_root, binding)
-    _write_binding(path, binding)
+    _persist_binding(binding, control_root)
     return binding
 
 
@@ -843,26 +900,45 @@ def capture_task_baseline_once(binding: dict[str, Any], control_root: Path | Non
     root = control_root or Path(str(binding.get("control_root") or ""))
     if not root.is_dir():
         raise SystemExit("Task execution binding control root is required to persist baseline")
-    _write_binding(_binding_path(root, str(updated["plan_id"]), str(updated["task_id"])), updated)
+    _persist_binding(updated, root)
     return updated
 
 
-def _run_named_inspection(mechanism: str, execution_root: Path, task: dict[str, Any]) -> str:
-    if mechanism != "named-harness-file-digest":
-        raise SystemExit(f"Unknown inspection mechanism: {mechanism}")
+FILE_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _write_scope_file_digest(execution_root: Path, task: dict[str, Any]) -> str:
     digest = hashlib.sha256()
     files = task.get("files") if isinstance(task.get("files"), dict) else {}
     for relative in _as_list(files.get("write")):
+        digest.update(str(relative).encode("utf-8"))
+        digest.update(b"\0")
         path = execution_root / str(relative)
         if path.is_file() and not path.is_symlink():
             digest.update(path.read_bytes())
-    digest.hexdigest()
-    return "passed"
+        else:
+            digest.update(b"MISSING")
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _run_named_inspection(mechanism: str, execution_root: Path, task: dict[str, Any], item: dict[str, Any]) -> str:
+    if mechanism != "named-harness-file-digest":
+        raise SystemExit(f"Unknown inspection mechanism: {mechanism}")
+    expected = str(item.get("digest") or "").strip().lower()
+    if not FILE_DIGEST_RE.fullmatch(expected):
+        raise SystemExit("named-harness-file-digest requires a 64-character hex digest")
+    actual = _write_scope_file_digest(execution_root, task)
+    return "passed" if actual == expected else "failed"
 
 
 def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: dict[str, Any]) -> dict[str, Any]:
     command = str(item.get("command") or "").strip()
-    kind = str(item.get("kind") or "process").strip().lower() or "process"
+    kind = str(item.get("kind") or "").strip().lower()
+    if kind not in VALIDATION_KINDS:
+        raise SystemExit(
+            "Task validation kind must be process or inspection; untyped structured validation is legacy-untyped"
+        )
     allowed = _acceptable_validation_results(item)
     expected = str(item.get("expected") or "").strip().lower()
     if expected in {"skip", "skipped"} and "skipped" in allowed:
@@ -874,7 +950,7 @@ def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: d
         mechanism = str(item.get("mechanism") or "").strip()
         if not mechanism:
             raise SystemExit("Inspection validation requires a named harness-owned mechanism")
-        result_value = _run_named_inspection(mechanism, execution_root, task)
+        result_value = _run_named_inspection(mechanism, execution_root, task, item)
         return {"command": command, "result": result_value, "kind": "inspection", "mechanism": mechanism}
     completed = subprocess.run(
         command,
@@ -985,7 +1061,7 @@ def _observe_completed_validation(
     if binding.get("mutating") is True:
         updated = dict(binding)
         updated["mutating"] = False
-        _write_binding(_binding_path(control_root, str(updated["plan_id"]), str(updated["task_id"])), updated)
+        _persist_binding(updated, control_root)
     return observed_items
 
 
@@ -1220,11 +1296,12 @@ def _compile_structured_validation_item(item: Any) -> dict[str, Any]:
         raise SystemExit("Task validation items must be mappings")
     compiled: dict[str, Any] = {}
     kind = str(item.get("kind") or "").strip().lower()
-    if kind:
-        if kind not in VALIDATION_KINDS:
-            raise SystemExit(f"Task validation kind must be process or inspection, not {kind}")
-        compiled["kind"] = kind
-    for key in ("command", "proves", "expected", "acceptable_results"):
+    if kind not in VALIDATION_KINDS:
+        raise SystemExit(
+            "Task validation kind must be process or inspection; untyped structured validation is legacy-untyped"
+        )
+    compiled["kind"] = kind
+    for key in ("command", "proves", "expected", "acceptable_results", "digest"):
         if key in item:
             compiled[key] = item[key]
     if kind == "inspection":
@@ -1238,20 +1315,16 @@ def _compile_structured_validation_item(item: Any) -> dict[str, Any]:
 def _compile_task_validation(
     task: dict[str, Any], task_body: str, source_ids: list[str], records: dict[str, str]
 ) -> list[Any]:
-    validation_value = [_compile_structured_validation_item(item) for item in _as_list(task.get("validation"))]
-    if validation_value:
-        return validation_value
+    validation_items = _as_list(task.get("validation"))
+    if validation_items:
+        return [_compile_structured_validation_item(item) for item in validation_items]
     if _section_table(task_body, "Validation"):
         raise SystemExit(
             "Untyped Validation table row is legacy-untyped; migrate to front-matter validation with explicit kind"
         )
-    fallback: list[Any] = []
-    for identifier in source_ids:
-        if identifier.startswith("TEST-"):
-            fallback.append(
-                {"command": records[identifier], "proves": identifier, "expected": records[identifier]}
-            )
-    return fallback
+    raise SystemExit(
+        "Task validation must declare front-matter items with explicit kind; TEST-ID fallback is not executable terminal validation"
+    )
 
 
 def _task_context(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any], str, dict[str, str], list[Path]]:

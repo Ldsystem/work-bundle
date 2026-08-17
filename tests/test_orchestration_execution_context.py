@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -108,7 +109,7 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
         "acceptance_review:\n"
         "  required: false\n"
         "validation:\n"
-        "  - {command: uv run --with pytest pytest -q tests/test_one.py, proves: TEST-004, expected: exit 0}\n"
+        "  - {kind: process, command: uv run --with pytest pytest -q tests/test_one.py, proves: TEST-004, expected: exit 0}\n"
         "---\n\n# Task\n",
         encoding="utf-8",
     )
@@ -1288,8 +1289,8 @@ def test_validate_executor_result_allows_skipped_when_task_expected_skip(tmp_pat
     _ensure_source_file(root)
     task.write_text(
         task.read_text(encoding="utf-8").replace(
-            f"{{command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: exit 0}}",
-            f"{{command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: skipped, acceptable_results: [passed, skipped]}}",
+            f"{{kind: process, command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: exit 0}}",
+            f"{{kind: process, command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: skipped, acceptable_results: [passed, skipped]}}",
         ),
         encoding="utf-8",
     )
@@ -1498,7 +1499,7 @@ def test_set_plan_status_completed_requires_validated_handoff(tmp_path: Path) ->
 
 
 DEFAULT_TASK_VALIDATION = (
-    f"  - {{command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: exit 0}}\n"
+    f"  - {{kind: process, command: {TASK_VALIDATION_COMMAND}, proves: TEST-004, expected: exit 0}}\n"
 )
 UNTYPED_LEGACY_COMMAND = "echo LEGACY-UNTYPED-MUST-NOT-RUN"
 
@@ -1706,6 +1707,19 @@ def _ensure_source_file(root: Path, relative: str = WRITE_SCOPE_FILE, content: s
     return path
 
 
+def _write_scope_digest(root: Path, relative: str = WRITE_SCOPE_FILE) -> str:
+    digest = hashlib.sha256()
+    digest.update(relative.encode("utf-8"))
+    digest.update(b"\0")
+    path = root / relative
+    if path.is_file() and not path.is_symlink():
+        digest.update(path.read_bytes())
+    else:
+        digest.update(b"MISSING")
+    digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def _ensure_git_head(root: Path) -> None:
     result = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
@@ -1875,12 +1889,14 @@ def test_expected_skipped_observes_skipped_without_running_process(tmp_path: Pat
 def test_named_inspection_does_not_use_executor_exit_code(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
     _ensure_source_file(root)
+    digest = _write_scope_digest(root)
     _set_task_validation(
         task,
         "validation:\n"
         "  - kind: inspection\n"
         "    command: inspect-write-scope\n"
         "    mechanism: named-harness-file-digest\n"
+        f"    digest: {digest}\n"
         "    proves: TEST-004\n"
         "    expected: passed\n",
     )
@@ -2188,3 +2204,149 @@ assert callable(getattr(module, "load_state", None))
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_structured_validation_without_kind_fails_closed_without_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _, task = workspace(tmp_path)
+    calls = _capture_subprocess_after_setup(monkeypatch)
+    _set_task_validation(
+        task,
+        "validation:\n"
+        f"  - {{command: {json.dumps(UNTYPED_LEGACY_COMMAND)}, proves: TEST-004, expected: passed}}\n",
+    )
+
+    with pytest.raises(SystemExit, match="kind|legacy-untyped"):
+        build_task_brief(args(root, task))
+
+    assert not any(UNTYPED_LEGACY_COMMAND in call for call in calls)
+
+
+def test_test_id_fallback_is_not_executable_terminal_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _, task = workspace(tmp_path)
+    calls = _capture_subprocess_after_setup(monkeypatch)
+    _set_task_validation(task, "")
+
+    with pytest.raises(SystemExit, match="kind|legacy-untyped|TEST"):
+        build_task_brief(args(root, task))
+
+    assert not any("Focused pytest" in call for call in calls)
+    assert not any(UNTYPED_LEGACY_COMMAND in call for call in calls)
+
+
+def test_disjoint_mutating_siblings_in_shared_worktree_are_blocked(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    sibling = root / ".work-bundle/orchestration/plan/active/plan-001/phase-001/task-005.md"
+    sibling.write_text(
+        task.read_text(encoding="utf-8")
+        .replace("id: task-004\n", "id: task-005\n")
+        .replace(
+            "write: [scripts/orchestration/execution_context.py]",
+            "write: [tests/test_compiler.py]",
+        ),
+        encoding="utf-8",
+    )
+    _set_process_validation(task, PASSING_PROCESS)
+    _set_process_validation(sibling, PASSING_PROCESS)
+    brief_a = _compiled_brief(root, task)
+    brief_b = _compiled_brief(root, sibling)
+    _bind_task_execution(root, brief_a, execution_id="exec-a")
+
+    with pytest.raises(SystemExit, match="isolate|serialize"):
+        _bind_task_execution(root, brief_b, execution_id="exec-b")
+
+
+def test_index_only_post_baseline_mutation_is_task_caused(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    outsider = root / "src/preexisting.py"
+    outsider.parent.mkdir(parents=True, exist_ok=True)
+    outsider.write_text("A\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    outsider.write_text("B\n", encoding="utf-8")
+    git(root, "add", "src/preexisting.py")
+    outsider.write_text("C\n", encoding="utf-8")
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    outsider.write_text("D\n", encoding="utf-8")
+    git(root, "add", "src/preexisting.py")
+    outsider.write_text("C\n", encoding="utf-8")
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
+
+    with pytest.raises(SystemExit, match="write scope|unauthorized|delta"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+
+def test_replaced_binding_baseline_fails_closed(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    path = root / ".work-bundle/runtime/execution/plan-001/task-004/execution-binding.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["baseline"] = {
+        **document["baseline"],
+        "head": "0" * 40,
+        "entries": {},
+    }
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
+
+    with pytest.raises(SystemExit, match="baseline|integrity|harness-owned|provenance"):
+        _validate_observed(_read_handoff(handoff), brief)
+
+
+def test_named_inspection_without_digest_fails_closed(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    _set_task_validation(
+        task,
+        "validation:\n"
+        "  - kind: inspection\n"
+        "    command: inspect-write-scope\n"
+        "    mechanism: named-harness-file-digest\n"
+        "    proves: TEST-004\n"
+        "    expected: passed\n",
+    )
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = _handoff_for_command(root, "inspect-write-scope")
+    payload = _read_handoff(handoff)
+    payload["validation"] = {
+        "commands": [{"command": "inspect-write-scope", "result": "passed", "mechanism": "named-harness-file-digest"}]
+    }
+
+    with pytest.raises(SystemExit, match="digest|falsif|inspection"):
+        _validate_observed(payload, brief)
+
+
+def test_named_inspection_wrong_digest_fails(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    _set_task_validation(
+        task,
+        "validation:\n"
+        "  - kind: inspection\n"
+        "    command: inspect-write-scope\n"
+        "    mechanism: named-harness-file-digest\n"
+        f"    digest: {'0' * 64}\n"
+        "    proves: TEST-004\n"
+        "    expected: passed\n",
+    )
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = _handoff_for_command(root, "inspect-write-scope")
+    payload = _read_handoff(handoff)
+    payload["validation"] = {
+        "commands": [{"command": "inspect-write-scope", "result": "passed", "mechanism": "named-harness-file-digest"}]
+    }
+
+    with pytest.raises(SystemExit, match="digest|failed|inspection"):
+        _validate_observed(payload, brief)

@@ -107,7 +107,7 @@ For contract-decoupled work, name the common contract group, accepted prior hand
 
 ## Validation
 
-Structured front-matter `validation` is the sole canonical terminal authority for new and updated tasks. Each item must carry explicit `kind: process|inspection`. Inspections must name a deterministic harness-owned `mechanism`. Preserve `proves`, `expected`, `acceptable_results`, and `expected: skip|skipped` semantics. Executor-authored `kind` cannot choose process versus inspection.
+Structured front-matter `validation` is the sole canonical terminal authority for new and updated tasks. Each item must carry explicit `kind: process|inspection`. Missing YAML `kind` fails closed and is not defaulted to `process`. TEST-ID source records are not executable terminal validation. Inspections must name a deterministic harness-owned `mechanism`. `named-harness-file-digest` compares a task-owned 64-character `digest` to the current write-scope file digest and can fail. Preserve `proves`, `expected`, `acceptable_results`, and `expected: skip|skipped` semantics. Executor-authored `kind` cannot choose process versus inspection.
 
 Body `## Validation` is optional non-authoritative presentation and must not grant or block terminal authority. Prefer omitting it on new tasks. Do not add a YAML-versus-body equality gate, renderer, or synchronization machinery.
 

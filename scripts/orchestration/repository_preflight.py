@@ -384,6 +384,20 @@ def _path_digest(root: Path, relative: str) -> str:
     return hashlib.sha256(target.read_bytes()).hexdigest()
 
 
+def _index_entries(ls_files_output: str) -> dict[str, str]:
+    entries: dict[str, str] = {}
+    for line in ls_files_output.splitlines():
+        if "\t" not in line:
+            continue
+        meta, relative = line.split("\t", 1)
+        parts = meta.split()
+        if len(parts) < 2:
+            continue
+        stage = parts[2] if len(parts) > 2 else "0"
+        entries[relative] = f"{parts[0]} {parts[1]} {stage}"
+    return entries
+
+
 def capture_repository_evidence(repository: Path) -> dict[str, object]:
     """Capture HEAD/tree, index identity, and content state for dirty/untracked paths."""
     path = repository.resolve()
@@ -393,15 +407,21 @@ def capture_repository_evidence(repository: Path) -> dict[str, object]:
     ls_files = _run_git(path, "ls-files", "-s")
     if head.returncode != 0 or tree.returncode != 0:
         raise RuntimeError("Git identity is unavailable for repository evidence")
+    index_entries = _index_entries(ls_files.stdout)
     entries: dict[str, dict[str, str]] = {}
     for line in inspected.get("changes") or []:
         text = str(line)
         for relative in _porcelain_paths(text):
-            entries[relative] = {"porcelain": text[:2], "digest": _path_digest(path, relative)}
+            entries[relative] = {
+                "porcelain": text[:2],
+                "digest": _path_digest(path, relative),
+                "index": index_entries.get(relative, ""),
+            }
     return {
         "head": head.stdout.strip(),
         "tree": tree.stdout.strip(),
         "index_digest": hashlib.sha256(ls_files.stdout.encode("utf-8")).hexdigest(),
+        "index_entries": index_entries,
         "entries": entries,
         "status": inspected.get("status"),
     }
@@ -429,6 +449,11 @@ def task_caused_paths(
     term_entries = terminal.get("entries") if isinstance(terminal.get("entries"), dict) else {}
     for relative in set(base_entries) | set(term_entries):
         if base_entries.get(relative) != term_entries.get(relative):
+            caused.add(str(relative))
+    base_index = baseline.get("index_entries") if isinstance(baseline.get("index_entries"), dict) else {}
+    term_index = terminal.get("index_entries") if isinstance(terminal.get("index_entries"), dict) else {}
+    for relative in set(base_index) | set(term_index):
+        if base_index.get(relative) != term_index.get(relative):
             caused.add(str(relative))
     return sorted(caused)
 
