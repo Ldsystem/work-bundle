@@ -56,6 +56,16 @@ allocated_skills:
     applies_when: [observable task condition]
     use_timing: before_task_work|task_execution|validation
     required_for: [why required]
+validation:
+  - kind: process
+    command: exact command
+    proves: [claim]
+    expected: passed
+  - kind: inspection
+    command: inspection identifier
+    mechanism: named-harness-owned-mechanism
+    proves: [claim]
+    expected: passed
 ---
 
 # TASK-001: [Task Name]
@@ -97,9 +107,11 @@ For contract-decoupled work, name the common contract group, accepted prior hand
 
 ## Validation
 
-| Command or inspection | Proves | Expected |
-| --- | --- | --- |
-| `exact command` | [claim] | [result] |
+Structured front-matter `validation` is the sole canonical terminal authority for new and updated tasks. Each item must carry explicit `kind: process|inspection`. Missing YAML `kind` fails closed and is not defaulted to `process`. TEST-ID source records are not executable terminal validation. Inspections must name a deterministic harness-owned `mechanism`. `named-harness-file-digest` compares a task-owned 64-character `digest` to the current write-scope file digest and can fail. Preserve `proves`, `expected`, `acceptable_results`, and `expected: skip|skipped` semantics. Executor-authored `kind` cannot choose process versus inspection.
+
+Body `## Validation` is optional non-authoritative presentation and must not grant or block terminal authority. Prefer omitting it on new tasks. Do not add a YAML-versus-body equality gate, renderer, or synchronization machinery.
+
+A legacy 3-column `Command or inspection | Proves | Expected` row without YAML `kind` is `legacy-untyped`. It fails closed until ordinary artifact repair migrates it to front-matter `kind: process|inspection`. Do not default it to `process`. Never shell-execute ambiguous legacy text.
 
 ## Completion
 

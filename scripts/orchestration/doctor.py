@@ -15,6 +15,7 @@ FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
     "deviations",
     "strategy_advice",
     "knowledge_persistence",
+    "baseline",
 }
 
 

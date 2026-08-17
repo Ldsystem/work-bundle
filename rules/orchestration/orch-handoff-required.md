@@ -44,7 +44,7 @@ Require compact executor-result handoffs before reporting execution complete or 
 - Mark execution complete without the required handoff for the completed or blocked scope.
 - Store handoffs under `.work-bundle/knowledge/`.
 - Retrieve durable knowledge while creating executor-result handoffs during `execute-plan`.
-- Include forbidden executor advice fields in executor-result handoffs: `suggested_durable_conclusions`, `durable_candidate_facts`, `recommended_orchestration_review`, `recommended_next_actions`, `delegation`, `deviations`, `strategy_advice`, or `knowledge_persistence`.
+- Include forbidden executor advice fields in executor-result handoffs: `suggested_durable_conclusions`, `durable_candidate_facts`, `recommended_orchestration_review`, `recommended_next_actions`, `delegation`, `deviations`, `strategy_advice`, `knowledge_persistence`, or `baseline`.
 - Use executor-result handoffs for durable-knowledge persistence recommendations, phase/plan/spec review advice, or orchestration strategy advice.
 - Omit changed files, validation evidence, unresolved blockers, or `task_fit_check` when they are applicable to the completed or partial result.
 - Claim a clean result without recording the compiled brief and assigned task checked, repairs made, and recheck outcome.

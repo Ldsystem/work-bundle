@@ -381,6 +381,23 @@ def register_existing(
     }
 
 
+def load_state(
+    runtime_root: Path,
+    workspace_id: str,
+    execution_id: str,
+    repository_id: str,
+) -> dict[str, object]:
+    """Read-only load of existing execution-workspace path and Git provenance."""
+    runtime_root = runtime_root.expanduser().resolve()
+    record = state_path(runtime_root, workspace_id, execution_id, repository_id)
+    state, identity = _read_record(record)
+    return {
+        "execution_workspace_state": state,
+        "git_identity": identity,
+        "state_path": str(record),
+    }
+
+
 def _read_record(path: Path) -> tuple[dict[str, object], dict[str, str]]:
     if not path.is_file() or path.is_symlink():
         raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_MISSING")

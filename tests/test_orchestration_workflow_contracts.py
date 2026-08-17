@@ -259,6 +259,7 @@ def _write_archive_plan(
 
 
 FOLLOW_ON_WRITE_SCOPE_FILE = "scripts/orchestration/plans.py"
+ARCHIVE_NEUTRAL_COMMAND = "env true"
 
 
 def _append_plan_knowledge(root: Path, *, closure_return: str = "missing") -> None:
@@ -668,6 +669,26 @@ def test_no_review_completed_handoff_does_not_require_accept_or_reviewer() -> No
     assert validated["knowledge_disposition"]["action"] == "none"
 
 
+def test_execute_plan_requires_bound_observation_and_isolate_or_serialize() -> None:
+    execute = read("skills/orch-execute-plan/SKILL.md")
+    plan = read("skills/orch-create-implementation-plan/SKILL.md")
+    contract = read("references/assets/orchestration/contract/handoff-executor-result-v1.md")
+    for token in [
+        "harness-owned task execution binding",
+        "capture the pre-task baseline once",
+        "cannot supply or replace that baseline",
+        "bound execution repository",
+        "isolate via prepare_worktree or serialize",
+        "Git-state-neutral",
+        "validate-executor-result",
+    ]:
+        assert token in execute
+    assert "mutating siblings on the same execution path isolate via prepare_worktree or serialize" in plan
+    assert "cannot supply or replace that baseline" in contract
+    assert "corroboration" in contract
+    assert "not independent proof" in contract or "not authority" in contract
+
+
 def test_optional_review_package_does_not_absorb_sibling_task_files(tmp_path: Path) -> None:
     from test_orchestration_execution_context import (
         WRITE_SCOPE_FILE,
@@ -689,10 +710,9 @@ def test_optional_review_package_does_not_absorb_sibling_task_files(tmp_path: Pa
     base = git(root, "rev-parse", "HEAD")
     scoped.write_text("def compile_task():\n    return 'task-b'\n", encoding="utf-8")
     task_a_file.write_text("TASK_A_NEW = 2\n", encoding="utf-8")
-    handoff = write_executor_handoff(
-        root,
-        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
-    )
+    from test_orchestration_execution_context import _bind_passing_observation
+
+    handoff = _bind_passing_observation(root, task_b)
 
     package = build_review_package(
         review_args(root, task_b, handoff=str(handoff), base=base, head="worktree")
@@ -714,7 +734,7 @@ def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer
     review = read("skills/orch-review-plan/SKILL.md")
     workflow = read("references/assets/orchestration/workflow.md")
     for token in [
-        "declared plan-level/integration acceptance from recorded validation evidence",
+        "declared plan-level/integration acceptance observed on the final integrated workspace",
         "do not start another implementation-review agent to produce plan-level acceptance",
         "Archive remains blocked while any required knowledge, validation, review",
     ]:
@@ -764,11 +784,12 @@ def test_passing_declared_plan_acceptance_allows_archive_without_second_reviewer
     from plans import cmd_archive_plan
     from test_orchestration_execution_context import (
         TASK_VALIDATION_COMMAND,
+        git,
         workspace,
         write_executor_handoff,
     )
 
-    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    command = ARCHIVE_NEUTRAL_COMMAND
     root, _, _ = workspace(tmp_path)
     _append_plan_knowledge(root, closure_return="missing")
     plan = root / ".work-bundle/orchestration/plan/active/compiler-plan.md"
@@ -780,6 +801,8 @@ def test_passing_declared_plan_acceptance_allows_archive_without_second_reviewer
         + f"| TEST-099 | integration | full harness | phase-001 | - | `{command}` | all tests pass |\n",
         encoding="utf-8",
     )
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "final workspace")
     handoff = write_executor_handoff(
         root,
         "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
@@ -831,6 +854,85 @@ def test_unvalidated_handoff_cannot_satisfy_declared_plan_acceptance(tmp_path: P
 
     with pytest.raises(SystemExit, match="acceptance-blocked"):
         cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+
+
+def _record_tree_fresh_integration_pass(root: Path, command: str) -> str:
+    from test_orchestration_execution_context import TASK_VALIDATION_COMMAND, git, write_executor_handoff
+
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "tree-fresh acceptance baseline")
+    head = git(root, "rev-parse", "HEAD")
+    handoff = write_executor_handoff(
+        root,
+        "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
+    )
+    handoff.write_text(
+        handoff.read_text(encoding="utf-8").replace(
+            f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n",
+            f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
+            f"    - {{command: {command}, result: passed}}\n",
+        )
+        + "repository:\n"
+        + f"  - root: {root}\n"
+        + "    metadata:\n"
+        + f"      actual_commit: {head}\n",
+        encoding="utf-8",
+    )
+    return head
+
+
+def test_tree_fresh_executor_pass_without_harness_observation_blocks_archive(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import workspace
+
+    command = "env false"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    _record_tree_fresh_integration_pass(root, command)
+
+    with pytest.raises(SystemExit, match="acceptance-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
+
+
+def test_task_worktree_command_pass_cannot_archive_different_final_workspace(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import git, workspace
+
+    command = "test -f worktree-only-marker"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "final workspace")
+    worktree = tmp_path / "isolated-task-worktree"
+    git(root, "worktree", "add", str(worktree), "HEAD")
+    (worktree / "worktree-only-marker").write_text("isolated\n", encoding="utf-8")
+    _write_earlier_integration_pass(root, command, created_at="2026-08-17")
+
+    with pytest.raises(SystemExit, match="acceptance-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
+    assert not (root / "worktree-only-marker").exists()
+
+
+def test_passing_mutating_integration_command_blocks_archive(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import workspace
+
+    command = "touch mutated-by-acceptance.txt"
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    _record_tree_fresh_integration_pass(root, command)
+
+    with pytest.raises(SystemExit, match="acceptance-blocked"):
+        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
 
 def test_contradictory_validated_plan_acceptance_blocks_archive(tmp_path: Path) -> None:
@@ -899,7 +1001,7 @@ def test_fresh_plan_acceptance_rerun_after_later_task_allows_archive(tmp_path: P
     from plans import cmd_archive_plan
     from test_orchestration_execution_context import WRITE_SCOPE_FILE, workspace
 
-    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    command = ARCHIVE_NEUTRAL_COMMAND
     root, _, _ = workspace(tmp_path)
     _append_plan_knowledge(root, closure_return="missing")
     _append_plan_integration_command(root, command)
@@ -976,7 +1078,7 @@ def test_same_day_out_of_id_order_fresh_rerun_allows_archive(tmp_path: Path) -> 
     from plans import cmd_archive_plan
     from test_orchestration_execution_context import WRITE_SCOPE_FILE, workspace
 
-    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    command = ARCHIVE_NEUTRAL_COMMAND
     root, _, _ = workspace(tmp_path)
     _append_plan_knowledge(root, closure_return="missing")
     _append_plan_integration_command(root, command)
@@ -1014,7 +1116,7 @@ def test_historical_failed_plan_acceptance_does_not_poison_fresh_head_pass(tmp_p
     from plans import cmd_archive_plan
     from test_orchestration_execution_context import WRITE_SCOPE_FILE, workspace
 
-    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    command = ARCHIVE_NEUTRAL_COMMAND
     root, _, _ = workspace(tmp_path)
     _append_plan_knowledge(root, closure_return="missing")
     _append_plan_integration_command(root, command)
@@ -1085,7 +1187,7 @@ def test_precommit_tree_pass_survives_same_tree_finalization_commit(tmp_path: Pa
     from plans import cmd_archive_plan
     from test_orchestration_execution_context import WRITE_SCOPE_FILE, git, workspace
 
-    command = "uv run --with pytest pytest -q tests/test_plan_acceptance.py"
+    command = ARCHIVE_NEUTRAL_COMMAND
     root, _, _ = workspace(tmp_path)
     _append_plan_knowledge(root, closure_return="missing")
     _append_plan_integration_command(root, command)
@@ -1247,18 +1349,9 @@ def test_overlapping_writes_are_not_parallelizable() -> None:
 
 
 def test_dev_create_task_plan_tests_omit_heavy_orchestration_requirements() -> None:
-    text = read("tests/test_dev_skill_contracts.py")
-    for token in [
-        "review-package",
-        "plan-acceptance",
-        "orchestration-tree",
-        "review package",
-        "plan-level acceptance",
-        "orchestration artifact tree",
-        "build-review-package",
-        "acceptance_review",
-    ]:
-        assert token not in text
-    assert "dev-create-task-plan" in text
-    assert ".work-bundle/runtime/dev-plans/" in text
+    skill = read("skills/dev-create-task-plan/SKILL.md")
+    assert "Do not import executor-result, `Completed`, review package, archive helper, or heavy Knowledge Base Update closure" in skill
+    tests = read("tests/test_dev_skill_contracts.py")
+    assert "dev-create-task-plan" in tests
+    assert ".work-bundle/runtime/dev-plans/" in tests
 

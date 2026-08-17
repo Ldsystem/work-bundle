@@ -15,16 +15,17 @@ Execution is a no-retrieval stage. Use the selected task, its compiled Truth Bas
 2. Before compilation, capability selection, delegation, or edits, resolve the workspace and every target repository from `.work-bundle/project.yaml`. Git-backed targets must match branch and accepted metadata baseline and be clean unless validated handoffs explain exact changes. Never mutate user work to pass preflight.
 3. Record CodeGraph applicability per target. When `.codegraph/` exists for indexed source work, sync after preflight and query it before broad inspection; recheck cleanliness and sync after changes. Otherwise record `no-index` and use bounded direct inspection. Do not initialize CodeGraph.
 4. Select or prepare the declared execution workspace and hydration profile. Record provenance. Cleanup may remove only a clean WorkBundle-owned workspace whose expected Git identity still matches, whose policy allows cleanup, and whose durable lifecycle state confirms integration or an explicit discarded/retired decision. Age alone is report-only; never delete user or harness workspaces.
-5. Compile the bounded task brief:
+5. After scheduler workspace selection or preparation and before material edits, create or load one harness-owned task execution binding that carries plan/task identity, `workspace_id`/`execution_id`/`repository_id`, and exact path/Git provenance. Keep it in runtime/execution-workspace state outside the mutation envelope. Compile and read task/spec artifacts from the control WorkBundle root. Execute process and Git evidence against the bound execution repository. Do not point orchestration `--project-root` at an isolated worktree to load gitignored `.work-bundle/orchestration/**`. Capture the pre-task baseline once from that bound repository via the helper; later brief rebuild or repair must not recapture or replace it. Executor handoff and other supported executor-facing interfaces cannot supply or replace that baseline. Same-user filesystem rewrite of helper runtime files is out of scope. Mutating siblings on the same execution path isolate via prepare_worktree or serialize even when write scopes are disjoint; a shared worktree must not host them. Do not add a path-ownership ledger.
+6. Compile the bounded task brief:
 
 ```bash
 python3 scripts/orch.py build-task-brief --task <task-path>
 ```
 
 Missing source IDs; decision authority other than `none-relevant` or an `AUTH-NNN` alias whose carried constraint was reconciled in the verified specification; `conflict_status: escalate`; inconsistent scope; or unsafe workspace state fails closed with the existing typed blocker. Truth Basis conflict uses `decision-blocked`. The compiled brief includes `AUTH-NNN: <carried constraint>`, not the alias alone.
-6. Choose the provider-neutral capability from the task profile. Partition only independent tasks with disjoint write scopes. Contract-decoupled participants validate against the common contract, accepted prior handoffs, and task-local files; they reach the named barrier before convergence work.
-7. When user/environment policy permits delegation, use visible multi-agent subagents for task ownership. Invisible helper workers may support bounded analysis only. If independent subagents are unavailable, use single-agent execution and mark later review `reviewer_independent: false`.
-8. Always validate the executor-result with the shared helper. Compile `build-review-package` and assign `dev-code-review` only when `acceptance_review.required: true` or compiled `review_required: true`. The scheduler does not perform code-quality review.
+7. Choose the provider-neutral capability from the task profile. Partition only independent tasks with disjoint write scopes. Contract-decoupled participants validate against the common contract, accepted prior handoffs, and task-local files; they reach the named barrier before convergence work.
+8. When user/environment policy permits delegation, use visible multi-agent subagents for task ownership. Invisible helper workers may support bounded analysis only. If independent subagents are unavailable, use single-agent execution and mark later review `reviewer_independent: false`.
+9. Always validate the executor-result with the shared helper. The helper observes required process/inspection items in the bound worktree as one Git-state-neutral batch, then authorizes from post-execution task-caused delta. Compile `build-review-package` and assign `dev-code-review` only when `acceptance_review.required: true` or compiled `review_required: true`. The scheduler does not perform code-quality review.
 
 ```bash
 python3 scripts/orch.py validate-executor-result --task <task-path> --handoff <handoff-path>
@@ -34,6 +35,7 @@ python3 scripts/orch.py validate-executor-result --task <task-path> --handoff <h
 
 - Follow the compiled brief and its exact read/write/forbidden scope.
 - Load or acknowledge allocated rules and methodology before the operation they govern.
+- Create or load the harness-owned task execution binding before material edits; capture the pre-task baseline once; run process commands and named inspections only in the bound execution repository.
 - Apply `systematic-debugging` before proposing a root-cause fix for unexpected behavior.
 - Apply TDD to testable new/changed behavior and diagnosed fixes; use direct deterministic verification for non-testable mechanical artifacts.
 - Run fresh claim-relevant validation after the final edit.
