@@ -41,6 +41,8 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 | Apply metadata migration | `migrate-project <root> [--name <name>] [--force] [--accepted-proposal-id <id>] --apply` |
 | Inspect portable-control migration | `migrate-control-plane <workspace-root> [--repository-remote <id>=<canonical-remote>] --dry-run` |
 | Apply portable-control migration | `migrate-control-plane <workspace-root> [--repository-remote <id>=<canonical-remote>] --accepted-proposal-id <id> --apply` |
+| Inspect registry-wide layout migration | `migrate-registered-projects --dry-run [--slug <slug>]` |
+| Apply registry-wide layout migration | `migrate-registered-projects --apply --accepted-plan-id <id> [--slug <slug>]` |
 | Attach portable workspace | `attach-workspace <workspace-root> [--materialize <none|missing|all>] [--repository-path <id>=<path>] (--dry-run|--apply)` |
 | Doctor portable workspace | `doctor-workspace <workspace-root> [--repair]` |
 | Provision member | `provision-member --workspace-root <workspace-root> [--workspace-slug <slug>] --origin <origin-root> --repository-id <id> --working-branch <branch> --base-ref <ref> [--dry-run|--apply]` |
@@ -58,6 +60,8 @@ Existing command names and `--project-root` remain supported for single-reposito
 **`init-project --force`:** may overwrite init-managed template files only: `.work-bundle/project.yaml`, `.work-bundle/rules/index.yaml`, `.work-bundle/knowledge/project.yaml`. For `AGENTS.md`, force refreshes only the WorkBundle managed section from `references/assets/template/AGENTS.md` and preserves user-authored content outside that section.
 
 **`migrate-project --force`:** narrower migration-only repair subset; overwrites `.work-bundle/project.yaml` only. For `AGENTS.md`, migration may convert legacy whole-file template content or stale managed sections to the current marker-bounded managed section without taking ownership of the whole file.
+
+`migrate-registered-projects --dry-run` inspects every bootstrap-resolved registry entry, reports layout version vs registry schema version, and lists the ordered version-to-version steps that would run. Apply requires that exact plan ID. Already-current entries are no-ops. Registry `layout_version` is written only after the target layout validates; a failed project restores recoverable pre-migration state and is not marked current.
 
 For metadata v2, `migrate-project --dry-run` classifies topology from project metadata plus the bootstrap-resolved registry and returns a proposal ID. In-place apply is allowed only for `single-compatible` evidence and requires that exact ID. Multiple repository locators route to `migrate-to-multi-repository`; registry/metadata identity conflicts and proposal drift fail closed. `--force` never overrides topology classification.
 

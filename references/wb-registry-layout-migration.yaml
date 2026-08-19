@@ -1,0 +1,29 @@
+id: wb-registry-layout-migration
+status: current
+registry_schema:
+  current: "1"
+  supported: ["1"]
+  implicit_when_missing: "1"
+layout:
+  current: "4"
+  supported: ["2", "3", "4"]
+  steps:
+    - id: layout-v2-to-v3
+      from: "2"
+      to: "3"
+      owner: migrate-project
+    - id: layout-v3-to-v4
+      from: "3"
+      to: "4"
+      owner: migrate-control-plane
+classification:
+  - current
+  - migratable
+  - unsupported
+  - missing
+  - blocked
+publication:
+  registry_layout_version_field: layout_version
+  update_registry_after_target_validation: true
+  preserve_unknown_fields: true
+  restore_pre_migration_state_on_failure: true

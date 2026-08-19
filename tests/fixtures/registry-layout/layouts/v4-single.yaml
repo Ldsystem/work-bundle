@@ -1,0 +1,33 @@
+metadata_version: 4
+authority: canonical
+workspace:
+  id: __WORKSPACE_ID__
+  slug: __SLUG__
+  mode: single-repository
+control_plane:
+  schema_version: 1
+  repository:
+    remote: ""
+  sync_policy:
+    mode: manual
+source_repositories:
+  - id: __REPO_ID__
+    role: source
+    remote:
+      canonical: __REMOTE__
+      aliases: []
+    default_branch: main
+    workspace_binding:
+      type: root
+    materialization:
+      required: true
+    operation_policy: inherit
+prefer_subagent: false
+custom_portable:
+  retained: yes
+historical_layout: v4
+agents_sync:
+  managed_section: work-bundle-rule
+  template_path: references/assets/template/AGENTS.md
+  template_checksum_sha256: ""
+  status: current

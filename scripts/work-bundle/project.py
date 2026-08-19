@@ -1438,6 +1438,8 @@ def _render_projects(projects: list[dict[str, object]]) -> str:
                 lines.append(f"      - {alias}")
         else:
             lines.append("    aliases: []")
+        if project.get("layout_version"):
+            lines.append(f"    layout_version: {project.get('layout_version')}")
         sources = project.get("source_repositories") if isinstance(project.get("source_repositories"), list) else []
         lines.append("    source_repositories:")
         for index, source in enumerate(sources or [{"path": project.get("project_root", ""), "work_dir": True, "remote": ""}]):
@@ -1596,6 +1598,8 @@ def _merge_registry_entry(
         )
     else:
         merged["source_repositories"] = source_repositories
+    if existing.get("layout_version"):
+        merged["layout_version"] = existing.get("layout_version")
     changed = not _registry_entries_equivalent(existing, merged)
     if changed:
         merged["updated_at"] = utc_now_rfc3339()[:10]
@@ -2397,6 +2401,69 @@ def cmd_set_prefer_subagent(args: list[str]) -> int:
         "changed_files": [str(target_path)] if changed else [],
     })
     return 0
+
+
+def apply_layout_v2_to_v3(
+    project_root: Path,
+    name: str | None = None,
+    force: bool = False,
+    registry_entry_data: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Upgrade in-place metadata v2 to v3 without publishing registry current-state."""
+    project_root = project_root.expanduser().resolve()
+    metadata_path = project_root / '.work-bundle/project.yaml'
+    current_text = read(metadata_path)
+    if _yaml_scalar(current_text, 'metadata_version') == PROJECT_METADATA_VERSION:
+        return {
+            'status': 'passed',
+            'from_version': PROJECT_METADATA_VERSION,
+            'to_version': PROJECT_METADATA_VERSION,
+            'changed_files': [],
+            'failures': [],
+        }
+    entry = registry_entry_data
+    if entry is None:
+        entry, _ = find_registry_entry(project_root)
+    topology = assess_legacy_topology(project_root, current_text, entry)
+    if topology['classification'] != 'single-compatible':
+        failure_code = str(topology.get('failure_code') or 'WB_MIGRATION_TOPOLOGY_CONFLICT')
+        return {
+            'status': 'failed',
+            'from_version': _yaml_scalar(current_text, 'metadata_version'),
+            'to_version': PROJECT_METADATA_VERSION,
+            'changed_files': [],
+            'failures': [failure_code],
+            'failure_code': failure_code,
+            'topology_assessment': topology,
+        }
+    changed, _agents_result = apply_project(
+        project_root,
+        init_git=False,
+        name=name,
+        force=force,
+        scope='migrate',
+        registry_entry_data=entry,
+        return_details=True,
+    )
+    if migrate_project_metadata_v2(project_root, name, entry):
+        changed.append(str(metadata_path))
+    contract_changed, _, _ = _retire_legacy_rules_contract(project_root)
+    changed.extend(contract_changed)
+    bootstrap_changed, _, _ = _cleanup_retired_bootstrap(project_root)
+    changed.extend(bootstrap_changed)
+    after = inspect_project(project_root)
+    failures = project_failures(after, strict=False, include_roles=False)
+    version = _yaml_scalar(read(metadata_path), 'metadata_version')
+    if version != PROJECT_METADATA_VERSION:
+        failures = failures or ['WB_REGISTRY_LAYOUT_VERSION_MISMATCH:' + version]
+    return {
+        'status': 'passed' if not failures else 'failed',
+        'from_version': '2',
+        'to_version': PROJECT_METADATA_VERSION,
+        'changed_files': sorted(set(changed)),
+        'failures': failures,
+        'failure_code': failures[0] if failures else '',
+    }
 
 
 def cmd_migrate_project(args: list[str]) -> int:

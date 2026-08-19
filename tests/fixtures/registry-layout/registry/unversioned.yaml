@@ -1,0 +1,21 @@
+source_repository_roles:
+  registry: "Locator authority in all versions."
+  project_metadata: "Working-state or portable topology depending on layout version."
+custom_registry_field: keep-registry
+projects:
+  - slug: __SLUG__
+    name: __NAME__
+    work_bundle_root: __WORKSPACE_ROOT__/.work-bundle
+    knowledge_root: __WORKSPACE_ROOT__/.work-bundle/knowledge
+    aliases: []
+    custom_entry_field: keep-entry
+    source_repositories:
+      - id: __REPO_ID__
+        path: __WORKSPACE_ROOT__
+        checkout_role: truth
+        work_dir: true
+        remote: "__REMOTE__"
+        git_repository: true
+    status: active
+    updated_at: 2026-08-13
+device_bindings: {}
