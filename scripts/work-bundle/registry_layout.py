@@ -281,15 +281,8 @@ def set_entry_layout_version(text: str, slug: str, version: str) -> str:
 
 
 def ensure_registry_schema_version(text: str, version: str) -> str:
-    lines = text.splitlines()
-    for index, line in enumerate(lines):
-        if line.startswith('registry_schema_version:'):
-            lines[index] = f'registry_schema_version: {version}'
-            return '\n'.join(lines).rstrip() + '\n'
-    insert = [f'registry_schema_version: {version}']
-    if lines and lines[0].strip():
-        return '\n'.join(insert + lines).rstrip() + '\n'
-    return '\n'.join(insert + lines).rstrip() + '\n'
+    from project import _ensure_registry_schema_version
+    return _ensure_registry_schema_version(text, version)
 
 
 def classify_registered_project(
@@ -314,6 +307,7 @@ def classify_registered_project(
         'blockers': [],
         'failure_code': '',
         'metadata_digest': '',
+        'registry_layout_status': '',
     }
     if workspace_root is None:
         result['failure_code'] = 'WB_REGISTRY_LAYOUT_MISSING_WORKSPACE'
@@ -357,9 +351,14 @@ def classify_registered_project(
         result['failure_code'] = str(blockers[0]['code'])
         return result
     if not steps:
+        declared_ok = declared_layout == catalog.layout_current
         result['classification'] = 'current'
+        result['registry_layout_status'] = (
+            'current' if declared_ok else ('missing' if not declared_layout else 'stale')
+        )
         return result
     result['classification'] = 'migratable'
+    result['registry_layout_status'] = 'pending'
     return result
 
 
@@ -455,6 +454,7 @@ def _plan_id(plan: dict[str, object]) -> str:
             'classification': project.get('classification'),
             'layout_version': project.get('layout_version'),
             'declared_layout_version': project.get('declared_layout_version'),
+            'registry_layout_status': project.get('registry_layout_status'),
             'metadata_digest': project.get('metadata_digest'),
             'steps': project.get('steps'),
             'failure_code': project.get('failure_code'),
@@ -531,6 +531,66 @@ def _diagnostic(
     return payload
 
 
+def _publish_layout_version(
+    slug: str,
+    version: str,
+    catalog: MigrationCatalog,
+) -> tuple[bool, str]:
+    registry_path = resolve_project_registry_path()
+    registry_text = set_entry_layout_version(read(registry_path), slug, version)
+    registry_text = ensure_registry_schema_version(registry_text, catalog.registry_schema_current)
+    changed = write(registry_path, registry_text)
+    return changed, str(registry_path)
+
+
+def _reconcile_current_layout_version(
+    entry: dict[str, object],
+    inspection: dict[str, object],
+    catalog: MigrationCatalog,
+    *,
+    validate: Callable[[Path, str], list[str]],
+) -> dict[str, object]:
+    slug = str(inspection.get('slug') or entry.get('slug') or '')
+    source_version = str(inspection.get('layout_version') or '')
+    target_version = catalog.layout_current
+    workspace_root = Path(str(inspection.get('workspace_root') or ''))
+    declared = str(inspection.get('declared_layout_version') or '')
+    base = {
+        'slug': slug,
+        'classification': 'current',
+        'from_version': source_version,
+        'to_version': target_version,
+        'steps': [],
+        'changed_files': [],
+        'registry_published': False,
+        'registry_layout_status': inspection.get('registry_layout_status') or 'current',
+    }
+    if declared == target_version:
+        return {**base, 'status': 'noop'}
+    failures = validate(workspace_root, target_version)
+    if failures:
+        return {
+            **base,
+            'status': 'failed',
+            'diagnostic': _diagnostic(
+                slug=slug,
+                from_version=source_version,
+                to_version=target_version,
+                failed_step='registry-layout-reconcile',
+                code='WB_REGISTRY_LAYOUT_VALIDATION_FAILED',
+                details={'failures': failures},
+            ),
+        }
+    changed, registry_path = _publish_layout_version(slug, target_version, catalog)
+    return {
+        **base,
+        'status': 'reconciled' if changed else 'noop',
+        'changed_files': [registry_path] if changed else [],
+        'registry_published': changed,
+        'registry_layout_status': 'current',
+    }
+
+
 def apply_registered_project(
     entry: dict[str, object],
     inspection: dict[str, object],
@@ -545,16 +605,9 @@ def apply_registered_project(
     workspace_root = Path(str(inspection.get('workspace_root') or ''))
     classification = str(inspection.get('classification') or '')
     if classification == 'current':
-        return {
-            'slug': slug,
-            'status': 'noop',
-            'classification': 'current',
-            'from_version': source_version,
-            'to_version': target_version,
-            'steps': [],
-            'changed_files': [],
-            'registry_published': False,
-        }
+        return _reconcile_current_layout_version(
+            entry, inspection, catalog, validate=validate,
+        )
     if classification != 'migratable':
         return {
             'slug': slug,

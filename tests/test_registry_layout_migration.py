@@ -9,7 +9,16 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests/fixtures/registry-layout"
-sys.path.insert(0, str(REPO_ROOT / "scripts/work-bundle"))
+_WB_SCRIPTS = str(REPO_ROOT / "scripts/work-bundle")
+if _WB_SCRIPTS in sys.path:
+    sys.path.remove(_WB_SCRIPTS)
+sys.path.insert(0, _WB_SCRIPTS)
+_core = sys.modules.get("core")
+if _core is not None and "orchestration" in str(getattr(_core, "__file__", "")):
+    del sys.modules["core"]
+    for name in list(sys.modules):
+        if name in {"registry_layout", "project", "control_plane"} or name.startswith("registry_layout."):
+            del sys.modules[name]
 
 from registry_layout import (  # noqa: E402
     apply_layout_step,
@@ -193,6 +202,7 @@ def test_already_current_registry_entry_is_noop(tmp_path: Path) -> None:
     assert first.returncode == second.returncode == 0, first.stdout + first.stderr
     data = payload(first)
     assert data["projects"][0]["classification"] == "current"
+    assert data["projects"][0]["registry_layout_status"] == "current"
     assert data["projects"][0]["steps"] == []
     assert data["plan_id"] == payload(second)["plan_id"]
 
@@ -210,6 +220,106 @@ def test_already_current_registry_entry_is_noop(tmp_path: Path) -> None:
     assert result["changed_files"] == []
     assert registry.read_bytes() == before_registry
     assert (workspace / ".work-bundle/project.yaml").read_bytes() == before_metadata
+
+
+def test_populated_device_bindings_do_not_reassign_project_roots(tmp_path: Path) -> None:
+    config = bootstrap_config(tmp_path)
+    alpha, alpha_remote, _, alpha_repo = prepare_workspace(tmp_path, "alpha", "v3-single.yaml")
+    beta, beta_remote, _, beta_repo = prepare_workspace(tmp_path, "beta", "v4-single.yaml")
+    registry = config / "registry/projects.yaml"
+    registry.write_text(
+        render_fixture(
+            FIXTURES / "registry/mixed-device-bindings.yaml",
+            SLUG_A="alpha",
+            ROOT_A=str(alpha),
+            REPO_A=alpha_repo,
+            REMOTE_A=str(alpha_remote),
+            SLUG_B="beta",
+            ROOT_B=str(beta),
+            REPO_B=beta_repo,
+            REMOTE_B=str(beta_remote),
+        ),
+        encoding="utf-8",
+    )
+    before = registry.read_text(encoding="utf-8")
+    assert before.index("wb-beta:") < before.index("wb-unrelated:") < before.index("wb-alpha:")
+
+    proposed = run_wb(config, "migrate-registered-projects", "--dry-run")
+    assert proposed.returncode == 0, proposed.stdout + proposed.stderr
+    data = payload(proposed)
+    assert [item["slug"] for item in data["projects"]] == ["alpha", "beta"]
+    by_slug = {item["slug"]: item for item in data["projects"]}
+    assert by_slug["alpha"]["workspace_root"] == str(alpha.resolve())
+    assert by_slug["beta"]["workspace_root"] == str(beta.resolve())
+    assert by_slug["alpha"]["classification"] == "migratable"
+    assert by_slug["beta"]["classification"] == "current"
+    assert registry.read_text(encoding="utf-8") == before
+
+    applied = run_wb(
+        config, "migrate-registered-projects", "--apply", "--accepted-plan-id", str(data["plan_id"])
+    )
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    results = {item["slug"]: item for item in payload(applied)["results"]}
+    assert results["alpha"]["status"] == "passed"
+    assert results["beta"]["status"] in {"noop", "reconciled"}
+    after = registry.read_text(encoding="utf-8")
+    assert "custom_registry_field: keep-registry" in after
+    assert "custom_entry_field: keep-entry-a" in after
+    assert "custom_entry_field: keep-entry-b" in after
+    assert after.index("projects:") < after.index("device_bindings:")
+    unrelated_start = after.index("wb-unrelated:")
+    next_binding = after.find("\n  wb-", unrelated_start + 1)
+    unrelated_block = after[unrelated_start: next_binding if next_binding != -1 else None]
+    assert "slug: unrelated-device" in unrelated_block
+    assert "workspace_root: /tmp/unrelated-device" in unrelated_block
+    assert "custom_binding_field: keep-unrelated" in unrelated_block
+    assert "metadata_version: 4" in (alpha / ".work-bundle/project.yaml").read_text(encoding="utf-8")
+
+
+def test_v4_missing_and_stale_layout_version_are_reconciled(tmp_path: Path) -> None:
+    config = bootstrap_config(tmp_path)
+    missing, missing_remote, _, missing_repo = prepare_workspace(tmp_path, "missing-layout", "v4-single.yaml")
+    stale, stale_remote, _, stale_repo = prepare_workspace(tmp_path, "stale-layout", "v4-single.yaml")
+    registry = write_registry(
+        config,
+        [
+            project_block("missing-layout", missing, missing_repo, str(missing_remote)),
+            project_block(
+                "stale-layout",
+                stale,
+                stale_repo,
+                str(stale_remote),
+                extra="    layout_version: 3",
+            ),
+        ],
+        schema="1",
+    )
+    before = registry.read_text(encoding="utf-8")
+    assert "layout_version: 4" not in before
+
+    proposed = run_wb(config, "migrate-registered-projects", "--dry-run")
+    assert proposed.returncode == 0, proposed.stdout + proposed.stderr
+    data = payload(proposed)
+    by_slug = {item["slug"]: item for item in data["projects"]}
+    assert by_slug["missing-layout"]["classification"] == "current"
+    assert by_slug["missing-layout"]["registry_layout_status"] == "missing"
+    assert by_slug["stale-layout"]["classification"] == "current"
+    assert by_slug["stale-layout"]["registry_layout_status"] == "stale"
+
+    applied = run_wb(
+        config, "migrate-registered-projects", "--apply", "--accepted-plan-id", str(data["plan_id"])
+    )
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    results = {item["slug"]: item for item in payload(applied)["results"]}
+    assert results["missing-layout"]["status"] == "reconciled"
+    assert results["stale-layout"]["status"] == "reconciled"
+    after = registry.read_text(encoding="utf-8")
+    assert after.count("layout_version: 4") == 2
+    assert "layout_version: 3" not in after
+    assert "custom_registry_field: keep-registry" in after
+    assert "custom_entry_field: keep-entry" in after
+    assert (missing / ".work-bundle/project.yaml").read_text(encoding="utf-8").count("metadata_version: 4")
+    assert (stale / ".work-bundle/project.yaml").read_text(encoding="utf-8").count("metadata_version: 4")
 
 
 def test_one_version_upgrade_v3_to_v4(tmp_path: Path) -> None:
@@ -360,14 +470,14 @@ def test_blocked_multi_repository_v2(tmp_path: Path) -> None:
     assert project["failure_code"] == "WB_MIGRATION_MULTI_REPOSITORY_WORKFLOW_REQUIRED"
 
 
-def test_validation_failure_after_transformation_restores_state(tmp_path: Path) -> None:
+def test_validation_failure_after_transformation_restores_state(tmp_path: Path, monkeypatch) -> None:
     config = bootstrap_config(tmp_path)
     workspace, remote, _, repo_id = prepare_workspace(tmp_path, "validate-fail", "v3-single.yaml")
     registry = write_registry(config, [project_block("validate-fail", workspace, repo_id, str(remote))])
     before_registry = registry.read_bytes()
     before_metadata = (workspace / ".work-bundle/project.yaml").read_bytes()
-    os.environ["WB_CONFIG_ROOT"] = str(config)
-    os.environ["WB_WORK_BUNDLE_ROOT"] = str(REPO_ROOT)
+    monkeypatch.setenv("WB_CONFIG_ROOT", str(config))
+    monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
 
     def failing_validate(root: Path, version: str) -> list[str]:
         if version == "4":
@@ -392,14 +502,14 @@ def test_validation_failure_after_transformation_restores_state(tmp_path: Path) 
     assert "layout_version: 4" not in registry.read_text(encoding="utf-8")
 
 
-def test_intermediate_step_failure_restores_pre_migration_state(tmp_path: Path) -> None:
+def test_intermediate_step_failure_restores_pre_migration_state(tmp_path: Path, monkeypatch) -> None:
     config = bootstrap_config(tmp_path)
     workspace, remote, _, repo_id = prepare_workspace(tmp_path, "mid-fail", "v2-project.yaml")
     registry = write_registry(config, [project_block("mid-fail", workspace, repo_id, str(remote))])
     before_registry = registry.read_bytes()
     before_metadata = (workspace / ".work-bundle/project.yaml").read_bytes()
-    os.environ["WB_CONFIG_ROOT"] = str(config)
-    os.environ["WB_WORK_BUNDLE_ROOT"] = str(REPO_ROOT)
+    monkeypatch.setenv("WB_CONFIG_ROOT", str(config))
+    monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
 
     def fail_v4(step, root, entry):
         if step.step_id == "layout-v3-to-v4":

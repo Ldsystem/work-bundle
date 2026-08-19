@@ -80,6 +80,7 @@ def make_remote(tmp_path: Path, name: str) -> tuple[Path, Path, str]:
     git(checkout, "commit", "-q", "-m", "init")
     git(checkout, "remote", "add", "origin", str(remote))
     git(checkout, "push", "-q", "-u", "origin", "main")
+    subprocess.run(["git", "-C", str(remote), "symbolic-ref", "HEAD", "refs/heads/main"], check=True)
     return remote, checkout, git(checkout, "rev-parse", "HEAD")
 
 

@@ -757,6 +757,99 @@ def test_registry_parser_tracks_projects_template_schema(tmp_path: Path) -> None
         _cleanup_wb_project_modules()
 
 
+def test_project_blocks_do_not_absorb_device_bindings(tmp_path: Path) -> None:
+    wb_project = _import_wb_project()
+    try:
+        rendered = (
+            (REPO_ROOT / "tests/fixtures/registry-layout/registry/mixed-device-bindings.yaml")
+            .read_text(encoding="utf-8")
+            .replace("__SLUG_A__", "alpha")
+            .replace("__ROOT_A__", "/tmp/alpha")
+            .replace("__REPO_A__", "alpha-main")
+            .replace("__REMOTE_A__", "/tmp/alpha.git")
+            .replace("__SLUG_B__", "beta")
+            .replace("__ROOT_B__", "/tmp/beta")
+            .replace("__REPO_B__", "beta-main")
+            .replace("__REMOTE_B__", "/tmp/beta.git")
+        )
+        registry_file = tmp_path / "projects.yaml"
+        registry_file.write_text(rendered, encoding="utf-8")
+        parsed = wb_project._project_blocks(registry_file)
+        assert [entry["slug"] for entry in parsed] == ["alpha", "beta"]
+        assert parsed[0]["work_bundle_root"] == "/tmp/alpha/.work-bundle"
+        assert parsed[1]["work_bundle_root"] == "/tmp/beta/.work-bundle"
+        assert parsed[1]["slug"] == "beta"
+        assert parsed[0]["custom_entry_field"] == "keep-entry-a"
+        line_parsed = wb_project._project_blocks_line_scoped(rendered)
+        assert [entry["slug"] for entry in line_parsed] == ["alpha", "beta"]
+        assert line_parsed[1]["slug"] == "beta"
+        assert line_parsed[1]["work_bundle_root"] == "/tmp/beta/.work-bundle"
+        assert "workspace_root" not in line_parsed[1]
+    finally:
+        _cleanup_wb_project_modules()
+
+
+def test_registry_upsert_preserves_schema_bindings_and_unknown_top_level(tmp_path: Path, monkeypatch) -> None:
+    config_root = bootstrap_config(tmp_path)
+    monkeypatch.setenv("WB_CONFIG_ROOT", str(config_root))
+    project = tmp_path / "project"
+    project.mkdir()
+    resolved = project.resolve()
+    registry_path = config_root / "registry" / "projects.yaml"
+    registry_path.write_text(
+        "\n".join(
+            [
+                "registry_schema_version: 1",
+                "source_repository_roles:",
+                '  registry: "Locator authority in all versions."',
+                '  project_metadata: "Working-state authority."',
+                "custom_registry_field: keep-registry",
+                "projects:",
+                "  - slug: demo",
+                "    name: demo",
+                f"    work_bundle_root: {resolved / '.work-bundle'}",
+                f"    knowledge_root: {resolved / '.work-bundle' / 'knowledge'}",
+                "    aliases: []",
+                "    custom_entry_field: keep-entry",
+                "    source_repositories:",
+                "      - id: demo-main",
+                f"        path: {resolved}",
+                "        checkout_role: truth",
+                "        work_dir: true",
+                '        remote: ""',
+                "        git_repository: true",
+                "    status: active",
+                "    updated_at: 2026-01-01",
+                "device_bindings:",
+                "  wb-unrelated:",
+                "    slug: unrelated-device",
+                "    workspace_root: /tmp/unrelated-device",
+                "    custom_binding_field: keep-unrelated",
+                "    repositories: {}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    wb_project = _import_wb_project()
+    try:
+        entry, changed, _ = wb_project.upsert_project_registry(resolved, "demo", ["demo"])
+        assert changed is True
+        assert entry["aliases"] == ["demo"]
+        text = registry_path.read_text(encoding="utf-8")
+        assert text.startswith("registry_schema_version: 1\n")
+        assert 'registry: "Locator authority in all versions."' in text
+        assert 'project_metadata: "Working-state authority."' in text
+        assert "custom_registry_field: keep-registry" in text
+        assert "custom_entry_field:" in text
+        assert "keep-entry" in text
+        assert "wb-unrelated:" in text
+        assert "custom_binding_field: keep-unrelated" in text
+        assert "workspace_root: /tmp/unrelated-device" in text
+    finally:
+        _cleanup_wb_project_modules()
+
+
 def test_init_fails_mechanically_when_required_template_missing(tmp_path: Path) -> None:
     work_bundle_root = _minimal_work_bundle_root(tmp_path, include_project_template=False)
     config_root = bootstrap_config(tmp_path, work_bundle_root=work_bundle_root)

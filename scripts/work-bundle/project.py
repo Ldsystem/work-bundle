@@ -8,7 +8,13 @@ from core import *
 
 from bootstrap_config import default_toolkit_root
 from workspace import WorkspaceContext, WorkspaceTransaction
-from workspace_resources import ensure_workspace_resources, validate_script_index
+from workspace_resources import ensure_workspace_resources, validate_script_index, _load_yaml
+try:
+    import yaml as _yaml_module
+except ImportError:
+    _yaml_module = None
+
+
 def migrate_project_metadata_v3(source_root: Path, target_root: Path, repository_id: str, branch: str, base_ref: str = 'HEAD', apply: bool = False, **options: object) -> dict[str, object]:
     from migration import apply_migration, propose_migration
     if not apply:
@@ -52,6 +58,10 @@ PROJECT_METADATA_V2_REQUIRED_FIELDS = [
     'operation_policy', 'source_repositories', 'migration',
 ]
 PROJECT_METADATA_VERSION = '3'
+REGISTRY_SCHEMA_VERSION = '1'
+_PROJECT_BLOCK_LOAD_ERRORS: tuple[type[BaseException], ...] = (ValueError, TypeError)
+if _yaml_module is not None:
+    _PROJECT_BLOCK_LOAD_ERRORS = _PROJECT_BLOCK_LOAD_ERRORS + (_yaml_module.YAMLError,)
 SOURCE_REPOSITORY_ROLES = {
     'registry': 'Locator only: workspace slug/root and stable repository origin identity and locators.',
     'project_metadata': 'Working-state authority: member path, branch/HEAD observation, lifecycle transaction, operation policy, and CodeGraph state.',
@@ -472,6 +482,8 @@ def _yaml_block_bounds(lines: list[str], key: str) -> tuple[int, int] | None:
         if line and not line.startswith(' ') and not line.startswith('\t'):
             end = index
             break
+    while end > start + 1 and not str(lines[end - 1]).strip():
+        end -= 1
     return start, end
 
 
@@ -1357,16 +1369,74 @@ def set_prefer_subagent(project_root: Path, scope: str, enabled: bool) -> tuple[
     return path, _set_yaml_scalar(path, 'prefer_subagent', value)
 
 
-def _project_blocks(path: Path) -> list[dict[str, object]]:
-    text = read(path)
+def _ensure_registry_schema_version(text: str, version: str = REGISTRY_SCHEMA_VERSION) -> str:
+    rendered = text if text.endswith('\n') else text + '\n'
+    for line in rendered.splitlines():
+        if line.startswith('registry_schema_version:'):
+            return rendered
+    insert = [f'registry_schema_version: {version}']
+    lines = rendered.splitlines()
+    if lines and lines[0].strip():
+        return '\n'.join(insert + lines).rstrip() + '\n'
+    return '\n'.join(insert + lines).rstrip() + '\n'
+
+
+def _ensure_source_repository_roles(text: str) -> str:
+    rendered = text if text.endswith('\n') else text + '\n'
+    lines = rendered.splitlines()
+    if _yaml_block_bounds(lines, 'source_repository_roles'):
+        return rendered
+    block_lines = _source_repository_roles_block().splitlines()
+    projects = _yaml_block_bounds(lines, 'projects')
+    insert_at = projects[0] if projects else len(lines)
+    if insert_at < len(lines) and block_lines and block_lines[-1] != '':
+        block_lines.append('')
+    return '\n'.join(lines[:insert_at] + block_lines + lines[insert_at:]).rstrip() + '\n'
+
+
+def _ensure_device_bindings(text: str) -> str:
+    rendered = text if text.endswith('\n') else text + '\n'
+    lines = rendered.splitlines()
+    if _yaml_block_bounds(lines, 'device_bindings'):
+        return rendered
+    if lines and lines[-1] != '':
+        lines.append('')
+    lines.append('device_bindings: {}')
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def _normalize_loaded_registry_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {str(key): _normalize_loaded_registry_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_loaded_registry_value(item) for item in value]
+    if isinstance(value, bool) or value is None:
+        return value
+    isoformat = getattr(value, 'isoformat', None)
+    if callable(isoformat) and not isinstance(value, (str, bytes)):
+        return isoformat()
+    return value
+
+
+def _project_blocks_line_scoped(text: str) -> list[dict[str, object]]:
     projects: list[dict[str, object]] = []
     current: dict[str, object] | None = None
     current_list: str | None = None
     current_repo: dict[str, object] | None = None
+    in_projects = False
     for raw in text.splitlines():
         line = raw.rstrip()
         stripped = line.strip()
-        if not stripped or stripped == "projects:":
+        if not stripped or stripped.startswith('#'):
+            continue
+        if stripped.startswith('projects:'):
+            in_projects = True
+            continue
+        if line and not line.startswith((' ', '\t')):
+            if in_projects:
+                break
+            continue
+        if not in_projects:
             continue
         if line.startswith("  - "):
             if current is not None:
@@ -1419,13 +1489,96 @@ def _project_blocks(path: Path) -> list[dict[str, object]]:
     return projects
 
 
-def _render_projects(projects: list[dict[str, object]]) -> str:
-    lines = [
-        'source_repository_roles:',
-        f"  registry: {_yaml_string(SOURCE_REPOSITORY_ROLES['registry'])}",
-        f"  project_metadata: {_yaml_string(SOURCE_REPOSITORY_ROLES['project_metadata'])}",
-        'projects:',
-    ]
+def _project_blocks_from_document(document: object) -> list[dict[str, object]] | None:
+    if not isinstance(document, dict):
+        return None
+    projects = document.get('projects')
+    if projects is None:
+        return []
+    if not isinstance(projects, list):
+        return None
+    result: list[dict[str, object]] = []
+    for item in projects:
+        if isinstance(item, dict):
+            loaded = _normalize_loaded_registry_value(item)
+            if isinstance(loaded, dict):
+                result.append(loaded)
+    return result
+
+
+def _project_blocks(path: Path) -> list[dict[str, object]]:
+    text = read(path)
+    if not text.strip():
+        return []
+    try:
+        loaded = _project_blocks_from_document(_load_yaml(text))
+    except _PROJECT_BLOCK_LOAD_ERRORS:
+        loaded = None
+    if loaded is not None:
+        return loaded
+    lines = text.splitlines()
+    bounds = _yaml_block_bounds(lines, 'projects')
+    scoped = '\n'.join(lines[bounds[0]:bounds[1]]) + '\n' if bounds else text
+    return _project_blocks_line_scoped(scoped)
+
+
+def _render_registry_scalar(value: object) -> str:
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if value is None:
+        return 'null'
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return _yaml_string(value)
+
+
+def _render_registry_value(lines: list[str], indent: int, key: str, value: object) -> None:
+    prefix = ' ' * indent
+    if isinstance(value, dict):
+        if not value:
+            lines.append(f'{prefix}{key}: {{}}')
+            return
+        lines.append(f'{prefix}{key}:')
+        for nested_key, nested_value in value.items():
+            _render_registry_value(lines, indent + 2, str(nested_key), nested_value)
+        return
+    if isinstance(value, list):
+        if not value:
+            lines.append(f'{prefix}{key}: []')
+            return
+        lines.append(f'{prefix}{key}:')
+        for item in value:
+            if isinstance(item, dict):
+                entries = list(item.items())
+                if not entries:
+                    lines.append(f'{prefix}  - {{}}')
+                    continue
+                first_key, first_value = entries[0]
+                if isinstance(first_value, (dict, list)):
+                    lines.append(f'{prefix}  -')
+                    for nested_key, nested_value in entries:
+                        _render_registry_value(lines, indent + 4, str(nested_key), nested_value)
+                    continue
+                lines.append(f'{prefix}  - {first_key}: {_render_registry_scalar(first_value)}')
+                for nested_key, nested_value in entries[1:]:
+                    _render_registry_value(lines, indent + 4, str(nested_key), nested_value)
+            elif isinstance(item, list):
+                lines.append(f'{prefix}  - []')
+            else:
+                lines.append(f'{prefix}  - {_render_registry_scalar(item)}')
+        return
+    lines.append(f'{prefix}{key}: {_render_registry_scalar(value)}')
+
+
+def _render_projects_collection(projects: list[dict[str, object]]) -> str:
+    known = {
+        'slug', 'name', 'work_bundle_root', 'knowledge_root', 'aliases',
+        'layout_version', 'source_repositories', 'status', 'updated_at',
+    }
+    lines = ['projects:']
+    if not projects:
+        lines[0] = 'projects: []'
+        return '\n'.join(lines)
     for project in sorted(projects, key=lambda item: str(item.get("slug", ""))):
         lines.append(f"  - slug: {project.get('slug', '')}")
         lines.append(f"    name: {project.get('name', project.get('slug', ''))}")
@@ -1438,8 +1591,14 @@ def _render_projects(projects: list[dict[str, object]]) -> str:
                 lines.append(f"      - {alias}")
         else:
             lines.append("    aliases: []")
-        if project.get("layout_version"):
+        if project.get("layout_version") not in {None, ''}:
             lines.append(f"    layout_version: {project.get('layout_version')}")
+        extras = [
+            key for key in project
+            if key not in known
+        ]
+        for key in extras:
+            _render_registry_value(lines, 4, str(key), project.get(key))
         sources = project.get("source_repositories") if isinstance(project.get("source_repositories"), list) else []
         lines.append("    source_repositories:")
         for index, source in enumerate(sources or [{"path": project.get("project_root", ""), "work_dir": True, "remote": ""}]):
@@ -1455,7 +1614,18 @@ def _render_projects(projects: list[dict[str, object]]) -> str:
             lines.append(f"        git_repository: {str(bool(source.get('git_repository', False))).lower()}")
         lines.append(f"    status: {project.get('status', 'active')}")
         lines.append(f"    updated_at: {project.get('updated_at', utc_now_rfc3339()[:10])}")
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines)
+
+
+def _render_projects(projects: list[dict[str, object]], original: str | None = None) -> str:
+    collection = _render_projects_collection(projects)
+    if original is None:
+        return _source_repository_roles_block() + '\n' + collection + '\n'
+    lines = original.splitlines()
+    lines, _ = _replace_top_level_block(lines, collection, 'projects')
+    rendered = _ensure_registry_schema_version('\n'.join(lines).rstrip() + '\n')
+    rendered = _ensure_source_repository_roles(rendered)
+    return _ensure_device_bindings(rendered)
 
 
 def _project_registry_template_text() -> str:
@@ -1598,8 +1768,11 @@ def _merge_registry_entry(
         )
     else:
         merged["source_repositories"] = source_repositories
-    if existing.get("layout_version"):
+    if existing.get("layout_version") not in {None, ''}:
         merged["layout_version"] = existing.get("layout_version")
+    for key, value in existing.items():
+        if key not in merged:
+            merged[key] = value
     changed = not _registry_entries_equivalent(existing, merged)
     if changed:
         merged["updated_at"] = utc_now_rfc3339()[:10]
@@ -1674,7 +1847,7 @@ def upsert_project_registry(
         next_projects.append(incoming)
         entry = incoming
         changed = True
-    rendered = _render_projects(next_projects)
+    rendered = _render_projects(next_projects, read(path))
     if read(path) != rendered:
         write(path, rendered)
         changed = True
@@ -1865,7 +2038,7 @@ def remove_project_registry(project: str) -> tuple[bool, Path]:
             continue
         kept.append(entry)
     if removed:
-        write(path, _render_projects(kept))
+        write(path, _render_projects(kept, read(path)))
     return removed, path
 
 
