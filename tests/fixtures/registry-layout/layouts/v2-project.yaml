@@ -1,0 +1,6 @@
+metadata_version: 2
+authority: canonical
+project_root: __WORKSPACE_ROOT__
+custom_user_field: keep-me
+historical_layout: v2
+user_note: preserve-across-layout-migration

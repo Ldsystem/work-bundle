@@ -30,6 +30,7 @@ from control_plane import (
     cmd_migrate_control_plane,
     cmd_publish_control_plane,
 )
+from registry_layout import cmd_migrate_registered_projects
 
 
 def main() -> int:
@@ -69,6 +70,8 @@ def main() -> int:
         return cmd_migrate_project(parsed.args)
     if command == 'migrate-control-plane':
         return cmd_migrate_control_plane(parsed.args)
+    if command == 'migrate-registered-projects':
+        return cmd_migrate_registered_projects(parsed.args)
     if command == 'init-workspace':
         return cmd_init_workspace(parsed.args)
     if command == 'publish-control-plane':

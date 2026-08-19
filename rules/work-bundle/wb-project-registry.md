@@ -27,6 +27,7 @@ Ensure project registration and lookup preserve the versioned authority split be
 - When changing portable topology, update its durable authorities through an atomic or recoverable workflow; when attaching metadata v4, publish only the device-local binding after all materializations validate.
 - Describe registry, device-binding, metadata-v4 portable, and metadata-v3 compatibility roles without collapsing them into one working-state model.
 - Preserve metadata v2 locator entries as compatibility input during explicit migration, preserve unknown fields, and publish v3 origin/member separation only after target verification.
+- Enumerate registered workspaces from the bootstrap-resolved project registry for layout upgrades; classify each entry as current, migratable, unsupported, missing, or blocked; apply registered version-to-version layout steps in deterministic order; and publish registry `layout_version` only after the target layout validates.
 
 ## Must Not
 

@@ -1,0 +1,29 @@
+metadata_version: 3
+authority: canonical
+workspace_root: __WORKSPACE_ROOT__
+workspace_mode: single-repository
+project_root: __WORKSPACE_ROOT__
+prefer_subagent: false
+custom_portable:
+  retained: yes
+historical_layout: v3
+source_repositories:
+  - id: __REPO_ID__
+    project_root: __WORKSPACE_ROOT__
+    origin_id: __REPO_ID__
+    checkout_kind: single-repository
+    git_control_root: __WORKSPACE_ROOT__/.git
+    git_control_scope: project
+    worktree_name: __REPO_ID__
+    git_repository: true
+    expected_branch: main
+    base_ref: HEAD
+    observed_head: __HEAD__
+    observation_time: 2026-08-13T00:00:00Z
+    baseline_status: current
+    lifecycle_status: active
+    operation_policy: inherit
+    remote: __REMOTE__
+    codegraph:
+      supported: false
+      status: not-indexed

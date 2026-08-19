@@ -599,6 +599,7 @@ def test_initialize_project_v4_migration_guardrails_and_pressure_scenarios() -> 
     evals = json.loads((REPO_ROOT / "references/evals/work-bundle/evals.json").read_text(encoding="utf-8"))
 
     assert "migrate-control-plane" in initialize
+    assert "migrate-registered-projects" in initialize
     assert "--repository-remote" in initialize
     assert "load every applicable rule body in full" in initialize
     assert "do not edit the project registry directly" in initialize

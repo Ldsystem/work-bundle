@@ -40,6 +40,7 @@ CLI_HELP_EPILOG = '''Canonical consolidated command surface:
   doctor-project <project-root> [--repair] [--force]
   migrate-project <project-root> --dry-run
   migrate-control-plane <workspace-root> (--dry-run|--apply --accepted-proposal-id <id>)
+  migrate-registered-projects (--dry-run|--apply --accepted-plan-id <id>) [--slug <slug>]
   init-workspace <workspace-root> --slug <slug> --repository <id=remote> (--dry-run|--apply)
   publish-control-plane <workspace-root> --remote <git-remote> (--dry-run|--apply)
   attach-workspace <workspace-root> [--materialize none|missing|all] (--dry-run|--apply)

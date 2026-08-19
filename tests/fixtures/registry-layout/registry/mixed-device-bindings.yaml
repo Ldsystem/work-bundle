@@ -1,0 +1,52 @@
+registry_schema_version: 1
+source_repository_roles:
+  registry: "Locator authority in all versions."
+  project_metadata: "Working-state or portable topology depending on layout version."
+custom_registry_field: keep-registry
+projects:
+  - slug: __SLUG_A__
+    name: __SLUG_A__
+    work_bundle_root: __ROOT_A__/.work-bundle
+    knowledge_root: __ROOT_A__/.work-bundle/knowledge
+    aliases: []
+    custom_entry_field: keep-entry-a
+    source_repositories:
+      - id: __REPO_A__
+        path: __ROOT_A__
+        checkout_role: truth
+        work_dir: true
+        remote: "__REMOTE_A__"
+        git_repository: true
+    status: active
+    updated_at: 2026-08-13
+  - slug: __SLUG_B__
+    name: __SLUG_B__
+    work_bundle_root: __ROOT_B__/.work-bundle
+    knowledge_root: __ROOT_B__/.work-bundle/knowledge
+    aliases: []
+    custom_entry_field: keep-entry-b
+    source_repositories:
+      - id: __REPO_B__
+        path: __ROOT_B__
+        checkout_role: truth
+        work_dir: true
+        remote: "__REMOTE_B__"
+        git_repository: true
+    status: active
+    updated_at: 2026-08-13
+device_bindings:
+  wb-__SLUG_B__:
+    slug: __SLUG_B__
+    workspace_root: __ROOT_B__
+    custom_binding_field: keep-binding-b
+    repositories: {}
+  wb-unrelated:
+    slug: unrelated-device
+    workspace_root: /tmp/unrelated-device
+    custom_binding_field: keep-unrelated
+    repositories: {}
+  wb-__SLUG_A__:
+    slug: __SLUG_A__
+    workspace_root: __ROOT_A__
+    custom_binding_field: keep-binding-a
+    repositories: {}

@@ -1215,6 +1215,53 @@ def cmd_publish_control_plane(args: list[str]) -> int:
     return 0
 
 
+def apply_layout_v3_to_v4(
+    workspace_root: Path,
+    remote_overrides: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Upgrade metadata v3 to portable v4, publishing device bindings atomically with metadata."""
+    workspace_root = workspace_root.expanduser().resolve()
+    metadata_path = workspace_root / ".work-bundle/project.yaml"
+    before = read(metadata_path)
+    protected = _protected_tracked_paths(workspace_root)
+    if protected:
+        raise ControlPlaneError("WB_CONTROL_PLANE_PROTECTED_PATH_TRACKED", {"protected_paths": protected})
+    if _source_tracks_control_plane(workspace_root):
+        raise ControlPlaneError("WB_CONTROL_PLANE_SOURCE_TRACKS_CONTROL_PLANE")
+    proposal = _proposal(workspace_root, before, remote_overrides)
+    gitignore_text = _merged_local_only_gitignore(read(workspace_root / ".work-bundle/.gitignore"))
+    backup = workspace_root / ".work-bundle/runtime/migrations" / str(proposal["proposal_id"]) / "project-v3.yaml"
+    gitignore = workspace_root / ".work-bundle/.gitignore"
+    bindings = _registry_bindings()
+    workspace_id = str(proposal["workspace_id"])
+    repositories = proposal["repositories"]
+    assert isinstance(repositories, list)
+    bindings[workspace_id] = _binding_from_v3(
+        workspace_root, workspace_id, _workspace_slug(workspace_root, before), repositories
+    )
+    registry = resolve_project_registry_path()
+    registry_text = _bindings_document(bindings, read(registry) or "projects: []\n")
+    payloads = {
+        backup: before,
+        metadata_path: str(proposal["rendered"]),
+        gitignore: gitignore_text,
+        registry: registry_text,
+    }
+    source_exclusion = _source_exclude_payload(workspace_root)
+    if source_exclusion is not None:
+        payloads[source_exclusion[0]] = source_exclusion[1]
+    changed_files = _atomic_publish(payloads)
+    return {
+        "status": "passed",
+        "from_version": _yaml_scalar(before, "metadata_version"),
+        "to_version": VERSION,
+        "changed_files": changed_files,
+        "failures": [],
+        "workspace_id": workspace_id,
+        "proposal_id": proposal["proposal_id"],
+    }
+
+
 def cmd_migrate_control_plane(args: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="wb.py migrate-control-plane")
     parser.add_argument("workspace_root")
@@ -1292,49 +1339,18 @@ def cmd_migrate_control_plane(args: list[str]) -> int:
         out({**base, "status": "issues-found", "failure_code": "WB_CONTROL_PLANE_PROPOSAL_STALE", "changed_files": []})
         return 1
     try:
-        gitignore_text = _merged_local_only_gitignore(
-            read(workspace_root / ".work-bundle/.gitignore")
-        )
+        applied = apply_layout_v3_to_v4(workspace_root, remote_overrides)
     except ControlPlaneError as exc:
-        out({**base, "status": "issues-found", "failure_code": exc.code, "changed_files": []})
-        return 1
-    backup = workspace_root / ".work-bundle/runtime/migrations" / str(proposal["proposal_id"]) / "project-v3.yaml"
-    gitignore = workspace_root / ".work-bundle/.gitignore"
-    bindings = _registry_bindings()
-    workspace_id = str(proposal["workspace_id"])
-    repositories = proposal["repositories"]
-    assert isinstance(repositories, list)
-    try:
-        bindings[workspace_id] = _binding_from_v3(
-            workspace_root, workspace_id, _workspace_slug(workspace_root, before), repositories
-        )
-    except ControlPlaneError as exc:
-        out({**base, "status": "issues-found", "failure_code": exc.code, "changed_files": []})
-        return 1
-    registry = resolve_project_registry_path()
-    registry_text = _bindings_document(bindings, read(registry) or "projects: []\n")
-    payloads = {
-        backup: before,
-        metadata_path: str(proposal["rendered"]),
-        gitignore: gitignore_text,
-        registry: registry_text,
-    }
-    source_exclusion = _source_exclude_payload(workspace_root)
-    if source_exclusion is not None:
-        payloads[source_exclusion[0]] = source_exclusion[1]
-    try:
-        changed_files = _atomic_publish(payloads)
-    except ControlPlaneError as exc:
-        out({**base, "status": "issues-found", "failure_code": exc.code, "changed_files": []})
+        out({**base, "status": "issues-found", "failure_code": exc.code, "changed_files": [], **exc.details})
         return 1
     out(
         {
             **base,
             "status": "passed",
             "dry_run": False,
-            "workspace_id": workspace_id,
-            "changed_files": changed_files,
-            "local_binding_path": str(registry),
+            "workspace_id": applied["workspace_id"],
+            "changed_files": applied["changed_files"],
+            "local_binding_path": str(resolve_project_registry_path()),
         }
     )
     return 0
