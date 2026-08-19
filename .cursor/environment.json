@@ -1,0 +1,4 @@
+{
+  "name": "work-bundle",
+  "install": "pip install --user pytest && bin/install.sh"
+}
