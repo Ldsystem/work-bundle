@@ -538,6 +538,51 @@ def test_intermediate_step_failure_restores_pre_migration_state(tmp_path: Path, 
     assert "metadata_version: 2" in before_metadata.decode("utf-8")
 
 
+def test_failed_migration_preserves_symlink_and_nested_credentials(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = bootstrap_config(tmp_path)
+    workspace, remote, _, repo_id = prepare_workspace(tmp_path, "user-data", "v3-single.yaml")
+    registry = write_registry(config, [project_block("user-data", workspace, repo_id, str(remote))])
+    nested = workspace / "assets" / "credentials" / "keep.txt"
+    nested.parent.mkdir(parents=True)
+    nested_bytes = b"nested-user-owned-credentials\n"
+    nested.write_bytes(nested_bytes)
+    readme_link = workspace / "readme-link"
+    readme_link.symlink_to("README.md")
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_bytes(b"do-not-copy-into-snapshot\n")
+    outside_link = workspace / "outside-link"
+    outside_link.symlink_to(outside)
+    before_registry = registry.read_bytes()
+    before_metadata = (workspace / ".work-bundle/project.yaml").read_bytes()
+    monkeypatch.setenv("WB_CONFIG_ROOT", str(config))
+    monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
+
+    def failing_validate(root: Path, version: str) -> list[str]:
+        if version == "4":
+            return ["WB_REGISTRY_LAYOUT_INJECTED_VALIDATION"]
+        return validate_layout_version(root, version)
+
+    result = migrate_registered_projects(
+        dry_run=False,
+        apply=True,
+        accepted_plan_id=migrate_registered_projects(dry_run=True, apply=False)["plan_id"],
+        validate=failing_validate,
+    )
+    assert result["status"] == "issues-found"
+    assert result["diagnostics"][0]["failure_code"] == "WB_REGISTRY_LAYOUT_VALIDATION_FAILED"
+    assert registry.read_bytes() == before_registry
+    assert (workspace / ".work-bundle/project.yaml").read_bytes() == before_metadata
+    assert readme_link.is_symlink()
+    assert readme_link.readlink() == Path("README.md")
+    assert outside_link.is_symlink()
+    assert outside_link.readlink() == outside
+    assert not outside_link.is_dir()
+    assert nested.read_bytes() == nested_bytes
+    assert not nested.is_symlink()
+
+
 def test_idempotent_rerun_after_success(tmp_path: Path) -> None:
     config = bootstrap_config(tmp_path)
     workspace, remote, _, repo_id = prepare_workspace(tmp_path, "rerun", "v3-single.yaml")

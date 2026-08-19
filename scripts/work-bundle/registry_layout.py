@@ -169,23 +169,39 @@ def _metadata_digest(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
-def _ignore_credentials(directory: str, names: list[str]) -> list[str]:
-    ignored: list[str] = []
-    if Path(directory).name == CREDENTIAL_DIR_NAME or CREDENTIAL_DIR_NAME in names:
-        ignored.append(CREDENTIAL_DIR_NAME)
-    return ignored
+def _root_credential_dir(workspace_root: Path) -> Path:
+    return workspace_root / CREDENTIAL_DIR_NAME
 
 
-def _credential_store_exists(workspace_root: Path) -> bool:
-    return (workspace_root / CREDENTIAL_DIR_NAME / 'credentials.yaml').is_file()
+def _path_present(path: Path) -> bool:
+    return path.is_symlink() or path.exists()
+
+
+def _remove_present_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+
+
+def _ignore_root_credential_store(workspace_root: Path) -> Callable[[str, list[str]], list[str]]:
+    root = Path(workspace_root)
+
+    def ignore(directory: str, names: list[str]) -> list[str]:
+        if Path(directory) == root and CREDENTIAL_DIR_NAME in names:
+            return [CREDENTIAL_DIR_NAME]
+        return []
+
+    return ignore
 
 
 def _remove_created_credential_store(workspace_root: Path) -> None:
-    credential_file = workspace_root / CREDENTIAL_DIR_NAME / 'credentials.yaml'
-    credential_dir = workspace_root / CREDENTIAL_DIR_NAME
+    credential_file = _root_credential_dir(workspace_root) / 'credentials.yaml'
+    credential_dir = _root_credential_dir(workspace_root)
     if credential_file.is_file():
         credential_file.unlink()
-    if credential_dir.is_dir():
+    if credential_dir.is_dir() and not credential_dir.is_symlink():
         try:
             credential_dir.rmdir()
         except OSError:
@@ -196,11 +212,17 @@ def snapshot_workspace(workspace_root: Path, destination: Path) -> dict[str, obj
     if destination.exists():
         shutil.rmtree(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(workspace_root, destination, ignore=_ignore_credentials, symlinks=False)
+    credential_present = _path_present(_root_credential_dir(workspace_root))
+    shutil.copytree(
+        workspace_root,
+        destination,
+        ignore=_ignore_root_credential_store(workspace_root),
+        symlinks=True,
+    )
     return {
         'workspace_root': str(workspace_root),
         'snapshot_root': str(destination),
-        'credential_store_existed': _credential_store_exists(workspace_root),
+        'credential_store_existed': credential_present,
     }
 
 
@@ -208,24 +230,24 @@ def restore_workspace(snapshot: dict[str, object]) -> None:
     workspace_root = Path(str(snapshot['workspace_root']))
     snapshot_root = Path(str(snapshot['snapshot_root']))
     credential_existed = bool(snapshot.get('credential_store_existed'))
-    credential_dir = workspace_root / CREDENTIAL_DIR_NAME
+    credential_dir = _root_credential_dir(workspace_root)
     parked: Path | None = None
-    if credential_dir.exists():
+    if _path_present(credential_dir):
         parked = workspace_root.parent / f'.{workspace_root.name}.credentials-restore'
-        if parked.exists():
-            shutil.rmtree(parked)
+        if _path_present(parked):
+            _remove_present_path(parked)
         shutil.move(str(credential_dir), str(parked))
-    if workspace_root.exists():
+    if _path_present(workspace_root):
         shutil.rmtree(workspace_root)
-    shutil.copytree(snapshot_root, workspace_root, symlinks=False)
+    shutil.copytree(snapshot_root, workspace_root, symlinks=True)
     if parked is not None and credential_existed:
-        target = workspace_root / CREDENTIAL_DIR_NAME
-        if target.exists():
-            shutil.rmtree(target)
+        target = _root_credential_dir(workspace_root)
+        if _path_present(target):
+            _remove_present_path(target)
         shutil.move(str(parked), str(target))
     else:
-        if parked is not None and parked.exists():
-            shutil.rmtree(parked)
+        if parked is not None and _path_present(parked):
+            _remove_present_path(parked)
         if not credential_existed:
             _remove_created_credential_store(workspace_root)
 
