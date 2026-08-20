@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WorkBundle → Execution Flow Roadmap</title>
+  <meta name="description" content="Serial-first vertical roadmap for WorkBundle and Execution Flow external execution." />
+  <style>
+    :root{
+      --bg:#f6f8fb;
+      --panel:#ffffff;
+      --panel-2:#f9fafb;
+      --text:#101828;
+      --muted:#667085;
+      --border:#d0d5dd;
+      --accent:#635bff;
+      --accent-bg:#eef2ff;
+      --accent-soft:#f5f3ff;
+      --success:#087443;
+      --warning:#8a5d00;
+      --warning-bg:#fff8e8;
+      --shadow:0 8px 28px rgba(16,24,40,.08);
+      --radius:18px;
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg:#0c111d;
+        --panel:#111827;
+        --panel-2:#172033;
+        --text:#f5f7fa;
+        --muted:#a7b0c0;
+        --border:#344054;
+        --accent:#8b83ff;
+        --accent-bg:#25214f;
+        --accent-soft:#1c1938;
+        --success:#55d99a;
+        --warning:#f4c466;
+        --warning-bg:#332a13;
+        --shadow:none;
+      }
+    }
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      line-height:1.5;
+    }
+    .page{
+      width:min(1120px, calc(100% - 32px));
+      margin:0 auto;
+      padding:40px 0 64px;
+    }
+    header{
+      margin-bottom:28px;
+    }
+    .eyebrow{
+      font-size:13px;
+      color:var(--muted);
+      letter-spacing:.04em;
+      text-transform:uppercase;
+      font-weight:700;
+    }
+    h1{
+      margin:.35rem 0 .6rem;
+      font-size:clamp(30px,5vw,52px);
+      line-height:1.05;
+      letter-spacing:-.03em;
+    }
+    .subtitle{
+      max-width:800px;
+      color:var(--muted);
+      font-size:17px;
+    }
+    .callout{
+      border:1px solid var(--accent);
+      background:var(--accent-soft);
+      border-radius:var(--radius);
+      padding:18px 20px;
+      margin:24px 0 30px;
+    }
+    .callout strong{display:block;margin-bottom:6px}
+    section{
+      margin-top:34px;
+      padding-top:28px;
+      border-top:1px solid var(--border);
+    }
+    section:first-of-type{
+      border-top:0;
+      padding-top:0;
+      margin-top:0;
+    }
+    .section-head{
+      display:flex;
+      gap:12px;
+      justify-content:space-between;
+      align-items:center;
+      flex-wrap:wrap;
+      margin-bottom:16px;
+    }
+    h2{
+      margin:0;
+      font-size:22px;
+      letter-spacing:-.02em;
+    }
+    .phase{
+      display:inline-flex;
+      align-items:center;
+      padding:5px 10px;
+      border-radius:999px;
+      background:var(--accent-bg);
+      color:var(--text);
+      font-size:12px;
+      font-weight:700;
+    }
+    .node{
+      border:1px solid var(--border);
+      background:var(--panel);
+      border-radius:16px;
+      padding:15px 17px;
+      box-shadow:var(--shadow);
+    }
+    .node.primary{
+      border-color:var(--accent);
+      background:var(--accent-soft);
+    }
+    .node.outcome{
+      border-style:dashed;
+      box-shadow:none;
+      background:var(--panel-2);
+    }
+    .node .title{
+      font-weight:750;
+    }
+    .id{
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+      font-weight:800;
+    }
+    .small{font-size:13px}
+    .muted{color:var(--muted)}
+    .arrow{
+      text-align:center;
+      color:var(--muted);
+      font-size:24px;
+      line-height:1;
+      padding:7px 0;
+      user-select:none;
+    }
+    .join{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      color:var(--muted);
+      font-size:13px;
+      margin:14px 0;
+    }
+    .join::before,.join::after{
+      content:"";
+      flex:1;
+      height:1px;
+      background:var(--border);
+    }
+    .grid2,.grid3,.grid4{
+      display:grid;
+      gap:14px;
+    }
+    .grid2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .grid3{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .grid4{grid-template-columns:repeat(4,minmax(0,1fr))}
+    .branch{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
+    .cross{
+      margin-top:18px;
+      padding:16px 18px;
+      border-left:3px dashed var(--border);
+      background:var(--panel-2);
+      border-radius:0 14px 14px 0;
+    }
+    .cross p{margin:.5rem 0}
+    .result-badge{
+      display:inline-flex;
+      margin-top:9px;
+      padding:5px 9px;
+      border-radius:999px;
+      background:var(--accent);
+      color:white;
+      font-size:12px;
+      font-weight:800;
+    }
+    .step-card{
+      border:1px solid var(--border);
+      background:var(--panel);
+      border-radius:14px;
+      padding:14px;
+    }
+    details{
+      border:1px solid var(--border);
+      background:var(--panel);
+      border-radius:14px;
+      padding:14px 16px;
+    }
+    summary{
+      cursor:pointer;
+      font-weight:750;
+    }
+    .legend{
+      margin-top:12px;
+      display:grid;
+      gap:8px;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .legend-row{
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+    .solid-line,.dash-line{
+      width:36px;
+      height:0;
+      border-top:2px solid var(--accent);
+      flex:none;
+    }
+    .dash-line{
+      border-top-style:dashed;
+      border-top-color:var(--muted);
+    }
+    footer{
+      margin-top:36px;
+      color:var(--muted);
+      font-size:12px;
+      text-align:center;
+    }
+    .toolbar{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      margin-top:16px;
+    }
+    button{
+      appearance:none;
+      border:1px solid var(--border);
+      background:var(--panel);
+      color:var(--text);
+      border-radius:10px;
+      padding:8px 11px;
+      font:inherit;
+      font-size:13px;
+      cursor:pointer;
+    }
+    button:hover{border-color:var(--accent)}
+    @media (max-width:900px){
+      .grid4{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .grid3{grid-template-columns:1fr}
+    }
+    @media (max-width:680px){
+      .page{width:min(100% - 20px,1120px);padding-top:24px}
+      .grid2,.grid4{grid-template-columns:1fr}
+      .node{padding:14px}
+      .subtitle{font-size:15px}
+    }
+    @media print{
+      :root{
+        --bg:#fff; --panel:#fff; --panel-2:#fff; --text:#000; --muted:#444;
+        --border:#bbb; --accent:#444; --accent-bg:#eee; --accent-soft:#f5f5f5;
+        --shadow:none;
+      }
+      body{background:#fff}
+      .page{width:100%;padding:0}
+      .toolbar{display:none}
+      section{break-inside:avoid}
+      .node,.step-card,.callout,details{break-inside:avoid}
+      a{color:inherit;text-decoration:none}
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div class="eyebrow">WorkBundle Toolkit · Execution Flow</div>
+      <h1>Vertical Dependency Roadmap</h1>
+      <div class="subtitle">
+        A serial-first roadmap for external execution. Formal blocker joins are preserved,
+        but the recommended working order minimizes context switching and avoids opening every branch at once.
+      </div>
+      <div class="toolbar">
+        <button id="printBtn" type="button">Print / Save PDF</button>
+        <button id="expandBtn" type="button">Expand notes</button>
+        <button id="collapseBtn" type="button">Collapse notes</button>
+      </div>
+    </header>
+
+    <div class="callout">
+      <strong>The important idea</strong>
+      We do <b>not</b> have to develop every branch together. Build one useful vertical spine first,
+      then add side capabilities only when the trunk reaches the node that needs them.
+    </div>
+
+    <section>
+      <div class="section-head">
+        <h2>Recommended serial-first path</h2>
+        <span class="phase">least context switching</span>
+      </div>
+
+      <div class="node primary">
+        <div class="title"><span class="id">WOR-31</span> · Provider-neutral adapter protocol</div>
+        <div class="small muted">What we get: one stable interface for fake, ACP, cloud, cancellation, provider status and result collection.</div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="node primary">
+        <div class="title"><span class="id">WOR-32</span> · FakeExecutor adapter + deterministic fixtures</div>
+        <div class="small muted">What we get: Execution Flow can execute and fail predictably without spending provider quota. This becomes the test bed for routing.</div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="node primary">
+        <div class="title"><span class="id">WOR-35</span> · Concrete executor registry</div>
+        <div class="small muted">What we get: a structured catalog of agent/model/provider capabilities, constraints, cost, latency, reliability and evidence.</div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="node primary">
+        <div class="title"><span class="id">WOR-36</span> · Deterministic executor ranking</div>
+        <div class="small muted">What we get: the same task + registry state always produces an explainable concrete executor choice.</div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="node primary">
+        <div class="title"><span class="id">WOR-37</span> · Quota/provider fallback + real routing control</div>
+        <div class="small muted">What we get: a usable router. It can select an executor, dispatch through the adapter protocol, detect quota/provider failure and fall back without weakening the WorkBundle task contract.</div>
+      </div>
+
+      <div class="join">At this point the core routing engine exists</div>
+
+      <div class="grid2">
+        <div>
+          <div class="node">
+            <div class="title"><span class="id">WOR-33</span> · ACP external executor</div>
+            <div class="small muted">What we get: visible delegation to a real ACP-capable agent instead of only the fake adapter.</div>
+          </div>
+          <div class="small muted" style="text-align:center;margin-top:7px">Requires WOR-31 + WOR-32</div>
+        </div>
+        <div>
+          <div class="node">
+            <div class="title"><span class="id">WOR-38</span> · Outcome-based routing evidence</div>
+            <div class="small muted">What we get: routing preferences can improve from WorkBundle-observed success/failure evidence instead of executor self-rating.</div>
+          </div>
+          <div class="small muted" style="text-align:center;margin-top:7px">Requires WOR-37</div>
+        </div>
+      </div>
+
+      <div class="arrow">↘ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↙</div>
+
+      <div class="node primary">
+        <div class="title"><span class="id">WOR-39</span> · End-to-end multi-executor proof + diagnostics</div>
+        <div class="small muted">
+          What we finally get: a deterministic demonstration of
+          <b>WorkBundle task → executor ranking → fallback/delegation → ACP/fake executor → executor-result → WorkBundle validation → outcome evidence</b>.
+        </div>
+        <span class="result-badge">Core Execution Flow proven</span>
+      </div>
+      <div class="small muted" style="text-align:center;margin-top:7px">Formal blockers: WOR-37 + WOR-33 + WOR-38</div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Vertical branch tree</h2>
+        <span class="phase">where branches actually depend on each other</span>
+      </div>
+
+      <div class="grid3">
+        <div class="branch">
+          <span class="phase">A · Adapter branch</span>
+          <div class="node"><span class="id">WOR-31</span><div class="small muted">Adapter contract</div></div>
+          <div class="arrow">↓</div>
+          <div class="node"><span class="id">WOR-32</span><div class="small muted">Fake execution harness</div></div>
+          <div class="arrow">↓</div>
+          <div class="node"><span class="id">WOR-33</span><div class="small muted">Real ACP delegation</div></div>
+          <div class="arrow">↓</div>
+          <div class="node outcome"><b>Branch result</b><div class="small muted">Execution Flow can run a bounded WorkBundle task through a real external agent.</div></div>
+        </div>
+
+        <div class="branch">
+          <span class="phase">B · Routing branch</span>
+          <div class="node"><span class="id">WOR-35</span><div class="small muted">Executor registry</div></div>
+          <div class="arrow">↓</div>
+          <div class="node"><span class="id">WOR-36</span><div class="small muted">Deterministic ranking</div></div>
+          <div class="arrow">↓</div>
+          <div class="node primary"><span class="id">WOR-37</span><div class="small muted">Selection + compatible fallback</div></div>
+          <div class="arrow">↓</div>
+          <div class="node"><span class="id">WOR-38</span><div class="small muted">Observed outcome learning</div></div>
+          <div class="arrow">↓</div>
+          <div class="node outcome"><b>Branch result</b><div class="small muted">Execution Flow can choose, retry and improve concrete executor selection.</div></div>
+        </div>
+
+        <div class="branch">
+          <span class="phase">C · WorkBundle safety branch</span>
+          <div class="node"><span class="id">WOR-28</span><div class="small muted">Repository / CodeGraph evidence applicability</div></div>
+          <div class="arrow">↓</div>
+          <div class="node"><span class="id">WOR-29</span><div class="small muted">Fail-closed external result re-entry</div></div>
+          <div style="height:8px"></div>
+          <div class="node"><span class="id">WOR-42</span><div class="small muted">Compile-time capability validation</div></div>
+          <div class="arrow">↓</div>
+          <div class="node outcome"><b>Branch result</b><div class="small muted">External execution cannot bypass WorkBundle identity, binding, validation or capability-contract boundaries.</div></div>
+        </div>
+      </div>
+
+      <div class="cross">
+        <b>Cross-branch joins</b>
+        <p><b>WOR-37</b> is where Adapter branch A and Routing branch B first truly meet. It formally requires <span class="id">WOR-31</span>, <span class="id">WOR-32</span> and <span class="id">WOR-36</span>.</p>
+        <p><b>WOR-39</b> is the final convergence. It formally waits for <span class="id">WOR-37</span>, <span class="id">WOR-33</span> and <span class="id">WOR-38</span>.</p>
+        <p><b>WOR-42 ↔ WOR-36</b> is currently a relationship, not a formal blocker. WOR-36 already specifies fail-closed defensive validation until WOR-42 lands.</p>
+        <p><b>WOR-28 → WOR-29</b> is a separate WorkBundle hardening chain. It does not formally block WOR-39 today; treat WOR-29 as a release-quality gate before broadly trusting external execution.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Branches we can deliberately postpone</h2>
+        <span class="phase">not needed for the first usable core</span>
+      </div>
+      <div class="grid3">
+        <div class="node">
+          <div class="title"><span class="id">WOR-40</span> · Async cloud transport</div>
+          <div class="small muted">Depends on WOR-31. Eventually gives provider job/session state, asynchronous completion and cloud result collection.</div>
+        </div>
+        <div class="node">
+          <div class="title"><span class="id">WOR-34</span> · Optional MCP frontend</div>
+          <div class="small muted">Depends on WOR-31. Eventually gives an MCP-facing API over Execution Flow rather than a new orchestration engine.</div>
+        </div>
+        <div class="node">
+          <div class="title"><span class="id">WOR-27 → WOR-30</span> · Transport/no-retrieval research</div>
+          <div class="small muted">Decision work only. It asks whether a request wrapper or future retrieval exception is necessary. Neither is required for baseline Execution Flow.</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Low-exhaustion working sequence</h2>
+        <span class="phase">one vertical slice at a time</span>
+      </div>
+      <div class="grid4">
+        <div class="step-card">
+          <div class="small muted">Step 1</div>
+          <b>WOR-31 → WOR-32</b>
+          <div class="small muted">Build the execution foundation and fake harness.</div>
+        </div>
+        <div class="step-card">
+          <div class="small muted">Step 2</div>
+          <b>WOR-35 → WOR-36 → WOR-37</b>
+          <div class="small muted">Build the router against that harness.</div>
+        </div>
+        <div class="step-card">
+          <div class="small muted">Step 3</div>
+          <b>WOR-33 → WOR-38</b>
+          <div class="small muted">Add real ACP execution, then feedback evidence.</div>
+        </div>
+        <div class="step-card">
+          <div class="small muted">Step 4</div>
+          <b>WOR-39</b>
+          <div class="small muted">Merge the branches and prove the complete flow.</div>
+        </div>
+      </div>
+
+      <div class="callout" style="margin-top:16px">
+        <strong>Practical recommendation</strong>
+        Start with <span class="id">WOR-31</span>. Do not open four implementation fronts.
+        Finish <span class="id">WOR-31 → WOR-32</span> first; then move into the routing chain.
+        WorkBundle hardening (<span class="id">WOR-42</span> and <span class="id">WOR-28 → WOR-29</span>)
+        can be scheduled as deliberate checkpoints rather than a permanently parallel stream.
+      </div>
+    </section>
+
+    <section>
+      <details>
+        <summary>Legend and accuracy notes</summary>
+        <div class="legend">
+          <div class="legend-row"><span class="solid-line"></span><span>Solid dependency described in current Linear blocker relations.</span></div>
+          <div class="legend-row"><span class="dash-line"></span><span>Recommended sequencing/release relationship, not necessarily a Linear blocker.</span></div>
+          <div>Umbrella issues WOR-13, WOR-25 and WOR-26 are intentionally not drawn as execution steps. Their child issues contain the actionable implementation work.</div>
+        </div>
+      </details>
+    </section>
+
+    <footer>
+      WorkBundle Toolkit / Execution Flow · standalone roadmap package
+    </footer>
+  </main>
+
+  <script>
+    (() => {
+      if (window.__wbRoadmapInit) return;
+      window.__wbRoadmapInit = true;
+
+      const printBtn = document.getElementById('printBtn');
+      const expandBtn = document.getElementById('expandBtn');
+      const collapseBtn = document.getElementById('collapseBtn');
+
+      printBtn.addEventListener('click', () => window.print());
+      expandBtn.addEventListener('click', () => {
+        document.querySelectorAll('details').forEach(d => d.open = true);
+      });
+      collapseBtn.addEventListener('click', () => {
+        document.querySelectorAll('details').forEach(d => d.open = false);
+      });
+    })();
+  </script>
+</body>
+</html>
