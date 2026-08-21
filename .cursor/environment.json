@@ -1,0 +1,4 @@
+{
+  "name": "work-bundle",
+  "install": "python3 -m pip install --user pytest pyyaml && ./bin/install.sh"
+}
