@@ -68,6 +68,6 @@ bin/install-work-bundle-skills --dry-run
 Run the deterministic repository gate with isolated dependencies:
 
 ```bash
-uvx --from pytest --with pyyaml --with sqlite-vec pytest -q
+uvx --python 3.13 --from pytest==9.1.1 --with pyyaml==6.0.3 --with sqlite-vec==0.1.9 pytest -q
 bin/work-bundle-skill validate
 ```
