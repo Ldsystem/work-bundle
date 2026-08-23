@@ -1,6 +1,27 @@
 # work-bundle
 
+[![CI](https://github.com/Ldsystem/work-bundle/actions/workflows/ci.yml/badge.svg)](https://github.com/Ldsystem/work-bundle/actions/workflows/ci.yml)
+![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
+
 Toolkit source for WorkBundle skills, rules, references, and deterministic helper code.
+
+## Ecosystem
+
+WorkBundle owns orchestration contracts, workspace authority, durable knowledge,
+and acceptance flow. [Execution Flow](https://github.com/Ldsystem/execution-flow)
+is a separate, optional TypeScript repository that supplies provider-neutral
+executor selection and ACP delegation without taking over WorkBundle
+orchestration.
+
+The recommended local layout for developing both repositories is a
+multi-repository workspace:
+
+```text
+work-bundle-workspace/
+├── .work-bundle/       # portable workspace authority and runtime artifacts
+├── work-bundle-main/   # this toolkit repository
+└── execution-flow/     # the independent Execution Flow repository
+```
 
 WorkBundle distinguishes four roots:
 
@@ -42,4 +63,11 @@ Useful checks:
 bin/work-bundle-skill list
 bin/work-bundle-skill validate
 bin/install-work-bundle-skills --dry-run
+```
+
+Run the deterministic repository gate with isolated dependencies:
+
+```bash
+uvx --python 3.13 --from pytest==9.1.1 --with pyyaml==6.0.3 --with sqlite-vec==0.1.9 pytest -q
+bin/work-bundle-skill validate
 ```
