@@ -9,6 +9,7 @@ design/
 
 # IDE / editors
 .air/
+.cursor/
 .idea/
 .vscode/
 *.swp
