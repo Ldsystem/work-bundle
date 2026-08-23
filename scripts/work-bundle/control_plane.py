@@ -436,6 +436,9 @@ def _v4_repositories(text: str) -> list[dict[str, object]]:
         repository["workspace_binding_name"] = (
             str(workspace_binding.get("name", "")) if isinstance(workspace_binding, dict) else ""
         )
+        repository["workspace_binding_path"] = (
+            str(workspace_binding.get("path", "")) if isinstance(workspace_binding, dict) else ""
+        )
     return repositories
 
 
@@ -828,7 +831,7 @@ def _portable_failures(text: str) -> list[str]:
     if not _workspace_value(text, "slug"):
         failures.append("WB_CONTROL_PLANE_WORKSPACE_SLUG_MISSING")
     mode = _workspace_value(text, "mode")
-    if mode not in {"single-repository", "multi-repository"}:
+    if mode not in {"single-repository", "multi-repository", "composite"}:
         failures.append("WB_CONTROL_PLANE_WORKSPACE_MODE_INVALID")
     control = _block(text, "control_plane")
     if not re.search(r"^\s{2}schema_version:\s*1\s*$", control, re.MULTILINE):
@@ -851,6 +854,7 @@ def _portable_failures(text: str) -> list[str]:
         failures.append("WB_CONTROL_PLANE_REPOSITORIES_MISSING")
     seen_ids: set[str] = set()
     seen_member_names: set[str] = set()
+    seen_member_paths: set[str] = set()
     root_bindings = 0
     for repository in repositories:
         repository_id = str(repository.get("id") or "")
@@ -868,19 +872,43 @@ def _portable_failures(text: str) -> list[str]:
         binding_type = str(repository.get("workspace_binding_type") or "")
         if binding_type == "root":
             root_bindings += 1
-            if mode != "single-repository":
+            if mode not in {"single-repository", "composite"}:
                 failures.append(f"WB_CONTROL_PLANE_ROOT_BINDING_MODE_INVALID:{repository_id}")
         elif binding_type == "member":
             member_name = str(repository.get("workspace_binding_name") or "")
-            if mode != "multi-repository" or not member_name:
+            member_path = str(repository.get("workspace_binding_path") or "")
+            if mode == "multi-repository":
+                if not member_name:
+                    failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_INVALID:{repository_id}")
+                elif member_name in seen_member_names:
+                    failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_DUPLICATE:{member_name}")
+                seen_member_names.add(member_name)
+            elif mode == "composite":
+                if not member_name:
+                    failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_INVALID:{repository_id}")
+                elif member_name in seen_member_names:
+                    failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_DUPLICATE:{member_name}")
+                seen_member_names.add(member_name)
+                if not member_path:
+                    failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_INVALID:{repository_id}")
+                else:
+                    try:
+                        _validate_member_path(member_path)
+                    except ControlPlaneError as exc:
+                        failures.append(f"{exc.code}:{repository_id}")
+                    if member_path in seen_member_paths:
+                        failures.append(f"WB_CONTROL_PLANE_MEMBER_PATH_DUPLICATE:{member_path}")
+                    seen_member_paths.add(member_path)
+            else:
                 failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_INVALID:{repository_id}")
-            elif member_name in seen_member_names:
-                failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_DUPLICATE:{member_name}")
-            seen_member_names.add(member_name)
+                if member_name:
+                    seen_member_names.add(member_name)
         elif binding_type:
             failures.append(f"WB_CONTROL_PLANE_WORKSPACE_BINDING_INVALID:{repository_id}")
     if mode == "single-repository" and (len(repositories) != 1 or root_bindings != 1):
         failures.append("WB_CONTROL_PLANE_SINGLE_REPOSITORY_BINDING_INVALID")
+    if mode == "composite" and root_bindings != 1:
+        failures.append("WB_CONTROL_PLANE_COMPOSITE_ROOT_BINDING_INVALID")
     return failures
 
 
@@ -1393,20 +1421,276 @@ def _tree_entries_without_control_plane(path: Path) -> set[str]:
     return entries
 
 
-def _ensure_source_local_excludes(workspace_root: Path) -> bool:
-    exclude = workspace_root / ".git/info/exclude"
-    current = read(exclude)
+NESTED_MEMBER_EXCLUDE_MARKER = "# work-bundle:nested-member:"
+
+
+def _validate_member_path(raw: str) -> str:
+    path = str(raw or "").strip()
+    if path == ".work-bundle" or path.startswith(".work-bundle/"):
+        raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_PATH_OVERLAPS_CONTROL_PLANE")
+    candidate = Path(path)
+    if (
+        not path
+        or candidate.is_absolute()
+        or len(candidate.parts) != 1
+        or candidate.parts[0] in {".", ".."}
+        or "/" in path
+        or "\\" in path
+    ):
+        raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_PATH_INVALID")
+    return path
+
+
+def _root_index_tracks(workspace_root: Path, relative: str) -> bool:
+    if not (workspace_root / ".git").exists() or not relative:
+        return False
+    tracked = _git(workspace_root, "ls-files", "--", relative, f"{relative.rstrip('/')}/")
+    return bool(tracked.strip())
+
+
+def _metadata_digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _composite_members(text: str) -> list[tuple[str, str]]:
+    members: list[tuple[str, str]] = []
+    for repository in _v4_repositories(text):
+        if str(repository.get("workspace_binding_type") or "") != "member":
+            continue
+        name = str(repository.get("workspace_binding_name") or repository.get("id") or "")
+        path = str(repository.get("workspace_binding_path") or name)
+        if name and path:
+            members.append((name, path))
+    return members
+
+
+def _exclude_text_with_source_and_members(
+    current: str, members: Iterable[tuple[str, str]]
+) -> str:
+    existing = {line.strip() for line in current.splitlines()}
     additions: list[str] = []
     for pattern in (".work-bundle/", "credentials/"):
-        if pattern not in {line.strip() for line in current.splitlines()}:
+        if pattern not in existing:
             additions.append(pattern)
+            existing.add(pattern)
+    for name, path in members:
+        pattern = f"{path.rstrip('/')}/"
+        marker = f"{NESTED_MEMBER_EXCLUDE_MARKER}{name}"
+        if pattern in existing:
+            continue
+        if marker not in existing:
+            additions.append(marker)
+        additions.append(pattern)
+        existing.add(marker)
+        existing.add(pattern)
     if not additions:
-        return False
+        return current if not current or current.endswith("\n") else current + "\n"
     rendered = current
     if rendered and not rendered.endswith("\n"):
         rendered += "\n"
-    rendered += "\n".join(additions) + "\n"
+    return rendered + "\n".join(additions) + "\n"
+
+
+def _ensure_source_local_excludes(
+    workspace_root: Path, members: Iterable[tuple[str, str]] = ()
+) -> bool:
+    exclude = workspace_root / ".git/info/exclude"
+    current = read(exclude)
+    rendered = _exclude_text_with_source_and_members(current, members)
+    if rendered == current:
+        return False
     return _atomic_write(exclude, rendered)
+
+
+def _member_segment(repository: dict[str, object], binding_name: str) -> str:
+    return str(repository.get("workspace_binding_path") or binding_name)
+
+
+def _classify_workspace_member(
+    repositories: list[dict[str, object]], member: dict[str, str]
+) -> str:
+    for repository in repositories:
+        repository_id = str(repository.get("id") or "")
+        binding_type = str(repository.get("workspace_binding_type") or "")
+        name = str(repository.get("workspace_binding_name") or "")
+        path = str(repository.get("workspace_binding_path") or "")
+        remote = str(repository.get("canonical_remote") or "")
+        branch = str(repository.get("default_branch") or "")
+        same_id = repository_id == member["repository_id"]
+        same_name = bool(name) and name == member["name"]
+        same_path = bool(path) and path == member["path"]
+        if not same_id and not (binding_type == "member" and (same_name or same_path)):
+            continue
+        if (
+            same_id
+            and same_name
+            and same_path
+            and remote == member["remote"]
+            and branch == member["default_branch"]
+        ):
+            return "match"
+        return "collision"
+    return "absent"
+
+
+def _render_member_metadata_block(member: dict[str, str]) -> str:
+    return "\n".join(
+        [
+            f"  - id: {_quote(member['repository_id'])}",
+            "    role: source",
+            "    remote:",
+            f"      canonical: {_quote(member['remote'])}",
+            "      aliases: []",
+            f"    default_branch: {_quote(member['default_branch'])}",
+            "    workspace_binding:",
+            "      type: member",
+            f"      name: {_quote(member['name'])}",
+            f"      path: {_quote(member['path'])}",
+            "    materialization:",
+            "      required: true",
+            "    operation_policy: inherit",
+        ]
+    ) + "\n"
+
+
+def _append_member_metadata(text: str, member: dict[str, str]) -> str:
+    if _workspace_value(text, "mode") == "single-repository":
+        text = re.sub(r"^(\s{2}mode: )single-repository\s*$", r"\1composite", text, count=1, flags=re.MULTILINE)
+    block = _render_member_metadata_block(member)
+    if "prefer_subagent:" in text:
+        return text.replace("prefer_subagent:", block + "prefer_subagent:", 1)
+    return text.rstrip() + "\n" + block
+
+
+def _require_observed_branch(path: Path, expected: str, repository_id: str) -> str:
+    actual = _git(path, "branch", "--show-current")
+    if actual != expected:
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_BRANCH_MISMATCH:{repository_id}")
+    return actual
+
+
+def _add_workspace_member_preflight(workspace_root: Path, text: str) -> dict[str, object]:
+    workspace_id = _workspace_id(text)
+    binding = _registry_bindings().get(workspace_id)
+    if not isinstance(binding, dict):
+        raise ControlPlaneError("WB_CONTROL_PLANE_BINDING_MISSING")
+    bound_root = str(binding.get("workspace_root") or "")
+    if not bound_root or Path(bound_root).expanduser().resolve() != workspace_root:
+        raise ControlPlaneError("WB_CONTROL_PLANE_BINDING_ROOT_MISMATCH")
+    root = next(
+        (item for item in _v4_repositories(text) if str(item.get("workspace_binding_type") or "") == "root"),
+        None,
+    )
+    if root is None:
+        raise ControlPlaneError("WB_CONTROL_PLANE_COMPOSITE_ROOT_BINDING_INVALID")
+    root_id = str(root.get("id") or "")
+    repositories = binding.get("repositories")
+    local = repositories.get(root_id) if isinstance(repositories, dict) else None
+    if not isinstance(local, dict) or not local.get("project_root"):
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_CHECKOUT_MISSING:{root_id}")
+    project_root = Path(str(local["project_root"])).expanduser().resolve()
+    if project_root != workspace_root:
+        raise ControlPlaneError(
+            "WB_CONTROL_PLANE_ROOT_BINDING_PATH_MISMATCH",
+            {"repository_id": root_id},
+        )
+    if (
+        not project_root.is_dir()
+        or not (project_root / ".git").exists()
+        or not _git(project_root, "rev-parse", "--git-common-dir")
+    ):
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_GIT_INVALID:{root_id}")
+    actual_remote = _resolved_git_remote(project_root)
+    expected_remote = str(root.get("canonical_remote") or "")
+    if actual_remote != expected_remote:
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_REMOTE_CONFLICT:{root_id}")
+    _require_observed_branch(project_root, str(root.get("default_branch") or ""), root_id)
+    return binding
+
+
+def _require_add_workspace_member_request(member: dict[str, str]) -> None:
+    if not member["remote"]:
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_REMOTE_REQUIRED:{member['repository_id']}")
+    if not member["default_branch"]:
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_DEFAULT_BRANCH_MISSING:{member['repository_id']}")
+
+
+def _require_add_workspace_member_target(text: str, member: dict[str, str], classification: str) -> None:
+    _require_add_workspace_member_request(member)
+    rendered = text if classification == "match" else _append_member_metadata(text, member)
+    failures = _portable_failures(rendered)
+    if failures:
+        raise ControlPlaneError(failures[0])
+
+
+def _require_add_workspace_member_replay_state(
+    workspace_root: Path, member: dict[str, str], binding: dict[str, object]
+) -> None:
+    member_path = (workspace_root / member["path"]).resolve()
+    if not member_path.is_dir() or not (member_path / ".git").exists():
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_CHECKOUT_MISSING:{member['repository_id']}")
+    actual_remote = _resolved_git_remote(member_path)
+    if actual_remote != member["remote"]:
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_REMOTE_CONFLICT:{member['repository_id']}")
+    _require_observed_branch(member_path, member["default_branch"], member["repository_id"])
+    repositories = binding.get("repositories")
+    local = repositories.get(member["repository_id"]) if isinstance(repositories, dict) else None
+    if not isinstance(local, dict) or not local.get("project_root"):
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_MEMBER_DEVICE_BINDING_MISSING:{member['repository_id']}")
+    bound_path = Path(str(local["project_root"])).expanduser().resolve()
+    if bound_path != member_path or str(local.get("checkout_kind") or "") != "nested-member":
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_MEMBER_DEVICE_BINDING_MISMATCH:{member['repository_id']}")
+    exclude_lines = {line.strip() for line in read(workspace_root / ".git/info/exclude").splitlines()}
+    if f"{member['path'].rstrip('/')}/" not in exclude_lines:
+        raise ControlPlaneError(f"WB_CONTROL_PLANE_MEMBER_EXCLUDE_MISSING:{member['path']}")
+
+
+def _inspect_existing_member_checkout(member_path: Path, member: dict[str, str]) -> None:
+    if not member_path.is_dir():
+        raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
+    actual_remote = _resolved_git_remote(member_path)
+    if actual_remote != member["remote"]:
+        raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
+    _require_observed_branch(member_path, member["default_branch"], member["repository_id"])
+
+
+def _materialize_member_checkout(member_path: Path, member: dict[str, str]) -> None:
+    _materialize(member["remote"], member_path)
+    current_branch = _git(member_path, "branch", "--show-current")
+    if current_branch != member["default_branch"]:
+        try:
+            _run_git_checked(member_path, "checkout", "-q", member["default_branch"])
+        except ControlPlaneError:
+            raise ControlPlaneError(f"WB_CONTROL_PLANE_BRANCH_MISMATCH:{member['repository_id']}")
+    _require_observed_branch(member_path, member["default_branch"], member["repository_id"])
+
+
+def _add_workspace_member_proposal(
+    workspace_root: Path, text: str, member: dict[str, str]
+) -> dict[str, object]:
+    repositories = _v4_repositories(text)
+    root = next(
+        (item for item in repositories if str(item.get("workspace_binding_type") or "") == "root"),
+        {},
+    )
+    facts = {
+        "current_mode": _workspace_value(text, "mode"),
+        "target_mode": "composite",
+        "root": {
+            "workspace_id": _workspace_id(text),
+            "repository_id": str(root.get("id") or ""),
+        },
+        "member": dict(member),
+        "exclude_patterns": [f"{member['path'].rstrip('/')}/"],
+        "device_binding_delta": {
+            "repository_id": member["repository_id"],
+            "project_root": str(workspace_root / member["path"]),
+            "checkout_kind": "nested-member",
+        },
+        "metadata_digest": _metadata_digest(text),
+    }
+    encoded = json.dumps(facts, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return {"proposal_id": "awm-" + hashlib.sha256(encoded).hexdigest()[:24], **facts}
 
 
 def _rollback_workspace_root_materialization(workspace_root: Path, before: set[str]) -> None:
@@ -1487,6 +1771,16 @@ def _attach(
     slug = _workspace_slug(workspace_root, text)
     workspace_mode = _workspace_value(text, "mode")
     repositories = _v4_repositories(text)
+    if workspace_mode == "composite":
+        for repository in repositories:
+            if str(repository.get("workspace_binding_type") or "") != "member":
+                continue
+            member_path = _member_segment(repository, str(repository.get("workspace_binding_name") or repository.get("id") or ""))
+            if member_path and _root_index_tracks(workspace_root, member_path):
+                raise ControlPlaneError(
+                    "WB_CONTROL_PLANE_MEMBER_PATH_TRACKED",
+                    {"repository_id": str(repository.get("id") or "")},
+                )
     bindings = _registry_bindings()
     existing_binding = bindings.get(workspace_id, {})
     existing_root = str(existing_binding.get("workspace_root") or "") if isinstance(existing_binding, dict) else ""
@@ -1565,7 +1859,7 @@ def _attach(
             if binding_type == "root" and candidate is None and (workspace_root / ".git").exists():
                 candidate = workspace_root
             if binding_type != "root" and candidate is None:
-                default_candidate = (workspace_root / binding_name).resolve()
+                default_candidate = (workspace_root / _member_segment(repository, binding_name)).resolve()
                 if default_candidate.parent != workspace_root or default_candidate.name == ".work-bundle":
                     raise ControlPlaneError(
                         "WB_CONTROL_PLANE_MATERIALIZATION_PATH_INVALID",
@@ -1575,7 +1869,7 @@ def _attach(
                     candidate = default_candidate
             if candidate is None and materialize in {"missing", "all"} and not manual_locator:
                 if apply:
-                    candidate = workspace_root if binding_type == "root" else (workspace_root / binding_name).resolve()
+                    candidate = workspace_root if binding_type == "root" else (workspace_root / _member_segment(repository, binding_name)).resolve()
                     if binding_type == "root":
                         root_materialization_before = _materialize_workspace_root(
                             remote, workspace_root, str(repository.get("default_branch") or "main")
@@ -1605,7 +1899,19 @@ def _attach(
                 local_repositories[repository_id] = {
                     **existing_repository,
                     "project_root": str(candidate),
-                    "checkout_kind": "manual" if manual_locator else ("workspace-root" if binding_type == "root" else ("managed-worktree" if candidate.parent == workspace_root else "external")),
+                    "checkout_kind": (
+                        "manual"
+                        if manual_locator
+                        else (
+                            "workspace-root"
+                            if binding_type == "root"
+                            else (
+                                "nested-member"
+                                if workspace_mode == "composite"
+                                else ("managed-worktree" if candidate.parent == workspace_root else "external")
+                            )
+                        )
+                    ),
                     "observed_branch": "" if manual_locator else _git(candidate, "branch", "--show-current"),
                     "observed_head": "" if manual_locator else _git(candidate, "rev-parse", "HEAD"),
                     "observed_at": utc_now_rfc3339(),
@@ -1633,8 +1939,8 @@ def _attach(
                     path.mkdir(parents=True)
                     changed.append(str(path))
             changed.extend(_sync_agents(workspace_root))
-            if workspace_mode == "single-repository" and (workspace_root / ".git").exists():
-                if _ensure_source_local_excludes(workspace_root):
+            if workspace_mode in {"single-repository", "composite"} and (workspace_root / ".git").exists():
+                if _ensure_source_local_excludes(workspace_root, _composite_members(text) if workspace_mode == "composite" else ()):
                     changed.append(str(workspace_root / ".git/info/exclude"))
             control = workspace_root / ".work-bundle"
             bindings[workspace_id] = {
@@ -1746,6 +2052,13 @@ def cmd_doctor_workspace(args: list[str], *, command_name: str = "doctor-workspa
     repositories = binding.get("repositories") if isinstance(binding, dict) else {}
     local_repositories = repositories if isinstance(repositories, dict) else {}
     missing_required: list[str] = []
+    if not portable_failures and _workspace_value(text, "mode") == "composite":
+        for repo in _v4_repositories(text):
+            if str(repo.get("workspace_binding_type") or "") != "member":
+                continue
+            member_path = _member_segment(repo, str(repo.get("workspace_binding_name") or repo.get("id") or ""))
+            if member_path and _root_index_tracks(workspace_root, member_path):
+                local_failures.append(f"WB_CONTROL_PLANE_MEMBER_PATH_TRACKED:{repo.get('id')}")
     if not portable_failures:
         configured_control_remote = validated_remote(_control_plane_remote(text)) if _control_plane_remote(text) else ""
         actual_control_remote = _git_remote(workspace_root / ".work-bundle")
@@ -1783,7 +2096,11 @@ def cmd_doctor_workspace(args: list[str], *, command_name: str = "doctor-workspa
                     if issue not in missing_required:
                         missing_required.append(issue)
     if parsed.repair and not portable_failures:
-        result, code = _attach(workspace_root, "none", {}, True)
+        try:
+            result, code = _attach(workspace_root, "none", {}, True)
+        except ControlPlaneError as exc:
+            local_failures.append(exc.code)
+            result, code = {"status": "issues-found"}, 1
         if code == 0:
             bindings = _registry_bindings()
             binding = bindings.get(workspace_id)
@@ -1828,3 +2145,154 @@ def cmd_detach_workspace(args: list[str]) -> int:
         }
     )
     return 0
+
+
+def _apply_add_workspace_member(
+    workspace_root: Path, text: str, member: dict[str, str]
+) -> dict[str, object]:
+    metadata_path = workspace_root / ".work-bundle/project.yaml"
+    exclude_path = workspace_root / ".git/info/exclude"
+    registry = resolve_project_registry_path()
+    member_path = workspace_root / member["path"]
+    workspace_id = _workspace_id(text)
+    owned_member = False
+    try:
+        _add_workspace_member_preflight(workspace_root, text)
+        if member_path.exists() or member_path.is_symlink():
+            _inspect_existing_member_checkout(member_path, member)
+        else:
+            owned_member = True
+            _materialize_member_checkout(member_path, member)
+        rendered = _append_member_metadata(text, member)
+        portable = _portable_failures(rendered)
+        if portable:
+            raise ControlPlaneError(portable[0])
+        members = _composite_members(rendered)
+        exclude_text = _exclude_text_with_source_and_members(read(exclude_path), members)
+        bindings = _registry_bindings()
+        existing = bindings.get(workspace_id, {})
+        if not isinstance(existing, dict):
+            existing = {}
+        existing_repositories = existing.get("repositories")
+        local_repositories = dict(existing_repositories) if isinstance(existing_repositories, dict) else {}
+        current_binding = local_repositories.get(member["repository_id"])
+        local_repositories[member["repository_id"]] = {
+            **(current_binding if isinstance(current_binding, dict) else {}),
+            "project_root": str(member_path.resolve()),
+            "checkout_kind": "nested-member",
+            "observed_branch": _git(member_path, "branch", "--show-current"),
+            "observed_head": _git(member_path, "rev-parse", "HEAD"),
+            "observed_at": utc_now_rfc3339(),
+            "git_common_dir": _git(member_path, "rev-parse", "--git-common-dir"),
+        }
+        bindings[workspace_id] = {
+            **existing,
+            "repositories": local_repositories,
+        }
+        changed = _atomic_publish(
+            {
+                metadata_path: rendered,
+                exclude_path: exclude_text,
+                registry: _bindings_document(bindings, read(registry) or "projects: []\n"),
+            }
+        )
+        return {
+            "status": "passed",
+            "dry_run": False,
+            "replay": False,
+            "changed_files": sorted(set(changed)),
+            "workspace_id": workspace_id,
+        }
+    except (ControlPlaneError, OSError) as exc:
+        if owned_member and member_path.exists():
+            if member_path.is_symlink() or member_path.is_file():
+                member_path.unlink(missing_ok=True)
+            elif member_path.is_dir():
+                shutil.rmtree(member_path)
+        if isinstance(exc, ControlPlaneError):
+            raise
+        raise ControlPlaneError("WB_CONTROL_PLANE_TRANSACTION_FAILED") from exc
+
+
+def cmd_add_workspace_member(args: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="wb.py add-workspace-member")
+    parser.add_argument("workspace_root")
+    parser.add_argument("--repository-id", required=True)
+    parser.add_argument("--remote", required=True)
+    parser.add_argument("--name", required=True)
+    parser.add_argument("--path", required=True)
+    parser.add_argument("--default-branch", required=True)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--dry-run", action="store_true")
+    action.add_argument("--apply", action="store_true")
+    parser.add_argument("--accepted-proposal-id")
+    parsed = parser.parse_args(args)
+    if parsed.apply and not parsed.accepted_proposal_id:
+        parser.error("--accepted-proposal-id is required with --apply")
+    workspace_root = Path(parsed.workspace_root).expanduser().resolve()
+    try:
+        remote = validated_remote(parsed.remote)
+        path = _validate_member_path(parsed.path)
+        name = str(parsed.name or "").strip()
+        if not name:
+            raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_BINDING_INVALID")
+        if not parsed.repository_id:
+            raise ControlPlaneError("WB_CONTROL_PLANE_REPOSITORY_ID_MISSING")
+        member = {
+            "repository_id": parsed.repository_id,
+            "name": name,
+            "path": path,
+            "remote": remote,
+            "default_branch": str(parsed.default_branch or "").strip(),
+        }
+        metadata_path = workspace_root / ".work-bundle/project.yaml"
+        text = read(metadata_path)
+        mode = _workspace_value(text, "mode")
+        if mode not in {"single-repository", "composite"}:
+            raise ControlPlaneError("WB_CONTROL_PLANE_COMPOSITE_SOURCE_MODE_INVALID")
+        portable = _portable_failures(text)
+        if portable:
+            raise ControlPlaneError(portable[0])
+        _add_workspace_member_preflight(workspace_root, text)
+        if _root_index_tracks(workspace_root, path):
+            raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_PATH_TRACKED")
+        member_path = workspace_root / path
+        if member_path.exists() or member_path.is_symlink():
+            _inspect_existing_member_checkout(member_path, member)
+        classification = _classify_workspace_member(_v4_repositories(text), member)
+        if classification == "collision":
+            raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
+        _require_add_workspace_member_target(text, member, classification)
+        proposal = _add_workspace_member_proposal(workspace_root, text, member)
+        payload = {
+            "command": "add-workspace-member",
+            "proposal_id": proposal["proposal_id"],
+            "proposal": {key: value for key, value in proposal.items() if key != "proposal_id"},
+        }
+        if parsed.dry_run:
+            out({**payload, "status": "passed", "dry_run": True, "changed_files": []})
+            return 0
+        live_text = read(metadata_path)
+        live_proposal = _add_workspace_member_proposal(workspace_root, live_text, member)
+        if parsed.accepted_proposal_id != live_proposal["proposal_id"]:
+            out({**payload, "status": "issues-found", "failure_code": "WB_CONTROL_PLANE_PROPOSAL_STALE", "changed_files": []})
+            return 1
+        if classification == "match":
+            live_binding = _add_workspace_member_preflight(workspace_root, live_text)
+            _require_add_workspace_member_replay_state(workspace_root, member, live_binding)
+            out({**payload, "status": "passed", "dry_run": False, "replay": True, "changed_files": []})
+            return 0
+        applied = _apply_add_workspace_member(workspace_root, live_text, member)
+        out({**payload, **applied})
+        return 0
+    except ControlPlaneError as exc:
+        out(
+            {
+                "command": "add-workspace-member",
+                "status": "issues-found",
+                "failure_code": exc.code,
+                "changed_files": [],
+                **exc.details,
+            }
+        )
+        return 1
