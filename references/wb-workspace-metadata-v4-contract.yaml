@@ -10,7 +10,7 @@ workspace:
   id:
     stable_across_devices: true
   mode:
-    allowed: [single-repository, multi-repository]
+    allowed: [single-repository, multi-repository, composite]
 source_repositories:
   durable_identity: [id, remote.canonical]
   workspace_binding:
@@ -19,8 +19,30 @@ source_repositories:
     multi_repository:
       type: member
       name: required
+    composite:
+      root:
+        type: root
+        count: 1
+      member:
+        type: member
+        name: required
+        name_unique: true
+        path: one-segment-under-workspace-root
+        path_unique: true
+        checkout_kind: nested-member
+        replay_requires:
+          member_checkout: matching-remote-and-branch
+          device_binding: exact-path-nested-member
+          root_exclude: member-pattern-present
     remote_only: absent
   local_binding_fields_forbidden: [project_root, observed_head, observation_time, git_control_root]
+add_workspace_member:
+  preflight:
+    root_origin: corroborate-against-portable-canonical
+    root_branch: corroborate-against-portable-default-branch
+  proposal:
+    validate_request_values: true
+    validate_rendered_target_metadata: true
 migration:
   explicit: true
   dry_run_proposal: true

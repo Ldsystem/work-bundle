@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1610,3 +1613,863 @@ def test_attach_converges_duplicate_agents_sections(tmp_path: Path) -> None:
     agents = (workspace_b / "AGENTS.md").read_text(encoding="utf-8")
     assert agents.count("# Work Bundle RULE START") == 1
     assert all(value in agents for value in ("user-before", "user-middle", "user-after"))
+
+
+def init_single_v4(
+    tmp_path: Path, *, slug: str = "single-demo", attach: bool = True
+) -> tuple[Path, Path, Path, str]:
+    config = config_root(tmp_path / "config-root")
+    remote, workspace, _ = make_remote(tmp_path / "source-fixture", "source")
+    initialized = run_wb(
+        config,
+        "init-workspace",
+        str(workspace),
+        "--mode",
+        "single-repository",
+        "--slug",
+        slug,
+        "--repository",
+        f"source-main={remote}",
+        "--apply",
+    )
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+    workspace_id = json.loads(initialized.stdout)["workspace_id"]
+    if attach:
+        attached = run_wb(
+            config,
+            "attach-workspace",
+            str(workspace),
+            "--materialize",
+            "none",
+            "--apply",
+        )
+        assert attached.returncode == 0, attached.stdout + attached.stderr
+    return config, workspace, remote, workspace_id
+
+
+def add_workspace_member_args(
+    workspace: Path,
+    remote: Path | str,
+    *,
+    repository_id: str = "execution-flow",
+    name: str = "execution-flow",
+    path: str = "execution-flow",
+    default_branch: str = "main",
+) -> list[str]:
+    return [
+        "add-workspace-member",
+        str(workspace),
+        "--repository-id",
+        repository_id,
+        "--remote",
+        str(remote),
+        "--name",
+        name,
+        "--path",
+        path,
+        "--default-branch",
+        default_branch,
+    ]
+
+
+def write_composite_metadata(workspace: Path, *, include_root: bool = True, member_name: str = "execution-flow", member_path: str = "execution-flow") -> None:
+    metadata = workspace / ".work-bundle/project.yaml"
+    text = metadata.read_text(encoding="utf-8")
+    text = text.replace("  mode: single-repository", "  mode: composite")
+    if not include_root:
+        text = text.replace("      type: root", "      type: member\n      name: relocated-root")
+    member = "\n".join(
+        [
+            "  - id: execution-flow",
+            "    role: source",
+            "    remote:",
+            '      canonical: "https://example.com/execution-flow"',
+            "      aliases: []",
+            "    default_branch: main",
+            "    workspace_binding:",
+            "      type: member",
+            *([f"      name: {member_name}"] if member_name else []),
+            *([f"      path: {member_path}"] if member_path else []),
+            "    materialization:",
+            "      required: true",
+            "    operation_policy: inherit",
+            "",
+        ]
+    )
+    text = text.replace("prefer_subagent:", member + "prefer_subagent:")
+    metadata.write_text(text, encoding="utf-8")
+
+
+class CompositeMemberLifecycleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_v4_composite_schema_accepts_root_plus_named_members(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        write_composite_metadata(workspace)
+        doctor = run_wb(config, "doctor-workspace", str(workspace))
+        failures = json.loads(doctor.stdout)["portable"]["failures"]
+        self.assertNotIn("WB_CONTROL_PLANE_WORKSPACE_MODE_INVALID", failures)
+        self.assertNotIn("WB_CONTROL_PLANE_ROOT_BINDING_MODE_INVALID:source-main", failures)
+        self.assertNotIn("WB_CONTROL_PLANE_MEMBER_BINDING_INVALID:execution-flow", failures)
+
+    def test_v4_composite_schema_requires_exactly_one_named_root(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        write_composite_metadata(workspace, include_root=False)
+        doctor = run_wb(config, "doctor-workspace", str(workspace))
+        failures = json.loads(doctor.stdout)["portable"]["failures"]
+        self.assertIn("WB_CONTROL_PLANE_COMPOSITE_ROOT_BINDING_INVALID", failures)
+
+    def test_v4_composite_schema_rejects_duplicate_member_paths(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        write_composite_metadata(workspace)
+        metadata = workspace / ".work-bundle/project.yaml"
+        extra = "\n".join(
+            [
+                "  - id: other-flow",
+                "    role: source",
+                "    remote:",
+                '      canonical: "https://example.com/other-flow"',
+                "      aliases: []",
+                "    default_branch: main",
+                "    workspace_binding:",
+                "      type: member",
+                "      name: other-flow",
+                "      path: execution-flow",
+                "    materialization:",
+                "      required: true",
+                "    operation_policy: inherit",
+                "",
+            ]
+        )
+        metadata.write_text(
+            metadata.read_text(encoding="utf-8").replace("prefer_subagent:", extra + "prefer_subagent:"),
+            encoding="utf-8",
+        )
+        doctor = run_wb(config, "doctor-workspace", str(workspace))
+        failures = json.loads(doctor.stdout)["portable"]["failures"]
+        self.assertIn("WB_CONTROL_PLANE_MEMBER_PATH_DUPLICATE:execution-flow", failures)
+
+    def test_v4_existing_modes_still_reject_crossed_bindings(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        metadata = workspace / ".work-bundle/project.yaml"
+        text = metadata.read_text(encoding="utf-8")
+        metadata.write_text(
+            text.replace("prefer_subagent:", "\n".join([
+                "  - id: extra-member",
+                "    role: source",
+                "    remote:",
+                '      canonical: "https://example.com/extra"',
+                "      aliases: []",
+                "    default_branch: main",
+                "    workspace_binding:",
+                "      type: member",
+                "      name: extra-member",
+                "    materialization:",
+                "      required: true",
+                "    operation_policy: inherit",
+                "prefer_subagent:",
+            ])),
+            encoding="utf-8",
+        )
+        doctor = run_wb(config, "doctor-workspace", str(workspace))
+        failures = json.loads(doctor.stdout)["portable"]["failures"]
+        self.assertIn("WB_CONTROL_PLANE_MEMBER_BINDING_INVALID:extra-member", failures)
+        self.assertIn("WB_CONTROL_PLANE_SINGLE_REPOSITORY_BINDING_INVALID", failures)
+
+    def test_add_workspace_member_dry_run_emits_digest_bound_proposal_without_writes(self) -> None:
+        config, workspace, _, workspace_id = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        metadata = workspace / ".work-bundle/project.yaml"
+        metadata_before = metadata.read_bytes()
+        registry_before = (config / "registry/projects.yaml").read_bytes()
+        exclude_before = (workspace / ".git/info/exclude").read_bytes()
+        digest = hashlib.sha256(metadata_before).hexdigest()
+
+        proposed = run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run")
+        self.assertEqual(proposed.returncode, 0, proposed.stdout + proposed.stderr)
+        self.assertNotIn("unknown command", proposed.stderr)
+        data = json.loads(proposed.stdout)
+        proposal = data["proposal"]
+        self.assertEqual(data["status"], "passed")
+        self.assertTrue(data["dry_run"])
+        self.assertEqual(data["changed_files"], [])
+        self.assertTrue(data["proposal_id"])
+        self.assertEqual(proposal["current_mode"], "single-repository")
+        self.assertEqual(proposal["target_mode"], "composite")
+        self.assertEqual(proposal["root"]["workspace_id"], workspace_id)
+        self.assertEqual(proposal["root"]["repository_id"], "source-main")
+        self.assertEqual(proposal["member"]["repository_id"], "execution-flow")
+        self.assertEqual(proposal["member"]["name"], "execution-flow")
+        self.assertEqual(proposal["member"]["path"], "execution-flow")
+        self.assertEqual(proposal["member"]["remote"], str(member_remote.resolve()))
+        self.assertEqual(proposal["member"]["default_branch"], "main")
+        self.assertIn("execution-flow/", proposal["exclude_patterns"])
+        self.assertEqual(proposal["device_binding_delta"]["checkout_kind"], "nested-member")
+        self.assertEqual(
+            Path(str(proposal["device_binding_delta"]["project_root"])).resolve(),
+            (workspace / "execution-flow").resolve(),
+        )
+        self.assertEqual(proposal["metadata_digest"], digest)
+        self.assertEqual(metadata.read_bytes(), metadata_before)
+        self.assertEqual((config / "registry/projects.yaml").read_bytes(), registry_before)
+        self.assertEqual((workspace / ".git/info/exclude").read_bytes(), exclude_before)
+        self.assertFalse((workspace / "execution-flow").exists())
+
+    def test_add_workspace_member_apply_rejects_digest_drift(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        proposed = run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run")
+        self.assertEqual(proposed.returncode, 0, proposed.stdout + proposed.stderr)
+        proposal_id = json.loads(proposed.stdout)["proposal_id"]
+        metadata = workspace / ".work-bundle/project.yaml"
+        metadata.write_text(metadata.read_text(encoding="utf-8").replace("slug: single-demo", "slug: drifted"), encoding="utf-8")
+
+        applied = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            proposal_id,
+            "--apply",
+        )
+        self.assertEqual(applied.returncode, 1)
+        data = json.loads(applied.stdout)
+        self.assertEqual(data["failure_code"], "WB_CONTROL_PLANE_PROPOSAL_STALE")
+        self.assertIn("  mode: single-repository", metadata.read_text(encoding="utf-8"))
+        self.assertFalse((workspace / "execution-flow").exists())
+
+    def test_add_workspace_member_first_apply_converts_and_publishes_recoverably(self) -> None:
+        config, workspace, source_remote, workspace_id = init_single_v4(self.tmp_path)
+        member_remote, _, member_head = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        root_readme = (workspace / "README.md").read_bytes()
+        proposed = run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run")
+        self.assertEqual(proposed.returncode, 0, proposed.stdout + proposed.stderr)
+        proposal_id = json.loads(proposed.stdout)["proposal_id"]
+
+        applied = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            proposal_id,
+            "--apply",
+        )
+        self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+        data = json.loads(applied.stdout)
+        self.assertEqual(data["status"], "passed")
+        self.assertIsNot(data.get("replay"), True)
+        metadata = (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
+        self.assertIn("  mode: composite", metadata)
+        self.assertIn(workspace_id, metadata)
+        self.assertIn("  - id: source-main", metadata)
+        self.assertIn("      type: root", metadata)
+        self.assertIn("  - id: execution-flow", metadata)
+        self.assertIn("      type: member", metadata)
+        self.assertIn("      name: execution-flow", metadata)
+        self.assertIn("      path: execution-flow", metadata)
+        self.assertNotIn("workspace_root:", metadata)
+        self.assertNotIn("project_root:", metadata)
+        self.assertTrue((workspace / "execution-flow/README.md").is_file())
+        self.assertEqual(git(workspace / "execution-flow", "rev-parse", "HEAD"), member_head)
+        self.assertEqual(
+            Path(git(workspace / "execution-flow", "remote", "get-url", "origin")).resolve(),
+            member_remote.resolve(),
+        )
+        self.assertEqual(git(workspace, "check-ignore", "--no-index", "execution-flow/README.md"), "execution-flow/README.md")
+        self.assertEqual(git(workspace, "ls-files", "--", "execution-flow"), "")
+        self.assertEqual((workspace / "README.md").read_bytes(), root_readme)
+        self.assertEqual(git(workspace, "remote", "get-url", "origin"), str(source_remote))
+        registry = (config / "registry/projects.yaml").read_text(encoding="utf-8")
+        self.assertIn(str((workspace / "execution-flow").resolve()), registry)
+        self.assertIn("checkout_kind: nested-member", registry)
+        self.assertEqual(git(member_remote, "rev-parse", "HEAD"), member_head)
+
+    def test_add_workspace_member_later_apply_is_add_only(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        first_remote, _, _ = make_remote(self.tmp_path / "member-a", "execution-flow")
+        second_remote, _, _ = make_remote(self.tmp_path / "member-b", "second-flow")
+        first = json.loads(run_wb(config, *add_workspace_member_args(workspace, first_remote), "--dry-run").stdout)
+        self.assertEqual(
+            run_wb(
+                config,
+                *add_workspace_member_args(workspace, first_remote),
+                "--accepted-proposal-id",
+                first["proposal_id"],
+                "--apply",
+            ).returncode,
+            0,
+        )
+        second = json.loads(
+            run_wb(
+                config,
+                *add_workspace_member_args(
+                    workspace,
+                    second_remote,
+                    repository_id="second-flow",
+                    name="second-flow",
+                    path="second-flow",
+                ),
+                "--dry-run",
+            ).stdout
+        )
+        self.assertEqual(second["proposal"]["current_mode"], "composite")
+        self.assertEqual(second["proposal"]["target_mode"], "composite")
+        applied = run_wb(
+            config,
+            *add_workspace_member_args(
+                workspace,
+                second_remote,
+                repository_id="second-flow",
+                name="second-flow",
+                path="second-flow",
+            ),
+            "--accepted-proposal-id",
+            second["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+        metadata = (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
+        self.assertEqual(metadata.count("  - id: source-main"), 1)
+        self.assertEqual(metadata.count("  - id: execution-flow"), 1)
+        self.assertEqual(metadata.count("  - id: second-flow"), 1)
+        self.assertIn("  mode: composite", metadata)
+        self.assertTrue((workspace / "execution-flow/README.md").is_file())
+        self.assertTrue((workspace / "second-flow/README.md").is_file())
+
+    def test_add_workspace_member_matching_replay_is_idempotent(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        first = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        self.assertEqual(
+            run_wb(
+                config,
+                *add_workspace_member_args(workspace, member_remote),
+                "--accepted-proposal-id",
+                first["proposal_id"],
+                "--apply",
+            ).returncode,
+            0,
+        )
+        metadata_before = (workspace / ".work-bundle/project.yaml").read_bytes()
+        registry_before = (config / "registry/projects.yaml").read_bytes()
+        replay_proposal = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        replayed = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            replay_proposal["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(replayed.returncode, 0, replayed.stdout + replayed.stderr)
+        data = json.loads(replayed.stdout)
+        self.assertEqual(data["status"], "passed")
+        self.assertTrue(data["replay"])
+        self.assertEqual(data["changed_files"], [])
+        self.assertEqual((workspace / ".work-bundle/project.yaml").read_bytes(), metadata_before)
+        self.assertEqual((config / "registry/projects.yaml").read_bytes(), registry_before)
+
+    def test_add_workspace_member_different_remote_or_path_collides(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        other_remote, _, _ = make_remote(self.tmp_path / "other-fixture", "other-flow")
+        first = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        self.assertEqual(
+            run_wb(
+                config,
+                *add_workspace_member_args(workspace, member_remote),
+                "--accepted-proposal-id",
+                first["proposal_id"],
+                "--apply",
+            ).returncode,
+            0,
+        )
+        remote_collision = run_wb(config, *add_workspace_member_args(workspace, other_remote), "--dry-run")
+        self.assertEqual(remote_collision.returncode, 1)
+        self.assertEqual(json.loads(remote_collision.stdout)["failure_code"], "WB_CONTROL_PLANE_MEMBER_COLLISION")
+        path_collision = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote, path="other-flow"),
+            "--dry-run",
+        )
+        self.assertEqual(path_collision.returncode, 1)
+        self.assertEqual(json.loads(path_collision.stdout)["failure_code"], "WB_CONTROL_PLANE_MEMBER_COLLISION")
+
+    def test_add_workspace_member_rollback_restores_owned_state_only(self) -> None:
+        config, workspace, source_remote, _ = init_single_v4(self.tmp_path)
+        member_remote, _, member_head = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        user_exclude = workspace / ".git/info/exclude"
+        user_exclude.write_text(user_exclude.read_text(encoding="utf-8") + "# keep-user-exclude\n", encoding="utf-8")
+        metadata_before = (workspace / ".work-bundle/project.yaml").read_bytes()
+        registry_before = (config / "registry/projects.yaml").read_bytes()
+        exclude_before = user_exclude.read_bytes()
+        proposed = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        os.chmod(config / "registry", 0o555)
+        try:
+            applied = run_wb(
+                config,
+                *add_workspace_member_args(workspace, member_remote),
+                "--accepted-proposal-id",
+                proposed["proposal_id"],
+                "--apply",
+            )
+        finally:
+            os.chmod(config / "registry", 0o755)
+        self.assertEqual(applied.returncode, 1)
+        self.assertEqual(json.loads(applied.stdout)["failure_code"], "WB_CONTROL_PLANE_TRANSACTION_FAILED")
+        self.assertEqual((workspace / ".work-bundle/project.yaml").read_bytes(), metadata_before)
+        self.assertEqual((config / "registry/projects.yaml").read_bytes(), registry_before)
+        self.assertEqual(user_exclude.read_bytes(), exclude_before)
+        self.assertFalse((workspace / "execution-flow").exists())
+        self.assertEqual(git(workspace, "remote", "get-url", "origin"), str(source_remote))
+        self.assertEqual(git(member_remote, "rev-parse", "HEAD"), member_head)
+
+    def test_add_workspace_member_rejects_invalid_paths_and_tracked_root_index(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        for invalid in ("foo/bar", "../escape", ".work-bundle", "."):
+            result = run_wb(config, *add_workspace_member_args(workspace, member_remote, path=invalid), "--dry-run")
+            self.assertEqual(result.returncode, 1, invalid)
+            code = json.loads(result.stdout)["failure_code"]
+            self.assertIn(
+                code,
+                {
+                    "WB_CONTROL_PLANE_MEMBER_PATH_INVALID",
+                    "WB_CONTROL_PLANE_MEMBER_PATH_OVERLAPS_CONTROL_PLANE",
+                },
+            )
+        tracked = workspace / "tracked-member"
+        tracked.mkdir()
+        (tracked / "README.md").write_text("owned by root\n", encoding="utf-8")
+        git(workspace, "add", "tracked-member/README.md")
+        git(workspace, "commit", "-q", "-m", "track nested path")
+        tracked_result = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote, path="tracked-member", name="tracked-member"),
+            "--dry-run",
+        )
+        self.assertEqual(tracked_result.returncode, 1)
+        self.assertEqual(json.loads(tracked_result.stdout)["failure_code"], "WB_CONTROL_PLANE_MEMBER_PATH_TRACKED")
+
+    def test_add_workspace_member_rejects_credential_remote_without_echo(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        secret_remote = "https://user:super-secret@example.com/execution-flow.git"
+        result = run_wb(config, *add_workspace_member_args(workspace, secret_remote), "--dry-run")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads(result.stdout)["failure_code"], "WB_CONTROL_PLANE_REMOTE_CREDENTIALS_FORBIDDEN")
+        self.assertNotIn("super-secret", result.stdout + result.stderr)
+
+    def test_attach_and_doctor_reapply_composite_excludes_and_fail_closed_when_tracked(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        proposed = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        applied = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            proposed["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+        exclude = workspace / ".git/info/exclude"
+        kept = "\n".join(line for line in exclude.read_text(encoding="utf-8").splitlines() if "execution-flow" not in line)
+        exclude.write_text(kept + "\n", encoding="utf-8")
+        ignored = subprocess.run(
+            ["git", "-C", str(workspace), "check-ignore", "--no-index", "execution-flow/README.md"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(ignored.returncode, 0)
+
+        repaired = run_wb(config, "doctor-workspace", str(workspace), "--repair")
+        self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
+        self.assertEqual(git(workspace, "check-ignore", "--no-index", "execution-flow/README.md"), "execution-flow/README.md")
+
+        shutil.rmtree(workspace / "execution-flow" / ".git")
+        git(workspace, "add", "-f", "execution-flow/README.md")
+        git(workspace, "commit", "-q", "-m", "accidentally track member")
+        doctor = run_wb(config, "doctor-workspace", str(workspace))
+        self.assertEqual(doctor.returncode, 1)
+        payload = json.loads(doctor.stdout)
+        failures = payload["portable"]["failures"] + payload["local_binding"]["failures"]
+        self.assertTrue(any("WB_CONTROL_PLANE_MEMBER_PATH_TRACKED" in item for item in failures))
+
+    def test_add_workspace_member_rejects_multi_repository_source(self) -> None:
+        config = config_root(self.tmp_path / "config-root")
+        remote, _, _ = make_remote(self.tmp_path / "source-fixture", "source")
+        workspace = self.tmp_path / "multi"
+        initialized = run_wb(
+            config,
+            "init-workspace",
+            str(workspace),
+            "--mode",
+            "multi-repository",
+            "--slug",
+            "multi-demo",
+            "--repository",
+            f"source-main={remote}",
+            "--apply",
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stdout + initialized.stderr)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        result = run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads(result.stdout)["failure_code"], "WB_CONTROL_PLANE_COMPOSITE_SOURCE_MODE_INVALID")
+
+    def test_add_workspace_member_preflight_rejects_absent_binding_and_non_git_root(self) -> None:
+        config, workspace, _, workspace_id = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        registry = config / "registry/projects.yaml"
+        registry.write_text("projects: []\nbindings: []\n", encoding="utf-8")
+        shutil.rmtree(workspace / ".git")
+        metadata = workspace / ".work-bundle/project.yaml"
+        metadata_before = metadata.read_bytes()
+        registry_before = registry.read_bytes()
+
+        dry = run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run")
+        self.assertEqual(dry.returncode, 1, dry.stdout + dry.stderr)
+        dry_payload = json.loads(dry.stdout)
+        self.assertEqual(dry_payload["failure_code"], "WB_CONTROL_PLANE_BINDING_MISSING")
+        self.assertNotIn("super-secret", dry.stdout + dry.stderr)
+
+        applied = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            "awm-unaccepted",
+            "--apply",
+        )
+        self.assertEqual(applied.returncode, 1, applied.stdout + applied.stderr)
+        applied_payload = json.loads(applied.stdout)
+        self.assertEqual(applied_payload["failure_code"], "WB_CONTROL_PLANE_BINDING_MISSING")
+        self.assertNotIn("super-secret", applied.stdout + applied.stderr)
+        self.assertEqual(metadata.read_bytes(), metadata_before)
+        self.assertEqual(registry.read_bytes(), registry_before)
+        self.assertNotIn(workspace_id, registry.read_text(encoding="utf-8"))
+        self.assertFalse((workspace / ".git/info/exclude").exists())
+        self.assertFalse((workspace / "execution-flow").exists())
+
+    def test_add_workspace_member_preflight_rejects_mismatched_or_incomplete_root_binding(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        registry = config / "registry/projects.yaml"
+        original = registry.read_text(encoding="utf-8")
+        bound_root = workspace.resolve()
+        self.assertIn(f"workspace_root: {bound_root}", original)
+        registry.write_text(
+            original.replace(f"workspace_root: {bound_root}", f"workspace_root: {bound_root}-elsewhere"),
+            encoding="utf-8",
+        )
+        mismatched = run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run")
+        self.assertEqual(mismatched.returncode, 1, mismatched.stdout + mismatched.stderr)
+        self.assertEqual(json.loads(mismatched.stdout)["failure_code"], "WB_CONTROL_PLANE_BINDING_ROOT_MISMATCH")
+
+        incomplete = init_single_v4(self.tmp_path / "incomplete", slug="incomplete-demo", attach=False)
+        incomplete_config, incomplete_workspace, _, _ = incomplete
+        missing_root = run_wb(
+            incomplete_config,
+            *add_workspace_member_args(incomplete_workspace, member_remote),
+            "--dry-run",
+        )
+        self.assertEqual(missing_root.returncode, 1, missing_root.stdout + missing_root.stderr)
+        self.assertEqual(
+            json.loads(missing_root.stdout)["failure_code"],
+            "WB_CONTROL_PLANE_BOUND_CHECKOUT_MISSING:source-main",
+        )
+
+        invalid_config, invalid_workspace, _, _ = init_single_v4(self.tmp_path / "invalid-git", slug="invalid-git")
+        shutil.rmtree(invalid_workspace / ".git")
+        invalid = run_wb(
+            invalid_config,
+            *add_workspace_member_args(invalid_workspace, member_remote),
+            "--accepted-proposal-id",
+            "awm-unaccepted",
+            "--apply",
+        )
+        self.assertEqual(invalid.returncode, 1, invalid.stdout + invalid.stderr)
+        self.assertEqual(
+            json.loads(invalid.stdout)["failure_code"],
+            "WB_CONTROL_PLANE_BOUND_GIT_INVALID:source-main",
+        )
+        self.assertFalse((invalid_workspace / ".git/info/exclude").exists())
+        self.assertFalse((invalid_workspace / "execution-flow").exists())
+
+    def test_add_workspace_member_rejects_existing_wrong_branch_without_mutation(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        member_path = workspace / "execution-flow"
+        subprocess.run(["git", "clone", "-q", str(member_remote), str(member_path)], check=True)
+        git(member_path, "checkout", "-q", "-b", "other")
+        metadata = workspace / ".work-bundle/project.yaml"
+        metadata_before = metadata.read_bytes()
+        registry_before = (config / "registry/projects.yaml").read_bytes()
+        exclude_before = (workspace / ".git/info/exclude").read_bytes()
+
+        dry = run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run")
+        self.assertEqual(dry.returncode, 1, dry.stdout + dry.stderr)
+        self.assertEqual(json.loads(dry.stdout)["failure_code"], "WB_CONTROL_PLANE_BRANCH_MISMATCH:execution-flow")
+        self.assertEqual(git(member_path, "branch", "--show-current"), "other")
+
+        applied = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            "awm-unaccepted",
+            "--apply",
+        )
+        self.assertEqual(applied.returncode, 1, applied.stdout + applied.stderr)
+        self.assertEqual(json.loads(applied.stdout)["failure_code"], "WB_CONTROL_PLANE_BRANCH_MISMATCH:execution-flow")
+        self.assertEqual(git(member_path, "branch", "--show-current"), "other")
+        self.assertEqual(metadata.read_bytes(), metadata_before)
+        self.assertEqual((config / "registry/projects.yaml").read_bytes(), registry_before)
+        self.assertEqual((workspace / ".git/info/exclude").read_bytes(), exclude_before)
+        self.assertIn("  mode: single-repository", metadata.read_text(encoding="utf-8"))
+
+    def test_add_workspace_member_verifies_branch_after_owned_clone(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        metadata = workspace / ".work-bundle/project.yaml"
+        metadata_before = metadata.read_bytes()
+        proposed = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote, default_branch="develop"),
+            "--dry-run",
+        )
+        self.assertEqual(proposed.returncode, 0, proposed.stdout + proposed.stderr)
+        applied = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote, default_branch="develop"),
+            "--accepted-proposal-id",
+            json.loads(proposed.stdout)["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(applied.returncode, 1, applied.stdout + applied.stderr)
+        self.assertEqual(json.loads(applied.stdout)["failure_code"], "WB_CONTROL_PLANE_BRANCH_MISMATCH:execution-flow")
+        self.assertEqual(metadata.read_bytes(), metadata_before)
+        self.assertFalse((workspace / "execution-flow").exists())
+        self.assertIn("  mode: single-repository", metadata.read_text(encoding="utf-8"))
+
+    def _apply_first_member(self, config: Path, workspace: Path, member_remote: Path) -> None:
+        proposed = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        applied = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            proposed["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+
+    def test_add_workspace_member_preflight_rejects_root_remote_or_branch_drift(self) -> None:
+        config, workspace, source_remote, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        other_remote, _, _ = make_remote(self.tmp_path / "other-root", "other-root")
+        metadata = workspace / ".work-bundle/project.yaml"
+        metadata_before = metadata.read_bytes()
+        registry_before = (config / "registry/projects.yaml").read_bytes()
+        exclude_before = (workspace / ".git/info/exclude").read_bytes()
+
+        git(workspace, "remote", "set-url", "origin", str(other_remote))
+        remote_dry = run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run")
+        self.assertEqual(remote_dry.returncode, 1, remote_dry.stdout + remote_dry.stderr)
+        self.assertEqual(json.loads(remote_dry.stdout)["failure_code"], "WB_CONTROL_PLANE_BOUND_REMOTE_CONFLICT:source-main")
+        remote_apply = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            "awm-unaccepted",
+            "--apply",
+        )
+        self.assertEqual(remote_apply.returncode, 1, remote_apply.stdout + remote_apply.stderr)
+        self.assertEqual(json.loads(remote_apply.stdout)["failure_code"], "WB_CONTROL_PLANE_BOUND_REMOTE_CONFLICT:source-main")
+        git(workspace, "remote", "set-url", "origin", str(source_remote))
+
+        git(workspace, "checkout", "-q", "-b", "drifted")
+        branch_dry = run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run")
+        self.assertEqual(branch_dry.returncode, 1, branch_dry.stdout + branch_dry.stderr)
+        self.assertEqual(json.loads(branch_dry.stdout)["failure_code"], "WB_CONTROL_PLANE_BRANCH_MISMATCH:source-main")
+        branch_apply = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            "awm-unaccepted",
+            "--apply",
+        )
+        self.assertEqual(branch_apply.returncode, 1, branch_apply.stdout + branch_apply.stderr)
+        self.assertEqual(json.loads(branch_apply.stdout)["failure_code"], "WB_CONTROL_PLANE_BRANCH_MISMATCH:source-main")
+        self.assertEqual(git(workspace, "branch", "--show-current"), "drifted")
+        self.assertEqual(metadata.read_bytes(), metadata_before)
+        self.assertEqual((config / "registry/projects.yaml").read_bytes(), registry_before)
+        self.assertEqual((workspace / ".git/info/exclude").read_bytes(), exclude_before)
+        self.assertFalse((workspace / "execution-flow").exists())
+        self.assertIn("  mode: single-repository", metadata.read_text(encoding="utf-8"))
+
+    def test_add_workspace_member_dry_run_rejects_invalid_target_proposal(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        metadata = workspace / ".work-bundle/project.yaml"
+        metadata_before = metadata.read_bytes()
+        registry_before = (config / "registry/projects.yaml").read_bytes()
+        exclude_before = (workspace / ".git/info/exclude").read_bytes()
+
+        empty_remote = run_wb(config, *add_workspace_member_args(workspace, ""), "--dry-run")
+        self.assertEqual(empty_remote.returncode, 1, empty_remote.stdout + empty_remote.stderr)
+        empty_remote_payload = json.loads(empty_remote.stdout)
+        self.assertEqual(empty_remote_payload["failure_code"], "WB_CONTROL_PLANE_REMOTE_REQUIRED:execution-flow")
+        self.assertNotIn("proposal_id", empty_remote_payload)
+        self.assertNotIn("proposal", empty_remote_payload)
+
+        empty_branch = run_wb(
+            config,
+            *add_workspace_member_args(workspace, "https://example.com/execution-flow", default_branch=""),
+            "--dry-run",
+        )
+        self.assertEqual(empty_branch.returncode, 1, empty_branch.stdout + empty_branch.stderr)
+        empty_branch_payload = json.loads(empty_branch.stdout)
+        self.assertEqual(empty_branch_payload["failure_code"], "WB_CONTROL_PLANE_DEFAULT_BRANCH_MISSING:execution-flow")
+        self.assertNotIn("proposal_id", empty_branch_payload)
+        self.assertNotIn("proposal", empty_branch_payload)
+
+        empty_branch_apply = run_wb(
+            config,
+            *add_workspace_member_args(workspace, "https://example.com/execution-flow", default_branch=""),
+            "--accepted-proposal-id",
+            "awm-unaccepted",
+            "--apply",
+        )
+        self.assertEqual(empty_branch_apply.returncode, 1, empty_branch_apply.stdout + empty_branch_apply.stderr)
+        self.assertEqual(
+            json.loads(empty_branch_apply.stdout)["failure_code"],
+            "WB_CONTROL_PLANE_DEFAULT_BRANCH_MISSING:execution-flow",
+        )
+        self.assertEqual(metadata.read_bytes(), metadata_before)
+        self.assertEqual((config / "registry/projects.yaml").read_bytes(), registry_before)
+        self.assertEqual((workspace / ".git/info/exclude").read_bytes(), exclude_before)
+        self.assertFalse((workspace / "execution-flow").exists())
+        self.assertIn("  mode: single-repository", metadata.read_text(encoding="utf-8"))
+
+    def test_add_workspace_member_replay_rejects_missing_member_checkout(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        self._apply_first_member(config, workspace, member_remote)
+        shutil.rmtree(workspace / "execution-flow")
+        metadata_before = (workspace / ".work-bundle/project.yaml").read_bytes()
+        registry_before = (config / "registry/projects.yaml").read_bytes()
+        exclude_before = (workspace / ".git/info/exclude").read_bytes()
+
+        replay_proposal = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        replayed = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            replay_proposal["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(replayed.returncode, 1, replayed.stdout + replayed.stderr)
+        payload = json.loads(replayed.stdout)
+        self.assertEqual(payload["failure_code"], "WB_CONTROL_PLANE_BOUND_CHECKOUT_MISSING:execution-flow")
+        self.assertIsNot(payload.get("replay"), True)
+        self.assertEqual(payload["changed_files"], [])
+        self.assertEqual((workspace / ".work-bundle/project.yaml").read_bytes(), metadata_before)
+        self.assertEqual((config / "registry/projects.yaml").read_bytes(), registry_before)
+        self.assertEqual((workspace / ".git/info/exclude").read_bytes(), exclude_before)
+        self.assertFalse((workspace / "execution-flow").exists())
+
+    def test_add_workspace_member_replay_rejects_missing_or_mismatched_member_device_binding(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        self._apply_first_member(config, workspace, member_remote)
+        registry = config / "registry/projects.yaml"
+        original_registry = registry.read_text(encoding="utf-8")
+        metadata_before = (workspace / ".work-bundle/project.yaml").read_bytes()
+        exclude_before = (workspace / ".git/info/exclude").read_bytes()
+        member_head = git(workspace / "execution-flow", "rev-parse", "HEAD")
+
+        registry.write_text(re.sub(r"      execution-flow:\n(?:        .*\n)+", "", original_registry), encoding="utf-8")
+        missing_proposal = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        missing = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            missing_proposal["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(missing.returncode, 1, missing.stdout + missing.stderr)
+        missing_payload = json.loads(missing.stdout)
+        self.assertEqual(missing_payload["failure_code"], "WB_CONTROL_PLANE_MEMBER_DEVICE_BINDING_MISSING:execution-flow")
+        self.assertIsNot(missing_payload.get("replay"), True)
+        self.assertEqual(missing_payload["changed_files"], [])
+
+        mismatched_kind = original_registry.replace(
+            "        checkout_kind: nested-member\n",
+            "        checkout_kind: managed-worktree\n",
+            1,
+        )
+        registry.write_text(mismatched_kind, encoding="utf-8")
+        kind_proposal = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        kind = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            kind_proposal["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(kind.returncode, 1, kind.stdout + kind.stderr)
+        kind_payload = json.loads(kind.stdout)
+        self.assertEqual(kind_payload["failure_code"], "WB_CONTROL_PLANE_MEMBER_DEVICE_BINDING_MISMATCH:execution-flow")
+        self.assertIsNot(kind_payload.get("replay"), True)
+
+        member_path = str((workspace / "execution-flow").resolve())
+        mismatched_path = original_registry.replace(
+            f"        project_root: {member_path}\n",
+            f"        project_root: {member_path}-stale\n",
+            1,
+        )
+        registry.write_text(mismatched_path, encoding="utf-8")
+        path_proposal = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        path = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            path_proposal["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(path.returncode, 1, path.stdout + path.stderr)
+        path_payload = json.loads(path.stdout)
+        self.assertEqual(path_payload["failure_code"], "WB_CONTROL_PLANE_MEMBER_DEVICE_BINDING_MISMATCH:execution-flow")
+        self.assertIsNot(path_payload.get("replay"), True)
+        self.assertEqual((workspace / ".work-bundle/project.yaml").read_bytes(), metadata_before)
+        self.assertEqual((workspace / ".git/info/exclude").read_bytes(), exclude_before)
+        self.assertEqual(git(workspace / "execution-flow", "rev-parse", "HEAD"), member_head)
+        self.assertTrue((workspace / "execution-flow/README.md").is_file())
+
+    def test_add_workspace_member_replay_rejects_missing_exclude(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
+        self._apply_first_member(config, workspace, member_remote)
+        exclude = workspace / ".git/info/exclude"
+        kept = "\n".join(line for line in exclude.read_text(encoding="utf-8").splitlines() if "execution-flow" not in line)
+        exclude.write_text(kept + "\n", encoding="utf-8")
+        metadata_before = (workspace / ".work-bundle/project.yaml").read_bytes()
+        registry_before = (config / "registry/projects.yaml").read_bytes()
+        exclude_before = exclude.read_bytes()
+
+        replay_proposal = json.loads(run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run").stdout)
+        replayed = run_wb(
+            config,
+            *add_workspace_member_args(workspace, member_remote),
+            "--accepted-proposal-id",
+            replay_proposal["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(replayed.returncode, 1, replayed.stdout + replayed.stderr)
+        payload = json.loads(replayed.stdout)
+        self.assertEqual(payload["failure_code"], "WB_CONTROL_PLANE_MEMBER_EXCLUDE_MISSING:execution-flow")
+        self.assertIsNot(payload.get("replay"), True)
+        self.assertEqual(payload["changed_files"], [])
+        self.assertEqual((workspace / ".work-bundle/project.yaml").read_bytes(), metadata_before)
+        self.assertEqual((config / "registry/projects.yaml").read_bytes(), registry_before)
+        self.assertEqual(exclude.read_bytes(), exclude_before)
+        self.assertTrue((workspace / "execution-flow/README.md").is_file())

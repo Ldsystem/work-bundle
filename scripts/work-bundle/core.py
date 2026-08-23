@@ -45,6 +45,7 @@ CLI_HELP_EPILOG = '''Canonical consolidated command surface:
   publish-control-plane <workspace-root> --remote <git-remote> (--dry-run|--apply)
   attach-workspace <workspace-root> [--materialize none|missing|all] (--dry-run|--apply)
   doctor-workspace <workspace-root> [--repair]
+  add-workspace-member <workspace-root> --repository-id <id> --remote <observed-url> --name <binding-name> --path <relative-path> --default-branch <branch> (--dry-run|--accepted-proposal-id <id> --apply)
   detach-workspace <workspace-root> --apply
   migrate-to-multi-repository <source-project-root> --target-workspace-root <target> [--origin <git-origin>] ...
   provision-member --workspace-root <workspace-root> --origin <git-origin> ... (--dry-run|--apply)

@@ -23,6 +23,7 @@ from violations import (
 from credential import CredentialError, list_metadata
 from execution_workspace import cmd_execution_workspace
 from control_plane import (
+    cmd_add_workspace_member,
     cmd_attach_workspace,
     cmd_detach_workspace,
     cmd_doctor_workspace,
@@ -80,6 +81,8 @@ def main() -> int:
         return cmd_attach_workspace(parsed.args)
     if command == 'doctor-workspace':
         return cmd_doctor_workspace(parsed.args)
+    if command == 'add-workspace-member':
+        return cmd_add_workspace_member(parsed.args)
     if command == 'detach-workspace':
         return cmd_detach_workspace(parsed.args)
     if command == 'migrate-to-multi-repository':
