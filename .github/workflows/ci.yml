@@ -32,12 +32,15 @@ jobs:
 
       - name: Run full tests
         if: runner.os == 'Linux'
-        run: uvx --python 3.13 --from pytest --with pyyaml --with sqlite-vec pytest -q
+        run: >-
+          uvx --python 3.13 --from pytest==9.1.1
+          --with pyyaml==6.0.3 --with sqlite-vec==0.1.9 pytest -q
 
       - name: Run macOS portable tests
         if: runner.os == 'macOS'
         run: >-
-          uvx --python 3.13 --from pytest --with pyyaml --with sqlite-vec
+          uvx --python 3.13 --from pytest==9.1.1
+          --with pyyaml==6.0.3 --with sqlite-vec==0.1.9
           pytest -q -k "not test_index_rebuild_installs_and_loads_sqlite_vec_when_available"
 
       - name: Validate skill packages

@@ -1,7 +1,7 @@
 # work-bundle
 
 [![CI](https://github.com/Ldsystem/work-bundle/actions/workflows/ci.yml/badge.svg)](https://github.com/Ldsystem/work-bundle/actions/workflows/ci.yml)
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 
 Toolkit source for WorkBundle skills, rules, references, and deterministic helper code.
 
@@ -18,7 +18,7 @@ multi-repository workspace:
 
 ```text
 work-bundle-workspace/
-├── .work-bundle/       # portable authority and device-local runtime state
+├── .work-bundle/       # portable workspace authority and runtime artifacts
 ├── work-bundle-main/   # this toolkit repository
 └── execution-flow/     # the independent Execution Flow repository
 ```
