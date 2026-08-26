@@ -19,6 +19,7 @@ from execution_context import (
     validate_executor_result_for_task,
 )
 from handoffs import cmd_write_handoff, index_handoffs
+from plans import _material_repository_root, _verified_handoff_tree
 
 
 def read(path: str) -> str:
@@ -92,6 +93,156 @@ def test_handoff_helper_indexes_sparse_executor_result(tmp_path: Path) -> None:
     assert row["type"] == "executor-result"
     assert row["related_task"] == "task-001"
     assert row["path"].endswith("handoff-exec-20990101-001-task-result.yaml")
+
+
+def test_handoff_tree_resolves_recorded_repository_instead_of_control_root(tmp_path: Path) -> None:
+    from test_orchestration_execution_context import git
+
+    control_root = tmp_path / "control"
+    execution_root = tmp_path / "execution-flow"
+    control_root.mkdir()
+    execution_root.mkdir()
+    git(execution_root, "init", "-q")
+    git(execution_root, "config", "user.email", "test@example.com")
+    git(execution_root, "config", "user.name", "Test")
+    (execution_root / "feature.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    git(execution_root, "add", ".")
+    git(execution_root, "commit", "-qm", "feature")
+    head = git(execution_root, "rev-parse", "HEAD").strip()
+    tree = git(execution_root, "rev-parse", "HEAD^{tree}").strip()
+    handoff = {
+        "repository": [{"root": str(execution_root), "metadata": {"actual_commit": head}}],
+    }
+
+    assert _verified_handoff_tree(control_root, handoff) == tree
+
+
+def test_material_repository_prefers_fresh_terminal_plan_acceptance_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_orchestration_execution_context import git
+
+    control_root = tmp_path / "control"
+    earlier_root = tmp_path / "earlier"
+    accepted_root = tmp_path / "accepted"
+    control_root.mkdir()
+    for root, content in ((earlier_root, "old\n"), (accepted_root, "accepted\n")):
+        root.mkdir()
+        git(root, "init", "-q")
+        git(root, "config", "user.email", "test@example.com")
+        git(root, "config", "user.name", "Test")
+        (root / "feature.ts").write_text(content, encoding="utf-8")
+        git(root, "add", ".")
+        git(root, "commit", "-qm", "feature")
+
+    command = "pnpm run ci"
+    earlier_head = git(earlier_root, "rev-parse", "HEAD").strip()
+    accepted_head = git(accepted_root, "rev-parse", "HEAD").strip()
+    validated = [
+        (
+            {
+                "changes": {"files": [{"path": "feature.ts", "action": "modified"}]},
+                "repository": [{"root": str(earlier_root), "metadata": {"actual_commit": earlier_head}}],
+                "validation": {"commands": []},
+            },
+            {"task_id": "task-001", "files": {"write": ["feature.ts"]}},
+        ),
+        (
+            {
+                "changes": {"files": [{"path": "feature.ts", "action": "modified"}]},
+                "repository": [{"root": str(accepted_root), "metadata": {"actual_commit": accepted_head}}],
+                "validation": {"commands": [{"command": command, "result": "passed"}]},
+            },
+            {"task_id": "task-002", "files": {"write": ["feature.ts"]}},
+        ),
+    ]
+    monkeypatch.setattr("plans._plan_task_order", lambda _args, _plan_id: {"task-001": 1, "task-002": 2})
+
+    assert _material_repository_root(
+        argparse.Namespace(project_root=str(control_root)), "plan-001", validated, [command]
+    ) == accepted_root.resolve()
+
+
+def test_material_repository_rejects_fresh_acceptance_before_later_material_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_orchestration_execution_context import git
+
+    earlier_root = tmp_path / "earlier"
+    later_root = tmp_path / "later"
+    for root in (earlier_root, later_root):
+        root.mkdir()
+        git(root, "init", "-q")
+        git(root, "config", "user.email", "test@example.com")
+        git(root, "config", "user.name", "Test")
+        (root / "feature.ts").write_text(f"{root.name}\n", encoding="utf-8")
+        git(root, "add", ".")
+        git(root, "commit", "-qm", "feature")
+
+    command = "pnpm run ci"
+    earlier_head = git(earlier_root, "rev-parse", "HEAD").strip()
+    later_head = git(later_root, "rev-parse", "HEAD").strip()
+    validated = [
+        (
+            {
+                "changes": {"files": [{"path": "feature.ts", "action": "modified"}]},
+                "repository": [{"root": str(earlier_root), "metadata": {"actual_commit": earlier_head}}],
+                "validation": {"commands": [{"command": command, "result": "passed"}]},
+            },
+            {"task_id": "task-010", "files": {"write": ["feature.ts"]}},
+        ),
+        (
+            {
+                "changes": {"files": [{"path": "feature.ts", "action": "modified"}]},
+                "repository": [{"root": str(later_root), "metadata": {"actual_commit": later_head}}],
+                "validation": {"commands": []},
+            },
+            {"task_id": "task-002", "files": {"write": ["feature.ts"]}},
+        ),
+    ]
+    monkeypatch.setattr("plans._plan_task_order", lambda _args, _plan_id: {"task-010": 1, "task-002": 2})
+
+    with pytest.raises(SystemExit, match="acceptance-blocked: final plan repository is ambiguous"):
+        _material_repository_root(
+            argparse.Namespace(project_root=str(tmp_path)), "plan-001", validated, [command]
+        )
+
+
+def test_material_repository_rejects_material_handoff_without_repository_provenance(tmp_path: Path) -> None:
+    command = "pnpm run ci"
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    metadata = tmp_path / ".work-bundle/project.yaml"
+    metadata.parent.mkdir()
+    metadata.write_text(
+        "metadata_version: 3\n"
+        "workspace_root: " + str(tmp_path) + "\n"
+        "workspace_mode: multi-repository\n"
+        "source_repositories:\n"
+        "  first:\n"
+        "    project_root: " + str(first) + "\n"
+        "  second:\n"
+        "    project_root: " + str(second) + "\n",
+        encoding="utf-8",
+    )
+    validated = [
+        (
+            {
+                "changes": {"files": [{"path": "feature.ts", "action": "modified"}]},
+                "validation": {"commands": [{"command": command, "result": "passed"}]},
+            },
+            {"task_id": "task-001", "files": {"write": ["feature.ts"]}},
+        ),
+    ]
+
+    with pytest.raises(
+        SystemExit, match="acceptance-blocked: material handoff repository provenance is unavailable"
+    ):
+        _material_repository_root(
+            argparse.Namespace(project_root=str(tmp_path)), "plan-001", validated, [command]
+        )
 
 
 def test_write_handoff_fills_missing_task_plan_from_authorized_args(tmp_path: Path) -> None:
@@ -1036,6 +1187,44 @@ def test_fresh_plan_acceptance_rerun_after_later_task_allows_archive(tmp_path: P
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
 
+def test_archive_moves_plan_directory_named_for_root_artifact(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import workspace
+
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    active = root / ".work-bundle/orchestration/plan/active"
+    (active / "compiler-plan.md").rename(active / "plan-001-feature.md")
+    (active / "plan-001").rename(active / "plan-001-feature")
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    archived = root / ".work-bundle/orchestration/plan/archived"
+    assert (archived / "plan-001-feature.md").is_file()
+    assert (archived / "plan-001-feature").is_dir()
+    assert not (active / "plan-001-feature").exists()
+
+
+def test_archive_reconciles_archived_root_with_active_plan_directory(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import workspace
+
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    plan_root = root / ".work-bundle/orchestration/plan"
+    active = plan_root / "active"
+    archived = plan_root / "archived"
+    archived.mkdir(exist_ok=True)
+    (active / "compiler-plan.md").rename(archived / "plan-001-feature.md")
+    (active / "plan-001").rename(active / "plan-001-feature")
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (archived / "plan-001-feature.md").is_file()
+    assert (archived / "plan-001-feature").is_dir()
+    assert not (active / "plan-001-feature").exists()
+
+
 def test_same_day_out_of_id_order_stale_plan_acceptance_blocks_archive(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
     from test_orchestration_execution_context import WRITE_SCOPE_FILE, workspace
@@ -1354,4 +1543,3 @@ def test_dev_create_task_plan_tests_omit_heavy_orchestration_requirements() -> N
     tests = read("tests/test_dev_skill_contracts.py")
     assert "dev-create-task-plan" in tests
     assert ".work-bundle/runtime/dev-plans/" in tests
-

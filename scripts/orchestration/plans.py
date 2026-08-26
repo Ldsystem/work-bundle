@@ -185,11 +185,113 @@ def _handoff_recorded_identities(handoff: dict[str, object]) -> list[str]:
 
 
 def _verified_handoff_tree(root: Path, handoff: dict[str, object]) -> str | None:
+    repositories = handoff.get("repository") if isinstance(handoff.get("repository"), list) else []
+    for repository in repositories:
+        if not isinstance(repository, dict):
+            continue
+        recorded_root = str(repository.get("root") or "").strip()
+        metadata = repository.get("metadata") if isinstance(repository.get("metadata"), dict) else {}
+        identity = str(metadata.get("actual_commit") or "").strip()
+        if recorded_root and identity:
+            tree = _git_tree_id(Path(recorded_root).expanduser().resolve(), identity)
+            if tree:
+                return tree
     for identity in _handoff_recorded_identities(handoff):
         tree = _git_tree_id(root, identity)
         if tree:
             return tree
     return None
+
+
+def _plan_task_order(args: argparse.Namespace, plan_id: str) -> dict[str, int]:
+    order: dict[str, int] = {}
+    for row in index_plans(args):
+        if row.get("type") != "task" or row.get("plan_id") != plan_id:
+            continue
+        front_matter, _body = read_front_matter(artifact_path_from_row(row, args))
+        task_id = str(front_matter.get("id") or row.get("id") or "")
+        value = front_matter.get("order")
+        rank: int | None = None
+        if isinstance(value, int) and not isinstance(value, bool):
+            rank = value
+        elif isinstance(value, str) and re.fullmatch(r"[1-9]\d*", value.strip()):
+            rank = int(value)
+        if task_id and rank is not None:
+            if rank in order.values():
+                raise SystemExit("acceptance-blocked: final plan task order is ambiguous")
+            order[task_id] = rank
+    return order
+
+
+def _material_repository_root(
+    args: argparse.Namespace,
+    plan_id: str,
+    validated: list[tuple[dict[str, object], dict[str, object]]],
+    commands: list[str],
+) -> Path:
+    entries: list[tuple[Path, str]] = []
+    material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
+    if not material:
+        return project_root(args)
+    for handoff, _brief in material:
+        handoff_has_provenance = False
+        repositories = handoff.get("repository") if isinstance(handoff.get("repository"), list) else []
+        for repository in repositories:
+            if not isinstance(repository, dict):
+                continue
+            recorded = str(repository.get("root") or "").strip()
+            metadata = repository.get("metadata") if isinstance(repository.get("metadata"), dict) else {}
+            identity = str(metadata.get("actual_commit") or "").strip()
+            if recorded and identity:
+                entries.append((Path(recorded).expanduser().resolve(), identity))
+                handoff_has_provenance = True
+        if not handoff_has_provenance:
+            try:
+                fallback = _resolve_final_plan_workspace(args)
+            except SystemExit as error:
+                raise SystemExit(
+                    "acceptance-blocked: material handoff repository provenance is unavailable"
+                ) from error
+            entries.append((fallback, "HEAD"))
+    roots = {root for root, _identity in entries}
+    if len(roots) == 1:
+        return next(iter(roots))
+    task_order = _plan_task_order(args, plan_id)
+    material_ranks: list[int] = []
+    for handoff, brief in validated:
+        if not _handoff_has_material_changes(handoff, brief):
+            continue
+        task_id = str(brief.get("task_id") or "")
+        if task_id not in task_order:
+            raise SystemExit("acceptance-blocked: final plan task order is unavailable")
+        material_ranks.append(task_order[task_id])
+    terminal_material_rank = max(material_ranks) if material_ranks else -1
+    acceptance_entries: list[tuple[Path, str]] = []
+    for handoff, brief in validated:
+        if not any(_handoff_command_result(handoff, command) == "passed" for command in commands):
+            continue
+        task_id = str(brief.get("task_id") or "")
+        rank = task_order.get(task_id)
+        if rank is None or rank < terminal_material_rank:
+            continue
+        repositories = handoff.get("repository") if isinstance(handoff.get("repository"), list) else []
+        for repository in repositories:
+            if not isinstance(repository, dict):
+                continue
+            recorded = str(repository.get("root") or "").strip()
+            metadata = repository.get("metadata") if isinstance(repository.get("metadata"), dict) else {}
+            identity = str(metadata.get("actual_commit") or "").strip()
+            if recorded and identity:
+                acceptance_entries.append((Path(recorded).expanduser().resolve(), identity))
+    fresh_acceptance_roots: set[Path] = set()
+    for root, identity in acceptance_entries:
+        head_tree = _git_tree_id(root, "HEAD")
+        recorded_tree = _git_tree_id(root, identity)
+        if head_tree is not None and recorded_tree is not None and head_tree == recorded_tree:
+            fresh_acceptance_roots.add(root)
+    if len(fresh_acceptance_roots) == 1:
+        return next(iter(fresh_acceptance_roots))
+    raise SystemExit("acceptance-blocked: final plan repository is ambiguous")
 
 
 def _acceptance_result_detail(results: set[str]) -> str:
@@ -280,7 +382,7 @@ def _assert_archive_plan_acceptance(
     commands = _declared_integration_commands(body)
     if not commands:
         return
-    git_root = project_root(args)
+    git_root = _material_repository_root(args, plan_id, validated, commands)
     terminal_tree = _git_tree_id(git_root, "HEAD")
     material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
     for command in commands:
@@ -309,7 +411,7 @@ def _assert_archive_plan_acceptance(
         raise SystemExit(
             f"acceptance-blocked: declared plan-level acceptance {command} is {_acceptance_result_detail(judged)}"
         )
-    workspace = _resolve_final_plan_workspace(args)
+    workspace = git_root if material else _resolve_final_plan_workspace(args)
     for command in commands:
         _assert_archive_command_state_neutral(command, workspace)
 
@@ -457,9 +559,22 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
         replace_front_matter_value(root_path, "status", "Completed")
         moved.append(move_to_archive(root_path, active_root, archived_root))
 
-    active_plan_dir = active_root / args.id
+    sibling_plan_dir = root_path.with_suffix("")
+    indexed_active_dirs = {
+        active_root / artifact_path_from_row(row, args).relative_to(active_root).parts[0]
+        for row in rows
+        if row.get("type") == "task"
+        and row.get("plan_id") == args.id
+        and is_relative_to(artifact_path_from_row(row, args), active_root)
+    }
+    if sibling_plan_dir.is_dir() and is_relative_to(sibling_plan_dir, active_root):
+        active_plan_dir = sibling_plan_dir
+    elif len(indexed_active_dirs) == 1:
+        active_plan_dir = next(iter(indexed_active_dirs))
+    else:
+        active_plan_dir = active_root / args.id
     if active_plan_dir.exists():
-        archived_plan_dir = archived_root / args.id
+        archived_plan_dir = archived_root / active_plan_dir.name
         if archived_plan_dir.exists():
             raise SystemExit(f"Archived plan directory already exists: {archived_plan_dir}")
         archived_plan_dir.parent.mkdir(parents=True, exist_ok=True)
