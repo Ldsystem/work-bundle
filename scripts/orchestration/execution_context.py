@@ -1548,10 +1548,14 @@ def build_review_package(args: argparse.Namespace) -> Path:
     handoff, _ = _read_structured(handoff_path)
     validated = validate_executor_result_for_task(handoff, task, observe=True, **_observation_kwargs(args))
     knowledge_disposition = validated["knowledge_disposition"]
+    binding = load_task_execution_binding(root, plan_id, task_id)
+    execution_root = Path(str(binding["execution_path"])).resolve()
 
-    base = _resolve_commit(root, str(args.base))
+    base = _resolve_commit(execution_root, str(args.base))
     write_paths = [str(path) for path in _as_list((task.get("files") or {}).get("write"))]
-    head, diff, name_status, out_of_scope = _review_diff(root, base, str(args.head), write_paths)
+    head, diff, name_status, out_of_scope = _review_diff(
+        execution_root, base, str(args.head), write_paths
+    )
     if len(diff.encode("utf-8")) > MAX_DIFF_BYTES or diff.count("\n") > MAX_DIFF_LINES:
         oversized = ", ".join(
             sorted({path for line in name_status for path in _paths_from_name_status(line)})

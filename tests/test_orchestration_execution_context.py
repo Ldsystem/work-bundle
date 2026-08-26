@@ -555,6 +555,42 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
     assert ".work-bundle/knowledge/notes" not in package
 
 
+def test_build_review_package_resolves_git_refs_in_bound_execution_repository(
+    tmp_path: Path,
+) -> None:
+    root, _, task = workspace(tmp_path)
+    execution_root = tmp_path / "execution-repository"
+    execution_root.mkdir()
+    git(execution_root, "init", "-q", "-b", "main")
+    git(execution_root, "config", "user.email", "test@example.com")
+    git(execution_root, "config", "user.name", "Test")
+    source = execution_root / WRITE_SCOPE_FILE
+    source.parent.mkdir(parents=True)
+    source.write_text("def compile_task():\n    return 'old'\n", encoding="utf-8")
+    git(execution_root, "add", ".")
+    git(execution_root, "commit", "-qm", "base")
+    base = git(execution_root, "rev-parse", "HEAD")
+
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief, execution_root=execution_root)
+    source.write_text("def compile_task():\n    return 'new'\n", encoding="utf-8")
+    git(execution_root, "add", WRITE_SCOPE_FILE)
+    git(execution_root, "commit", "-qm", "head")
+    head = git(execution_root, "rev-parse", "HEAD")
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
+
+    target = build_review_package(
+        args(root, task, handoff=str(handoff), base=base, head=head)
+    )
+    package = target.read_text(encoding="utf-8")
+
+    assert target == root / ".work-bundle/runtime/execution/plan-001/task-004/review-package.md"
+    assert f"Base: {base}" in package
+    assert f"Head: {head}" in package
+    assert "return 'new'" in package
+
+
 def test_build_review_package_includes_tracked_and_untracked_worktree_changes(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
     source = root / WRITE_SCOPE_FILE
