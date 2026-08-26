@@ -117,7 +117,9 @@ def test_handoff_tree_resolves_recorded_repository_instead_of_control_root(tmp_p
     assert _verified_handoff_tree(control_root, handoff) == tree
 
 
-def test_material_repository_prefers_fresh_plan_acceptance_root(tmp_path: Path) -> None:
+def test_material_repository_prefers_fresh_terminal_plan_acceptance_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from test_orchestration_execution_context import git
 
     control_root = tmp_path / "control"
@@ -143,7 +145,7 @@ def test_material_repository_prefers_fresh_plan_acceptance_root(tmp_path: Path) 
                 "repository": [{"root": str(earlier_root), "metadata": {"actual_commit": earlier_head}}],
                 "validation": {"commands": []},
             },
-            {"files": {"write": ["feature.ts"]}},
+            {"task_id": "task-001", "files": {"write": ["feature.ts"]}},
         ),
         (
             {
@@ -151,13 +153,71 @@ def test_material_repository_prefers_fresh_plan_acceptance_root(tmp_path: Path) 
                 "repository": [{"root": str(accepted_root), "metadata": {"actual_commit": accepted_head}}],
                 "validation": {"commands": [{"command": command, "result": "passed"}]},
             },
-            {"files": {"write": ["feature.ts"]}},
+            {"task_id": "task-002", "files": {"write": ["feature.ts"]}},
         ),
     ]
+    monkeypatch.setattr(
+        "plans.index_plans",
+        lambda _args: [
+            {"type": "task", "plan_id": "plan-001", "id": "task-001"},
+            {"type": "task", "plan_id": "plan-001", "id": "task-002"},
+        ],
+    )
 
     assert _material_repository_root(
-        argparse.Namespace(project_root=str(control_root)), validated, [command]
+        argparse.Namespace(project_root=str(control_root)), "plan-001", validated, [command]
     ) == accepted_root.resolve()
+
+
+def test_material_repository_rejects_fresh_acceptance_before_later_material_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_orchestration_execution_context import git
+
+    earlier_root = tmp_path / "earlier"
+    later_root = tmp_path / "later"
+    for root in (earlier_root, later_root):
+        root.mkdir()
+        git(root, "init", "-q")
+        git(root, "config", "user.email", "test@example.com")
+        git(root, "config", "user.name", "Test")
+        (root / "feature.ts").write_text(f"{root.name}\n", encoding="utf-8")
+        git(root, "add", ".")
+        git(root, "commit", "-qm", "feature")
+
+    command = "pnpm run ci"
+    earlier_head = git(earlier_root, "rev-parse", "HEAD").strip()
+    later_head = git(later_root, "rev-parse", "HEAD").strip()
+    validated = [
+        (
+            {
+                "changes": {"files": [{"path": "feature.ts", "action": "modified"}]},
+                "repository": [{"root": str(earlier_root), "metadata": {"actual_commit": earlier_head}}],
+                "validation": {"commands": [{"command": command, "result": "passed"}]},
+            },
+            {"task_id": "task-001", "files": {"write": ["feature.ts"]}},
+        ),
+        (
+            {
+                "changes": {"files": [{"path": "feature.ts", "action": "modified"}]},
+                "repository": [{"root": str(later_root), "metadata": {"actual_commit": later_head}}],
+                "validation": {"commands": []},
+            },
+            {"task_id": "task-002", "files": {"write": ["feature.ts"]}},
+        ),
+    ]
+    monkeypatch.setattr(
+        "plans.index_plans",
+        lambda _args: [
+            {"type": "task", "plan_id": "plan-001", "id": "task-001"},
+            {"type": "task", "plan_id": "plan-001", "id": "task-002"},
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="acceptance-blocked: final plan repository is ambiguous"):
+        _material_repository_root(
+            argparse.Namespace(project_root=str(tmp_path)), "plan-001", validated, [command]
+        )
 
 
 def test_write_handoff_fills_missing_task_plan_from_authorized_args(tmp_path: Path) -> None:
@@ -1100,6 +1160,44 @@ def test_fresh_plan_acceptance_rerun_after_later_task_allows_archive(tmp_path: P
     cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
+
+
+def test_archive_moves_plan_directory_named_for_root_artifact(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import workspace
+
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    active = root / ".work-bundle/orchestration/plan/active"
+    (active / "compiler-plan.md").rename(active / "plan-001-feature.md")
+    (active / "plan-001").rename(active / "plan-001-feature")
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    archived = root / ".work-bundle/orchestration/plan/archived"
+    assert (archived / "plan-001-feature.md").is_file()
+    assert (archived / "plan-001-feature").is_dir()
+    assert not (active / "plan-001-feature").exists()
+
+
+def test_archive_reconciles_archived_root_with_active_plan_directory(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import workspace
+
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    plan_root = root / ".work-bundle/orchestration/plan"
+    active = plan_root / "active"
+    archived = plan_root / "archived"
+    archived.mkdir(exist_ok=True)
+    (active / "compiler-plan.md").rename(archived / "plan-001-feature.md")
+    (active / "plan-001").rename(active / "plan-001-feature")
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (archived / "plan-001-feature.md").is_file()
+    assert (archived / "plan-001-feature").is_dir()
+    assert not (active / "plan-001-feature").exists()
 
 
 def test_same_day_out_of_id_order_stale_plan_acceptance_blocks_archive(tmp_path: Path) -> None:
