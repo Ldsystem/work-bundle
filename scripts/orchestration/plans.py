@@ -203,6 +203,26 @@ def _verified_handoff_tree(root: Path, handoff: dict[str, object]) -> str | None
     return None
 
 
+def _plan_task_order(args: argparse.Namespace, plan_id: str) -> dict[str, int]:
+    order: dict[str, int] = {}
+    for row in index_plans(args):
+        if row.get("type") != "task" or row.get("plan_id") != plan_id:
+            continue
+        front_matter, _body = read_front_matter(artifact_path_from_row(row, args))
+        task_id = str(front_matter.get("id") or row.get("id") or "")
+        value = front_matter.get("order")
+        rank: int | None = None
+        if isinstance(value, int) and not isinstance(value, bool):
+            rank = value
+        elif isinstance(value, str) and re.fullmatch(r"[1-9]\d*", value.strip()):
+            rank = int(value)
+        if task_id and rank is not None:
+            if rank in order.values():
+                raise SystemExit("acceptance-blocked: final plan task order is ambiguous")
+            order[task_id] = rank
+    return order
+
+
 def _material_repository_root(
     args: argparse.Namespace,
     plan_id: str,
@@ -210,9 +230,11 @@ def _material_repository_root(
     commands: list[str],
 ) -> Path:
     entries: list[tuple[Path, str]] = []
-    for handoff, brief in validated:
-        if not _handoff_has_material_changes(handoff, brief):
-            continue
+    material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
+    if not material:
+        return project_root(args)
+    for handoff, _brief in material:
+        handoff_has_provenance = False
         repositories = handoff.get("repository") if isinstance(handoff.get("repository"), list) else []
         for repository in repositories:
             if not isinstance(repository, dict):
@@ -222,19 +244,19 @@ def _material_repository_root(
             identity = str(metadata.get("actual_commit") or "").strip()
             if recorded and identity:
                 entries.append((Path(recorded).expanduser().resolve(), identity))
-    if not entries:
-        return project_root(args)
+                handoff_has_provenance = True
+        if not handoff_has_provenance:
+            try:
+                fallback = _resolve_final_plan_workspace(args)
+            except SystemExit as error:
+                raise SystemExit(
+                    "acceptance-blocked: material handoff repository provenance is unavailable"
+                ) from error
+            entries.append((fallback, "HEAD"))
     roots = {root for root, _identity in entries}
     if len(roots) == 1:
         return next(iter(roots))
-    task_order = {
-        str(row.get("id") or ""): index
-        for index, row in enumerate(
-            row
-            for row in index_plans(args)
-            if row.get("type") == "task" and row.get("plan_id") == plan_id
-        )
-    }
+    task_order = _plan_task_order(args, plan_id)
     material_ranks: list[int] = []
     for handoff, brief in validated:
         if not _handoff_has_material_changes(handoff, brief):

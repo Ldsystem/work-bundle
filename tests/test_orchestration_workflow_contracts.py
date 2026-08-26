@@ -156,13 +156,7 @@ def test_material_repository_prefers_fresh_terminal_plan_acceptance_root(
             {"task_id": "task-002", "files": {"write": ["feature.ts"]}},
         ),
     ]
-    monkeypatch.setattr(
-        "plans.index_plans",
-        lambda _args: [
-            {"type": "task", "plan_id": "plan-001", "id": "task-001"},
-            {"type": "task", "plan_id": "plan-001", "id": "task-002"},
-        ],
-    )
+    monkeypatch.setattr("plans._plan_task_order", lambda _args, _plan_id: {"task-001": 1, "task-002": 2})
 
     assert _material_repository_root(
         argparse.Namespace(project_root=str(control_root)), "plan-001", validated, [command]
@@ -195,7 +189,7 @@ def test_material_repository_rejects_fresh_acceptance_before_later_material_task
                 "repository": [{"root": str(earlier_root), "metadata": {"actual_commit": earlier_head}}],
                 "validation": {"commands": [{"command": command, "result": "passed"}]},
             },
-            {"task_id": "task-001", "files": {"write": ["feature.ts"]}},
+            {"task_id": "task-010", "files": {"write": ["feature.ts"]}},
         ),
         (
             {
@@ -206,15 +200,46 @@ def test_material_repository_rejects_fresh_acceptance_before_later_material_task
             {"task_id": "task-002", "files": {"write": ["feature.ts"]}},
         ),
     ]
-    monkeypatch.setattr(
-        "plans.index_plans",
-        lambda _args: [
-            {"type": "task", "plan_id": "plan-001", "id": "task-001"},
-            {"type": "task", "plan_id": "plan-001", "id": "task-002"},
-        ],
-    )
+    monkeypatch.setattr("plans._plan_task_order", lambda _args, _plan_id: {"task-010": 1, "task-002": 2})
 
     with pytest.raises(SystemExit, match="acceptance-blocked: final plan repository is ambiguous"):
+        _material_repository_root(
+            argparse.Namespace(project_root=str(tmp_path)), "plan-001", validated, [command]
+        )
+
+
+def test_material_repository_rejects_material_handoff_without_repository_provenance(tmp_path: Path) -> None:
+    command = "pnpm run ci"
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    metadata = tmp_path / ".work-bundle/project.yaml"
+    metadata.parent.mkdir()
+    metadata.write_text(
+        "metadata_version: 3\n"
+        "workspace_root: " + str(tmp_path) + "\n"
+        "workspace_mode: multi-repository\n"
+        "source_repositories:\n"
+        "  first:\n"
+        "    project_root: " + str(first) + "\n"
+        "  second:\n"
+        "    project_root: " + str(second) + "\n",
+        encoding="utf-8",
+    )
+    validated = [
+        (
+            {
+                "changes": {"files": [{"path": "feature.ts", "action": "modified"}]},
+                "validation": {"commands": [{"command": command, "result": "passed"}]},
+            },
+            {"task_id": "task-001", "files": {"write": ["feature.ts"]}},
+        ),
+    ]
+
+    with pytest.raises(
+        SystemExit, match="acceptance-blocked: material handoff repository provenance is unavailable"
+    ):
         _material_repository_root(
             argparse.Namespace(project_root=str(tmp_path)), "plan-001", validated, [command]
         )
