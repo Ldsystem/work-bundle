@@ -19,6 +19,7 @@ from execution_context import (
     validate_executor_result_for_task,
 )
 from handoffs import cmd_write_handoff, index_handoffs
+from plans import _verified_handoff_tree
 
 
 def read(path: str) -> str:
@@ -92,6 +93,28 @@ def test_handoff_helper_indexes_sparse_executor_result(tmp_path: Path) -> None:
     assert row["type"] == "executor-result"
     assert row["related_task"] == "task-001"
     assert row["path"].endswith("handoff-exec-20990101-001-task-result.yaml")
+
+
+def test_handoff_tree_resolves_recorded_repository_instead_of_control_root(tmp_path: Path) -> None:
+    from test_orchestration_execution_context import git
+
+    control_root = tmp_path / "control"
+    execution_root = tmp_path / "execution-flow"
+    control_root.mkdir()
+    execution_root.mkdir()
+    git(execution_root, "init", "-q")
+    git(execution_root, "config", "user.email", "test@example.com")
+    git(execution_root, "config", "user.name", "Test")
+    (execution_root / "feature.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    git(execution_root, "add", ".")
+    git(execution_root, "commit", "-qm", "feature")
+    head = git(execution_root, "rev-parse", "HEAD").strip()
+    tree = git(execution_root, "rev-parse", "HEAD^{tree}").strip()
+    handoff = {
+        "repository": [{"root": str(execution_root), "metadata": {"actual_commit": head}}],
+    }
+
+    assert _verified_handoff_tree(control_root, handoff) == tree
 
 
 def test_write_handoff_fills_missing_task_plan_from_authorized_args(tmp_path: Path) -> None:
@@ -1354,4 +1377,3 @@ def test_dev_create_task_plan_tests_omit_heavy_orchestration_requirements() -> N
     tests = read("tests/test_dev_skill_contracts.py")
     assert "dev-create-task-plan" in tests
     assert ".work-bundle/runtime/dev-plans/" in tests
-

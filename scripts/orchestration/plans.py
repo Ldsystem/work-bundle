@@ -185,11 +185,44 @@ def _handoff_recorded_identities(handoff: dict[str, object]) -> list[str]:
 
 
 def _verified_handoff_tree(root: Path, handoff: dict[str, object]) -> str | None:
+    repositories = handoff.get("repository") if isinstance(handoff.get("repository"), list) else []
+    for repository in repositories:
+        if not isinstance(repository, dict):
+            continue
+        recorded_root = str(repository.get("root") or "").strip()
+        metadata = repository.get("metadata") if isinstance(repository.get("metadata"), dict) else {}
+        identity = str(metadata.get("actual_commit") or "").strip()
+        if recorded_root and identity:
+            tree = _git_tree_id(Path(recorded_root).expanduser().resolve(), identity)
+            if tree:
+                return tree
     for identity in _handoff_recorded_identities(handoff):
         tree = _git_tree_id(root, identity)
         if tree:
             return tree
     return None
+
+
+def _material_repository_root(
+    args: argparse.Namespace,
+    validated: list[tuple[dict[str, object], dict[str, object]]],
+) -> Path:
+    roots: set[Path] = set()
+    for handoff, brief in validated:
+        if not _handoff_has_material_changes(handoff, brief):
+            continue
+        repositories = handoff.get("repository") if isinstance(handoff.get("repository"), list) else []
+        for repository in repositories:
+            if not isinstance(repository, dict):
+                continue
+            recorded = str(repository.get("root") or "").strip()
+            if recorded:
+                roots.add(Path(recorded).expanduser().resolve())
+    if len(roots) > 1:
+        raise SystemExit("acceptance-blocked: final plan repository is ambiguous")
+    if roots:
+        return next(iter(roots))
+    return project_root(args)
 
 
 def _acceptance_result_detail(results: set[str]) -> str:
@@ -280,7 +313,7 @@ def _assert_archive_plan_acceptance(
     commands = _declared_integration_commands(body)
     if not commands:
         return
-    git_root = project_root(args)
+    git_root = _material_repository_root(args, validated)
     terminal_tree = _git_tree_id(git_root, "HEAD")
     material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
     for command in commands:
@@ -309,7 +342,7 @@ def _assert_archive_plan_acceptance(
         raise SystemExit(
             f"acceptance-blocked: declared plan-level acceptance {command} is {_acceptance_result_detail(judged)}"
         )
-    workspace = _resolve_final_plan_workspace(args)
+    workspace = git_root if material else _resolve_final_plan_workspace(args)
     for command in commands:
         _assert_archive_command_state_neutral(command, workspace)
 
