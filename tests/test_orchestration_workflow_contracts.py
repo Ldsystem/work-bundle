@@ -19,7 +19,7 @@ from execution_context import (
     validate_executor_result_for_task,
 )
 from handoffs import cmd_write_handoff, index_handoffs
-from plans import _verified_handoff_tree
+from plans import _material_repository_root, _verified_handoff_tree
 
 
 def read(path: str) -> str:
@@ -115,6 +115,49 @@ def test_handoff_tree_resolves_recorded_repository_instead_of_control_root(tmp_p
     }
 
     assert _verified_handoff_tree(control_root, handoff) == tree
+
+
+def test_material_repository_prefers_fresh_plan_acceptance_root(tmp_path: Path) -> None:
+    from test_orchestration_execution_context import git
+
+    control_root = tmp_path / "control"
+    earlier_root = tmp_path / "earlier"
+    accepted_root = tmp_path / "accepted"
+    control_root.mkdir()
+    for root, content in ((earlier_root, "old\n"), (accepted_root, "accepted\n")):
+        root.mkdir()
+        git(root, "init", "-q")
+        git(root, "config", "user.email", "test@example.com")
+        git(root, "config", "user.name", "Test")
+        (root / "feature.ts").write_text(content, encoding="utf-8")
+        git(root, "add", ".")
+        git(root, "commit", "-qm", "feature")
+
+    command = "pnpm run ci"
+    earlier_head = git(earlier_root, "rev-parse", "HEAD").strip()
+    accepted_head = git(accepted_root, "rev-parse", "HEAD").strip()
+    validated = [
+        (
+            {
+                "changes": {"files": [{"path": "feature.ts", "action": "modified"}]},
+                "repository": [{"root": str(earlier_root), "metadata": {"actual_commit": earlier_head}}],
+                "validation": {"commands": []},
+            },
+            {"files": {"write": ["feature.ts"]}},
+        ),
+        (
+            {
+                "changes": {"files": [{"path": "feature.ts", "action": "modified"}]},
+                "repository": [{"root": str(accepted_root), "metadata": {"actual_commit": accepted_head}}],
+                "validation": {"commands": [{"command": command, "result": "passed"}]},
+            },
+            {"files": {"write": ["feature.ts"]}},
+        ),
+    ]
+
+    assert _material_repository_root(
+        argparse.Namespace(project_root=str(control_root)), validated, [command]
+    ) == accepted_root.resolve()
 
 
 def test_write_handoff_fills_missing_task_plan_from_authorized_args(tmp_path: Path) -> None:

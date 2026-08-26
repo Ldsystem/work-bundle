@@ -164,6 +164,16 @@ def _git_tree_id(root: Path, spec: str) -> str | None:
     return result.stdout.strip() or None
 
 
+def _git_is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", ancestor, descendant],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def _handoff_recorded_identities(handoff: dict[str, object]) -> list[str]:
     identities: list[str] = []
     review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
@@ -206,8 +216,9 @@ def _verified_handoff_tree(root: Path, handoff: dict[str, object]) -> str | None
 def _material_repository_root(
     args: argparse.Namespace,
     validated: list[tuple[dict[str, object], dict[str, object]]],
+    commands: list[str],
 ) -> Path:
-    roots: set[Path] = set()
+    entries: list[tuple[Path, str]] = []
     for handoff, brief in validated:
         if not _handoff_has_material_changes(handoff, brief):
             continue
@@ -216,13 +227,44 @@ def _material_repository_root(
             if not isinstance(repository, dict):
                 continue
             recorded = str(repository.get("root") or "").strip()
-            if recorded:
-                roots.add(Path(recorded).expanduser().resolve())
-    if len(roots) > 1:
+            metadata = repository.get("metadata") if isinstance(repository.get("metadata"), dict) else {}
+            identity = str(metadata.get("actual_commit") or "").strip()
+            if recorded and identity:
+                entries.append((Path(recorded).expanduser().resolve(), identity))
+    if not entries:
+        return project_root(args)
+    acceptance_entries: list[tuple[Path, str]] = []
+    for handoff, _brief in validated:
+        if not any(_handoff_command_result(handoff, command) == "passed" for command in commands):
+            continue
+        repositories = handoff.get("repository") if isinstance(handoff.get("repository"), list) else []
+        for repository in repositories:
+            if not isinstance(repository, dict):
+                continue
+            recorded = str(repository.get("root") or "").strip()
+            metadata = repository.get("metadata") if isinstance(repository.get("metadata"), dict) else {}
+            identity = str(metadata.get("actual_commit") or "").strip()
+            if recorded and identity:
+                acceptance_entries.append((Path(recorded).expanduser().resolve(), identity))
+    fresh_acceptance_roots = {
+        root
+        for root, identity in acceptance_entries
+        if _git_tree_id(root, "HEAD") == _git_tree_id(root, identity)
+    }
+    if len(fresh_acceptance_roots) == 1:
+        return next(iter(fresh_acceptance_roots))
+    terminal: list[tuple[Path, str]] = []
+    identities = {identity for _root, identity in entries}
+    for root, identity in entries:
+        if _git_tree_id(root, identity) and all(_git_is_ancestor(root, other, identity) for other in identities):
+            terminal.append((root, identity))
+    terminal_identities = {identity for _root, identity in terminal}
+    if len(terminal_identities) == 1:
+        identity = next(iter(terminal_identities))
+        return next(root for root, candidate in terminal if candidate == identity)
+    if len({root for root, _identity in entries}) > 1:
         raise SystemExit("acceptance-blocked: final plan repository is ambiguous")
-    if roots:
-        return next(iter(roots))
-    return project_root(args)
+    return entries[0][0]
 
 
 def _acceptance_result_detail(results: set[str]) -> str:
@@ -313,7 +355,7 @@ def _assert_archive_plan_acceptance(
     commands = _declared_integration_commands(body)
     if not commands:
         return
-    git_root = _material_repository_root(args, validated)
+    git_root = _material_repository_root(args, validated, commands)
     terminal_tree = _git_tree_id(git_root, "HEAD")
     material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
     for command in commands:
