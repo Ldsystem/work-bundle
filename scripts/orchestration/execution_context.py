@@ -56,6 +56,107 @@ FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
 }
 VALID_RESULT_STATES = {"completed", "blocked", "partial", "failed"}
 TASK_FIT_RESULTS = {"clean", "repaired", "unresolved", "skipped"}
+EXECUTOR_CAPABILITIES = {"mechanical", "standard", "judgment"}
+SOURCE_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cs",
+    ".go",
+    ".h",
+    ".hpp",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".kts",
+    ".php",
+    ".py",
+    ".rb",
+    ".rs",
+    ".scala",
+    ".sh",
+    ".swift",
+    ".ts",
+    ".tsx",
+    ".vue",
+}
+
+
+def _source_paths(values: Any) -> list[str]:
+    return [
+        str(value)
+        for value in _as_list(values)
+        if Path(str(value).split("#", 1)[0]).suffix.lower() in SOURCE_SUFFIXES
+    ]
+
+
+def task_evidence_applicability(task: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return the monotonic, reason-coded evidence requirements owned by a task."""
+
+    reasons: dict[str, list[str]] = {"metadata": [], "repository": [], "codegraph": []}
+
+    def require(kind: str, reason: str) -> None:
+        if reason not in reasons[kind]:
+            reasons[kind].append(reason)
+
+    if task.get("project_metadata_required") is True or task.get("metadata_preflight"):
+        require("metadata", "project-metadata-preflight")
+
+    binding = task.get("execution_binding")
+    if isinstance(binding, dict) and binding.get("target_kind") == "git-backed":
+        require("repository", "repository-target-binding")
+    if task.get("repository_id") or task.get("repository_target"):
+        require("repository", "repository-target")
+    if task.get("repository_preflight"):
+        require("repository", "repository-preflight")
+    if task.get("accepted_repository_baseline") or task.get("repository_baseline"):
+        require("repository", "accepted-repository-baseline")
+    if _as_list(task.get("changed_paths")):
+        require("repository", "changed-paths")
+    if task.get("repository_blocker_state"):
+        require("repository", "repository-blocker-state")
+
+    files = task.get("files") if isinstance(task.get("files"), dict) else {}
+    read_paths = _source_paths([*_as_list(files.get("read")), *_as_list(task.get("source_files"))])
+    write_paths = _source_paths([*_as_list(files.get("write")), *_as_list(task.get("target_files"))])
+    source_reasons: list[str] = []
+    if read_paths:
+        source_reasons.append("source-inspection")
+    if write_paths:
+        source_reasons.append("source-editing")
+    if _as_list(task.get("target_symbols")) or _as_list(task.get("dependency_paths")) or _as_list(
+        task.get("call_chains")
+    ):
+        source_reasons.append("source-analysis")
+    validation = [item for item in _as_list(task.get("validation")) if isinstance(item, dict)]
+    if any(
+        _source_paths(item.get("command"))
+        or re.search(r"(?:^|\s)(?:pytest|unittest|cargo test|go test|pnpm test|npm test)(?:\s|$)", str(item.get("command") or ""))
+        for item in validation
+    ):
+        source_reasons.append("source-validation")
+    for reason in source_reasons:
+        require("repository", reason)
+        require("codegraph", reason)
+
+    return {
+        kind: {"required": bool(kind_reasons), "reasons": kind_reasons}
+        for kind, kind_reasons in reasons.items()
+    }
+
+
+def _compile_executor_profile(task: dict[str, Any], task_path: Path) -> dict[str, Any]:
+    if "executor_profile" not in task:
+        return {"capability": "standard", "context_mode": "compiled-brief"}
+    profile = task["executor_profile"]
+    if not isinstance(profile, dict):
+        raise SystemExit(f"Task executor_profile must be a mapping: {task_path}")
+    capability = profile.get("capability")
+    if capability not in EXECUTOR_CAPABILITIES:
+        allowed = ", ".join(sorted(EXECUTOR_CAPABILITIES))
+        raise SystemExit(f"Task executor_profile.capability must be one of {allowed}: {task_path}")
+    return dict(profile)
 
 
 def _split_top_level(value: str, delimiter: str = ",") -> list[str]:
@@ -1012,6 +1113,194 @@ def _observe_completed_validation(
     return observed_items
 
 
+def _task_evidence_applicability(task: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    compiled = task.get("evidence_applicability")
+    if compiled is None:
+        return task_evidence_applicability(task)
+    if not isinstance(compiled, dict):
+        raise SystemExit("Task evidence_applicability must be a mapping")
+    normalized: dict[str, dict[str, Any]] = {}
+    for kind in ("metadata", "repository", "codegraph"):
+        item = compiled.get(kind)
+        if not isinstance(item, dict) or not isinstance(item.get("required"), bool):
+            raise SystemExit(f"Task evidence_applicability.{kind}.required must be boolean")
+        reasons = item.get("reasons")
+        if not isinstance(reasons, list) or any(not isinstance(reason, str) for reason in reasons):
+            raise SystemExit(f"Task evidence_applicability.{kind}.reasons must be a string list")
+        normalized[kind] = {"required": item["required"], "reasons": list(reasons)}
+    return normalized
+
+
+def _validated_repository_evidence(handoff: dict[str, Any], metadata_required: bool) -> list[dict[str, Any]]:
+    entries = handoff.get("repository")
+    if not isinstance(entries, list) or not entries:
+        raise SystemExit("Executor result is missing applicable repository evidence")
+    validated: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise SystemExit("Executor result repository evidence entries must be mappings")
+        root = Path(str(entry.get("root") or ""))
+        if not root.is_absolute():
+            raise SystemExit("Executor result repository evidence root must be absolute")
+        if entry.get("target_kind") not in {"git-backed", "local-project"}:
+            raise SystemExit("Executor result repository evidence target_kind is invalid")
+        if entry.get("preflight_kind") not in {"git-clean-worktree", "local-project"}:
+            raise SystemExit("Executor result repository evidence preflight_kind is invalid")
+        if entry.get("baseline") not in {"initial", "accepted-handoff"}:
+            raise SystemExit("Executor result repository evidence baseline is invalid")
+        if entry.get("status") not in {"clean", "blocked"}:
+            raise SystemExit("Executor result repository evidence status is invalid")
+        if metadata_required:
+            metadata = entry.get("metadata")
+            required_fields = {
+                "repository_id",
+                "expected_branch",
+                "actual_branch",
+                "branch_status",
+                "expected_commit",
+                "actual_commit",
+                "commit_status",
+                "baseline_status",
+            }
+            if not isinstance(metadata, dict) or not required_fields.issubset(metadata):
+                raise SystemExit("Executor result repository metadata evidence is missing required fields")
+        validated.append(entry)
+    return validated
+
+
+def _validated_codegraph_evidence(
+    handoff: dict[str, Any], repository_entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    entries = handoff.get("codegraph")
+    if not isinstance(entries, list) or not entries:
+        raise SystemExit("Executor result is missing applicable CodeGraph evidence")
+    repository_roots = {str(Path(str(entry["root"])).resolve()) for entry in repository_entries}
+    validated: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise SystemExit("Executor result CodeGraph evidence entries must be mappings")
+        root = Path(str(entry.get("root") or ""))
+        if not root.is_absolute():
+            raise SystemExit("Executor result CodeGraph evidence root must be absolute")
+        if repository_roots and str(root.resolve()) not in repository_roots:
+            raise SystemExit("Executor result CodeGraph evidence root has no matching repository evidence")
+        applicable = entry.get("applicable")
+        up_to_date = entry.get("up_to_date")
+        reason = entry.get("reason")
+        if not isinstance(applicable, bool) or not isinstance(up_to_date, bool):
+            raise SystemExit("Executor result CodeGraph applicable and up_to_date must be boolean")
+        if applicable:
+            if not up_to_date or reason not in {None, ""}:
+                raise SystemExit("Applicable CodeGraph evidence must be up_to_date without a failure reason")
+        elif up_to_date or reason != "no-index":
+            raise SystemExit("Non-applicable CodeGraph evidence must be explicit no-index")
+        validated.append(entry)
+    return validated
+
+
+def _observe_repository_and_codegraph_evidence(
+    task: dict[str, Any],
+    repository_entries: list[dict[str, Any]],
+    codegraph_entries: list[dict[str, Any]],
+    *,
+    codegraph_required: bool,
+) -> None:
+    workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
+    control_root_raw = workspace.get("root")
+    if not control_root_raw:
+        raise SystemExit("Task execution binding is missing harness provenance")
+    binding = load_task_execution_binding(
+        Path(str(control_root_raw)), str(task["plan_id"]), str(task["task_id"])
+    )
+    execution_root = Path(str(binding["execution_path"])).resolve()
+    repository = next(
+        (entry for entry in repository_entries if Path(str(entry["root"])).resolve() == execution_root),
+        None,
+    )
+    if repository is None:
+        raise SystemExit("Executor repository evidence does not match the helper-observed execution binding")
+    try:
+        observed_repository = capture_repository_evidence(execution_root)
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error
+    baseline = binding.get("baseline")
+    if not isinstance(baseline, dict) or not baseline.get("head"):
+        raise SystemExit("Task execution binding is missing harness provenance baseline")
+    caused = task_caused_paths(baseline, observed_repository, execution_root)
+    task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
+    _assert_task_caused_delta_in_write_scope(caused, task_files)
+
+    metadata = repository.get("metadata")
+    if isinstance(metadata, dict):
+        branch = subprocess.run(
+            ["git", "-C", str(execution_root), "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if branch.returncode != 0:
+            raise SystemExit("Helper-observed repository branch identity is unavailable")
+        actual_branch = branch.stdout.strip()
+        actual_commit = str(observed_repository.get("head") or "")
+        if metadata.get("actual_branch") != actual_branch:
+            raise SystemExit("Executor repository branch does not match helper-observed identity")
+        if metadata.get("actual_commit") != actual_commit:
+            raise SystemExit("Executor repository commit does not match helper-observed identity")
+        expected_branch = metadata.get("expected_branch")
+        expected_commit = metadata.get("expected_commit")
+        observed_branch_status = (
+            "not-applicable" if not expected_branch else "matched" if expected_branch == actual_branch else "mismatch"
+        )
+        observed_commit_status = (
+            "not-applicable" if not expected_commit else "matched" if expected_commit == actual_commit else "stale"
+        )
+        if metadata.get("branch_status") != observed_branch_status:
+            raise SystemExit("Executor repository branch status contradicts helper observation")
+        if metadata.get("commit_status") != observed_commit_status:
+            raise SystemExit("Executor repository commit status contradicts helper observation")
+    if not codegraph_required:
+        return
+    codegraph = next(
+        (entry for entry in codegraph_entries if Path(str(entry["root"])).resolve() == execution_root),
+        None,
+    )
+    if codegraph is None:
+        raise SystemExit("Executor CodeGraph evidence does not match the helper-observed execution binding")
+    marker_exists = (execution_root / ".codegraph").is_dir()
+    if marker_exists and codegraph.get("applicable") is not True:
+        raise SystemExit("Helper-observed CodeGraph marker contradicts executor no-index evidence")
+    if not marker_exists and (
+        codegraph.get("applicable") is not False or codegraph.get("reason") != "no-index"
+    ):
+        raise SystemExit("Helper-observed missing CodeGraph marker requires explicit no-index evidence")
+    if marker_exists:
+        status = subprocess.run(
+            ["codegraph", "status", "--json", str(execution_root)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if status.returncode != 0:
+            raise SystemExit("Helper-observed CodeGraph status is unavailable")
+        try:
+            observed_codegraph = json.loads(status.stdout)
+        except json.JSONDecodeError as error:
+            raise SystemExit("Helper-observed CodeGraph status is malformed") from error
+        pending = observed_codegraph.get("pendingChanges")
+        index = observed_codegraph.get("index")
+        up_to_date = (
+            observed_codegraph.get("initialized") is True
+            and Path(str(observed_codegraph.get("projectPath") or "")).resolve() == execution_root
+            and isinstance(pending, dict)
+            and all(pending.get(kind) == 0 for kind in ("added", "modified", "removed"))
+            and observed_codegraph.get("worktreeMismatch") is None
+            and isinstance(index, dict)
+            and index.get("reindexRecommended") is False
+        )
+        if codegraph.get("up_to_date") is not up_to_date:
+            raise SystemExit("Executor CodeGraph up_to_date claim contradicts helper-observed status")
+
+
 def validate_executor_result_for_task(
     handoff: dict[str, Any],
     task: dict[str, Any],
@@ -1060,6 +1349,7 @@ def validate_executor_result_for_task(
         if isinstance(item, dict) and item.get("command")
     ]
     observed_validation = None
+    reported_commands: dict[str, dict[str, Any]] = {}
     if state == "completed" and required_items:
         reported = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
         reported_commands = {
@@ -1087,21 +1377,42 @@ def validate_executor_result_for_task(
                 raise SystemExit(
                     f"Executor result validation for {command} must be {allowed_text}; got {result_value}"
                 )
-        if observe:
-            observed_validation = _observe_completed_validation(
-                handoff,
-                task,
-                required_items,
-                reported_commands,
-                workspace_id=workspace_id,
-                execution_id=execution_id,
-                repository_id=repository_id,
-                execution_runtime_root=execution_runtime_root,
-            )
+
+    evidence_applicability = _task_evidence_applicability(task)
+    repository_entries: list[dict[str, Any]] = []
+    codegraph_entries: list[dict[str, Any]] = []
+    if evidence_applicability["repository"]["required"]:
+        repository_entries = _validated_repository_evidence(
+            handoff, evidence_applicability["metadata"]["required"]
+        )
+    elif evidence_applicability["metadata"]["required"]:
+        repository_entries = _validated_repository_evidence(handoff, True)
+    if evidence_applicability["codegraph"]["required"]:
+        codegraph_entries = _validated_codegraph_evidence(handoff, repository_entries)
+    if observe and (repository_entries or codegraph_entries):
+        _observe_repository_and_codegraph_evidence(
+            task,
+            repository_entries,
+            codegraph_entries,
+            codegraph_required=evidence_applicability["codegraph"]["required"],
+        )
+
+    if state == "completed" and required_items and observe:
+        observed_validation = _observe_completed_validation(
+            handoff,
+            task,
+            required_items,
+            reported_commands,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+            repository_id=repository_id,
+            execution_runtime_root=execution_runtime_root,
+        )
     return {
         "knowledge_disposition": knowledge_disposition,
         "unresolved": unresolved,
         "result_state": state,
+        "evidence_applicability": evidence_applicability,
         **({"observed_validation": observed_validation} if observed_validation is not None else {}),
     }
 
@@ -1342,6 +1653,8 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         interfaces = {"consumes": api_ids, "produces": []}
 
     validation_value = _compile_task_validation(task, task_body, source_ids, records)
+    executor_profile = _compile_executor_profile(task, task_path)
+    evidence_applicability = task_evidence_applicability(task)
 
     goal_lines = [line.strip() for line in _section(task_body, "Goal") if line.strip()]
     resolved_goal = task.get("goal") or (goal_lines[0] if goal_lines else None) or task.get("name") or task_id
@@ -1376,9 +1689,8 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
             "files": {"read": read_files, "write": write_files, "forbidden": forbidden_files},
             "methodology": {"primary": methodology.get("primary", "direct"), "skills": skill_names},
             "allocated_rules": rules,
-            "executor_profile": task.get("executor_profile")
-            if isinstance(task.get("executor_profile"), dict)
-            else {"capability": "standard", "context_mode": "compiled-brief"},
+            "executor_profile": executor_profile,
+            "evidence_applicability": evidence_applicability,
             "workspace": {"root": str(root)},
             "validation": validation,
             "handoff_contract": "executor-result-v1",

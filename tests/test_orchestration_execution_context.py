@@ -161,6 +161,32 @@ HANDOFF_COMPLETION = (
 )
 
 
+def evidence_blocks(root: Path, *, codegraph: str = "no-index") -> str:
+    if codegraph == "no-index":
+        codegraph_block = (
+            "    applicable: false\n"
+            "    up_to_date: false\n"
+            "    reason: no-index\n"
+        )
+    else:
+        codegraph_block = (
+            "    applicable: true\n"
+            "    up_to_date: true\n"
+            "    reason: null\n"
+        )
+    return (
+        "repository:\n"
+        f"  - root: {root.resolve()}\n"
+        "    target_kind: git-backed\n"
+        "    preflight_kind: git-clean-worktree\n"
+        "    baseline: initial\n"
+        "    status: clean\n"
+        "codegraph:\n"
+        f"  - root: {root.resolve()}\n"
+        f"{codegraph_block}"
+    )
+
+
 def committed_review_base(root: Path) -> str:
     source = root / WRITE_SCOPE_FILE
     source.parent.mkdir(parents=True, exist_ok=True)
@@ -178,6 +204,7 @@ def write_executor_handoff(root: Path, disposition: str) -> Path:
         "type: executor-result\n"
         "related: {plan: plan-001, task: task-004}\n"
         f"{HANDOFF_COMPLETION}"
+        f"{evidence_blocks(root)}"
         "knowledge_disposition:\n"
         + disposition,
         encoding="utf-8",
@@ -205,6 +232,7 @@ def write_related_handoff(root: Path, related_block: str) -> Path:
         "type: executor-result\n"
         f"{related_block}"
         f"{HANDOFF_COMPLETION}"
+        f"{evidence_blocks(root)}"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
@@ -243,6 +271,168 @@ def test_build_task_brief_resolves_source_ids_and_keeps_allocations_task_local(t
     assert ACCEPTED_CONSTRAINT in packet
     assert ACCEPTED_AUTHORITY_PATH not in packet.split("truth_basis:", 1)[1].split("expected_delta:", 1)[0]
     assert "conflict_status: clear" in packet
+
+
+@pytest.mark.parametrize("malformed", ["null", "standard", "[standard]"])
+def test_build_task_brief_rejects_present_non_mapping_executor_profile(
+    tmp_path: Path, malformed: str
+) -> None:
+    root, _, task = workspace(tmp_path)
+    content = task.read_text(encoding="utf-8")
+    content = re.sub(
+        r"executor_profile:\n(?:  .*\n)+?acceptance_review:",
+        f"executor_profile: {malformed}\nacceptance_review:",
+        content,
+    )
+    task.write_text(content, encoding="utf-8")
+
+    with pytest.raises(SystemExit, match=r"executor_profile.*mapping"):
+        build_task_brief(args(root, task))
+
+
+@pytest.mark.parametrize("profile", ["{}", "{context_mode: compiled-brief}", "{capability: unknown}"])
+def test_build_task_brief_rejects_missing_or_unknown_executor_capability(
+    tmp_path: Path, profile: str
+) -> None:
+    root, _, task = workspace(tmp_path)
+    content = task.read_text(encoding="utf-8")
+    content = re.sub(
+        r"executor_profile:\n(?:  .*\n)+?acceptance_review:",
+        f"executor_profile: {profile}\nacceptance_review:",
+        content,
+    )
+    task.write_text(content, encoding="utf-8")
+
+    with pytest.raises(SystemExit, match=r"executor_profile\.capability"):
+        build_task_brief(args(root, task))
+
+
+def test_build_task_brief_defaults_only_an_omitted_executor_profile(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    content = re.sub(
+        r"executor_profile:\n(?:  .*\n)+?acceptance_review:",
+        "acceptance_review:",
+        task.read_text(encoding="utf-8"),
+    )
+    task.write_text(content, encoding="utf-8")
+
+    brief = execution_context._compile_task_brief(args(root, task))[1]["task_brief"]
+
+    assert brief["executor_profile"] == {
+        "capability": "standard",
+        "context_mode": "compiled-brief",
+    }
+
+
+def test_build_task_brief_preserves_valid_executor_profile_fields_verbatim(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    content = task.read_text(encoding="utf-8").replace(
+        "  context_mode: compiled-brief\nacceptance_review:",
+        "  context_mode: isolated\n"
+        "  review_capability: judgment\n"
+        "  escalation: {after_failed_repairs: 2}\n"
+        "  future_option: [alpha, beta]\n"
+        "acceptance_review:",
+    )
+    task.write_text(content, encoding="utf-8")
+
+    profile = execution_context._compile_task_brief(args(root, task))[1]["task_brief"]["executor_profile"]
+
+    assert profile == {
+        "capability": "mechanical",
+        "context_mode": "isolated",
+        "review_capability": "judgment",
+        "escalation": {"after_failed_repairs": 2},
+        "future_option": ["alpha", "beta"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("task_authority", "expected"),
+    [
+        ({}, {"metadata": [], "repository": [], "codegraph": []}),
+        (
+            {"project_metadata_required": True},
+            {"metadata": ["project-metadata-preflight"], "repository": [], "codegraph": []},
+        ),
+        (
+            {"execution_binding": {"target_kind": "local-project"}},
+            {"metadata": [], "repository": [], "codegraph": []},
+        ),
+        (
+            {"execution_binding": {"target_kind": "git-backed"}},
+            {"metadata": [], "repository": ["repository-target-binding"], "codegraph": []},
+        ),
+        (
+            {"changed_paths": ["src/core.ts"]},
+            {"metadata": [], "repository": ["changed-paths"], "codegraph": []},
+        ),
+        (
+            {"files": {"read": ["src/core.ts"], "write": []}},
+            {
+                "metadata": [],
+                "repository": ["source-inspection"],
+                "codegraph": ["source-inspection"],
+            },
+        ),
+        (
+            {"files": {"read": [], "write": ["src/core.ts"]}},
+            {
+                "metadata": [],
+                "repository": ["source-editing"],
+                "codegraph": ["source-editing"],
+            },
+        ),
+        (
+            {"files": {"read": ["README.md"]}, "source_files": ["src/core.ts"]},
+            {
+                "metadata": [],
+                "repository": ["source-inspection"],
+                "codegraph": ["source-inspection"],
+            },
+        ),
+        (
+            {"files": {"write": ["README.md"]}, "target_files": ["src/core.ts"]},
+            {
+                "metadata": [],
+                "repository": ["source-editing"],
+                "codegraph": ["source-editing"],
+            },
+        ),
+        (
+            {"target_symbols": ["compile_task"]},
+            {
+                "metadata": [],
+                "repository": ["source-analysis"],
+                "codegraph": ["source-analysis"],
+            },
+        ),
+        (
+            {"validation": [{"kind": "process", "command": "pytest tests/test_core.py"}]},
+            {
+                "metadata": [],
+                "repository": ["source-validation"],
+                "codegraph": ["source-validation"],
+            },
+        ),
+    ],
+)
+def test_evidence_applicability_decision_table_is_monotonic_and_reason_coded(
+    task_authority: dict, expected: dict
+) -> None:
+    result = execution_context.task_evidence_applicability(task_authority)
+
+    for key, reasons in expected.items():
+        assert result[key] == {"required": bool(reasons), "reasons": reasons}
+
+
+def test_compiled_brief_preserves_the_shared_evidence_applicability_result(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    task_data, _ = execution_context._read_structured(task)
+
+    brief = execution_context._compile_task_brief(args(root, task))[1]["task_brief"]
+
+    assert brief["evidence_applicability"] == execution_context.task_evidence_applicability(task_data)
 
 
 def test_build_task_brief_fails_closed_when_truth_basis_is_missing(tmp_path: Path) -> None:
@@ -521,6 +711,7 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
         f"    - {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
         "unresolved:\n"
         "  - Confirm retry timing with the caller.\n"
+        f"{evidence_blocks(root)}"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
@@ -578,7 +769,7 @@ def test_build_review_package_resolves_git_refs_in_bound_execution_repository(
     git(execution_root, "add", WRITE_SCOPE_FILE)
     git(execution_root, "commit", "-qm", "head")
     head = git(execution_root, "rev-parse", "HEAD")
-    handoff = _handoff_for_command(root, PASSING_PROCESS)
+    handoff = _handoff_for_command(root, PASSING_PROCESS, evidence_root=execution_root)
 
     target = build_review_package(
         args(root, task, handoff=str(handoff), base=base, head=head)
@@ -618,6 +809,7 @@ def test_build_review_package_includes_tracked_and_untracked_worktree_changes(tm
         "type: executor-result\n"
         "related: {plan: plan-001, task: task-004}\n"
         f"{HANDOFF_COMPLETION}"
+        f"{evidence_blocks(root)}"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
@@ -654,6 +846,7 @@ def test_build_review_package_never_reads_tracked_protected_diff_content(tmp_pat
         "type: executor-result\n"
         "related: {plan: plan-001, task: task-004}\n"
         f"{HANDOFF_COMPLETION}"
+        f"{evidence_blocks(root)}"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
@@ -1292,6 +1485,7 @@ def _completed_handoff_payload(
         "validation:\n"
         "  commands:\n"
         f"    - {{command: {TASK_VALIDATION_COMMAND}, result: {validation_result}}}\n"
+        f"{evidence_blocks(root)}"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
@@ -1309,6 +1503,141 @@ def test_validate_executor_result_rejects_failed_required_command(tmp_path: Path
 
     with pytest.raises(SystemExit, match="failed|passed|validation"):
         _validate_observed(_read_handoff(handoff), brief)
+
+
+@pytest.mark.parametrize("missing", ["repository", "codegraph"])
+def test_validate_executor_result_fails_closed_when_applicable_evidence_is_missing(
+    tmp_path: Path, missing: str
+) -> None:
+    root, _, task = workspace(tmp_path)
+    handoff = _read_handoff(_completed_handoff_payload(root))
+    handoff.pop(missing)
+    brief = _compiled_brief(root, task)
+
+    with pytest.raises(SystemExit, match=f"(?i){missing}"):
+        execution_context.validate_executor_result_for_task(handoff, brief)
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        None,
+        [],
+        [{"root": "/tmp/repo", "applicable": False, "up_to_date": True, "reason": "no-index"}],
+        [{"root": "/tmp/repo", "applicable": False, "up_to_date": False, "reason": None}],
+        [{"root": "/tmp/repo", "applicable": True, "up_to_date": False, "reason": None}],
+    ],
+)
+def test_validate_executor_result_rejects_malformed_codegraph_evidence(
+    tmp_path: Path, malformed: object
+) -> None:
+    root, _, task = workspace(tmp_path)
+    handoff = _read_handoff(_completed_handoff_payload(root))
+    handoff["codegraph"] = malformed
+    brief = _compiled_brief(root, task)
+
+    with pytest.raises(SystemExit, match="CodeGraph|codegraph"):
+        execution_context.validate_executor_result_for_task(handoff, brief)
+
+
+def test_validate_executor_result_accepts_explicit_shaped_no_index_evidence(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    handoff = _read_handoff(_completed_handoff_payload(root))
+    brief = _compiled_brief(root, task)
+
+    validated = execution_context.validate_executor_result_for_task(handoff, brief)
+
+    assert validated["evidence_applicability"] == brief["evidence_applicability"]
+
+
+def test_helper_observed_codegraph_marker_overrides_executor_no_index_claim(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    _set_process_validation(task, PASSING_PROCESS)
+    (root / ".codegraph").mkdir()
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = _read_handoff(_handoff_for_command(root, PASSING_PROCESS))
+
+    with pytest.raises(SystemExit, match="CodeGraph|codegraph|no-index"):
+        execution_context.validate_executor_result_for_task(handoff, brief, observe=True)
+
+
+def test_helper_observation_accepts_metadata_only_applicability_without_codegraph(
+    tmp_path: Path,
+) -> None:
+    root, _, task = workspace(tmp_path)
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    brief["evidence_applicability"] = {
+        "metadata": {"required": True, "reasons": ["project-metadata-preflight"]},
+        "repository": {"required": False, "reasons": []},
+        "codegraph": {"required": False, "reasons": []},
+    }
+    _bind_task_execution(root, brief)
+    handoff = _read_handoff(_handoff_for_command(root, PASSING_PROCESS))
+    handoff.pop("codegraph")
+    actual_branch = git(root, "branch", "--show-current")
+    actual_commit = git(root, "rev-parse", "HEAD")
+    handoff["repository"][0]["metadata"] = {
+        "repository_id": "repo1",
+        "expected_branch": actual_branch,
+        "actual_branch": actual_branch,
+        "branch_status": "matched",
+        "expected_commit": actual_commit,
+        "actual_commit": actual_commit,
+        "commit_status": "matched",
+        "baseline_status": "current",
+    }
+
+    validated = execution_context.validate_executor_result_for_task(handoff, brief, observe=True)
+
+    assert validated["evidence_applicability"]["codegraph"]["required"] is False
+
+
+def test_helper_observation_rejects_executor_repository_identity_that_is_not_live(
+    tmp_path: Path,
+) -> None:
+    root, _, task = workspace(tmp_path)
+    _set_process_validation(task, PASSING_PROCESS)
+    brief = _compiled_brief(root, task)
+    brief["evidence_applicability"] = {
+        "metadata": {"required": True, "reasons": ["project-metadata-preflight"]},
+        "repository": {"required": False, "reasons": []},
+        "codegraph": {"required": False, "reasons": []},
+    }
+    _bind_task_execution(root, brief)
+    handoff = _read_handoff(_handoff_for_command(root, PASSING_PROCESS))
+    handoff.pop("codegraph")
+    handoff["repository"][0]["metadata"] = {
+        "repository_id": "repo1",
+        "expected_branch": git(root, "branch", "--show-current"),
+        "actual_branch": git(root, "branch", "--show-current"),
+        "branch_status": "matched",
+        "expected_commit": "forged-commit",
+        "actual_commit": "forged-commit",
+        "commit_status": "matched",
+        "baseline_status": "current",
+    }
+
+    with pytest.raises(SystemExit, match="repository|commit|identity|observed"):
+        execution_context.validate_executor_result_for_task(handoff, brief, observe=True)
+
+
+def test_helper_observation_rejects_unverifiable_codegraph_up_to_date_claim(
+    tmp_path: Path,
+) -> None:
+    root, _, task = workspace(tmp_path)
+    _set_process_validation(task, PASSING_PROCESS)
+    (root / ".codegraph").mkdir()
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = _read_handoff(_handoff_for_command(root, PASSING_PROCESS, extra=""))
+    handoff["codegraph"] = [
+        {"root": str(root.resolve()), "applicable": True, "up_to_date": True, "reason": None}
+    ]
+
+    with pytest.raises(SystemExit, match="CodeGraph|codegraph|status|up.to.date"):
+        execution_context.validate_executor_result_for_task(handoff, brief, observe=True)
 
 
 def test_validate_executor_result_rejects_skipped_required_command(tmp_path: Path) -> None:
@@ -1844,7 +2173,14 @@ def _set_process_validation(task: Path, command: str, **fields: object) -> None:
     )
 
 
-def _handoff_for_command(root: Path, command: str, result: str = "passed", extra: str = "") -> Path:
+def _handoff_for_command(
+    root: Path,
+    command: str,
+    result: str = "passed",
+    extra: str = "",
+    *,
+    evidence_root: Path | None = None,
+) -> Path:
     handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
     handoff.parent.mkdir(parents=True, exist_ok=True)
     handoff.write_text(
@@ -1856,6 +2192,7 @@ def _handoff_for_command(root: Path, command: str, result: str = "passed", extra
         "validation:\n"
         "  commands:\n"
         f"    - {{command: {json.dumps(command)}, result: {result}}}\n"
+        f"{evidence_blocks(evidence_root or root)}"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
@@ -1984,7 +2321,7 @@ def test_wrong_worktree_cannot_grant_completed(tmp_path: Path) -> None:
         execution_id="other-exec",
     )
     (other_root / "unauthorized-other.py").write_text("leak\n", encoding="utf-8")
-    handoff = _handoff_for_command(root, PASSING_PROCESS)
+    handoff = _handoff_for_command(root, PASSING_PROCESS, evidence_root=other_root)
 
     with pytest.raises(SystemExit, match="write scope|unauthorized|delta"):
         _validate_observed(_read_handoff(handoff), brief)
@@ -2053,6 +2390,7 @@ def test_in_batch_mutation_is_validation_blocked(tmp_path: Path) -> None:
         "  commands:\n"
         f"    - {{command: {json.dumps(PASSING_PROCESS)}, result: passed}}\n"
         f"    - {{command: {json.dumps(mutating)}, result: passed}}\n"
+        f"{evidence_blocks(root)}"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
