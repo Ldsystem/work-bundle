@@ -373,6 +373,13 @@ def test_sqlite_vec_availability_probe_does_not_call_production_import_helper(
         def load(_connection: object) -> None:
             return None
 
+    class TemporaryConnection:
+        def enable_load_extension(self, _enabled: bool) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
     def fail_if_called() -> tuple[object | None, str | None]:
         raise AssertionError("availability probe delegated to production import helper")
 
@@ -385,6 +392,7 @@ def test_sqlite_vec_availability_probe_does_not_call_production_import_helper(
 
     monkeypatch.setattr(indexes, "install_sqlite_vec", fail_if_called)
     monkeypatch.setattr("builtins.__import__", import_loadable_sqlite_vec)
+    monkeypatch.setattr(indexes.sqlite3, "connect", lambda _path: TemporaryConnection())
 
     assert indexes.sqlite_vec_availability_probe() == {
         "status": "available",
