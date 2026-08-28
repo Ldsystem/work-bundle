@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.13"
+# dependencies = [
+#   "pyyaml==6.0.3",
+#   "sqlite-vec==0.1.9",
+#   "fastembed==0.8.0",
+# ]
+# ///
 """Compatibility entrypoint for keep-summarizing helpers."""
 
 from __future__ import annotations
