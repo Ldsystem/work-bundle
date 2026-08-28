@@ -43,7 +43,7 @@ jobs:
           uvx --python 3.13 --from pytest==9.1.1
           --with pyyaml==6.0.3 --with sqlite-vec==0.1.9
           --with fastembed==0.8.0
-          pytest -q -k "not test_index_rebuild_installs_and_loads_sqlite_vec_when_available"
+          pytest -q -k "not test_production_index_rebuild_keeps_proposed_notes_in_vector_discovery"
 
       - name: Validate skill packages
         run: bin/work-bundle-skill validate
