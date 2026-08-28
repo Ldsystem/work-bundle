@@ -368,10 +368,23 @@ def test_sqlite_vec_availability_probe_reports_temporary_load_unavailable_stably
 def test_sqlite_vec_availability_probe_does_not_call_production_import_helper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class LoadableSqliteVec:
+        @staticmethod
+        def load(_connection: object) -> None:
+            return None
+
     def fail_if_called() -> tuple[object | None, str | None]:
         raise AssertionError("availability probe delegated to production import helper")
 
+    real_import = __import__
+
+    def import_loadable_sqlite_vec(name: str, *args: object, **kwargs: object) -> object:
+        if name == indexes.SQLITE_VEC_IMPORT:
+            return LoadableSqliteVec()
+        return real_import(name, *args, **kwargs)
+
     monkeypatch.setattr(indexes, "install_sqlite_vec", fail_if_called)
+    monkeypatch.setattr("builtins.__import__", import_loadable_sqlite_vec)
 
     assert indexes.sqlite_vec_availability_probe() == {
         "status": "available",
