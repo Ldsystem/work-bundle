@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -471,6 +472,23 @@ def _git_write_tree(root: Path) -> str:
     return git(root, "write-tree")
 
 
+def _record_repository_commit(evidence: str, actual_commit: str) -> str:
+    marker = "    status: clean\n"
+    assert marker in evidence
+    return evidence.replace(
+        marker,
+        marker + "    metadata:\n" + f"      actual_commit: {actual_commit}\n",
+        1,
+    )
+
+
+def _complete_evidence_blocks(root: Path, *, actual_commit: str | None = None) -> str:
+    from test_orchestration_execution_context import evidence_blocks
+
+    evidence = evidence_blocks(root)
+    return evidence if actual_commit is None else _record_repository_commit(evidence, actual_commit)
+
+
 def _write_follow_on_executor_handoff(
     root: Path,
     *,
@@ -486,14 +504,7 @@ def _write_follow_on_executor_handoff(
 
     extra = "" if extra_command is None else f"    - {{command: {extra_command}, result: {extra_result}}}\n"
     review = "" if reviewed_head is None else f"acceptance_review: {{reviewed_head: {reviewed_head}}}\n"
-    repository = ""
-    if actual_commit:
-        repository = (
-            "repository:\n"
-            f"  - root: {root}\n"
-            "    metadata:\n"
-            f"      actual_commit: {actual_commit}\n"
-        )
+    evidence = _complete_evidence_blocks(root, actual_commit=actual_commit)
     handoff = root / f".work-bundle/orchestration/handoff/executor/active/handoff-{task_id}.yaml"
     handoff.parent.mkdir(parents=True, exist_ok=True)
     handoff.write_text(
@@ -511,7 +522,7 @@ def _write_follow_on_executor_handoff(
         f"    - {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
         f"{extra}"
         f"{review}"
-        f"{repository}"
+        f"{evidence}"
         "knowledge_disposition:\n"
         "  action: none\n"
         "  reason: No stable authority changed.\n"
@@ -522,22 +533,29 @@ def _write_follow_on_executor_handoff(
 
 
 def _write_earlier_integration_pass(root: Path, command: str, *, created_at: str) -> Path:
-    from test_orchestration_execution_context import TASK_VALIDATION_COMMAND, write_executor_handoff
+    from test_orchestration_execution_context import TASK_VALIDATION_COMMAND, git, write_executor_handoff
+
+    try:
+        head = git(root, "rev-parse", "HEAD")
+    except subprocess.CalledProcessError:
+        git(root, "add", ".")
+        git(root, "commit", "-qm", "integration acceptance baseline")
+        head = git(root, "rev-parse", "HEAD")
 
     handoff = write_executor_handoff(
         root,
         "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
     )
-    handoff.write_text(
+    content = (
         handoff.read_text(encoding="utf-8")
         .replace("id: handoff-task-004\n", f"id: handoff-task-004\ncreated_at: {created_at}\n")
         .replace(
             f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n",
             f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
             f"    - {{command: {command}, result: passed}}\n",
-        ),
-        encoding="utf-8",
+        )
     )
+    handoff.write_text(_record_repository_commit(content, head), encoding="utf-8")
     return handoff
 
 
@@ -1017,18 +1035,12 @@ def _record_tree_fresh_integration_pass(root: Path, command: str) -> str:
         root,
         "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
     )
-    handoff.write_text(
-        handoff.read_text(encoding="utf-8").replace(
+    content = handoff.read_text(encoding="utf-8").replace(
             f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n",
             f"- {{command: {TASK_VALIDATION_COMMAND}, result: passed}}\n"
             f"    - {{command: {command}, result: passed}}\n",
         )
-        + "repository:\n"
-        + f"  - root: {root}\n"
-        + "    metadata:\n"
-        + f"      actual_commit: {head}\n",
-        encoding="utf-8",
-    )
+    handoff.write_text(_record_repository_commit(content, head), encoding="utf-8")
     return head
 
 
@@ -1140,7 +1152,18 @@ def test_stale_plan_acceptance_after_later_material_task_blocks_archive(tmp_path
     _append_plan_integration_command(root, command)
     _write_earlier_integration_pass(root, command, created_at="2026-08-15")
     _write_follow_on_plan_task(root)
-    _write_follow_on_executor_handoff(root, task_id="task-005", created_at="2026-08-16")
+    later = _git_commit_file(
+        root,
+        FOLLOW_ON_WRITE_SCOPE_FILE,
+        "def archive_plan():\n    return 'later'\n",
+        "task-005",
+    )
+    _write_follow_on_executor_handoff(
+        root,
+        task_id="task-005",
+        created_at="2026-08-16",
+        actual_commit=later,
+    )
 
     with pytest.raises(SystemExit, match="acceptance-blocked:.*is stale"):
         cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
@@ -1156,17 +1179,8 @@ def test_fresh_plan_acceptance_rerun_after_later_task_allows_archive(tmp_path: P
     root, _, _ = workspace(tmp_path)
     _append_plan_knowledge(root, closure_return="missing")
     _append_plan_integration_command(root, command)
-    first = _git_commit_file(root, WRITE_SCOPE_FILE, "def compile_task():\n    return 'old'\n", "task-004")
+    _git_commit_file(root, WRITE_SCOPE_FILE, "def compile_task():\n    return 'old'\n", "task-004")
     _write_earlier_integration_pass(root, command, created_at="2026-08-15")
-    earlier = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
-    earlier.write_text(
-        earlier.read_text(encoding="utf-8")
-        + "repository:\n"
-        f"  - root: {root}\n"
-        "    metadata:\n"
-        f"      actual_commit: {first}\n",
-        encoding="utf-8",
-    )
     _write_follow_on_plan_task(root)
     later = _git_commit_file(
         root,
