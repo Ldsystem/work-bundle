@@ -68,6 +68,12 @@ bin/install-work-bundle-skills --dry-run
 Run the deterministic repository gate with isolated dependencies:
 
 ```bash
-uvx --python 3.13 --from pytest==9.1.1 --with pyyaml==6.0.3 --with sqlite-vec==0.1.9 pytest -q
+uvx --python 3.13 --from pytest==9.1.1 --with pyyaml==6.0.3 --with sqlite-vec==0.1.9 --with fastembed==0.8.0 pytest -q
 bin/work-bundle-skill validate
+```
+
+Run the keep-summarizing CLI through its pinned uv-managed environment:
+
+```bash
+uv run scripts/ks.py --help
 ```

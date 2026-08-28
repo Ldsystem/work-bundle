@@ -1,41 +1,24 @@
 from core import *
 
-VECTOR_DIMENSIONS = 64
+from functools import lru_cache
+from importlib.metadata import PackageNotFoundError, version
+
+VECTOR_DIMENSIONS = 384
 SQLITE_VEC_PACKAGE = "sqlite-vec"
 SQLITE_VEC_IMPORT = "sqlite_vec"
+EMBEDDING_PACKAGE = "fastembed"
+EMBEDDING_PACKAGE_VERSION = "0.8.0"
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+EMBEDDING_MODEL_VERSION = "v1.5"
+VECTOR_INDEX_SCHEMA = "knowledge-chunk-vec-v2"
+VECTOR_CHUNKING = "document-body-v1"
 
 
 def install_sqlite_vec() -> tuple[object | None, str | None]:
     try:
         return __import__(SQLITE_VEC_IMPORT), None
-    except ImportError:
-        pass
-
-    commands = [
-        [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", SQLITE_VEC_PACKAGE],
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--index-url",
-            "https://pypi.org/simple",
-            SQLITE_VEC_PACKAGE,
-        ],
-    ]
-    errors: list[str] = []
-    for command in commands:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-        if result.returncode == 0:
-            try:
-                return __import__(SQLITE_VEC_IMPORT), None
-            except ImportError as exc:
-                errors.append(f"{command!r}: installed but import failed: {exc}")
-        else:
-            detail = (result.stderr or result.stdout).strip()
-            errors.append(f"{command!r}: {detail}")
-    return None, "sqlite-vec install failed: " + " | ".join(errors)
+    except ImportError as exc:
+        return None, f"sqlite-vec unavailable in the uv-managed environment: {exc}"
 
 
 def load_sqlite_vec(conn: sqlite3.Connection) -> tuple[object | None, str | None]:
@@ -55,18 +38,49 @@ def load_sqlite_vec(conn: sqlite3.Connection) -> tuple[object | None, str | None
             pass
 
 
-def local_text_vector(text: str) -> list[float]:
-    vector = [0.0] * VECTOR_DIMENSIONS
-    terms = [term for term in re.split(r"\W+", text.lower()) if term]
-    for term in terms:
-        digest = hashlib.sha256(term.encode("utf-8")).digest()
-        index = int.from_bytes(digest[:2], "big") % VECTOR_DIMENSIONS
-        sign = 1.0 if digest[2] % 2 == 0 else -1.0
-        vector[index] += sign
-    magnitude = sum(value * value for value in vector) ** 0.5
-    if not magnitude:
-        return vector
-    return [value / magnitude for value in vector]
+@lru_cache(maxsize=1)
+def embedding_model() -> object:
+    from fastembed import TextEmbedding
+
+    return TextEmbedding(model_name=EMBEDDING_MODEL)
+
+
+def embedding_backend_status() -> tuple[object | None, str | None]:
+    try:
+        installed_version = version(EMBEDDING_PACKAGE)
+        if installed_version != EMBEDDING_PACKAGE_VERSION:
+            return None, (
+                f"FastEmbed version mismatch: expected {EMBEDDING_PACKAGE_VERSION}, "
+                f"got {installed_version}"
+            )
+        return embedding_model(), None
+    except (ImportError, OSError, RuntimeError, ValueError, PackageNotFoundError) as exc:
+        return None, f"FastEmbed model unavailable in the uv-managed environment: {exc}"
+
+
+def local_text_vector(text: str, *, query: bool = False) -> list[float]:
+    model, error = embedding_backend_status()
+    if model is None:
+        raise RuntimeError(error or "FastEmbed model unavailable")
+    embed = model.query_embed if query else model.passage_embed
+    vector = list(next(iter(embed([text]))))
+    if len(vector) != VECTOR_DIMENSIONS:
+        raise RuntimeError(
+            f"FastEmbed model dimension mismatch: expected {VECTOR_DIMENSIONS}, got {len(vector)}"
+        )
+    return [float(value) for value in vector]
+
+
+def expected_vector_metadata() -> dict[str, object]:
+    return {
+        "embedding_model": EMBEDDING_MODEL,
+        "embedding_model_version": EMBEDDING_MODEL_VERSION,
+        "embedding_package": EMBEDDING_PACKAGE,
+        "embedding_package_version": EMBEDDING_PACKAGE_VERSION,
+        "dimensions": VECTOR_DIMENSIONS,
+        "chunking": VECTOR_CHUNKING,
+        "index_schema": VECTOR_INDEX_SCHEMA,
+    }
 
 def markdown_files(root: Path) -> list[Path]:
     candidates = list((root / "notes").glob("**/*.md")) + list((root / "context-packs").glob("*.md"))
@@ -206,7 +220,7 @@ def build_vector_index_status(root: Path, chunks: list[dict[str, object]], proje
         "project": project,
         "artifact": VECTOR_INDEX_ARTIFACT_FILE,
         "chunks_considered": len(chunks),
-        "backend": "sqlite-local-vector",
+        "backend": "sqlite-vec",
     }
 
     if not install_missing:
@@ -234,6 +248,20 @@ def build_vector_index_status(root: Path, chunks: list[dict[str, object]], proje
             }
             artifact_path.write_text("", encoding="utf-8")
         else:
+            model, model_error = embedding_backend_status()
+            if model is None:
+                status = {
+                    **base_status,
+                    "status": "unavailable",
+                    "chunks_indexed": 0,
+                    "reason": model_error or "FastEmbed model unavailable",
+                    "fallback": "sqlite_fts",
+                }
+                artifact_path.write_text("", encoding="utf-8")
+                (indexes / VECTOR_INDEX_STATUS_FILE).write_text(
+                    json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+                )
+                return status
             conn.execute("DROP TABLE IF EXISTS knowledge_chunk_vec")
             conn.execute(
                 f"""
@@ -269,6 +297,7 @@ def build_vector_index_status(root: Path, chunks: list[dict[str, object]], proje
                         "path": chunk["path"],
                         "backend": "sqlite-vec",
                         "dimensions": VECTOR_DIMENSIONS,
+                        "embedding_model": EMBEDDING_MODEL,
                     }
                 )
             conn.commit()
@@ -283,8 +312,8 @@ def build_vector_index_status(root: Path, chunks: list[dict[str, object]], proje
                 "chunks_indexed": len(rows),
                 "extension": "sqlite-vec",
                 "extension_version": version,
-                "dimensions": VECTOR_DIMENSIONS,
                 "table": "knowledge_chunk_vec",
+                **expected_vector_metadata(),
             }
     finally:
         conn.close()
