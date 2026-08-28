@@ -55,6 +55,65 @@ FORBIDDEN_SCRIPT_FIELDS = {
     "retrieval_role",
 }
 
+HYBRID_CONTRACT_NOTES = [
+    {
+        "id": "note-exact-api",
+        "path": "notes/implementation/api/resolve-widget-v2.md",
+        "title": "resolveWidgetV2 API",
+        "lifecycle_stage": "implementation",
+        "perspective": "implementation/api",
+        "status": "implemented",
+        "source_type": "source_note",
+        "updated_at": "2026-08-28",
+        "summary": "Exact identifier contract for resolveWidgetV2.",
+        "tags": ["resolveWidgetV2", "api"],
+        "body": "The resolveWidgetV2 endpoint validates widget identifiers before returning the resolved widget.",
+        "sqlite_include": True,
+    },
+    {
+        "id": "note-paraphrase",
+        "path": "notes/development-design/retrieval/conceptual-match.md",
+        "title": "Conceptual Match Without Shared Wording",
+        "lifecycle_stage": "development_design",
+        "perspective": "development-design/retrieval",
+        "status": "proposed",
+        "source_type": "source_note",
+        "updated_at": "2026-08-28",
+        "summary": "Meaning based recall across vocabulary mismatch.",
+        "tags": ["semantic-recall"],
+        "body": "A reader asks how to locate advice that means the same thing even when none of the original wording is repeated.",
+        "sqlite_include": True,
+    },
+    {
+        "id": "note-hybrid",
+        "path": "notes/development-design/retrieval/hybrid-recall.md",
+        "title": "Hybrid Recall",
+        "lifecycle_stage": "development_design",
+        "perspective": "development-design/retrieval",
+        "status": "current",
+        "source_type": "source_note",
+        "updated_at": "2026-08-28",
+        "summary": "Hybrid retrieval combines lexical recall with conceptual matching.",
+        "tags": ["hybrid-retrieval", "semantic-recall"],
+        "body": "Hybrid retrieval preserves literal identifiers while adding meaning-based discovery.",
+        "sqlite_include": True,
+    },
+    {
+        "id": "note-noise",
+        "path": "notes/operation/facilities/boiler-inspection.md",
+        "title": "Boiler Inspection Calendar",
+        "lifecycle_stage": "operation",
+        "perspective": "operation/facilities",
+        "status": "current",
+        "source_type": "source_note",
+        "updated_at": "2026-08-28",
+        "summary": "Quarterly facilities inspection dates.",
+        "tags": ["facilities"],
+        "body": "Technicians record pressure gauges, relief valves, and combustion readings every quarter.",
+        "sqlite_include": True,
+    },
+]
+
 
 @pytest.fixture
 def knowledge_root(tmp_path: Path) -> Path:
@@ -78,6 +137,25 @@ def knowledge_root(tmp_path: Path) -> Path:
         for lifecycle, status in LIFECYCLE_FIXTURES
     ]
     indexes.build_sqlite_index(root, docs)
+    return root
+
+
+@pytest.fixture
+def hybrid_retrieval_root(tmp_path: Path) -> Path:
+    root = tmp_path / ".work-bundle" / "knowledge"
+    (root / "indexes").mkdir(parents=True)
+    indexes.build_sqlite_index(root, HYBRID_CONTRACT_NOTES)
+    chunks = [
+        {
+            "chunk_id": f"{note['id']}#body",
+            "document_id": note["id"],
+            "path": note["path"],
+        }
+        for note in HYBRID_CONTRACT_NOTES
+    ]
+    status = indexes.build_vector_index_status(root, chunks, "fixture")
+    if status["status"] != "rebuilt":
+        pytest.skip(f"sqlite-vec fixture backend unavailable: {status.get('reason', 'unknown reason')}")
     return root
 
 
@@ -111,6 +189,32 @@ def assert_no_forbidden_script_fields(payload: object) -> None:
     elif isinstance(payload, list):
         for value in payload:
             assert_no_forbidden_script_fields(value)
+
+
+def candidate_by_id(candidates: list[dict[str, object]], candidate_id: str) -> dict[str, object]:
+    return next(candidate for candidate in candidates if candidate["id"] == candidate_id)
+
+
+def vector_trace_status(trace: dict[str, object]) -> str:
+    vector = trace["sources"]["vector"]  # type: ignore[index]
+    if isinstance(vector, dict):
+        return str(vector.get("status", ""))
+    return str(vector)
+
+
+def vector_trace_reason(trace: dict[str, object]) -> str:
+    vector = trace["sources"]["vector"]  # type: ignore[index]
+    if isinstance(vector, dict):
+        return str(vector.get("reason", ""))
+    for key in ("source_reasons", "reasons", "source_details"):
+        container = trace.get(key)
+        if isinstance(container, dict):
+            detail = container.get("vector")
+            if isinstance(detail, dict):
+                return str(detail.get("reason", ""))
+            if detail is not None:
+                return str(detail)
+    return ""
 
 
 def test_neutral_candidate_discovery_spans_every_lifecycle_without_stage_gate(
@@ -249,6 +353,150 @@ def test_query_output_omits_forbidden_semantic_fields(
 ) -> None:
     trace, candidates = run_query(knowledge_root, capsys, target="implementation_spec")
 
+    assert_no_forbidden_script_fields(trace)
+    for candidate in candidates:
+        assert_no_forbidden_script_fields(candidate)
+
+
+def test_hybrid_retrieval_contract_exact_identifier_keeps_lexical_win(
+    hybrid_retrieval_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, candidates = run_query(hybrid_retrieval_root, capsys, query="resolveWidgetV2", limit=4)
+
+    assert candidates[0]["id"] == "note-exact-api"
+    assert candidates[0]["mechanical_sources"]["fts"] is True
+
+
+def test_hybrid_retrieval_contract_paraphrase_has_vector_provenance_without_lexical_overlap(
+    hybrid_retrieval_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace, candidates = run_query(
+        hybrid_retrieval_root,
+        capsys,
+        query="retrieve semantically similar knowledge using different terms",
+        limit=4,
+    )
+
+    paraphrase = candidate_by_id(candidates, "note-paraphrase")
+    assert vector_trace_status(trace) == "queried"
+    assert paraphrase["mechanical_sources"] == {"fts": False, "vector": True, "bfs": False}
+    assert isinstance(paraphrase["mechanical_scores"]["vector_distance"], float)
+
+
+def test_hybrid_retrieval_contract_deduplicates_both_sources_and_is_deterministic(
+    hybrid_retrieval_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first_trace, first = run_query(hybrid_retrieval_root, capsys, query="hybrid retrieval semantic recall", limit=4)
+    second_trace, second = run_query(hybrid_retrieval_root, capsys, query="hybrid retrieval semantic recall", limit=4)
+
+    hybrid = candidate_by_id(first, "note-hybrid")
+    assert vector_trace_status(first_trace) == vector_trace_status(second_trace) == "queried"
+    assert [candidate["id"] for candidate in first] == [candidate["id"] for candidate in second]
+    assert len({candidate["id"] for candidate in first}) == len(first)
+    assert hybrid["mechanical_sources"] == {"fts": True, "vector": True, "bfs": False}
+    assert [candidate["mechanical_scores"]["fusion_rank"] for candidate in first] == list(
+        range(1, len(first) + 1)
+    )
+    assert "note-noise" not in {candidate["id"] for candidate in first}
+
+
+def test_hybrid_retrieval_contract_uses_reciprocal_rank_fusion_not_source_append() -> None:
+    source_rankings = [
+        ["fts-only", "both"],
+        ["vector-only", "both"],
+    ]
+
+    first = query.reciprocal_rank_fusion(source_rankings)
+    second = query.reciprocal_rank_fusion(source_rankings)
+
+    assert first == second
+    assert first[0] == "both"
+    assert len(first) == len(set(first)) == 3
+
+
+def test_hybrid_retrieval_contract_fallback_reports_reason_and_keeps_fts(
+    hybrid_retrieval_root: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader_failure = lambda *_args, **_kwargs: (None, "fixture backend unavailable")
+
+    def forbid_package_manager(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("query fallback must not shell out to pip or uv")
+
+    monkeypatch.setattr(indexes, "load_sqlite_vec", loader_failure)
+    monkeypatch.setattr(query, "load_sqlite_vec", loader_failure, raising=False)
+    monkeypatch.setattr(indexes.subprocess, "run", forbid_package_manager)
+    monkeypatch.setattr(query.subprocess, "run", forbid_package_manager)
+
+    trace, candidates = run_query(hybrid_retrieval_root, capsys, query="resolveWidgetV2", limit=4)
+
+    assert vector_trace_status(trace) in {"unavailable", "failed"}
+    assert vector_trace_reason(trace) == "fixture backend unavailable"
+    assert candidates[0]["id"] == "note-exact-api"
+    assert all(candidate["mechanical_sources"]["vector"] is False for candidate in candidates)
+
+
+def test_hybrid_retrieval_contract_runtime_has_no_package_manager_shellout() -> None:
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            KEEP_SUMMARIZING_SCRIPTS / "indexes.py",
+            KEEP_SUMMARIZING_SCRIPTS / "query.py",
+        )
+    )
+
+    assert '"-m", "pip"' not in source
+    assert '"-m", "uv"' not in source
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("embedding_model", "incompatible-model"),
+        ("dimensions", 999),
+        ("index_schema", "future-schema"),
+        ("embedding_model", None),
+        ("embedding_model_version", None),
+        ("index_schema", None),
+    ],
+)
+def test_hybrid_retrieval_contract_incompatible_rebuilt_index_requires_rebuild(
+    hybrid_retrieval_root: Path,
+    capsys: pytest.CaptureFixture[str],
+    field: str,
+    value: object,
+) -> None:
+    status_path = hybrid_retrieval_root / "indexes" / indexes.VECTOR_INDEX_STATUS_FILE
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    if value is None:
+        status.pop(field, None)
+    else:
+        status[field] = value
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    trace, candidates = run_query(hybrid_retrieval_root, capsys, query="resolveWidgetV2", limit=4)
+
+    assert vector_trace_status(trace) == "failed"
+    assert "rebuild" in vector_trace_reason(trace).lower()
+    assert candidates[0]["id"] == "note-exact-api"
+    assert all(candidate["mechanical_sources"]["vector"] is False for candidate in candidates)
+
+
+def test_hybrid_retrieval_contract_scores_do_not_classify_or_status_filter(
+    hybrid_retrieval_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace, candidates = run_query(
+        hybrid_retrieval_root,
+        capsys,
+        query="retrieve semantically similar knowledge using different terms",
+        target="implementation_plan",
+        limit=4,
+    )
+
+    paraphrase = candidate_by_id(candidates, "note-paraphrase")
+    assert paraphrase["status"] == "proposed"
+    assert paraphrase["policy_hint"] == "implementation_plan"
     assert_no_forbidden_script_fields(trace)
     for candidate in candidates:
         assert_no_forbidden_script_fields(candidate)
