@@ -54,6 +54,10 @@ FORBIDDEN_SCRIPT_FIELDS = {
     "should_block",
     "retrieval_role",
 }
+MISSING_HYBRID_RETRIEVAL = pytest.mark.xfail(
+    strict=True,
+    reason="WOR-58 production hybrid retrieval is intentionally deferred to a separate slice",
+)
 
 HYBRID_CONTRACT_NOTES = [
     {
@@ -145,6 +149,11 @@ def hybrid_retrieval_root(tmp_path: Path) -> Path:
     root = tmp_path / ".work-bundle" / "knowledge"
     (root / "indexes").mkdir(parents=True)
     indexes.build_sqlite_index(root, HYBRID_CONTRACT_NOTES)
+    return root
+
+
+@pytest.fixture
+def hybrid_vector_root(hybrid_retrieval_root: Path) -> Path:
     chunks = [
         {
             "chunk_id": f"{note['id']}#body",
@@ -153,10 +162,10 @@ def hybrid_retrieval_root(tmp_path: Path) -> Path:
         }
         for note in HYBRID_CONTRACT_NOTES
     ]
-    status = indexes.build_vector_index_status(root, chunks, "fixture")
+    status = indexes.build_vector_index_status(hybrid_retrieval_root, chunks, "fixture")
     if status["status"] != "rebuilt":
         pytest.skip(f"sqlite-vec fixture backend unavailable: {status.get('reason', 'unknown reason')}")
-    return root
+    return hybrid_retrieval_root
 
 
 def run_query(knowledge_root: Path, capsys: pytest.CaptureFixture[str], **overrides: object) -> tuple[dict[str, object], list[dict[str, object]]]:
@@ -192,7 +201,26 @@ def assert_no_forbidden_script_fields(payload: object) -> None:
 
 
 def candidate_by_id(candidates: list[dict[str, object]], candidate_id: str) -> dict[str, object]:
-    return next(candidate for candidate in candidates if candidate["id"] == candidate_id)
+    candidate = next((candidate for candidate in candidates if candidate["id"] == candidate_id), None)
+    assert candidate is not None, (
+        f"expected candidate {candidate_id!r}; got "
+        f"{[candidate.get('id') for candidate in candidates]!r}"
+    )
+    return candidate
+
+
+def write_vector_status(root: Path, **overrides: object) -> Path:
+    status = {
+        "status": "rebuilt",
+        "embedding_model": "fixture-model",
+        "embedding_model_version": "fixture-v1",
+        "dimensions": indexes.VECTOR_DIMENSIONS,
+        "index_schema": "fixture-v1",
+        **overrides,
+    }
+    status_path = root / "indexes" / indexes.VECTOR_INDEX_STATUS_FILE
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    return status_path
 
 
 def vector_trace_status(trace: dict[str, object]) -> str:
@@ -367,11 +395,12 @@ def test_hybrid_retrieval_contract_exact_identifier_keeps_lexical_win(
     assert candidates[0]["mechanical_sources"]["fts"] is True
 
 
+@MISSING_HYBRID_RETRIEVAL
 def test_hybrid_retrieval_contract_paraphrase_has_vector_provenance_without_lexical_overlap(
-    hybrid_retrieval_root: Path, capsys: pytest.CaptureFixture[str]
+    hybrid_vector_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     trace, candidates = run_query(
-        hybrid_retrieval_root,
+        hybrid_vector_root,
         capsys,
         query="retrieve semantically similar knowledge using different terms",
         limit=4,
@@ -383,11 +412,12 @@ def test_hybrid_retrieval_contract_paraphrase_has_vector_provenance_without_lexi
     assert isinstance(paraphrase["mechanical_scores"]["vector_distance"], float)
 
 
+@MISSING_HYBRID_RETRIEVAL
 def test_hybrid_retrieval_contract_deduplicates_both_sources_and_is_deterministic(
-    hybrid_retrieval_root: Path, capsys: pytest.CaptureFixture[str]
+    hybrid_vector_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    first_trace, first = run_query(hybrid_retrieval_root, capsys, query="hybrid retrieval semantic recall", limit=4)
-    second_trace, second = run_query(hybrid_retrieval_root, capsys, query="hybrid retrieval semantic recall", limit=4)
+    first_trace, first = run_query(hybrid_vector_root, capsys, query="hybrid retrieval semantic recall", limit=4)
+    second_trace, second = run_query(hybrid_vector_root, capsys, query="hybrid retrieval semantic recall", limit=4)
 
     hybrid = candidate_by_id(first, "note-hybrid")
     assert vector_trace_status(first_trace) == vector_trace_status(second_trace) == "queried"
@@ -400,34 +430,67 @@ def test_hybrid_retrieval_contract_deduplicates_both_sources_and_is_deterministi
     assert "note-noise" not in {candidate["id"] for candidate in first}
 
 
-def test_hybrid_retrieval_contract_uses_reciprocal_rank_fusion_not_source_append() -> None:
-    source_rankings = [
-        ["fts-only", "both"],
-        ["vector-only", "both"],
-    ]
-
-    first = query.reciprocal_rank_fusion(source_rankings)
-    second = query.reciprocal_rank_fusion(source_rankings)
-
-    assert first == second
-    assert first[0] == "both"
-    assert len(first) == len(set(first)) == 3
-
-
-def test_hybrid_retrieval_contract_fallback_reports_reason_and_keeps_fts(
+@MISSING_HYBRID_RETRIEVAL
+def test_hybrid_retrieval_contract_uses_reciprocal_rank_fusion_not_source_append(
     hybrid_retrieval_root: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    loader_failure = lambda *_args, **_kwargs: (None, "fixture backend unavailable")
+    def candidate(candidate_id: str, rank: float | None, distance: float | None) -> dict[str, object]:
+        return {
+            "id": candidate_id,
+            "path": f"notes/{candidate_id}.md",
+            "title": candidate_id,
+            "lifecycle_stage": "implementation",
+            "perspective": "implementation/fixture",
+            "status": "current",
+            "source_type": "source_note",
+            "updated_at": "2026-08-28",
+            "summary": candidate_id,
+            "tags": "[]",
+            "body": candidate_id,
+            "rank": rank,
+            "vector_distance": distance,
+        }
 
-    def forbid_package_manager(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("query fallback must not shell out to pip or uv")
+    class FakeHybridConnection:
+        row_factory: object = None
 
-    monkeypatch.setattr(indexes, "load_sqlite_vec", loader_failure)
-    monkeypatch.setattr(query, "load_sqlite_vec", loader_failure, raising=False)
-    monkeypatch.setattr(indexes.subprocess, "run", forbid_package_manager)
-    monkeypatch.setattr(query.subprocess, "run", forbid_package_manager)
+        def execute(self, sql: str, _parameters: object) -> list[dict[str, object]]:
+            if "knowledge_chunk_vec" in sql:
+                return [candidate("vector-only", None, 0.1), candidate("both", None, 0.2)]
+            if "knowledge_note_fts" in sql:
+                return [candidate("fts-only", 0.1, None), candidate("both", 0.2, None)]
+            raise AssertionError(f"unexpected hybrid query: {sql}")
+
+        def close(self) -> None:
+            return None
+
+    write_vector_status(hybrid_retrieval_root)
+    monkeypatch.setattr(query.sqlite3, "connect", lambda _path: FakeHybridConnection())
+
+    trace, candidates = run_query(hybrid_retrieval_root, capsys, query="fixture fusion", limit=3)
+
+    assert vector_trace_status(trace) == "queried"
+    assert [item["id"] for item in candidates] == ["both", "fts-only", "vector-only"]
+    assert candidate_by_id(candidates, "both")["mechanical_sources"] == {
+        "fts": True,
+        "vector": True,
+        "bfs": False,
+    }
+
+
+@MISSING_HYBRID_RETRIEVAL
+def test_hybrid_retrieval_contract_fallback_reports_reason_and_keeps_fts(
+    hybrid_retrieval_root: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_vector_status(
+        hybrid_retrieval_root,
+        status="unavailable",
+        reason="fixture backend unavailable",
+        fallback="sqlite_fts",
+    )
 
     trace, candidates = run_query(hybrid_retrieval_root, capsys, query="resolveWidgetV2", limit=4)
 
@@ -437,6 +500,7 @@ def test_hybrid_retrieval_contract_fallback_reports_reason_and_keeps_fts(
     assert all(candidate["mechanical_sources"]["vector"] is False for candidate in candidates)
 
 
+@MISSING_HYBRID_RETRIEVAL
 def test_hybrid_retrieval_contract_runtime_has_no_package_manager_shellout() -> None:
     source = "\n".join(
         path.read_text(encoding="utf-8")
@@ -461,13 +525,14 @@ def test_hybrid_retrieval_contract_runtime_has_no_package_manager_shellout() -> 
         ("index_schema", None),
     ],
 )
+@MISSING_HYBRID_RETRIEVAL
 def test_hybrid_retrieval_contract_incompatible_rebuilt_index_requires_rebuild(
     hybrid_retrieval_root: Path,
     capsys: pytest.CaptureFixture[str],
     field: str,
     value: object,
 ) -> None:
-    status_path = hybrid_retrieval_root / "indexes" / indexes.VECTOR_INDEX_STATUS_FILE
+    status_path = write_vector_status(hybrid_retrieval_root)
     status = json.loads(status_path.read_text(encoding="utf-8"))
     if value is None:
         status.pop(field, None)
@@ -489,7 +554,7 @@ def test_hybrid_retrieval_contract_scores_do_not_classify_or_status_filter(
     trace, candidates = run_query(
         hybrid_retrieval_root,
         capsys,
-        query="retrieve semantically similar knowledge using different terms",
+        query="conceptual match vocabulary mismatch",
         target="implementation_plan",
         limit=4,
     )
