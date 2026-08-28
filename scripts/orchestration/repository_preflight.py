@@ -171,19 +171,20 @@ def _v4_metadata_repository_entries(root: Path, text: str) -> list[dict[str, obj
     resolved: list[dict[str, object]] = []
     for entry in entries:
         repository_id = str(entry.get("id") or "")
-        binding = local.get(repository_id)
-        if not binding or not binding.get("project_root"):
-            continue
+        binding = local.get(repository_id) or {}
         entry.update(binding)
-        entry["project_root"] = binding["project_root"]
-        entry["path"] = binding["project_root"]
         entry["git_repository"] = True
-        entry["expected_branch"] = entry.get("default_branch") or binding.get("observed_branch") or ""
-        # A device observation is current evidence, never the expected task baseline.
-        entry["observed_head"] = ""
+        entry["expected_branch"] = entry.get("default_branch") or ""
+        entry["observed_branch"] = binding.get("observed_branch") or ""
+        entry["observed_head"] = binding.get("observed_head") or ""
+        project_root = str(binding.get("project_root") or "")
+        entry["observation_project_root_status"] = "present" if project_root else "missing"
         entry["baseline_status"] = "local-observation"
-        project_path = Path(str(binding["project_root"])).expanduser().resolve()
-        codegraph_present = (project_path / ".codegraph").is_dir()
+        if project_root:
+            entry["project_root"] = project_root
+            entry["path"] = project_root
+        project_path = Path(project_root).expanduser().resolve() if project_root else None
+        codegraph_present = bool(project_path and (project_path / ".codegraph").is_dir())
         entry["codegraph"] = {
             "supported": codegraph_present,
             "index_present": codegraph_present,
@@ -257,6 +258,15 @@ def _metadata_repositories(root: Path) -> list[Path]:
         if raw:
             repositories.append(Path(str(raw)).expanduser().resolve())
     return repositories
+
+
+def _v4_metadata_targets(root: Path) -> list[dict[str, object]]:
+    targets: list[dict[str, object]] = []
+    for entry in _metadata_repository_entries(root):
+        raw = entry.get("project_root") or entry.get("path")
+        path = Path(str(raw)).expanduser().resolve() if raw else root.resolve()
+        targets.append({"path": str(path), "source": "project-metadata", "metadata": entry})
+    return targets
 
 
 def _enrich_with_metadata(root: Path, targets: list[dict[str, str]]) -> list[dict[str, object]]:
@@ -337,6 +347,11 @@ def resolve_target_repositories(
     resolved = _resolve_candidates(root, references)
     if resolved:
         return _enrich_with_metadata(root, resolved)
+    metadata_path = root / ".work-bundle" / "project.yaml"
+    if metadata_path.is_file() and _metadata_scalar(
+        metadata_path.read_text(encoding="utf-8"), "metadata_version"
+    ) == "4":
+        return _v4_metadata_targets(root)
     return _enrich_with_metadata(
         root,
         _resolve_candidates(root, ((path, "project-metadata") for path in _metadata_repositories(root))),
@@ -478,6 +493,23 @@ def inspect_repository_state(
         "baseline": baseline,
         "changes": [],
     }
+    if metadata and metadata.get("observation_project_root_status") == "missing":
+        result["status"] = "missing-observation"
+        result["failure_code"] = "WB_REPOSITORY_OBSERVATION_PROJECT_ROOT_MISSING"
+        result["metadata"] = {
+            "repository_id": metadata.get("id"),
+            "expected_branch": metadata.get("expected_branch") or None,
+            "actual_branch": None,
+            "branch_status": "not-observed",
+            "expected_commit": metadata.get("observed_head") or None,
+            "actual_commit": None,
+            "commit_status": "not-observed",
+            "observation_branch_status": "missing",
+            "observation_head_status": "missing",
+            "baseline_status": metadata.get("baseline_status"),
+            "codegraph": metadata.get("codegraph") or {},
+        }
+        return result
     if not path.exists():
         result["status"] = "inaccessible"
         return result
@@ -508,13 +540,13 @@ def inspect_repository_state(
         actual_head = _run_git(path, "rev-parse", "HEAD").stdout.strip()
         expected_branch = str(metadata.get("expected_branch") or metadata.get("working_branch") or "")
         expected_head = str(metadata.get("observed_head") or metadata.get("last_commit_id") or "")
+        observed_branch = str(metadata.get("observed_branch") or "")
+        device_observation = "observation_project_root_status" in metadata
         branch_status = "not-applicable"
         commit_status = "not-applicable"
         if bool(metadata.get("git_repository")):
             branch_status = "matched" if expected_branch == actual_branch else "mismatch"
-            if str(metadata.get("baseline_status") or "") == "local-observation":
-                commit_status = "current-observation"
-            elif expected_head:
+            if expected_head:
                 commit_status = "matched" if expected_head == actual_head else "stale"
             elif str(metadata.get("baseline_status") or "") == "unborn":
                 commit_status = "unborn"
@@ -531,6 +563,12 @@ def inspect_repository_state(
             "actual_commit": actual_head or None,
             "commit_status": commit_status,
             "baseline_status": metadata.get("baseline_status"),
+            "observation_branch_status": (
+                "matched" if observed_branch == actual_branch else "stale"
+            ) if device_observation and observed_branch else ("missing" if device_observation else "not-applicable"),
+            "observation_head_status": (
+                "matched" if expected_head == actual_head else "stale"
+            ) if device_observation and expected_head else ("missing" if device_observation else "not-applicable"),
             "codegraph": {
                 "supported": bool(codegraph_metadata.get("supported")),
                 "index_present": bool(codegraph_metadata.get("index_present")),
@@ -542,6 +580,14 @@ def inspect_repository_state(
         }
         if branch_status == "mismatch":
             result["status"] = "branch-mismatch"
+            return result
+        if device_observation and (not observed_branch or not expected_head):
+            result["status"] = "missing-observation"
+            result["failure_code"] = "WB_REPOSITORY_OBSERVATION_MISSING"
+            return result
+        if device_observation and (observed_branch != actual_branch or expected_head != actual_head):
+            result["status"] = "stale-observation"
+            result["failure_code"] = "WB_REPOSITORY_OBSERVATION_STALE"
             return result
         if commit_status in {"stale", "missing"}:
             result["status"] = "stale-baseline"

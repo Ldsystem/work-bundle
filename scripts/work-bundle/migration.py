@@ -30,9 +30,16 @@ TRANSACTION_STAGES = (
 
 
 class MigrationError(Exception):
-    def __init__(self, code: str, transaction_record: Path | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        transaction_record: Path | None = None,
+        *,
+        result: dict[str, object] | None = None,
+    ) -> None:
         self.code = code
         self.transaction_record = transaction_record
+        self.result = result or {}
         super().__init__(code)
 
 
@@ -55,6 +62,43 @@ def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def validate_migration_proposal(origin: Path, branch: str, base_ref: str) -> dict[str, object]:
+    """Validate origin-local worktree and ref availability without writing Git state."""
+    origin = origin.resolve()
+    common_dir = _run_git(origin, 'rev-parse', '--path-format=absolute', '--git-common-dir')
+    if common_dir.returncode:
+        raise MigrationError('WB_MIGRATION_ORIGIN_GIT_UNAVAILABLE')
+    evidence: dict[str, object] = {
+        'working_branch': branch,
+        'base_ref': base_ref,
+        'origin_git_common_dir': str(Path(common_dir.stdout.strip()).resolve()),
+        'changed_files': [],
+        'git_actions': [],
+    }
+    worktrees = _run_git(origin, 'worktree', 'list', '--porcelain')
+    if worktrees.returncode:
+        raise MigrationError('WB_MIGRATION_ORIGIN_GIT_UNAVAILABLE', result=evidence)
+    if f'branch refs/heads/{branch}' in worktrees.stdout.splitlines():
+        raise MigrationError('WB_WORKTREE_BRANCH_CONFLICT', result=evidence)
+
+    resolved = _run_git(origin, 'rev-parse', '--verify', '--quiet', f'{base_ref}^{{commit}}')
+    if resolved.returncode:
+        local_branch_available = False
+        if base_ref.startswith('origin/') and len(base_ref) > len('origin/'):
+            local_name = base_ref.removeprefix('origin/')
+            local = _run_git(origin, 'show-ref', '--verify', '--quiet', f'refs/heads/{local_name}')
+            local_branch_available = local.returncode == 0
+        evidence['local_branch_available'] = local_branch_available
+        code = (
+            'WB_MIGRATION_LOCAL_ORIGIN_BASE_REF_UNAVAILABLE'
+            if local_branch_available
+            else 'WB_MIGRATION_BASE_REF_UNAVAILABLE'
+        )
+        raise MigrationError(code, result=evidence)
+    evidence['resolved_base_commit'] = resolved.stdout.strip()
+    return evidence
 
 
 def source_git_state(root: Path) -> dict[str, object]:
@@ -201,7 +245,9 @@ def propose_migration(
     repository_name: str | None = None,
     additional_repository_origins: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
+    origin = (origin or source).resolve()
     inspection = inspect_migration(source, target, origin)
+    proposal_validation = validate_migration_proposal(origin, branch, base_ref)
     slug = workspace_slug or target.name
     name = repository_name or repository_id
     return {
@@ -215,6 +261,7 @@ def propose_migration(
         'dry_run': True,
         'changed_files': [],
         'git_actions': [],
+        'proposal_validation': proposal_validation,
         'credential_action': 'create-empty-protected-store',
         'apply_requires_accepted_baseline': bool(
             inspection['source_repository_git']['dirty']

@@ -856,6 +856,7 @@ def _portable_failures(text: str) -> list[str]:
     seen_member_names: set[str] = set()
     seen_member_paths: set[str] = set()
     root_bindings = 0
+    composite_member_bindings = 0
     for repository in repositories:
         repository_id = str(repository.get("id") or "")
         if not repository.get("id"):
@@ -884,21 +885,29 @@ def _portable_failures(text: str) -> list[str]:
                     failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_DUPLICATE:{member_name}")
                 seen_member_names.add(member_name)
             elif mode == "composite":
+                valid_composite_member = True
                 if not member_name:
                     failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_INVALID:{repository_id}")
+                    valid_composite_member = False
                 elif member_name in seen_member_names:
                     failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_DUPLICATE:{member_name}")
+                    valid_composite_member = False
                 seen_member_names.add(member_name)
                 if not member_path:
                     failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_INVALID:{repository_id}")
+                    valid_composite_member = False
                 else:
                     try:
                         _validate_member_path(member_path)
                     except ControlPlaneError as exc:
                         failures.append(f"{exc.code}:{repository_id}")
+                        valid_composite_member = False
                     if member_path in seen_member_paths:
                         failures.append(f"WB_CONTROL_PLANE_MEMBER_PATH_DUPLICATE:{member_path}")
+                        valid_composite_member = False
                     seen_member_paths.add(member_path)
+                if valid_composite_member:
+                    composite_member_bindings += 1
             else:
                 failures.append(f"WB_CONTROL_PLANE_MEMBER_BINDING_INVALID:{repository_id}")
                 if member_name:
@@ -909,6 +918,8 @@ def _portable_failures(text: str) -> list[str]:
         failures.append("WB_CONTROL_PLANE_SINGLE_REPOSITORY_BINDING_INVALID")
     if mode == "composite" and root_bindings != 1:
         failures.append("WB_CONTROL_PLANE_COMPOSITE_ROOT_BINDING_INVALID")
+    if mode == "composite" and composite_member_bindings == 0:
+        failures.append("WB_CONTROL_PLANE_COMPOSITE_MEMBER_REQUIRED")
     return failures
 
 

@@ -154,6 +154,58 @@ def test_proposal_reports_complete_inputs_and_separate_dirty_states(tmp_path: Pa
     assert dry_run['changed_files'] == [] and not target.exists()
 
 
+def test_proposal_rejects_working_branch_checked_out_in_origin_common_dir(tmp_path: Path) -> None:
+    source, target, occupied = tmp_path / 'source', tmp_path / 'target', tmp_path / 'occupied'
+    seed(source, dirty_source=False, dirty_nested=False)
+    subprocess.run(
+        ['git', '-C', str(source), 'worktree', 'add', '-q', '-b', 'feature/occupied', str(occupied), 'HEAD'],
+        check=True,
+    )
+
+    with pytest.raises(MigrationError) as raised:
+        propose_migration(source, target, 'repo-one', 'feature/occupied', 'HEAD')
+
+    assert raised.value.code == 'WB_WORKTREE_BRANCH_CONFLICT'
+    assert raised.value.result['changed_files'] == []
+    assert raised.value.result['working_branch'] == 'feature/occupied'
+    assert not target.exists()
+
+
+def test_proposal_distinguishes_missing_origin_main_from_local_main(tmp_path: Path) -> None:
+    source, target = tmp_path / 'source', tmp_path / 'target'
+    seed(source, dirty_source=False, dirty_nested=False)
+
+    with pytest.raises(MigrationError) as raised:
+        propose_migration(source, target, 'repo-one', 'feature/workspace', 'origin/main')
+
+    assert raised.value.code == 'WB_MIGRATION_LOCAL_ORIGIN_BASE_REF_UNAVAILABLE'
+    assert raised.value.result['changed_files'] == []
+    assert raised.value.result['base_ref'] == 'origin/main'
+    assert raised.value.result['local_branch_available'] is True
+    assert not target.exists()
+
+    valid = propose_migration(source, target, 'repo-one', 'feature/workspace', 'main')
+    assert valid['changed_files'] == []
+    assert not target.exists()
+
+
+def test_invalid_proposal_prevents_apply_from_reaching_member_provisioning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, target = tmp_path / 'source', tmp_path / 'target'
+    seed(source, dirty_source=False, dirty_nested=False)
+    monkeypatch.setattr(
+        migration,
+        'provision_member',
+        lambda *_args, **_kwargs: pytest.fail('provision_member must not run'),
+    )
+
+    with pytest.raises(MigrationError, match='LOCAL_ORIGIN_BASE_REF_UNAVAILABLE'):
+        apply_migration(source, target, 'repo-one', 'feature/workspace', 'origin/main')
+
+    assert not target.exists()
+
+
 def test_dirty_apply_requires_exact_accepted_baseline(tmp_path: Path) -> None:
     source, target, registry_path = tmp_path / 'source', tmp_path / 'target', tmp_path / 'config/projects.yaml'
     seed(source)
