@@ -324,7 +324,7 @@ def test_query_trace_reports_vector_unavailable_status(
     assert trace["sources"]["vector"] == "unavailable"
 
 
-def test_index_rebuild_installs_and_loads_sqlite_vec_when_available(
+def test_production_index_rebuild_keeps_proposed_notes_in_vector_discovery(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     root = tmp_path / ".work-bundle" / "knowledge"
@@ -350,6 +350,49 @@ Vector index fixture body.
 """,
         encoding="utf-8",
     )
+    proposed = root / "notes" / "development-design" / "retrieval" / "conceptual-match.md"
+    proposed.parent.mkdir(parents=True)
+    proposed.write_text(
+        """---
+id: note-proposed-paraphrase
+title: Conceptual Match Without Shared Wording
+lifecycle_stage: development_design
+perspective: development-design/retrieval
+status: proposed
+source_type: source_note
+summary: Meaning based recall across vocabulary mismatch.
+tags:
+  - semantic-recall
+updated_at: 2026-08-28
+---
+
+# Conceptual Match Without Shared Wording
+
+A reader asks how to locate advice that means the same thing even when none of the original wording is repeated.
+""",
+        encoding="utf-8",
+    )
+    confidential = root / "notes" / "implementation" / "confidential.md"
+    confidential.parent.mkdir(parents=True)
+    confidential.write_text(
+        """---
+id: note-confidential
+title: Confidential Fixture
+lifecycle_stage: implementation
+perspective: implementation/security
+status: current
+source_type: source_note
+sensitivity: confidential
+summary: This note must not enter vector discovery.
+updated_at: 2026-08-28
+---
+
+# Confidential Fixture
+
+Confidential discovery material.
+""",
+        encoding="utf-8",
+    )
 
     indexes.cmd_index(
         argparse.Namespace(
@@ -365,14 +408,27 @@ Vector index fixture body.
     vector_status = payload["vector_status"]
     assert vector_status["status"] == "rebuilt"
     assert vector_status["extension"] == "sqlite-vec"
-    assert vector_status["chunks_indexed"] == 1
+    assert vector_status["chunks_indexed"] == 2
     assert vector_status["embedding_model"] == indexes.EMBEDDING_MODEL
     assert vector_status["embedding_model_version"] == indexes.EMBEDDING_MODEL_VERSION
     assert vector_status["embedding_package_version"] == indexes.EMBEDDING_PACKAGE_VERSION
     assert vector_status["dimensions"] == indexes.VECTOR_DIMENSIONS
     assert vector_status["chunking"] == indexes.VECTOR_CHUNKING
     assert vector_status["index_schema"] == indexes.VECTOR_INDEX_SCHEMA
-    assert (root / "indexes" / "vector-index.jsonl").read_text(encoding="utf-8")
+    vector_artifact = (root / "indexes" / "vector-index.jsonl").read_text(encoding="utf-8")
+    assert vector_artifact
+    assert "note-confidential" not in vector_artifact
+
+    trace, candidates = run_query(
+        root,
+        capsys,
+        query="retrieve semantically similar knowledge using different terms",
+        limit=4,
+    )
+    proposed_candidate = candidate_by_id(candidates, "note-proposed-paraphrase")
+    assert vector_trace_status(trace) == "queried"
+    assert proposed_candidate["status"] == "proposed"
+    assert proposed_candidate["mechanical_sources"] == {"fts": False, "vector": True, "bfs": False}
 
 
 def test_query_output_omits_forbidden_semantic_fields(

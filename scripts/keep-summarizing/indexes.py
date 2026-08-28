@@ -341,7 +341,9 @@ def cmd_index(args: argparse.Namespace) -> None:
             continue
         status = str(fm.get("status", "draft"))
         sensitivity = str(fm.get("sensitivity", "normal"))
-        include = status not in config["exclude_status"] and sensitivity not in config["exclude_sensitivity"]
+        # Discovery is authority-neutral: lifecycle status is evaluated only after
+        # retrieval, while sensitivity remains a legitimate indexing boundary.
+        include = sensitivity not in config["exclude_sensitivity"]
         doc = {
             "id": fm.get("id", rel),
             "path": rel,
