@@ -327,11 +327,14 @@ def test_query_trace_reports_vector_unavailable_status(
 def test_sqlite_vec_availability_probe_reports_import_unavailable_stably(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        indexes,
-        "install_sqlite_vec",
-        lambda: (None, "sqlite-vec unavailable in the uv-managed environment: missing"),
-    )
+    real_import = __import__
+
+    def import_without_sqlite_vec(name: str, *args: object, **kwargs: object) -> object:
+        if name == indexes.SQLITE_VEC_IMPORT:
+            raise ImportError("missing")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", import_without_sqlite_vec)
 
     assert indexes.sqlite_vec_availability_probe() == {
         "status": "unavailable",
@@ -347,11 +350,32 @@ def test_sqlite_vec_availability_probe_reports_temporary_load_unavailable_stably
         def load(_connection: object) -> None:
             raise RuntimeError("runner cannot load extension")
 
-    monkeypatch.setattr(indexes, "install_sqlite_vec", lambda: (UnloadableSqliteVec(), None))
+    real_import = __import__
+
+    def import_unloadable_sqlite_vec(name: str, *args: object, **kwargs: object) -> object:
+        if name == indexes.SQLITE_VEC_IMPORT:
+            return UnloadableSqliteVec()
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", import_unloadable_sqlite_vec)
 
     assert indexes.sqlite_vec_availability_probe() == {
         "status": "unavailable",
         "reason": "sqlite-vec probe unavailable: temporary load failed",
+    }
+
+
+def test_sqlite_vec_availability_probe_does_not_call_production_import_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called() -> tuple[object | None, str | None]:
+        raise AssertionError("availability probe delegated to production import helper")
+
+    monkeypatch.setattr(indexes, "install_sqlite_vec", fail_if_called)
+
+    assert indexes.sqlite_vec_availability_probe() == {
+        "status": "available",
+        "reason": None,
     }
 
 

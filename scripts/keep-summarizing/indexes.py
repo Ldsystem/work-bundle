@@ -23,8 +23,9 @@ def install_sqlite_vec() -> tuple[object | None, str | None]:
 
 def sqlite_vec_availability_probe() -> dict[str, object]:
     """Probe import and extension loading independently from a production rebuild."""
-    sqlite_vec, _ = install_sqlite_vec()
-    if sqlite_vec is None:
+    try:
+        sqlite_vec = __import__(SQLITE_VEC_IMPORT)
+    except ImportError:
         return {
             "status": "unavailable",
             "reason": "sqlite-vec probe unavailable: import failed",
