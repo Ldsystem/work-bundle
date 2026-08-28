@@ -1624,7 +1624,7 @@ def test_helper_observation_rejects_executor_repository_identity_that_is_not_liv
 
 
 def test_helper_observation_rejects_unverifiable_codegraph_up_to_date_claim(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root, _, task = workspace(tmp_path)
     _set_process_validation(task, PASSING_PROCESS)
@@ -1635,8 +1635,16 @@ def test_helper_observation_rejects_unverifiable_codegraph_up_to_date_claim(
     handoff["codegraph"] = [
         {"root": str(root.resolve()), "applicable": True, "up_to_date": True, "reason": None}
     ]
+    original_run = execution_context.subprocess.run
 
-    with pytest.raises(SystemExit, match="CodeGraph|codegraph|status|up.to.date"):
+    def missing_codegraph(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "codegraph":
+            raise FileNotFoundError("codegraph")
+        return original_run(args, **kwargs)
+
+    monkeypatch.setattr(execution_context.subprocess, "run", missing_codegraph)
+
+    with pytest.raises(SystemExit, match="CodeGraph status is unavailable"):
         execution_context.validate_executor_result_for_task(handoff, brief, observe=True)
 
 

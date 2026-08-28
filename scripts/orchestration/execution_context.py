@@ -1274,12 +1274,15 @@ def _observe_repository_and_codegraph_evidence(
     ):
         raise SystemExit("Helper-observed missing CodeGraph marker requires explicit no-index evidence")
     if marker_exists:
-        status = subprocess.run(
-            ["codegraph", "status", "--json", str(execution_root)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            status = subprocess.run(
+                ["codegraph", "status", "--json", str(execution_root)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError as error:
+            raise SystemExit("Helper-observed CodeGraph status is unavailable") from error
         if status.returncode != 0:
             raise SystemExit("Helper-observed CodeGraph status is unavailable")
         try:
