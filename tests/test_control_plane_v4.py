@@ -1228,7 +1228,7 @@ def test_migration_rejects_tracked_protected_control_plane_paths(tmp_path: Path)
     assert json.loads(blocked.stdout)["failure_code"] == "WB_CONTROL_PLANE_PROTECTED_PATH_TRACKED"
 
 
-def test_orchestration_uses_current_local_head_as_observation_not_expected_baseline(tmp_path: Path) -> None:
+def test_orchestration_blocks_when_current_local_head_outgrows_device_observation(tmp_path: Path) -> None:
     config = config_root(tmp_path / "config-root")
     workspace, remote, _ = make_v3_workspace(tmp_path / "fixture")
     migrate(config, workspace)
@@ -1245,13 +1245,20 @@ def test_orchestration_uses_current_local_head_as_observation_not_expected_basel
         "--apply",
     )
     assert attached.returncode == 0
+    registry = config / "registry/projects.yaml"
+    before = registry.read_text(encoding="utf-8")
     (checkout / "later.txt").write_text("later\n", encoding="utf-8")
     git(checkout, "add", "later.txt")
     git(checkout, "commit", "-q", "-m", "later local commit")
     preflight = run_orch(config, "repository-preflight", "--project-root", str(workspace))
-    row = json.loads(preflight.stdout)["repository_preflight"]["repositories"][0]
-    assert row["status"] == "clean"
-    assert row["metadata"]["expected_commit"] is None
+    payload = json.loads(preflight.stdout)["repository_preflight"]
+    row = payload["repositories"][0]
+    assert payload["status"] == "blocked"
+    assert row["status"] == "stale-observation"
+    assert row["failure_code"] == "WB_REPOSITORY_OBSERVATION_STALE"
+    assert row["metadata"]["commit_status"] == "stale"
+    assert row["metadata"]["observation_head_status"] == "stale"
+    assert registry.read_text(encoding="utf-8") == before
 
 
 def test_attach_materializes_missing_repository_idempotently_without_portable_mutation(tmp_path: Path) -> None:
@@ -1723,6 +1730,21 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         doctor = run_wb(config, "doctor-workspace", str(workspace))
         failures = json.loads(doctor.stdout)["portable"]["failures"]
         self.assertIn("WB_CONTROL_PLANE_COMPOSITE_ROOT_BINDING_INVALID", failures)
+
+    def test_v4_composite_schema_requires_at_least_one_named_member(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path)
+        metadata = workspace / ".work-bundle/project.yaml"
+        metadata.write_text(
+            metadata.read_text(encoding="utf-8").replace(
+                "  mode: single-repository", "  mode: composite"
+            ),
+            encoding="utf-8",
+        )
+
+        doctor = run_wb(config, "doctor-workspace", str(workspace))
+        failures = json.loads(doctor.stdout)["portable"]["failures"]
+
+        self.assertIn("WB_CONTROL_PLANE_COMPOSITE_MEMBER_REQUIRED", failures)
 
     def test_v4_composite_schema_rejects_duplicate_member_paths(self) -> None:
         config, workspace, _, _ = init_single_v4(self.tmp_path)

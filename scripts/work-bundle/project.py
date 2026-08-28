@@ -2547,7 +2547,16 @@ def cmd_migrate_to_multi_repository(args: list[str]) -> int:
             additional_repository_origins=additional_origins,
         )
     except (MigrationError, ValueError, RuntimeError) as exc:
-        out({'command':'migrate-to-multi-repository','status':'issues-found','failure_code':str(exc)})
+        payload = {
+            'command': 'migrate-to-multi-repository',
+            'status': 'issues-found',
+            'failure_code': exc.code if isinstance(exc, MigrationError) else str(exc),
+        }
+        if isinstance(exc, MigrationError) and exc.result:
+            payload['result'] = exc.result
+            payload['changed_files'] = exc.result.get('changed_files', [])
+            payload['git_actions'] = exc.result.get('git_actions', [])
+        out(payload)
         return 1
     out({'command':'migrate-to-multi-repository','status':'passed','result':result})
     return 0

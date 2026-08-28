@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATION = REPO_ROOT / "scripts" / "orchestration"
@@ -15,6 +17,7 @@ from repository_preflight import (  # noqa: E402
     repository_preflight,
     resolve_target_repositories,
 )
+import repository_preflight as preflight_module  # noqa: E402
 
 
 def git(path: Path, *args: str) -> str:
@@ -97,6 +100,106 @@ def write_workspace_metadata_v3(workspace: Path, repo: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def write_workspace_metadata_v4(workspace: Path, workspace_id: str = "wb-test") -> None:
+    (workspace / ".work-bundle").mkdir(parents=True, exist_ok=True)
+    (workspace / ".work-bundle" / "project.yaml").write_text(
+        "\n".join(
+            [
+                "metadata_version: 4",
+                "authority: canonical",
+                "workspace:",
+                f"  id: {workspace_id}",
+                "  slug: test",
+                "  mode: multi-repository",
+                "source_repositories:",
+                "  - id: repo-main",
+                "    role: source",
+                "    remote:",
+                '      canonical: "https://example.com/repo.git"',
+                "    default_branch: main",
+                "    workspace_binding:",
+                "      type: member",
+                "      name: repo-main",
+                "    materialization:",
+                "      required: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_v4_registry(
+    path: Path,
+    repo: Path | None,
+    *,
+    workspace_id: str = "wb-test",
+    observed_branch: str = "main",
+    observed_head: str = "",
+) -> None:
+    repository_lines = ["      repo-main:"]
+    if repo is not None:
+        repository_lines.append(f"        project_root: {repo.resolve()}")
+    if observed_branch:
+        repository_lines.append(f"        observed_branch: {observed_branch}")
+    if observed_head:
+        repository_lines.append(f"        observed_head: {observed_head}")
+    path.write_text(
+        "\n".join(
+            [
+                "metadata_version: 4",
+                "device_bindings:",
+                f"  {workspace_id}:",
+                "    repositories:",
+                *repository_lines,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_v4_preflight_keeps_missing_device_observation_as_typed_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    registry = tmp_path / "projects.yaml"
+    write_workspace_metadata_v4(workspace)
+    write_v4_registry(registry, None)
+    monkeypatch.setattr(preflight_module, "project_registry_path", lambda: registry)
+
+    result = repository_preflight(resolve_target_repositories(workspace))
+
+    assert result["repository_preflight"]["status"] == "blocked"
+    row = result["repository_preflight"]["repositories"][0]
+    assert row["status"] == "missing-observation"
+    assert row["failure_code"] == "WB_REPOSITORY_OBSERVATION_PROJECT_ROOT_MISSING"
+    assert row["metadata"]["repository_id"] == "repo-main"
+
+
+def test_v4_preflight_detects_stale_device_head_without_refreshing_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repo = repository(tmp_path)
+    registry = tmp_path / "projects.yaml"
+    write_workspace_metadata_v4(workspace)
+    write_v4_registry(registry, repo, observed_head="0" * 40)
+    before = registry.read_text(encoding="utf-8")
+    monkeypatch.setattr(preflight_module, "project_registry_path", lambda: registry)
+
+    result = repository_preflight(resolve_target_repositories(workspace))
+
+    assert result["repository_preflight"]["status"] == "blocked"
+    row = result["repository_preflight"]["repositories"][0]
+    assert row["status"] == "stale-observation"
+    assert row["failure_code"] == "WB_REPOSITORY_OBSERVATION_STALE"
+    assert row["metadata"]["observation_head_status"] == "stale"
+    assert registry.read_text(encoding="utf-8") == before
 
 
 def test_clean_repository_passes(tmp_path: Path) -> None:

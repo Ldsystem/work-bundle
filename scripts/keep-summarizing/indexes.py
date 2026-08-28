@@ -21,6 +21,33 @@ def install_sqlite_vec() -> tuple[object | None, str | None]:
         return None, f"sqlite-vec unavailable in the uv-managed environment: {exc}"
 
 
+def sqlite_vec_availability_probe() -> dict[str, object]:
+    """Probe import and extension loading independently from a production rebuild."""
+    try:
+        sqlite_vec = __import__(SQLITE_VEC_IMPORT)
+    except ImportError:
+        return {
+            "status": "unavailable",
+            "reason": "sqlite-vec probe unavailable: import failed",
+        }
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        return {"status": "available", "reason": None}
+    except Exception:
+        return {
+            "status": "unavailable",
+            "reason": "sqlite-vec probe unavailable: temporary load failed",
+        }
+    finally:
+        try:
+            conn.enable_load_extension(False)
+        except Exception:
+            pass
+        conn.close()
+
+
 def load_sqlite_vec(conn: sqlite3.Connection) -> tuple[object | None, str | None]:
     sqlite_vec, error = install_sqlite_vec()
     if sqlite_vec is None:

@@ -324,9 +324,90 @@ def test_query_trace_reports_vector_unavailable_status(
     assert trace["sources"]["vector"] == "unavailable"
 
 
+def test_sqlite_vec_availability_probe_reports_import_unavailable_stably(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import = __import__
+
+    def import_without_sqlite_vec(name: str, *args: object, **kwargs: object) -> object:
+        if name == indexes.SQLITE_VEC_IMPORT:
+            raise ImportError("missing")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", import_without_sqlite_vec)
+
+    assert indexes.sqlite_vec_availability_probe() == {
+        "status": "unavailable",
+        "reason": "sqlite-vec probe unavailable: import failed",
+    }
+
+
+def test_sqlite_vec_availability_probe_reports_temporary_load_unavailable_stably(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnloadableSqliteVec:
+        @staticmethod
+        def load(_connection: object) -> None:
+            raise RuntimeError("runner cannot load extension")
+
+    real_import = __import__
+
+    def import_unloadable_sqlite_vec(name: str, *args: object, **kwargs: object) -> object:
+        if name == indexes.SQLITE_VEC_IMPORT:
+            return UnloadableSqliteVec()
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", import_unloadable_sqlite_vec)
+
+    assert indexes.sqlite_vec_availability_probe() == {
+        "status": "unavailable",
+        "reason": "sqlite-vec probe unavailable: temporary load failed",
+    }
+
+
+def test_sqlite_vec_availability_probe_does_not_call_production_import_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LoadableSqliteVec:
+        @staticmethod
+        def load(_connection: object) -> None:
+            return None
+
+    class TemporaryConnection:
+        def enable_load_extension(self, _enabled: bool) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    def fail_if_called() -> tuple[object | None, str | None]:
+        raise AssertionError("availability probe delegated to production import helper")
+
+    real_import = __import__
+
+    def import_loadable_sqlite_vec(name: str, *args: object, **kwargs: object) -> object:
+        if name == indexes.SQLITE_VEC_IMPORT:
+            return LoadableSqliteVec()
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(indexes, "install_sqlite_vec", fail_if_called)
+    monkeypatch.setattr("builtins.__import__", import_loadable_sqlite_vec)
+    monkeypatch.setattr(indexes.sqlite3, "connect", lambda _path: TemporaryConnection())
+
+    assert indexes.sqlite_vec_availability_probe() == {
+        "status": "available",
+        "reason": None,
+    }
+
+
 def test_production_index_rebuild_keeps_proposed_notes_in_vector_discovery(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    probe = indexes.sqlite_vec_availability_probe()
+    if probe["status"] == "unavailable":
+        pytest.skip(str(probe["reason"]))
+    assert probe == {"status": "available", "reason": None}
+
     root = tmp_path / ".work-bundle" / "knowledge"
     note = root / "notes" / "development-design" / "architecture" / "source-of-truth" / "vector-index.md"
     note.parent.mkdir(parents=True)
