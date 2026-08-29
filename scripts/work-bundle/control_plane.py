@@ -1763,7 +1763,12 @@ def _materialize_workspace_root(remote: str, workspace_root: Path, default_branc
 
 
 def _attach(
-    workspace_root: Path, materialize: str, repository_paths: dict[str, Path], apply: bool
+    workspace_root: Path,
+    materialize: str,
+    repository_paths: dict[str, Path],
+    apply: bool,
+    *,
+    create_script_index: bool = True,
 ) -> tuple[dict[str, object], int]:
     metadata_path = workspace_root / ".work-bundle/project.yaml"
     text = read(metadata_path)
@@ -1943,7 +1948,10 @@ def _attach(
         raise ControlPlaneError("WB_CONTROL_PLANE_TRANSACTION_FAILED") from exc
     if apply:
         try:
-            changed = ensure_workspace_resources(workspace_root)
+            changed = ensure_workspace_resources(
+                workspace_root,
+                create_script_index=create_script_index,
+            )
             for relative in (".work-bundle/git", ".work-bundle/runtime", ".work-bundle/orchestration/execution-state"):
                 path = workspace_root / relative
                 if not path.exists():
@@ -1987,7 +1995,9 @@ def _attach(
     final_failures: list[str] = []
     if apply:
         final_failures.extend(_portable_failures(read(metadata_path)))
-        required_resources = ("script/index.yaml", "credentials/credentials.yaml", "AGENTS.md")
+        required_resources = ["credentials/credentials.yaml", "AGENTS.md"]
+        if create_script_index:
+            required_resources.insert(0, "script/index.yaml")
         final_failures.extend(
             f"WB_CONTROL_PLANE_RESOURCE_MISSING:{relative}"
             for relative in required_resources
@@ -2108,7 +2118,13 @@ def cmd_doctor_workspace(args: list[str], *, command_name: str = "doctor-workspa
                         missing_required.append(issue)
     if parsed.repair and not portable_failures:
         try:
-            result, code = _attach(workspace_root, "none", {}, True)
+            result, code = _attach(
+                workspace_root,
+                "none",
+                {},
+                True,
+                create_script_index=False,
+            )
         except ControlPlaneError as exc:
             local_failures.append(exc.code)
             result, code = {"status": "issues-found"}, 1

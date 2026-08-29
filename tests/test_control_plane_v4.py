@@ -1161,6 +1161,20 @@ def test_doctor_repair_preserves_existing_and_unknown_local_binding_fields(tmp_p
     assert str(checkout.resolve()) in after
 
 
+def test_doctor_workspace_repair_does_not_create_script_index(tmp_path: Path) -> None:
+    config = config_root(tmp_path / "config-root")
+    workspace, _, _ = make_v3_workspace(tmp_path / "fixture")
+    migrate(config, workspace)
+    script_index = workspace / "script/index.yaml"
+    script_index.unlink(missing_ok=True)
+
+    repaired = run_wb(config, "doctor-workspace", str(workspace), "--repair")
+
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    assert not script_index.exists()
+    assert (workspace / "credentials/credentials.yaml").is_file()
+
+
 def test_attach_rejects_second_active_materialization_on_same_device(tmp_path: Path) -> None:
     config = config_root(tmp_path / "config-root")
     workspace_a, _, _ = make_v3_workspace(tmp_path / "fixture")

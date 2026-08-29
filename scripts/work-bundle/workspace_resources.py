@@ -43,11 +43,11 @@ scripts: []
 CREDENTIAL_TEMPLATE = 'version: 1\ncredentials: []\n'
 
 
-def ensure_workspace_resources(workspace_root: Path) -> list[str]:
+def ensure_workspace_resources(workspace_root: Path, *, create_script_index: bool = True) -> list[str]:
     changed: list[str] = []
     script_index = workspace_root / 'script' / 'index.yaml'
     credential_file = workspace_root / 'credentials' / 'credentials.yaml'
-    if not script_index.exists():
+    if create_script_index and not script_index.exists():
         script_index.parent.mkdir(parents=True, exist_ok=True)
         script_index.write_text(SCRIPT_INDEX_TEMPLATE, encoding='utf-8')
         changed.append(str(script_index))
