@@ -1607,6 +1607,16 @@ def _task_context(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any],
     return root, task_path, task_data, task_body, records, source_paths
 
 
+def _contains_resolved_source_record(value: Any, record: str) -> bool:
+    if isinstance(value, str):
+        return record in value
+    if isinstance(value, dict):
+        return any(_contains_resolved_source_record(item, record) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_resolved_source_record(item, record) for item in value)
+    return False
+
+
 def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     root, task_path, task, task_body, records, source_paths = _task_context(args)
     task_id = _artifact_id(task, "id", task_path)
@@ -1700,9 +1710,8 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
             "review_required": review_required,
         }
     }
-    serialized_brief = json.dumps(brief, ensure_ascii=False)
     for identifier in source_ids:
-        if records[identifier] not in serialized_brief:
+        if not _contains_resolved_source_record(brief, records[identifier]):
             raise SystemExit(
                 f"Source ID {identifier} from {', '.join(path.as_posix() for path in source_paths)} "
                 "is not allocated to a resolved task-brief field"
