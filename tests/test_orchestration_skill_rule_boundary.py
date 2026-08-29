@@ -170,6 +170,14 @@ def test_workflow_makes_task_review_optional_on_the_chain() -> None:
     assert "-> independent dev-code-review" not in text
 
 
+def test_orchestration_doctor_uses_optional_review_anchors() -> None:
+    text = (REPO_ROOT / "scripts/orchestration/doctor.py").read_text(encoding="utf-8")
+
+    assert '"optional task review"' in text
+    assert '"acceptance_review.required: true"' in text
+    assert '"independent dev-code-review"' not in text
+
+
 def test_doctor_execute_path_requires_validate_not_universal_review() -> None:
     text = read("scripts/orchestration/doctor.py")
     start = text.index('skill_root / "orch-execute-plan" / "SKILL.md"')

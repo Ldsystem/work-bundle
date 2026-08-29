@@ -218,7 +218,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             [
                 "Disposable task briefs, review packages, and lightweight development plans",
                 "build-task-brief",
-                "independent dev-code-review",
+                "optional task review",
+                "acceptance_review.required: true",
                 "A task becomes `Completed` only when",
                 "Final workflow audit",
             ],
