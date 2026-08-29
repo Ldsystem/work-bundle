@@ -1083,6 +1083,26 @@ def _publish_evidence(control: Path, payload: dict[str, object]) -> Path:
     return path
 
 
+def _control_plane_gitlink_paths(control: Path) -> list[str]:
+    paths = {
+        str(marker.parent.relative_to(control)).replace("\\", "/")
+        for marker in control.rglob(".git")
+        if marker.parent != control and (marker.is_dir() or marker.is_file())
+    }
+    if (control / ".git").exists():
+        result = subprocess.run(
+            ["git", "-C", str(control), "ls-files", "--stage", "-z"],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            for entry in result.stdout.split(b"\0"):
+                if not entry.startswith(b"160000 ") or b"\t" not in entry:
+                    continue
+                paths.add(entry.split(b"\t", 1)[1].decode("utf-8", errors="surrogateescape"))
+    return sorted(paths)
+
+
 def cmd_publish_control_plane(args: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="wb.py publish-control-plane")
     parser.add_argument("workspace_root")
@@ -1108,6 +1128,16 @@ def cmd_publish_control_plane(args: list[str]) -> int:
         return 1
     if not remote:
         out({"command": "publish-control-plane", "status": "issues-found", "failure_code": "WB_CONTROL_PLANE_REMOTE_REQUIRED", "changed_files": []})
+        return 1
+    gitlink_paths = _control_plane_gitlink_paths(control)
+    if gitlink_paths:
+        out({
+            "command": "publish-control-plane",
+            "status": "issues-found",
+            "failure_code": "WB_CONTROL_PLANE_GITLINK_FORBIDDEN",
+            "gitlink_paths": gitlink_paths,
+            "changed_files": [],
+        })
         return 1
     if parsed.dry_run:
         out({"command": "publish-control-plane", "status": "passed", "dry_run": True, "remote": remote, "changed_files": [], "git_actions": ["init", "configure-origin", "commit", "push"]})

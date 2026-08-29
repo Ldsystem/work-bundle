@@ -1440,6 +1440,60 @@ def test_migrate_project_routes_registry_multi_source_to_workspace_migration(tmp
     assert metadata_path.read_bytes() == before
 
 
+def test_migrate_project_accepts_same_id_origin_and_member_paths(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    origin = tmp_path / "origin-locator"
+    origin.mkdir()
+    registry_path = config_root / "registry" / "projects.yaml"
+    registry_path.write_text(
+        "\n".join(
+            [
+                "projects:",
+                "  - slug: demo",
+                "    name: demo",
+                f"    work_bundle_root: {project.resolve() / '.work-bundle'}",
+                f"    knowledge_root: {project.resolve() / '.work-bundle' / 'knowledge'}",
+                "    aliases: []",
+                "    repository_origins:",
+                "      - id: demo-main",
+                f"        origin_path: {origin.resolve()}",
+                "        git_repository: true",
+                "    source_repositories:",
+                "      - id: demo-main",
+                f"        path: {project.resolve()}",
+                "        work_dir: true",
+                '        remote: ""',
+                "        git_repository: true",
+                "    status: active",
+                "    updated_at: 2026-01-01",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    metadata_path = project / ".work-bundle/project.yaml"
+    metadata_path.write_text(
+        "\n".join(
+            [
+                "metadata_version: 1",
+                "authority: canonical",
+                f"project_root: {project.resolve()}",
+                "industry: legacy",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    migrated = run_wb(config_root, "migrate-project", str(project), "--dry-run", "--name", "demo")
+
+    assert migrated.returncode == 1
+    data = json.loads(migrated.stdout)
+    assert data["mode"] == "multi-repository-migration-required"
+    assert data["topology_assessment"]["conflicts"] == []
+    assert data["topology_assessment"]["required_command"] == "migrate-to-multi-repository"
+
+
 def _seed_committed_repository(path: Path) -> None:
     path.mkdir()
     git(path, "init", "-q", "-b", "main")
