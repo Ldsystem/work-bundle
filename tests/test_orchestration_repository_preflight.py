@@ -37,6 +37,14 @@ def repository(tmp_path: Path, name: str = "repo") -> Path:
     return path
 
 
+def test_malformed_accepted_baseline_is_typed(tmp_path: Path) -> None:
+    malformed = tmp_path / "baseline.json"
+    malformed.write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Accepted baseline.*valid JSON"):
+        preflight_module._load_baselines(str(malformed))
+
+
 def write_project_metadata(project: Path, repo: Path, *, branch: str = "main", commit: str | None = None) -> None:
     head = commit if commit is not None else git(repo, "rev-parse", "HEAD")
     (project / ".work-bundle").mkdir(parents=True, exist_ok=True)

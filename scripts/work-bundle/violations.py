@@ -9,7 +9,7 @@ from pathlib import Path
 from core import out, read, work_bundle_config_root, write
 
 
-REFERENCE_PATH = Path('references/wb-violation-evidence.yaml')
+REFERENCE_PATH = Path(__file__).resolve().parents[2] / 'references' / 'wb-violation-evidence.yaml'
 
 
 class ViolationError(Exception):

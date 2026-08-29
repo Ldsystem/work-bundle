@@ -1583,6 +1583,13 @@ def test_overlapping_writes_are_not_parallelizable() -> None:
     assert "unsafe parallelization is explicitly blocked by dependency or scope evidence" in plan
 
 
+def test_plan_contract_has_no_placeholder_markdown_links() -> None:
+    plan = read("references/assets/orchestration/contract/plan-v1.md")
+
+    assert "](.work-bundle/orchestration/spec/active/...)" not in plan
+    assert "`.work-bundle/orchestration/spec/active/...`" in plan
+
+
 def test_dev_create_task_plan_tests_omit_heavy_orchestration_requirements() -> None:
     skill = read("skills/dev-create-task-plan/SKILL.md")
     assert "Do not import executor-result, `Completed`, review package, archive helper, or heavy Knowledge Base Update closure" in skill

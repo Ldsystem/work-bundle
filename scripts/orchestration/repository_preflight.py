@@ -636,7 +636,14 @@ def repository_preflight(
 def _load_baselines(path: str | None) -> dict[str, list[str]]:
     if not path:
         return {}
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as error:
+        raise SystemExit(f"Accepted baseline file could not be read: {path}: {error}") from error
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"Accepted baseline must contain valid JSON: {path}: {error.msg}") from error
     if not isinstance(value, dict) or not all(isinstance(item, list) for item in value.values()):
         raise SystemExit("Accepted baseline must be a JSON object mapping repository paths to change lists.")
     return {str(Path(key).resolve()): [str(change) for change in changes] for key, changes in value.items()}
