@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,6 +30,16 @@ def load_keep_summarizing_modules() -> tuple[object, object]:
             if previous[name] is not None:
                 sys.modules[name] = previous[name]
     return indexes_module, query_module
+
+
+def load_ks_entrypoint() -> object:
+    module_path = REPO_ROOT / "scripts" / "ks.py"
+    spec = importlib.util.spec_from_file_location("keep_summarizing_entrypoint", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load keep-summarizing entrypoint: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 indexes, query = load_keep_summarizing_modules()
@@ -659,6 +671,141 @@ def test_hybrid_retrieval_contract_runtime_declares_pinned_uv_dependencies() -> 
     assert '"pyyaml==6.0.3"' in source
     assert '"sqlite-vec==0.1.9"' in source
     assert '"fastembed==0.8.0"' in source
+
+
+def test_ks_entrypoint_reexecutes_with_uv_when_runtime_dependencies_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entrypoint = load_ks_entrypoint()
+    invocation: dict[str, object] = {}
+
+    def capture_execve(executable: str, argv: list[str], environ: dict[str, str]) -> None:
+        invocation.update(executable=executable, argv=argv, environ=environ)
+        raise RuntimeError("execve intercepted")
+
+    monkeypatch.setattr(entrypoint, "_missing_runtime_dependencies", lambda: ["sqlite_vec"])
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda _command: "/opt/homebrew/bin/uv")
+    monkeypatch.setattr(entrypoint.os, "execve", capture_execve)
+
+    with pytest.raises(RuntimeError, match="execve intercepted"):
+        entrypoint._ensure_managed_runtime(
+            argv=["scripts/ks.py", "index", "--project", "work-bundle"],
+            environ={"PATH": "/opt/homebrew/bin"},
+        )
+
+    assert invocation["executable"] == "/opt/homebrew/bin/uv"
+    assert invocation["argv"] == [
+        "/opt/homebrew/bin/uv",
+        "run",
+        str((REPO_ROOT / "scripts" / "ks.py").resolve()),
+        "index",
+        "--project",
+        "work-bundle",
+    ]
+    assert invocation["environ"][entrypoint.UV_REEXEC_ENV] == "1"
+
+
+def test_ks_entrypoint_reports_actionable_error_when_uv_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entrypoint = load_ks_entrypoint()
+    monkeypatch.setattr(entrypoint, "_missing_runtime_dependencies", lambda: ["sqlite_vec", "fastembed"])
+    monkeypatch.setattr(entrypoint.shutil, "which", lambda _command: None)
+
+    ready, error = entrypoint._ensure_managed_runtime(argv=["scripts/ks.py", "query"], environ={})
+
+    assert ready is False
+    assert error is not None
+    assert "KS_RUNTIME_DEPENDENCY_UNAVAILABLE" in error
+    assert "sqlite_vec, fastembed" in error
+    assert "install uv" in error.lower()
+
+
+def test_ks_entrypoint_uses_current_runtime_when_dependencies_are_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entrypoint = load_ks_entrypoint()
+    monkeypatch.setattr(entrypoint, "_missing_runtime_dependencies", lambda: [])
+
+    assert entrypoint._ensure_managed_runtime(argv=["scripts/ks.py", "query"], environ={}) == (True, None)
+
+
+def test_ks_entrypoint_reexecutes_when_an_installed_distribution_version_is_wrong(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entrypoint = load_ks_entrypoint()
+    expected = entrypoint._declared_runtime_versions()
+    installed = dict(expected)
+    installed["sqlite-vec"] = "0.1.8"
+
+    monkeypatch.setattr(entrypoint.importlib.util, "find_spec", lambda _module: object())
+    monkeypatch.setattr(entrypoint.importlib_metadata, "version", lambda name: installed[name])
+
+    assert entrypoint._missing_runtime_dependencies() == [
+        "sqlite_vec (sqlite-vec 0.1.8 != 0.1.9)"
+    ]
+
+
+def test_ks_entrypoint_reentry_marker_fails_typed_without_recursing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entrypoint = load_ks_entrypoint()
+    monkeypatch.setattr(entrypoint, "_missing_runtime_dependencies", lambda: ["sqlite_vec"])
+    monkeypatch.setattr(
+        entrypoint.shutil,
+        "which",
+        lambda _command: pytest.fail("marked re-entry must not look up uv again"),
+    )
+
+    ready, error = entrypoint._ensure_managed_runtime(
+        argv=["scripts/ks.py", "query"],
+        environ={entrypoint.UV_REEXEC_ENV: "1"},
+    )
+
+    assert ready is False
+    assert error is not None
+    assert "KS_RUNTIME_DEPENDENCY_UNAVAILABLE" in error
+    assert "sqlite_vec" in error
+
+
+def test_ks_entrypoint_preserves_uv_native_prelaunch_failure(
+    tmp_path: Path,
+) -> None:
+    fake_runtime = tmp_path / "runtime"
+    fake_runtime.mkdir()
+    for module_name, distribution_name in (
+        ("yaml", "PyYAML"),
+        ("sqlite_vec", "sqlite-vec"),
+        ("fastembed", "fastembed"),
+    ):
+        (fake_runtime / f"{module_name}.py").write_text("", encoding="utf-8")
+        metadata_dir = fake_runtime / f"{distribution_name.replace('-', '_')}-0.0.dist-info"
+        metadata_dir.mkdir()
+        (metadata_dir / "METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: {distribution_name}\nVersion: 0.0\n",
+            encoding="utf-8",
+        )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text("#!/bin/sh\necho UV_NATIVE_PRELAUNCH_FAILURE >&2\nexit 73\n", encoding="utf-8")
+    fake_uv.chmod(0o755)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+    environment["PYTHONPATH"] = str(fake_runtime)
+
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "ks.py"), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 73
+    assert "UV_NATIVE_PRELAUNCH_FAILURE" in result.stderr
+    assert "KS_RUNTIME_DEPENDENCY_UNAVAILABLE" not in result.stderr
 
 
 @pytest.mark.parametrize(
