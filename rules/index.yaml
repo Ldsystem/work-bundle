@@ -206,6 +206,23 @@ rules:
     load: conditional
     requires:
       - rule-work-bundle-security-exclusion
+  - id: wb-defect-evaluation
+    path: work-bundle/wb-defect-evaluation.md
+    applies_when:
+      - a conflict, violation, error, failed validation, contradictory workflow behavior, user interruption, or user correction occurs during WorkBundle-guided work
+      - visible task evidence suggests a WorkBundle skill, rule, script, specification, plan, handoff, workflow contract, or toolkit execution surface may have caused or contributed to the problem
+      - an agent must decide whether an observed problem is work-bundle-scoped, project-scoped, mixed, or undetermined before creating defect evidence or reporting a blocker
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: wb-defect-evidence
+    path: work-bundle/wb-defect-evidence.md
+    applies_when:
+      - the Work Bundle rule is visible in AGENTS.md and any conflict, confliction, violation, contradiction, or user correction occurs
+      - the Work Bundle rule is visible in AGENTS.md and the session needs a visible entry point for defect evaluation and first-observed evidence routing
+    enforcement: must
+    load: always
+    requires: []
   - id: wb-migrate-to-multi-repository
     path: work-bundle/wb-migrate-to-multi-repository.md
     applies_when:
@@ -258,21 +275,4 @@ rules:
       - task.resolves_stage_skills
     enforcement: must
     load: conditional
-    requires: []
-  - id: wb-violation-evaluation
-    path: work-bundle/wb-violation-evaluation.md
-    applies_when:
-      - a conflict, violation, error, failed validation, contradictory workflow behavior, user interruption, or user correction occurs during WorkBundle-guided work
-      - visible task evidence suggests a WorkBundle skill, rule, script, specification, plan, handoff, workflow contract, or toolkit execution surface may have caused or contributed to the problem
-      - an agent must decide whether an observed problem is work-bundle-scoped, project-scoped, mixed, or undetermined before creating violation evidence or reporting a blocker
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: wb-violation-evidence
-    path: work-bundle/wb-violation-evidence.md
-    applies_when:
-      - the Work Bundle rule is visible in AGENTS.md and any conflict, confliction, violation, contradiction, or user correction occurs
-      - the Work Bundle rule is visible in AGENTS.md and the session needs a visible entry point for violation evaluation and first-observed evidence routing
-    enforcement: must
-    load: always
     requires: []

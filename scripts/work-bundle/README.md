@@ -33,11 +33,12 @@ python3 scripts/wb.py inspect-skill skills/wb-credential-use/SKILL.md
 python3 scripts/wb.py validate-registry-entry <redacted-proposal.yaml>
 python3 scripts/wb.py create-rules rules
 python3 scripts/wb.py validate-rules rules
-python3 scripts/wb.py violation-ensure-store
-python3 scripts/wb.py violation-create-evidence --status active --short-description <slug> --deviation <text> --occurrence <text> --evidence <path-or-surface> --severity p5
-python3 scripts/wb.py violation-build-index
-python3 scripts/wb.py violation-write-index
-python3 scripts/wb.py violation-archive-evidence <evidence-id-or-path> --action completed
+python3 scripts/wb.py defect-ensure-store
+python3 scripts/wb.py defect-migrate-store
+python3 scripts/wb.py defect-create-evidence --status active --short-description <slug> --deviation <text> --occurrence <text> --evidence <path-or-surface> --severity p5
+python3 scripts/wb.py defect-build-index
+python3 scripts/wb.py defect-write-index
+python3 scripts/wb.py defect-archive-evidence <evidence-id-or-path> --action completed
 ```
 
 Prefer `--scope` for `create-rules` and `validate-rules`: `toolkit` resolves to `$work_bundle_root/rules/`, `global` resolves to `$work_bundle_config_root/rules/`, and `project` resolves to `<workspace-root>/.work-bundle/rules/`. The project-root form remains a single-repository compatibility alias.

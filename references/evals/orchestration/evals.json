@@ -231,14 +231,14 @@
     },
     {
       "id": 39,
-      "prompt": "Create a WorkBundle implementation specification for a scope that matches active violation registry entries.",
-      "expected_output": "Selects create-specification, inspects the WorkBundle violation registry without browsing .work-bundle/knowledge/**, includes related active violations as blocking Open Questions with severity, related scope, required resolution, and expected review closure, and treats exact-current-work conflicts as specification-owned when applicable.",
+      "prompt": "Create a WorkBundle implementation specification for a scope that matches active defect registry entries.",
+      "expected_output": "Selects create-specification, inspects the WorkBundle defect registry without browsing .work-bundle/knowledge/**, includes related active defects as blocking Open Questions with severity, related scope, required resolution, and expected review closure, and treats exact-current-work conflicts as specification-owned when applicable.",
       "files": []
     },
     {
       "id": 40,
-      "prompt": "Review a completed WorkBundle plan whose source specification included active violation evidence and whose implementation passed unblocked validation.",
-      "expected_output": "Selects review-plan, validates implementation and handoff evidence, closes resolved specification-included violations with the approved lifecycle action before archive, records violation_closure evidence, does not delete evidence files, keeps unrelated violations untouched, and blocks archive if included violation closure cannot be completed.",
+      "prompt": "Review a completed WorkBundle plan whose source specification included active defect evidence and whose implementation passed unblocked validation.",
+      "expected_output": "Selects review-plan, validates implementation and handoff evidence, closes resolved specification-included defects with the approved lifecycle action before archive, records defect_closure evidence, does not delete evidence files, keeps unrelated defects untouched, and blocks archive if included defect closure cannot be completed.",
       "files": []
     },
     {

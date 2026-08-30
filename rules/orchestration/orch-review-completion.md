@@ -42,7 +42,7 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Permit `new_feature` or `uncovered_fixture` with an empty `invariant_trace` only when `negative_evidence` proves no matching original user request or accepted specification invariant and no plan, handoff, or produced-commit contradiction.
 - Route `owning_repair` to the first broken artifact: task or acceptance criterion present plus implementation miss means task repair and re-review; accepted specification present plus plan omission means plan repair and resume from the owning step; original-request invariant omitted or contradicted by the accepted specification means specification repair. Only after those cases are excluded may a residual class stand.
 - Keep classification agent-owned and evidence-linked. A helper may require and structurally validate the record but must not decide the semantic class.
-- Keep same-scope specification-owned handling authoritative for a first-observed classification defect. Persist separate WorkBundle violation evidence only after `wb-violation-evaluation` classifies the finding as work-bundle-scoped or mixed and same-scope specification-owned handling no longer applies.
+- Keep same-scope specification-owned handling authoritative for a first-observed classification defect. Persist separate WorkBundle defect evidence only after `wb-defect-evaluation` classifies the finding as work-bundle-scoped or mixed and same-scope specification-owned handling no longer applies.
 
 ## Must Not
 

@@ -227,7 +227,7 @@ def test_runtime_verification_classification_contract_routes_the_first_broken_ar
             "uncovered_fixture",
             "owning_repair",
             "presentation",
-            "wb-violation-evaluation",
+            "wb-defect-evaluation",
             "work-bundle-scoped or mixed",
             "same-scope specification-owned",
             "task repair",

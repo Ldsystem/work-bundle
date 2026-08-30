@@ -61,7 +61,7 @@ Metadata blockers may block source inspection, impact traversal, planning, or ex
 
 Source Context must include project metadata preflight evidence or a blocking open question that explains why metadata preflight could not establish a trustworthy branch, commit, registry, and CodeGraph baseline.
 
-For WorkBundle project specifications, Source Context must include related active violation registry evidence when the current scope matches active violations. Each included violation records ID, severity, deviation summary, related scope, required resolution, and expected review closure. Exact-current-work conflicts may be specification-owned instead of requiring separate new violation evidence.
+For WorkBundle project specifications, Source Context must include related active defect registry evidence when the current scope matches active defects. Each included defect records ID, severity, deviation summary, related scope, required resolution, and expected review closure. Exact-current-work conflicts may be specification-owned instead of requiring separate new defect evidence.
 
 When no supporting authority note exists for the user purpose, record the retrieval gap and analyze the purpose from user input and repository evidence. Use Design Interrogation only for unresolved design intent that cannot be answered from current evidence.
 
@@ -146,7 +146,7 @@ Do not add a lifecycle stage, force a recommendation, or use a universal product
 - **REQ-SHELL-003**: Revise draft requirements after bounded evidence gathering instead of silently replacing them.
 - **REQ-META-001**: Run project metadata preflight after shell creation and before broad repository evidence gathering; block on missing metadata, branch mismatch, stale baseline affecting evidence trust, registry contradiction, or inconsistent CodeGraph state.
 - **REQ-KG-001**: Run bounded durable-knowledge gateway retrieval for material new findings or requests even when repository metadata blockers prevent source inspection, provided the gateway is accessible.
-- **REQ-VIOL-001**: For WorkBundle project scopes, inspect related active violation registry evidence and carry matching violations into Source Context or Open Questions with review closure expectations.
+- **REQ-DEF-001**: For WorkBundle project scopes, inspect related active defect registry evidence and carry matching defects into Source Context or Open Questions with review closure expectations.
 
 ## 6. Interfaces & Data Contracts
 
@@ -226,7 +226,7 @@ Every open question must include:
 | Required resolution | yes |
 | Advised options | yes |
 
-Candidate, background, blocked, draft, proposed, stale, opposing, or otherwise non-authority durable knowledge must not become requirement text. When material, record it as rationale, traceability, conflict evidence, or open-question input. Related active violations that affect the specification scope are blocking open questions unless the user or accepted evidence resolves them. Non-authority or opposing evidence is blocking only when the unresolved decision affects implementation or review safety.
+Candidate, background, blocked, draft, proposed, stale, opposing, or otherwise non-authority durable knowledge must not become requirement text. When material, record it as rationale, traceability, conflict evidence, or open-question input. Related active defects that affect the specification scope are blocking open questions unless the user or accepted evidence resolves them. Non-authority or opposing evidence is blocking only when the unresolved decision affects implementation or review safety.
 
 ## 12. Knowledge Base Update
 
@@ -262,7 +262,7 @@ Do not instruct specification authors or executors to write durable knowledge di
 - The source context records neutral cross-stage retrieval anchors or a retrieval gap, and any named retrieval policy is used only for classification/output grouping.
 - The specification carries accepted authority context forward so downstream planning and execution do not need to read `.work-bundle/knowledge/`.
 - The specification records project metadata preflight evidence including `working_branch`, `last_commit_id`, branch status, baseline status, and CodeGraph no-index fallback when applicable.
-- WorkBundle project specifications record related active violations and expected review closure when applicable.
+- WorkBundle project specifications record related active defects and expected review closure when applicable.
 - Material non-authority or opposing evidence is visible without shaping requirements unless resolved by user decision or accepted authority.
 
 ## 15. Quality Gate
