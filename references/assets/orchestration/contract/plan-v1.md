@@ -38,7 +38,7 @@ allocated_skills:
 evidence_capability:
   result: mapped | no_validation_bearing_obligation
   reason: [non-empty reason]
-  invariants: [stable per-invariant capability entries allocated to task IDs]
+  invariants: [stable per-invariant capability entries allocated to task IDs with closure_result initialized to pending]
 ---
 
 # Implementation Plan: [Plan Goal]

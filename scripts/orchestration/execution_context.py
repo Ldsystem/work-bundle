@@ -41,6 +41,7 @@ TRUTH_BASIS_FIELDS = (
 KNOWLEDGE_DISPOSITION_ACTIONS = {"none", "update", "supersede", "reclassify"}
 EVIDENCE_CAPABILITY_RESULTS = {"mapped", "no_validation_bearing_obligation"}
 EVIDENCE_BOUNDARIES = {"unit", "component", "integration", "runtime", "ui_visual", "performance", "accessibility", "inspection", "other"}
+EVIDENCE_CLOSURE_RESULTS = {"pending", "passed", "incapable", "contradictory", "stale", "wrong_boundary", "failed", "missing", "unexecuted"}
 KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE = re.compile(
     r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-[a-z0-9-]+\b)",
     re.IGNORECASE,
@@ -703,6 +704,8 @@ def _compile_evidence_capability(
                 raise SystemExit(f"Evidence capability {invariant_id} missing {field}")
         if str(item.get("oracle")) not in evidence_ids:
             raise SystemExit(f"Evidence capability {invariant_id} oracle must name an allocated evidence ID")
+        if item.get("closure_result") not in EVIDENCE_CLOSURE_RESULTS:
+            raise SystemExit(f"Evidence capability {invariant_id} has an invalid closure_result")
         for evidence_id in evidence_ids:
             if invariant_id not in _as_list(validation_by_id[evidence_id].get("invariant_ids")):
                 raise SystemExit(f"Validation {evidence_id} does not bind {invariant_id}")

@@ -496,7 +496,7 @@
     {
       "id": 89,
       "prompt": "Compile a task with an accepted invariant whose evidence-capability entry cites stable source IDs and a task-local validation oracle.",
-      "expected_output": "Compiles the task-local evidence_capability entry with invariant ID, source IDs, boundary, oracle, capability_reason, freshness, task owner, and evidence IDs without executor retrieval.",
+      "expected_output": "Compiles the task-local evidence_capability entry with invariant ID, source IDs, boundary, oracle, capability_reason, freshness, task owner, evidence IDs, and closure_result initialized to pending without executor retrieval.",
       "files": []
     },
     {

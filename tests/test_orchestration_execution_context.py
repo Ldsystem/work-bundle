@@ -21,9 +21,17 @@ from execution_context import build_review_package, build_task_brief  # noqa: E4
 
 def test_compile_evidence_capability_maps_stable_task_local_invariants() -> None:
     validation = [{"id": "VAL-001", "invariant_ids": ["INV-001"], "capability_reason": "Observes violation."}]
-    task = {"evidence_capability": {"result": "mapped", "reason": "Required.", "invariants": [{"id": "INV-001", "source_ids": ["REQ-001"], "invariant": "Observable behavior", "boundary": "unit", "oracle": "VAL-001", "capability_reason": "Unit oracle distinguishes violation.", "freshness": "current_task_batch", "task_id": "task-001", "evidence_ids": ["VAL-001"]}]}}
+    task = {"evidence_capability": {"result": "mapped", "reason": "Required.", "invariants": [{"id": "INV-001", "source_ids": ["REQ-001"], "invariant": "Observable behavior", "boundary": "unit", "oracle": "VAL-001", "capability_reason": "Unit oracle distinguishes violation.", "freshness": "current_task_batch", "task_id": "task-001", "evidence_ids": ["VAL-001"], "closure_result": "pending"}]}}
     result = execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], validation)
     assert result is not None and result["invariants"][0]["id"] == "INV-001"
+
+
+def test_compile_evidence_capability_requires_closure_result() -> None:
+    validation = [{"id": "VAL-001", "invariant_ids": ["INV-001"], "capability_reason": "Observes violation."}]
+    invariant = {"id": "INV-001", "source_ids": ["REQ-001"], "invariant": "Observable behavior", "boundary": "unit", "oracle": "VAL-001", "capability_reason": "Unit oracle distinguishes violation.", "freshness": "current_task_batch", "task_id": "task-001", "evidence_ids": ["VAL-001"]}
+    task = {"evidence_capability": {"result": "mapped", "reason": "Required.", "invariants": [invariant]}}
+    with pytest.raises(SystemExit, match="closure_result"):
+        execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], validation)
 
 
 def test_compile_evidence_capability_requires_explicit_result() -> None:
@@ -768,6 +776,23 @@ def test_build_task_brief_rejects_protected_credential_path_scope(tmp_path: Path
 
 def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8")
+        .replace(
+            "  result: no_validation_bearing_obligation\n"
+            "  reason: This shared fixture leaves capability semantics to scenario-specific tests.\n"
+            "  invariants: []\n",
+            "  result: mapped\n"
+            "  reason: This scenario verifies review-package propagation.\n"
+            "  invariants:\n"
+            "    - {id: INV-001, source_ids: [REQ-003, TEST-004], invariant: Review package carries allocated capability, boundary: unit, oracle: VAL-001, capability_reason: The focused process distinguishes omission, freshness: current_task_batch, task_id: task-004, evidence_ids: [VAL-001], closure_result: pending}\n",
+        )
+        .replace(
+            "  - {kind: process, command: uv run --with pytest pytest -q tests/test_one.py, proves: TEST-004, expected: exit 0}\n",
+            "  - {id: VAL-001, invariant_ids: [INV-001], capability_reason: The focused process distinguishes omission, kind: process, command: uv run --with pytest pytest -q tests/test_one.py, proves: TEST-004, expected: exit 0}\n",
+        ),
+        encoding="utf-8",
+    )
     source = root / WRITE_SCOPE_FILE
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("def compile_task():\n    return 'old'\n", encoding="utf-8")
@@ -829,6 +854,11 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
     assert "dev-test-driven-development" in package
     assert "## Review rubric" in package
     assert "## Accepted Truth Basis" in package
+    assert "## Evidence capability" in package
+    assert "INV-001" in package
+    assert "VAL-001" in package
+    assert "closure_result" in package
+    assert "pending" in package
     assert "## Knowledge disposition" in package
     assert "No stable authority changed." in package
     assert "SHOULD-NOT-APPEAR" not in package
