@@ -1083,6 +1083,26 @@ def _publish_evidence(control: Path, payload: dict[str, object]) -> Path:
     return path
 
 
+def _control_plane_gitlink_paths(control: Path) -> list[str]:
+    paths = {
+        str(marker.parent.relative_to(control)).replace("\\", "/")
+        for marker in control.rglob(".git")
+        if marker.parent != control and (marker.is_dir() or marker.is_file())
+    }
+    if (control / ".git").exists():
+        result = subprocess.run(
+            ["git", "-C", str(control), "ls-files", "--stage", "-z"],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            for entry in result.stdout.split(b"\0"):
+                if not entry.startswith(b"160000 ") or b"\t" not in entry:
+                    continue
+                paths.add(entry.split(b"\t", 1)[1].decode("utf-8", errors="surrogateescape"))
+    return sorted(paths)
+
+
 def cmd_publish_control_plane(args: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="wb.py publish-control-plane")
     parser.add_argument("workspace_root")
@@ -1108,6 +1128,16 @@ def cmd_publish_control_plane(args: list[str]) -> int:
         return 1
     if not remote:
         out({"command": "publish-control-plane", "status": "issues-found", "failure_code": "WB_CONTROL_PLANE_REMOTE_REQUIRED", "changed_files": []})
+        return 1
+    gitlink_paths = _control_plane_gitlink_paths(control)
+    if gitlink_paths:
+        out({
+            "command": "publish-control-plane",
+            "status": "issues-found",
+            "failure_code": "WB_CONTROL_PLANE_GITLINK_FORBIDDEN",
+            "gitlink_paths": gitlink_paths,
+            "changed_files": [],
+        })
         return 1
     if parsed.dry_run:
         out({"command": "publish-control-plane", "status": "passed", "dry_run": True, "remote": remote, "changed_files": [], "git_actions": ["init", "configure-origin", "commit", "push"]})
@@ -1763,7 +1793,12 @@ def _materialize_workspace_root(remote: str, workspace_root: Path, default_branc
 
 
 def _attach(
-    workspace_root: Path, materialize: str, repository_paths: dict[str, Path], apply: bool
+    workspace_root: Path,
+    materialize: str,
+    repository_paths: dict[str, Path],
+    apply: bool,
+    *,
+    create_script_index: bool = True,
 ) -> tuple[dict[str, object], int]:
     metadata_path = workspace_root / ".work-bundle/project.yaml"
     text = read(metadata_path)
@@ -1943,7 +1978,10 @@ def _attach(
         raise ControlPlaneError("WB_CONTROL_PLANE_TRANSACTION_FAILED") from exc
     if apply:
         try:
-            changed = ensure_workspace_resources(workspace_root)
+            changed = ensure_workspace_resources(
+                workspace_root,
+                create_script_index=create_script_index,
+            )
             for relative in (".work-bundle/git", ".work-bundle/runtime", ".work-bundle/orchestration/execution-state"):
                 path = workspace_root / relative
                 if not path.exists():
@@ -1987,7 +2025,9 @@ def _attach(
     final_failures: list[str] = []
     if apply:
         final_failures.extend(_portable_failures(read(metadata_path)))
-        required_resources = ("script/index.yaml", "credentials/credentials.yaml", "AGENTS.md")
+        required_resources = ["credentials/credentials.yaml", "AGENTS.md"]
+        if create_script_index:
+            required_resources.insert(0, "script/index.yaml")
         final_failures.extend(
             f"WB_CONTROL_PLANE_RESOURCE_MISSING:{relative}"
             for relative in required_resources
@@ -2108,7 +2148,13 @@ def cmd_doctor_workspace(args: list[str], *, command_name: str = "doctor-workspa
                         missing_required.append(issue)
     if parsed.repair and not portable_failures:
         try:
-            result, code = _attach(workspace_root, "none", {}, True)
+            result, code = _attach(
+                workspace_root,
+                "none",
+                {},
+                True,
+                create_script_index=False,
+            )
         except ControlPlaneError as exc:
             local_failures.append(exc.code)
             result, code = {"status": "issues-found"}, 1

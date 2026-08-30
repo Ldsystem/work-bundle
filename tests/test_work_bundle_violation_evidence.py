@@ -69,6 +69,17 @@ def test_violation_ensure_store_creates_directories(tmp_path: Path) -> None:
     assert not (Path.home() / ".work-bundle" / "violation" / "active" / "__pytest_marker__").exists()
 
 
+def test_violation_catalog_is_cwd_independent(tmp_path: Path) -> None:
+    external_cwd = tmp_path / "external-cwd"
+    external_cwd.mkdir()
+
+    result = run_wb(tmp_path, "violation-build-index", cwd=external_cwd)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "active:" in result.stdout
+    assert "archived:" in result.stdout
+
+
 def test_violation_create_evidence_writes_active_record_with_supplied_evidence_only(tmp_path: Path) -> None:
     cwd = prepare_cwd(tmp_path)
     supplied = cwd / "visible.txt"
@@ -274,7 +285,7 @@ def test_violation_dispatcher_routes_all_commands_and_command_help(tmp_path: Pat
         assert f"usage: wb.py {command}" in result.stdout
 
 
-def test_violation_catalog_is_read_from_reference(tmp_path: Path) -> None:
+def test_violation_catalog_ignores_cwd_shadow(tmp_path: Path) -> None:
     custom_catalog = CATALOG.replace("  - p3\n", "")
     cwd = prepare_cwd(tmp_path, custom_catalog)
 
@@ -296,9 +307,9 @@ def test_violation_catalog_is_read_from_reference(tmp_path: Path) -> None:
         cwd=cwd,
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 0
     payload = json.loads(result.stdout)
-    assert "invalid severity: p3" in payload["error"]
+    assert payload["status"] == "ok"
 
 
 def test_violation_evidence_rule_remains_minimal_storage_after_evaluation() -> None:

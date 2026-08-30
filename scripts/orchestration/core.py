@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 
 
-SPEC_STATUSES = {"draft", "active", "implemented", "reviewed", "superseded", "archived"}
+SPEC_STATUSES = {"draft", "active", "verified", "implemented", "reviewed", "superseded", "archived"}
 PLAN_STATUSES = {"Planned", "In progress", "Completed", "Deprecated", "On Hold"}
 HANDOFF_STATUSES = {"active", "reviewed", "archived", "superseded"}
 HANDOFF_TYPES = {"orchestration", "executor-result"}

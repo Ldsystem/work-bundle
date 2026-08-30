@@ -34,7 +34,7 @@ ROLE_NAMES = ['project-manager', 'solution-architect', 'domain-analyst', 'ui-des
 RULES = ['repository-boundary', 'lifecycle-authority', 'skill-registry', 'domain-profile', 'doctor-readonly', 'runtime-artifact-format', 'security-exclusion']
 
 CLI_HELP_EPILOG = '''Canonical consolidated command surface:
-  init-project <project-root> --mode <single-repository|multi-repository>
+  init-project <project-root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>]
   show-project [--workspace-root <workspace-root> | --project-root <project-root>]
   validate-project <project-root> --dry-run
   doctor-project <project-root> [--repair] [--force]

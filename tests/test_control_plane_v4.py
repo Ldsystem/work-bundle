@@ -1161,6 +1161,20 @@ def test_doctor_repair_preserves_existing_and_unknown_local_binding_fields(tmp_p
     assert str(checkout.resolve()) in after
 
 
+def test_doctor_workspace_repair_does_not_create_script_index(tmp_path: Path) -> None:
+    config = config_root(tmp_path / "config-root")
+    workspace, _, _ = make_v3_workspace(tmp_path / "fixture")
+    migrate(config, workspace)
+    script_index = workspace / "script/index.yaml"
+    script_index.unlink(missing_ok=True)
+
+    repaired = run_wb(config, "doctor-workspace", str(workspace), "--repair")
+
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    assert not script_index.exists()
+    assert (workspace / "credentials/credentials.yaml").is_file()
+
+
 def test_attach_rejects_second_active_materialization_on_same_device(tmp_path: Path) -> None:
     config = config_root(tmp_path / "config-root")
     workspace_a, _, _ = make_v3_workspace(tmp_path / "fixture")
@@ -1534,6 +1548,49 @@ def test_publish_existing_dirty_control_plane_fails_closed_without_mutation(tmp_
     evidence = json.loads(Path(data["transaction_evidence"]).read_text(encoding="utf-8"))
     assert evidence["state"] == "recovery-required"
     assert evidence["recovery_required"] is True
+
+
+def test_publish_rejects_nested_gitlink_before_staging(tmp_path: Path) -> None:
+    config = config_root(tmp_path / "config-root")
+    source_remote, _, _ = make_remote(tmp_path / "source-fixture", "source")
+    workspace = tmp_path / "workspace"
+    assert run_wb(
+        config,
+        "init-workspace",
+        str(workspace),
+        "--slug",
+        "demo",
+        "--repository",
+        f"source-main={source_remote}",
+        "--apply",
+    ).returncode == 0
+    control = workspace / ".work-bundle"
+    nested = control / "knowledge/notes/nested-repository"
+    nested.mkdir(parents=True)
+    git(nested, "init", "-q", "-b", "main")
+    git(nested, "config", "user.email", "test@example.com")
+    git(nested, "config", "user.name", "Test")
+    (nested / "README.md").write_text("nested\n", encoding="utf-8")
+    git(nested, "add", "README.md")
+    git(nested, "commit", "-q", "-m", "nested")
+    remote = tmp_path / "control.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+
+    failed = run_wb(
+        config,
+        "publish-control-plane",
+        str(workspace),
+        "--remote",
+        str(remote),
+        "--apply",
+    )
+
+    assert failed.returncode == 1
+    data = json.loads(failed.stdout)
+    assert data["failure_code"] == "WB_CONTROL_PLANE_GITLINK_FORBIDDEN"
+    assert data["gitlink_paths"] == ["knowledge/notes/nested-repository"]
+    assert not (control / ".git").exists()
+    assert (nested / ".git").is_dir()
 
 
 def test_publish_failed_git_snapshot_fails_closed_without_mutation(tmp_path: Path) -> None:

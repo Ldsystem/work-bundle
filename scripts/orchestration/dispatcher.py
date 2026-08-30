@@ -33,7 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     repository_preflight.add_argument("--task-file", action="append", default=[])
     repository_preflight.add_argument("--reference", action="append", default=[])
     repository_preflight.add_argument("--repository", action="append", default=[])
-    repository_preflight.add_argument("--accepted-baseline")
+    repository_preflight.add_argument(
+        "--accepted-baseline",
+        help="JSON file containing accepted repository baselines that reconcile observed branch or commit drift",
+    )
     repository_preflight.set_defaults(func=cmd_repository_preflight)
     task_brief = sub.add_parser("build-task-brief", parents=[parent])
     task_brief.add_argument("--task", required=True)
@@ -91,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     set_plan.add_argument("--id", required=True)
     set_plan.add_argument("--status", required=True)
     set_plan.add_argument("--kind", choices=["plan", "phase", "task"])
+    set_plan.add_argument("--plan-id")
     set_plan.add_argument("--handoff")
     set_plan.set_defaults(func=cmd_set_plan_status)
     archive_plan = sub.add_parser("archive-plan", parents=[parent])

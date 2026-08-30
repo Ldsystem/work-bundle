@@ -37,6 +37,14 @@ def repository(tmp_path: Path, name: str = "repo") -> Path:
     return path
 
 
+def test_malformed_accepted_baseline_is_typed(tmp_path: Path) -> None:
+    malformed = tmp_path / "baseline.json"
+    malformed.write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Accepted baseline.*valid JSON"):
+        preflight_module._load_baselines(str(malformed))
+
+
 def write_project_metadata(project: Path, repo: Path, *, branch: str = "main", commit: str | None = None) -> None:
     head = commit if commit is not None else git(repo, "rev-parse", "HEAD")
     (project / ".work-bundle").mkdir(parents=True, exist_ok=True)
@@ -504,3 +512,21 @@ def test_cli_outputs_machine_usable_json(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["repository_preflight"]["status"] == "passed"
     assert payload["repository_preflight"]["repositories"][0]["status"] == "clean"
+
+
+def test_repository_preflight_help_describes_accepted_baseline_contract() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "orch.py"),
+            "repository-preflight",
+            "--help",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--accepted-baseline" in result.stdout
+    assert "JSON file" in result.stdout
+    assert "accepted repository baselines" in result.stdout

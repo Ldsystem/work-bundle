@@ -927,7 +927,9 @@ def sync_agents_managed_section(project_root: Path, dry_run: bool = False, force
             warnings.append('multiple-managed-sections-consolidated')
 
     agents_changed = next_text != existing
-    metadata_changed = agents_status != 'unchanged' or _metadata_agents_checksum(metadata_path) != checksum
+    if existing and not agents_changed:
+        agents_status = 'unchanged'
+    metadata_changed = _metadata_agents_checksum(metadata_path) != checksum
     if agents_changed:
         changed_files.append(str(agents_path))
     if metadata_changed:
@@ -1278,10 +1280,18 @@ def repair_project(project_root: Path, force: bool = False, return_details: bool
         _yaml_scalar(current_metadata, 'metadata_version') == '3'
         and _yaml_scalar(current_metadata, 'workspace_mode') == 'multi-repository'
     ):
+        registry_entry_data, _ = find_registry_entry(project_root)
         changed = ensure_project_layout(project_root)
         changed.extend(ensure_workspace_resources(project_root))
         agents_result = sync_agents_managed_section(project_root, force=force)
         changed.extend(str(path) for path in agents_result.get('changed_files', []))
+        if registry_entry_data is not None:
+            metadata_changed, refreshed_path, _ = sync_project_metadata_from_registry_entry(
+                registry_entry_data,
+                fallback_root=project_root,
+            )
+            if metadata_changed:
+                changed.append(str(refreshed_path))
         changed = sorted(set(changed))
         if return_details:
             return changed, agents_result
@@ -1885,7 +1895,7 @@ def assess_legacy_topology(
     )
     registry_sources = registry_sources if isinstance(registry_sources, list) else []
 
-    def identities(sources: object) -> list[dict[str, str]]:
+    def identities(sources: object, identity_kind: str) -> list[dict[str, str]]:
         result: list[dict[str, str]] = []
         if not isinstance(sources, list):
             return result
@@ -1896,11 +1906,14 @@ def assess_legacy_topology(
             result.append({
                 'id': str(source.get('id') or ''),
                 'path': str(Path(str(raw_path)).expanduser().resolve()) if raw_path else '',
+                'kind': identity_kind,
             })
         return result
 
-    metadata_identities = identities(metadata_sources)
-    registry_identities = identities([*registry_sources, *(registry_origin_data or [])])
+    metadata_identities = identities(metadata_sources, 'member')
+    registry_member_identities = identities(registry_sources, 'member')
+    registry_origin_identities = identities(registry_origin_data or [], 'origin')
+    registry_identities = [*registry_member_identities, *registry_origin_identities]
     registry_identities = [
         dict(identity)
         for identity in {
@@ -1910,7 +1923,7 @@ def assess_legacy_topology(
     ]
     conflicts: list[str] = []
     by_id: dict[str, set[str]] = {}
-    for identity in [*metadata_identities, *registry_identities]:
+    for identity in [*metadata_identities, *registry_member_identities]:
         if identity['id'] and identity['path']:
             by_id.setdefault(identity['id'], set()).add(identity['path'])
     for source_id, paths in sorted(by_id.items()):

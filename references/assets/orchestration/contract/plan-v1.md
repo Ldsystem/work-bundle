@@ -157,5 +157,5 @@ If any generated artifact drifts from the source specification, omits required s
 
 ## 10. Related Specifications / Further Reading
 
-- [Related specification](.work-bundle/orchestration/spec/active/...)
-- [Carried durable-knowledge context, if any, from the source specification](.work-bundle/orchestration/spec/active/...)
+- Related specification: `.work-bundle/orchestration/spec/active/...`
+- Carried durable-knowledge context, if any: source specification front matter

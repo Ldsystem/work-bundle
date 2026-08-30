@@ -32,11 +32,11 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 
 | Mode | Command |
 |---|---|
-| Initialize | `init-project <root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>] [--project-root <project-root>] [--name <name>] [--force] [--dry-run] [--disable-work-bundle-git] [--create-project-skill-override]` |
-| Doctor | `doctor-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--repair] [--force]` |
+| Initialize | `init-project <root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>] [--name <name>] [--force] [--dry-run] [--disable-work-bundle-git] [--create-project-skill-override]` |
+| Doctor | `doctor-project <root> [--repair] [--force]` |
 | Inspect only | `show-project [--workspace-root <workspace-root> | --project-root <project-root>]` |
-| Strict validate | `validate-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--dry-run]` |
-| Register only | `register-project <root> [--workspace-root <workspace-root>] [--project-root <project-root>] [--name <name>]` |
+| Strict validate | `validate-project <root> [--dry-run]` |
+| Register only | `register-project <root> [--name <name>]` |
 | Inspect metadata migration | `migrate-project <root> [--name <name>] --dry-run` |
 | Apply metadata migration | `migrate-project <root> [--name <name>] [--force] [--accepted-proposal-id <id>] --apply` |
 | Inspect portable-control migration | `migrate-control-plane <workspace-root> [--repository-remote <id>=<canonical-remote>] --dry-run` |
@@ -52,7 +52,7 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 
 `initialize-project` remains a compatibility alias for `init-project`; prefer `init-project` in new instructions.
 
-Existing command names and `--project-root` remain supported for single-repository projects. New creation must reject a missing or contradictory mode/root combination rather than silently infer topology. Single-repository mode is current and fully supported, not legacy or transitional.
+The explicit `--workspace-root` and `--project-root` selectors remain available only on commands whose live help lists them, such as `show-project` and project-scoped `set-prefer-subagent`. New creation must reject a missing or contradictory mode/root combination rather than silently infer topology. Single-repository mode is current and fully supported, not legacy or transitional.
 
 **Portable v4 migration guardrails:** before `migrate-control-plane`, load every applicable rule body in full, including project context, registry authority, lifecycle, repository boundary, security exclusion, and violation routing. Do not sample those rules by keyword. Resolve canonical remotes from explicit `--repository-remote` input, registry locator authority, and the live origin chain. When authoritative network remotes conflict, stop and ask the user which remote is canonical; rerun the exact dry-run with `--repository-remote` after the decision. During this workflow, do not edit the project registry directly and do not change an external repository's Git config. `show-project`, `validate-project`, and `doctor-project` route metadata-version-4 workspaces to v4 control-plane validation; repair must never rewrite portable v4 metadata into v3 shape.
 

@@ -600,6 +600,38 @@ def test_archive_plan_ignores_foreign_plan_handoff_with_colliding_task_id(tmp_pa
     assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-A.md").is_file()
 
 
+def test_archive_plan_skips_unrelated_unparseable_executor_yaml(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    _write_archive_plan(tmp_path, "plan-A")
+    _write_archive_plan(tmp_path, "plan-B")
+    handoff_root = tmp_path / ".work-bundle/orchestration/handoff/executor/active"
+    handoff_root.mkdir(parents=True, exist_ok=True)
+    (handoff_root / "foreign-block.yaml").write_text(
+        "id: foreign\n"
+        "type: executor-result\n"
+        "related:\n"
+        "  plan: plan-A\n"
+        "  task: task-001\n"
+        "summary: >\n"
+        "  unsupported folded scalar\n",
+        encoding="utf-8",
+    )
+    (handoff_root / "foreign-inline.yaml").write_text(
+        "id: foreign-inline\n"
+        "type: executor-result\n"
+        "related: {plan: plan-A, task: task-001}\n"
+        "summary: >\n"
+        "  unsupported folded scalar\n",
+        encoding="utf-8",
+    )
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+
+    assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
+    assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-A.md").is_file()
+
+
 def test_archive_plan_ignores_task_only_handoff_with_ambiguous_task_id(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
 
@@ -1549,6 +1581,13 @@ def test_overlapping_writes_are_not_parallelizable() -> None:
     assert "disjoint write scopes" in workflow
     assert "assign parallel tasks only when dependencies are satisfied and write scopes are disjoint" in plan
     assert "unsafe parallelization is explicitly blocked by dependency or scope evidence" in plan
+
+
+def test_plan_contract_has_no_placeholder_markdown_links() -> None:
+    plan = read("references/assets/orchestration/contract/plan-v1.md")
+
+    assert "](.work-bundle/orchestration/spec/active/...)" not in plan
+    assert "`.work-bundle/orchestration/spec/active/...`" in plan
 
 
 def test_dev_create_task_plan_tests_omit_heavy_orchestration_requirements() -> None:

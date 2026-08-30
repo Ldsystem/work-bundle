@@ -634,6 +634,48 @@ def test_doctor_repair_does_not_restore_legacy_root_rule_index(tmp_path: Path) -
     assert not legacy_rule_index.exists()
 
 
+def test_doctor_repair_creates_missing_project_rule_index(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    current_rule_index = project / ".work-bundle/rules/index.yaml"
+    current_rule_index.unlink()
+
+    repaired = run_wb(config_root, "doctor-project", str(project), "--repair")
+
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    assert current_rule_index.read_text(encoding="utf-8") == "rules: []\n"
+    assert not (project / "rules/index.yaml").exists()
+
+
+def test_agents_force_checksum_only_reports_unchanged(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    agents_path = project / "AGENTS.md"
+    metadata_path = project / ".work-bundle/project.yaml"
+    agents_before = agents_path.read_bytes()
+    metadata_lines = metadata_path.read_text(encoding="utf-8").splitlines()
+    checksum_index = next(
+        index for index, line in enumerate(metadata_lines) if "template_checksum_sha256:" in line
+    )
+    metadata_lines[checksum_index] = '  template_checksum_sha256: "stale"'
+    metadata_path.write_text("\n".join(metadata_lines) + "\n", encoding="utf-8")
+
+    refreshed = run_wb(
+        config_root,
+        "init-project",
+        str(project),
+        "--mode",
+        "single-repository",
+        "--name",
+        "demo",
+        "--force",
+    )
+
+    assert refreshed.returncode == 0, refreshed.stdout + refreshed.stderr
+    data = json.loads(refreshed.stdout)
+    assert data["agents_status"] == "unchanged"
+    assert data["agents_sync"]["changed_files"] == [str(metadata_path)]
+    assert agents_path.read_bytes() == agents_before
+
+
 def test_init_force_overwrites_init_managed_templates_only(tmp_path: Path) -> None:
     config_root, project = _init_fixture_project(tmp_path)
     agents_path = project / "AGENTS.md"
@@ -655,7 +697,7 @@ def test_init_force_overwrites_init_managed_templates_only(tmp_path: Path) -> No
     assert str(agents_path) in force_data["changed_files"]
     assert force_data["agents_status"] == "updated"
     assert force_data["agents_sync"]["template_checksum_sha256"]
-    assert force_data["agents_sync"]["changed_files"] == [str(project / ".work-bundle/project.yaml"), str(agents_path)]
+    assert force_data["agents_sync"]["changed_files"] == [str(agents_path)]
     assert agents_path.read_text(encoding="utf-8").startswith(custom_agents.rstrip() + "\n\n")
     assert role_path.read_text(encoding="utf-8") == custom_role
 
@@ -1285,6 +1327,30 @@ def test_doctor_repair_refreshes_all_registered_checkout_baselines(tmp_path: Pat
     assert repair_data["project_source_repositories"][0]["checkout_role"] == "truth"
 
 
+def test_doctor_force_refreshes_v3_member_observations(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    metadata_path = project / ".work-bundle/project.yaml"
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    metadata_text = metadata_text.replace(
+        "workspace_mode: single-repository", "workspace_mode: multi-repository"
+    )
+    metadata_lines = metadata_text.splitlines()
+    baseline_index = next(
+        index for index, line in enumerate(metadata_lines) if line.strip().startswith("observed_head:")
+    )
+    metadata_lines[baseline_index] = f"    observed_head: {'0' * 40}"
+    metadata_path.write_text("\n".join(metadata_lines) + "\n", encoding="utf-8")
+    (project / "README.md").write_text("# Advanced member\n", encoding="utf-8")
+    git(project, "add", "README.md")
+    git(project, "commit", "-m", "chore: advance member")
+    actual_head = git(project, "rev-parse", "HEAD")
+
+    repaired = run_wb(config_root, "doctor-project", str(project), "--repair", "--force")
+
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    assert f"observed_head: {actual_head}" in metadata_path.read_text(encoding="utf-8")
+
+
 def test_migrate_project_upgrades_v1_metadata_and_preserves_unknown_fields(tmp_path: Path) -> None:
     config_root, project = _init_fixture_project(tmp_path)
     metadata_path = project / ".work-bundle/project.yaml"
@@ -1372,6 +1438,60 @@ def test_migrate_project_routes_registry_multi_source_to_workspace_migration(tmp
     assert data["mode"] == "multi-repository-migration-required"
     assert data["topology_assessment"]["required_command"] == "migrate-to-multi-repository"
     assert metadata_path.read_bytes() == before
+
+
+def test_migrate_project_accepts_same_id_origin_and_member_paths(tmp_path: Path) -> None:
+    config_root, project = _init_fixture_project(tmp_path)
+    origin = tmp_path / "origin-locator"
+    origin.mkdir()
+    registry_path = config_root / "registry" / "projects.yaml"
+    registry_path.write_text(
+        "\n".join(
+            [
+                "projects:",
+                "  - slug: demo",
+                "    name: demo",
+                f"    work_bundle_root: {project.resolve() / '.work-bundle'}",
+                f"    knowledge_root: {project.resolve() / '.work-bundle' / 'knowledge'}",
+                "    aliases: []",
+                "    repository_origins:",
+                "      - id: demo-main",
+                f"        origin_path: {origin.resolve()}",
+                "        git_repository: true",
+                "    source_repositories:",
+                "      - id: demo-main",
+                f"        path: {project.resolve()}",
+                "        work_dir: true",
+                '        remote: ""',
+                "        git_repository: true",
+                "    status: active",
+                "    updated_at: 2026-01-01",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    metadata_path = project / ".work-bundle/project.yaml"
+    metadata_path.write_text(
+        "\n".join(
+            [
+                "metadata_version: 1",
+                "authority: canonical",
+                f"project_root: {project.resolve()}",
+                "industry: legacy",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    migrated = run_wb(config_root, "migrate-project", str(project), "--dry-run", "--name", "demo")
+
+    assert migrated.returncode == 1
+    data = json.loads(migrated.stdout)
+    assert data["mode"] == "multi-repository-migration-required"
+    assert data["topology_assessment"]["conflicts"] == []
+    assert data["topology_assessment"]["required_command"] == "migrate-to-multi-repository"
 
 
 def _seed_committed_repository(path: Path) -> None:

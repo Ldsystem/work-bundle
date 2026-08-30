@@ -9,7 +9,9 @@ from execution_context import (
     unique_explicit_handoff_plan_id,
     validate_executor_result_for_task,
     _compile_task_brief,
+    _parse_scalar,
 )
+from handoffs import _read_compact_yaml_metadata
 from repository_preflight import capture_repository_evidence, task_caused_paths
 from specs import load_index, replace_front_matter_value
 
@@ -58,6 +60,14 @@ def _plan_executor_handoffs(args: argparse.Namespace, plan_id: str) -> list[dict
     handoff_root = orchestration_root(args) / "handoff" / "executor"
     for path in sorted(handoff_root.glob("*/*")):
         if not path.is_file() or path.suffix not in {".yaml", ".yml"}:
+            continue
+        compact = _read_compact_yaml_metadata(path)
+        if isinstance(compact.get("related"), str):
+            related = _parse_scalar(str(compact["related"]))
+            if isinstance(related, dict):
+                compact["related"] = related
+        compact_plan_id = unique_explicit_handoff_plan_id(compact)
+        if compact_plan_id is not None and compact_plan_id != plan_id:
             continue
         handoff = read_structured_artifact(path)
         if unique_explicit_handoff_plan_id(handoff) != plan_id:
@@ -522,11 +532,25 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
     if args.status not in PLAN_STATUSES:
         raise SystemExit(f"Invalid plan status: {args.status}")
     rows = index_plans(args)
-    matches = [row for row in rows if row.get("id") == args.id and (not args.kind or row.get("type") == args.kind)]
+    kind = getattr(args, "kind", None)
+    plan_id = getattr(args, "plan_id", None)
+    matches = [
+        row
+        for row in rows
+        if row.get("id") == args.id
+        and (not kind or row.get("type") == kind)
+        and (not plan_id or row.get("plan_id") == plan_id)
+    ]
     if not matches:
         raise SystemExit(f"Plan artifact not found: {args.id}")
     if len(matches) > 1:
-        raise SystemExit(f"Multiple plan artifacts match {args.id}; pass --kind plan|phase|task")
+        selectors = []
+        if not kind:
+            selectors.append("--kind plan|phase|task")
+        if not plan_id:
+            selectors.append("--plan-id PLAN_ID")
+        guidance = f"; pass {' and '.join(selectors)}" if selectors else "; supplied selectors remain ambiguous"
+        raise SystemExit(f"Multiple plan artifacts match {args.id}{guidance}")
     row = matches[0]
     path = artifact_path_from_row(row, args)
     if args.status == "Completed" and row.get("type") == "task":

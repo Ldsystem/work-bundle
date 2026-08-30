@@ -116,6 +116,73 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
     return root, spec, task
 
 
+def test_set_spec_status_verified_compiles_task_brief(tmp_path: Path) -> None:
+    from specs import cmd_set_spec_status
+
+    root, spec, task = workspace(tmp_path)
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace("status: verified\n", "status: draft\n"),
+        encoding="utf-8",
+    )
+
+    cmd_set_spec_status(
+        argparse.Namespace(project_root=str(root), workspace_root=None, id="spec-001", status="verified")
+    )
+    target = build_task_brief(args(root, task))
+
+    assert target.is_file()
+    assert "status: verified" in spec.read_text(encoding="utf-8")
+
+
+def test_build_task_brief_accepts_quoted_source_prose(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            "Never write outside the assigned files.",
+            'Never write outside the "quoted" assigned files.',
+        ),
+        encoding="utf-8",
+    )
+
+    target = build_task_brief(args(root, task))
+
+    assert target.is_file()
+    brief, _ = execution_context._read_structured(target)
+    assert any(
+        'Never write outside the "quoted" assigned files.' in constraint
+        for constraint in brief["task_brief"]["constraints"]
+    )
+
+
+def test_set_plan_status_uses_plan_id_to_disambiguate(tmp_path: Path) -> None:
+    from plans import cmd_set_plan_status
+
+    root, _, task = workspace(tmp_path)
+    second = root / ".work-bundle/orchestration/plan/active/plan-002/phase-001/task-004.md"
+    second.parent.mkdir(parents=True)
+    second.write_text(
+        task.read_text(encoding="utf-8").replace("plan_id: plan-001\n", "plan_id: plan-002\n"),
+        encoding="utf-8",
+    )
+
+    cmd_set_plan_status(
+        argparse.Namespace(
+            project_root=str(root),
+            workspace_root=None,
+            id="task-004",
+            plan_id="plan-002",
+            status="In progress",
+            kind="task",
+            handoff=None,
+        )
+    )
+
+    first_data, _ = execution_context._read_structured(task)
+    second_data, _ = execution_context._read_structured(second)
+    assert first_data.get("status") != "In progress"
+    assert second_data["status"] == "In progress"
+
+
 def args(root: Path, task: Path, **overrides: object) -> argparse.Namespace:
     values: dict[str, object] = {
         "project_root": str(root),
