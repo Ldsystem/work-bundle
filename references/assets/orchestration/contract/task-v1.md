@@ -66,6 +66,11 @@ validation:
     mechanism: named-harness-owned-mechanism
     proves: [claim]
     expected: passed
+evidence_capability:
+  result: mapped | no_validation_bearing_obligation
+  reason: [non-empty reason]
+  invariants:
+    - {id: INV-001, source_ids: [REQ-001, AC-001], invariant: string, boundary: unit | integration | runtime | ui_visual | inspection | other, oracle: VAL-001, capability_reason: string, freshness: current_task_batch, task_id: task-001, evidence_ids: [VAL-001]}
 ---
 
 # TASK-001: [Task Name]

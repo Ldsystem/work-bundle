@@ -492,6 +492,24 @@
       "prompt": "An excellence scan finds one adjacent idea that cannot change an accepted contract surface and another option whose acceptance could change a user-observable outcome and validation target.",
       "expected_output": "Omits the related-but-non-material adjacent idea or records it not_material, surfaces the outcome-changing option as a proposal because accepting or rejecting it could change a requirement, constraint, acceptance criterion, user-observable or contractual outcome, architectural boundary, measurable quality target, validation target, or declared boundary, and stops when further exploration can change none of those surfaces with the reason recorded.",
       "files": []
+    },
+    {
+      "id": 89,
+      "prompt": "Compile a task with an accepted invariant whose evidence-capability entry cites stable source IDs and a task-local validation oracle.",
+      "expected_output": "Compiles the task-local evidence_capability entry with invariant ID, source IDs, boundary, oracle, capability_reason, freshness, task owner, and evidence IDs without executor retrieval.",
+      "files": []
+    },
+    {
+      "id": 90,
+      "prompt": "A greenfield task records WOR-61 none_relevant but still has an accepted validation-bearing requirement and claims no_validation_bearing_obligation.",
+      "expected_output": "Rejects the empty evidence-capability map because none_relevant impact does not prove absence of accepted validation-bearing obligations.",
+      "files": []
+    },
+    {
+      "id": 91,
+      "prompt": "A plan maps a presentation invariant to a unit oracle that cannot observe rendering, while a lighter capable visual inspection is available.",
+      "expected_output": "Rejects the incapable unit mapping and allocates the lightest capable evidence boundary for the named invariant; it does not impose a universal UI gate on unrelated invariants.",
+      "files": []
     }
   ],
   "v4_evals": [

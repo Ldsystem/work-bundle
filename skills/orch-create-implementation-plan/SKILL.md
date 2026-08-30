@@ -13,7 +13,7 @@ Plan only from a verified active specification with converged semantics, resolve
 
 1. Use the specification and bounded repository evidence. Add upstream/downstream or validation scope only when current evidence proves it.
 2. Use the minimum orchestration overhead that preserves Truth Basis continuity, independently falsifiable and testable increments, short evidence loops, exact dependencies, disjoint write scopes, validation ownership, bounded failure radius, and review boundaries. Do not split one mechanical increment when it already satisfies those constraints.
-3. Give every task exact source IDs, a five-field Truth Basis, scope, interfaces, dependencies, steps, evidence, methodology, allocated rules/skills, executor profile, and review requirement.
+3. Give every task exact source IDs, a five-field Truth Basis, scope, interfaces, dependencies, steps, evidence, methodology, allocated rules/skills, executor profile, and review requirement. Allocate every accepted validation-bearing obligation to a stable `evidence_capability` invariant and the lightest capable task-local oracle. Each entry records source IDs, boundary, oracle, capability reason, freshness, task owner, and validation evidence IDs. Use `no_validation_bearing_obligation + reason` only when no accepted validation-bearing obligation or design decision exists; never infer it from WOR-61 `none_relevant`.
 4. Carry execution-workspace isolation, hydration, and cleanup policy into task and executor context; mutating siblings on the same execution path isolate via prepare_worktree or serialize even when write scopes are disjoint.
 5. Use a common contract group before safe parallel work. Contract-decoupled participants depend on the common contract group and accepted prior handoffs, not sibling in-progress implementation output. Create explicit barrier metadata with barrier ID, readiness evidence, and convergence owner. Cross-branch or joint validation belongs to a post-barrier convergence task.
 6. Require a compact `executor-result-v1` handoff. Default `acceptance_review.required: false`. Require task review only when the task sets `acceptance_review.required: true`. Do not infer that flag from soft applicability prose.
@@ -68,6 +68,8 @@ truth_basis:
 
 The compiler resolves each allocated `AUTH-NNN` alias to `AUTH-NNN: <carried constraint>` from verified specification `source_knowledge` without exposing knowledge paths.
 
+Each mapped invariant carries `source_ids`, `boundary`, `oracle`, `capability_reason`, `freshness`, `task_id`, and `evidence_ids`. Task validation entries carry stable `id`, `invariant_ids`, and their own `capability_reason`.
+
 ## Semantic convergence
 
 Use `dev-semantic-convergence` with these lenses:
@@ -78,6 +80,7 @@ Use `dev-semantic-convergence` with these lenses:
 - rule, skill, and methodology allocation;
 - parallel barrier and convergence safety;
 - executor-context completeness.
+- evidence-capability completeness, stable source projection, task-local filtering, and lightest-capable boundary selection.
 
 Repair generated drift in the same turn and record compact `semantic_loop` result, round count, and repaired defects. If a source requirement or decision is missing, stop for specification repair.
 

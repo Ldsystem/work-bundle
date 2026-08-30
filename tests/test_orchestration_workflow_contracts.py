@@ -397,6 +397,23 @@ def test_specification_contract_requires_bounded_excellence_applicability() -> N
     assert "related-but-non-material adjacent idea" in evals
 
 
+def test_planning_contract_allocates_evidence_capability() -> None:
+    plan = read("references/assets/orchestration/contract/plan-v1.md")
+    task = read("references/assets/orchestration/contract/task-v1.md")
+    skill = read("skills/orch-create-implementation-plan/SKILL.md")
+    workflow = read("references/assets/orchestration/workflow.md")
+    for text in (plan, task, skill, workflow):
+        assert "evidence_capability" in text
+        assert "no_validation_bearing_obligation" in text
+    for text in (task, skill, workflow):
+        assert "capability_reason" in text
+        assert "freshness" in text
+        assert "task" in text.lower()
+    assert "WOR-61 `none_relevant`" in skill
+    assert "lightest capable" in skill
+    assert "universal runtime" in workflow
+
+
 def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
     from test_orchestration_execution_context import ACCEPTED_AUTHORITY, workspace, write_executor_handoff

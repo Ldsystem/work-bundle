@@ -19,6 +19,19 @@ import execution_context  # noqa: E402
 from execution_context import build_review_package, build_task_brief  # noqa: E402
 
 
+def test_compile_evidence_capability_maps_stable_task_local_invariants() -> None:
+    validation = [{"id": "VAL-001", "invariant_ids": ["INV-001"], "capability_reason": "Observes violation."}]
+    task = {"evidence_capability": {"result": "mapped", "reason": "Required.", "invariants": [{"id": "INV-001", "source_ids": ["REQ-001"], "invariant": "Observable behavior", "boundary": "unit", "oracle": "VAL-001", "capability_reason": "Unit oracle distinguishes violation.", "freshness": "current_task_batch", "task_id": "task-001", "evidence_ids": ["VAL-001"]}]}}
+    result = execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], validation)
+    assert result is not None and result["invariants"][0]["id"] == "INV-001"
+
+
+def test_compile_evidence_capability_rejects_greenfield_escape() -> None:
+    task = {"evidence_capability": {"result": "no_validation_bearing_obligation", "reason": "Impact was none_relevant.", "invariants": []}}
+    with pytest.raises(SystemExit, match="cannot be inferred"):
+        execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], [])
+
+
 ACCEPTED_AUTHORITY_PATH = ".work-bundle/knowledge/notes/accepted-authority.md"
 ACCEPTED_AUTHORITY = "AUTH-001"
 ACCEPTED_CONSTRAINT = "Executors must not retrieve durable knowledge to reconstruct authority."

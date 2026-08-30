@@ -39,6 +39,8 @@ TRUTH_BASIS_FIELDS = (
     "conflict_status",
 )
 KNOWLEDGE_DISPOSITION_ACTIONS = {"none", "update", "supersede", "reclassify"}
+EVIDENCE_CAPABILITY_RESULTS = {"mapped", "no_validation_bearing_obligation"}
+EVIDENCE_BOUNDARIES = {"unit", "integration", "runtime", "ui_visual", "inspection", "other"}
 KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE = re.compile(
     r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-[a-z0-9-]+\b)",
     re.IGNORECASE,
@@ -656,6 +658,56 @@ def _compile_truth_basis(
         "expected_delta": _resolve_reference(list_fields["expected_delta"], records, source_paths),
         "conflict_status": conflict_status,
     }
+
+
+def _compile_evidence_capability(
+    task: dict[str, Any], task_id: str, source_ids: list[str], validation: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    raw = task.get("evidence_capability")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or raw.get("result") not in EVIDENCE_CAPABILITY_RESULTS:
+        raise SystemExit("Task evidence_capability result must be mapped or no_validation_bearing_obligation")
+    reason = _nonempty_text(raw.get("reason"))
+    if reason is None:
+        raise SystemExit("Task evidence_capability reason must be non-empty")
+    invariants = [item for item in _as_list(raw.get("invariants")) if isinstance(item, dict)]
+    if raw["result"] == "no_validation_bearing_obligation":
+        if invariants:
+            raise SystemExit("no_validation_bearing_obligation requires an empty invariant map")
+        if any(identifier.startswith(("REQ-", "AC-")) for identifier in source_ids):
+            raise SystemExit("no_validation_bearing_obligation cannot be inferred while accepted requirement or acceptance IDs remain")
+        return {"result": raw["result"], "reason": reason, "invariants": []}
+    if not invariants:
+        raise SystemExit("mapped evidence_capability requires at least one invariant")
+    validation_by_id = {str(item.get("id")): item for item in validation if _nonempty_text(item.get("id"))}
+    compiled: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in invariants:
+        invariant_id = _nonempty_text(item.get("id"))
+        if invariant_id is None or invariant_id in seen:
+            raise SystemExit("Evidence capability invariant IDs must be stable and unique")
+        seen.add(invariant_id)
+        allocated_sources = [str(value) for value in _as_list(item.get("source_ids"))]
+        if not allocated_sources or any(value not in source_ids for value in allocated_sources):
+            raise SystemExit(f"Evidence capability {invariant_id} cites unallocated source IDs")
+        if item.get("boundary") not in EVIDENCE_BOUNDARIES:
+            raise SystemExit(f"Evidence capability {invariant_id} has an invalid boundary")
+        if item.get("task_id") != task_id:
+            raise SystemExit(f"Evidence capability {invariant_id} has the wrong task owner")
+        evidence_ids = [str(value) for value in _as_list(item.get("evidence_ids"))]
+        if not evidence_ids or any(value not in validation_by_id for value in evidence_ids):
+            raise SystemExit(f"Evidence capability {invariant_id} cites missing validation evidence")
+        for field in ("invariant", "oracle", "capability_reason", "freshness"):
+            if _nonempty_text(item.get(field)) is None:
+                raise SystemExit(f"Evidence capability {invariant_id} missing {field}")
+        for evidence_id in evidence_ids:
+            if invariant_id not in _as_list(validation_by_id[evidence_id].get("invariant_ids")):
+                raise SystemExit(f"Validation {evidence_id} does not bind {invariant_id}")
+            if _nonempty_text(validation_by_id[evidence_id].get("capability_reason")) is None:
+                raise SystemExit(f"Validation {evidence_id} missing capability_reason")
+        compiled.append(dict(item))
+    return {"result": "mapped", "reason": reason, "invariants": compiled}
 
 
 def evaluate_knowledge_closure_state(
@@ -1677,6 +1729,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
     }
     truth_basis = _compile_truth_basis(task, records, source_paths)
     validation = _resolve_reference(validation_value, records, source_paths)
+    evidence_capability = _compile_evidence_capability(task, task_id, source_ids, validation)
     acceptance_review = task.get("acceptance_review")
     if acceptance_review in (None, {}):
         review_required = False
@@ -1706,6 +1759,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
             "evidence_applicability": evidence_applicability,
             "workspace": {"root": str(root)},
             "validation": validation,
+            "evidence_capability": evidence_capability,
             "handoff_contract": "executor-result-v1",
             "review_required": review_required,
         }
