@@ -878,6 +878,12 @@ def test_review_rule_uses_typed_resume_routing() -> None:
         "accepted `update`, `supersede`, or `reclassify`",
         "rejected dispositions",
         "archive",
+        "evidence_capability",
+        "INV/VAL",
+        "incapable green",
+        "pre-closure oracle-capability check",
+        "no_validation_bearing_obligation",
+        "WOR-59 G9 remains the unchanged post-execution classifier",
     ]:
         assert token in rule
 
