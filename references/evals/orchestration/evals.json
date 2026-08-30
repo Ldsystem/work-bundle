@@ -486,6 +486,12 @@
       "prompt": "An optional excellence proposal is rejected, while another proposal reveals an unresolved safety authority conflict.",
       "expected_output": "Keeps the rejected proposal traceable and excluded without blocking, but routes the unresolved safety authority conflict through the existing blocking open-question rules; optionality does not bypass safety authority.",
       "files": []
+    },
+    {
+      "id": 88,
+      "prompt": "An excellence scan finds one adjacent idea that cannot change an accepted contract surface and another option whose acceptance could change a user-observable outcome and validation target.",
+      "expected_output": "Omits the related-but-non-material adjacent idea or records it not_material, surfaces the outcome-changing option as a proposal because accepting or rejecting it could change a requirement, constraint, acceptance criterion, user-observable or contractual outcome, architectural boundary, measurable quality target, validation target, or declared boundary, and stops when further exploration can change none of those surfaces with the reason recorded.",
+      "files": []
     }
   ],
   "v4_evals": [

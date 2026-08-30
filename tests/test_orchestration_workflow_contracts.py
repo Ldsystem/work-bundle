@@ -385,11 +385,16 @@ def test_specification_contract_requires_bounded_excellence_applicability() -> N
             assert token in text
         assert "universal checklist" in text
         assert "one compact pass" in text
+        assert "accepting or rejecting it could change a requirement" in text
+        assert "user-observable or contractual outcome" in text
+        assert "measurable quality target" in text
+        assert "further exploration could change none of those surfaces" in text
     assert "excellence-applicability view" in skill
     assert "user-visible request with no evidenced adjacent improvement" in evals
     assert "silently implements a deferred proposal" in evals
     assert "accepted proposal" in evals and "stable authoritative" in evals
     assert "universal product-quality checklist" in evals
+    assert "related-but-non-material adjacent idea" in evals
 
 
 def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp_path: Path) -> None:

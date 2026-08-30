@@ -109,7 +109,7 @@ Use `none_relevant` only after a bounded scan finds no material relation and rec
 
 ### 4.3 Excellence Applicability
 
-Within Design Interrogation, run one compact pass that selects product-excellence dimensions from the task evidence and change shape rather than a universal checklist. Record exactly one result:
+Within Design Interrogation, run one compact pass that selects product-excellence dimensions from the task evidence and change shape rather than a universal checklist. Surface an option only when accepting or rejecting it could change a requirement, constraint, acceptance criterion, user-observable or contractual outcome, architectural boundary, measurable quality target, validation target, or declared boundary. Record exactly one result:
 
 ```yaml
 excellence_applicability:
@@ -129,7 +129,7 @@ excellence_applicability:
 
 Use `no_material_opportunity` only with a non-empty evidence-backed reason and an empty proposal list. `material_opportunities` requires one or more proposals. Each proposal explains user value, evidence, cost, risk, recommendation, and disposition in plain language; unanswered proposals become deferred. Only accepted proposals may project through stable `projects_to` IDs into authoritative requirements, constraints, interfaces, acceptance criteria, or validation targets. Rejected, deferred, and not-material proposals remain traceable but are excluded from planning, executor briefs, and acceptance obligations.
 
-Do not add a lifecycle stage, force a recommendation, or use a universal product-quality checklist. Stop after one compact pass when evidenced material dimensions have a result and every proposal has a disposition. Optional proposals do not block verification unless accepted without complete authoritative projection or they expose an unresolved safety or authority conflict governed by existing open-question rules. Agent judgment owns opportunity materiality and recommendation quality; structural validation does not.
+Do not add a lifecycle stage, force a recommendation, or use a universal product-quality checklist. Stop after one compact pass when further exploration could change none of those surfaces, record the reason, and ensure every surfaced proposal has a disposition. A related-but-non-material idea is omitted or recorded `not_material`; it is not promoted merely because it is adjacent. Optional proposals do not block verification unless accepted without complete authoritative projection or they expose an unresolved safety or authority conflict governed by existing open-question rules. Agent judgment owns opportunity materiality and recommendation quality; structural validation does not.
 
 ## 5. Requirements, Constraints & Guidelines
 
