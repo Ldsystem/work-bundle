@@ -345,9 +345,14 @@ def test_specification_contract_requires_bounded_impact_decisions() -> None:
             "dirty work",
         ]:
             assert token in text
+        assert "durable knowledge" in text
+        assert "projects_to" in text and "stable" in text
+    for text in (contract, skill):
+        assert "blocking" in text and "open question" in text.lower()
+    assert "blocking relations prevent verification" in workflow
     assert "impact-decision view" in skill
     assert "keep repository traversal out of `dev-semantic-convergence`" in skill
-    assert "Git history, prior work artifacts, or execution evidence" in skill
+    assert "Git history, prior work artifacts, execution evidence, or durable knowledge" in skill
     assert "user did not mention" in contract
     assert "existing downstream consumer" in evals
     assert "greenfield isolated utility" in evals

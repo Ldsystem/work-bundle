@@ -105,7 +105,7 @@ impact_decisions:
 
 Every material relation has exactly one `accepted | excluded | blocking` disposition. `projects_to` is required for accepted relations and must name stable requirements, constraints, interfaces, acceptance criteria, or validation targets. Excluded relations require evidence and a concise reason; "the user did not mention it" is not sufficient. Blocking relations create blocking Open Questions and keep the quality gate blocked.
 
-Use `none_relevant` only after a bounded scan finds no material relation and records its searched boundary, reason, and `stopping_reason`. Stop when every frontier relation is immaterial, already projected, excluded with evidence, or blocked for authority. Escalate to targeted Git history, prior work artifacts, or execution evidence only for contradictory current-state evidence, unresolved ownership, material regression/causality, or a suspected governing legacy decision; do not require full-history archaeology by default.
+Use `none_relevant` only after a bounded scan finds no material relation and records its searched boundary, reason, and `stopping_reason`. Stop when every frontier relation is immaterial, already projected, excluded with evidence, or blocked for authority. Escalate to targeted Git history, prior work artifacts, execution evidence, or durable knowledge only for contradictory current-state evidence, unresolved ownership, material regression/causality, or a suspected governing legacy decision; do not require full-history archaeology or broad knowledge retrieval by default.
 
 ## 5. Requirements, Constraints & Guidelines
 
