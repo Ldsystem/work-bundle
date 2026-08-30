@@ -164,7 +164,7 @@ def test_session_start_repairs_stale_metadata_without_rewriting_agents(tmp_path:
     result = run_wb(config_root, "session-start", "--project-root", str(project), "--json")
     assert result.returncode == 0, result.stdout + result.stderr
     data = json.loads(result.stdout)
-    assert data["agents_status"] == "updated"
+    assert data["agents_status"] == "unchanged"
     assert data["changed_files"] == [str(metadata_path)]
     assert agents_path.read_text(encoding="utf-8") == agents_before
     assert data["project_agents_checksum"].startswith("sha256:")
