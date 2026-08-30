@@ -39,6 +39,11 @@ def extract_command(
         if token == "--project-root":
             if index + 1 >= len(argv):
                 return NO_COMMAND
+            value = argv[index + 1]
+            if value in {"-h", "--help"}:
+                return NO_COMMAND
+            if value.startswith("-"):
+                return UNKNOWN_COMMAND
             index += 2
             continue
         if token.startswith("--project-root="):
@@ -108,8 +113,8 @@ def _connect(database: Path) -> sqlite3.Connection:
 def _begin(surface: str, command: str) -> tuple[Path, int] | None:
     if os.environ.get(DISABLE_ENV) == "0":
         return None
-    database = _database_path()
     try:
+        database = _database_path()
         with closing(_connect(database)) as connection:
             with connection:
                 cursor = connection.execute(
@@ -121,7 +126,7 @@ def _begin(surface: str, command: str) -> tuple[Path, int] | None:
                 )
                 row_id = int(cursor.lastrowid)
         return database, row_id
-    except (OSError, sqlite3.Error):
+    except (OSError, RuntimeError, sqlite3.Error):
         return None
 
 

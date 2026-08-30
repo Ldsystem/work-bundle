@@ -57,6 +57,12 @@ def test_surface_aware_command_extraction_never_persists_option_values() -> None
         "orch", ["--project-root=/private/path", "doctor"], recognized
     ) == "doctor"
     assert observation.extract_command("orch", ["--help", "doctor"], recognized) == "__no_command__"
+    assert observation.extract_command(
+        "orch", ["--project-root", "--help", "doctor"], recognized
+    ) == "__no_command__"
+    assert observation.extract_command(
+        "orch", ["--project-root", "--unknown", "doctor"], recognized
+    ) == "__unknown__"
     assert observation.extract_command("orch", ["--project", "/secret", "doctor"], recognized) == "__unknown__"
 
 
@@ -143,6 +149,17 @@ def test_database_failure_is_silent_and_does_not_change_dispatch(
     blocked_root.write_text("occupied", encoding="utf-8")
     monkeypatch.setenv("WORK_BUNDLE_INVOCATION_LOG", "1")
     monkeypatch.setenv("WB_CONFIG_ROOT", str(blocked_root))
+
+    assert observation.invoke_observed("wb", ["doctor"], {"doctor"}, lambda: 7) == 7
+    assert capsys.readouterr() == ("", "")
+
+
+def test_config_root_resolution_failure_is_silent_and_does_not_change_dispatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    observation = load_observation()
+    monkeypatch.setenv("WORK_BUNDLE_INVOCATION_LOG", "1")
+    monkeypatch.setenv("WB_CONFIG_ROOT", "~workbundle-user-that-does-not-exist/usage")
 
     assert observation.invoke_observed("wb", ["doctor"], {"doctor"}, lambda: 7) == 7
     assert capsys.readouterr() == ("", "")
