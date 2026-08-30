@@ -347,6 +347,8 @@ def test_specification_contract_requires_bounded_impact_decisions() -> None:
             assert token in text
         assert "durable knowledge" in text
         assert "projects_to" in text and "stable" in text
+        assert "user-observable or contractual outcome" in text
+        assert "measurable quality target" in text
     for text in (contract, skill):
         assert "blocking" in text and "open question" in text.lower()
     assert "blocking relations prevent verification" in workflow
@@ -358,6 +360,7 @@ def test_specification_contract_requires_bounded_impact_decisions() -> None:
     assert "greenfield isolated utility" in evals
     assert "mandatory full-history archaeology" in evals
     assert "prior work artifacts, execution evidence, or durable knowledge" in evals
+    assert "related-but-non-material relation" in evals
 
 
 def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp_path: Path) -> None:

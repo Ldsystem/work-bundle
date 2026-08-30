@@ -444,6 +444,12 @@
       "prompt": "A material current relation has unresolved ownership and could change the accepted API contract.",
       "expected_output": "Marks the relation blocking, creates a blocking open question, keeps Quality gate blocked, and uses targeted provenance evidence to resolve ownership rather than silently accepting or excluding it.",
       "files": []
+    },
+    {
+      "id": 81,
+      "prompt": "An impact scan finds one relation that is merely adjacent and cannot change an accepted contract surface, plus another relation whose disposition can change a user-observable outcome and validation target.",
+      "expected_output": "Stops traversing the related-but-non-material relation with a recorded reason, treats the outcome-changing relation as material, and requires accepted, excluded, or blocking disposition because it can change a user-observable or contractual outcome, architectural boundary, measurable quality target, validation target, or declared boundary.",
+      "files": []
     }
   ],
   "v4_evals": [
