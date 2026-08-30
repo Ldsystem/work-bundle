@@ -26,10 +26,15 @@ def test_compile_evidence_capability_maps_stable_task_local_invariants() -> None
     assert result is not None and result["invariants"][0]["id"] == "INV-001"
 
 
-def test_compile_evidence_capability_rejects_greenfield_escape() -> None:
-    task = {"evidence_capability": {"result": "no_validation_bearing_obligation", "reason": "Impact was none_relevant.", "invariants": []}}
-    with pytest.raises(SystemExit, match="cannot be inferred"):
-        execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], [])
+def test_compile_evidence_capability_requires_explicit_result() -> None:
+    with pytest.raises(SystemExit, match="required"):
+        execution_context._compile_evidence_capability({}, "task-001", ["REQ-001"], [])
+
+
+def test_compile_evidence_capability_allows_agent_decided_bookkeeping_empty_map() -> None:
+    task = {"evidence_capability": {"result": "no_validation_bearing_obligation", "reason": "Accepted IDs are bookkeeping-only and make no closure claim.", "invariants": []}}
+    result = execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], [])
+    assert result is not None and result["invariants"] == []
 
 
 ACCEPTED_AUTHORITY_PATH = ".work-bundle/knowledge/notes/accepted-authority.md"
@@ -121,6 +126,10 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
         "  context_mode: compiled-brief\n"
         "acceptance_review:\n"
         "  required: false\n"
+        "evidence_capability:\n"
+        "  result: no_validation_bearing_obligation\n"
+        "  reason: This shared fixture leaves capability semantics to scenario-specific tests.\n"
+        "  invariants: []\n"
         "validation:\n"
         "  - {kind: process, command: uv run --with pytest pytest -q tests/test_one.py, proves: TEST-004, expected: exit 0}\n"
         "---\n\n# Task\n",

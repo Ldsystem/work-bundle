@@ -40,7 +40,7 @@ TRUTH_BASIS_FIELDS = (
 )
 KNOWLEDGE_DISPOSITION_ACTIONS = {"none", "update", "supersede", "reclassify"}
 EVIDENCE_CAPABILITY_RESULTS = {"mapped", "no_validation_bearing_obligation"}
-EVIDENCE_BOUNDARIES = {"unit", "integration", "runtime", "ui_visual", "inspection", "other"}
+EVIDENCE_BOUNDARIES = {"unit", "component", "integration", "runtime", "ui_visual", "performance", "accessibility", "inspection", "other"}
 KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE = re.compile(
     r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-[a-z0-9-]+\b)",
     re.IGNORECASE,
@@ -665,7 +665,7 @@ def _compile_evidence_capability(
 ) -> dict[str, Any] | None:
     raw = task.get("evidence_capability")
     if raw is None:
-        return None
+        raise SystemExit("Task evidence_capability is required")
     if not isinstance(raw, dict) or raw.get("result") not in EVIDENCE_CAPABILITY_RESULTS:
         raise SystemExit("Task evidence_capability result must be mapped or no_validation_bearing_obligation")
     reason = _nonempty_text(raw.get("reason"))
@@ -675,8 +675,6 @@ def _compile_evidence_capability(
     if raw["result"] == "no_validation_bearing_obligation":
         if invariants:
             raise SystemExit("no_validation_bearing_obligation requires an empty invariant map")
-        if any(identifier.startswith(("REQ-", "AC-")) for identifier in source_ids):
-            raise SystemExit("no_validation_bearing_obligation cannot be inferred while accepted requirement or acceptance IDs remain")
         return {"result": raw["result"], "reason": reason, "invariants": []}
     if not invariants:
         raise SystemExit("mapped evidence_capability requires at least one invariant")
@@ -693,6 +691,8 @@ def _compile_evidence_capability(
             raise SystemExit(f"Evidence capability {invariant_id} cites unallocated source IDs")
         if item.get("boundary") not in EVIDENCE_BOUNDARIES:
             raise SystemExit(f"Evidence capability {invariant_id} has an invalid boundary")
+        if item.get("boundary") == "other" and _nonempty_text(item.get("other_mechanism")) is None:
+            raise SystemExit(f"Evidence capability {invariant_id} other boundary requires other_mechanism")
         if item.get("task_id") != task_id:
             raise SystemExit(f"Evidence capability {invariant_id} has the wrong task owner")
         evidence_ids = [str(value) for value in _as_list(item.get("evidence_ids"))]
@@ -701,6 +701,8 @@ def _compile_evidence_capability(
         for field in ("invariant", "oracle", "capability_reason", "freshness"):
             if _nonempty_text(item.get(field)) is None:
                 raise SystemExit(f"Evidence capability {invariant_id} missing {field}")
+        if str(item.get("oracle")) not in evidence_ids:
+            raise SystemExit(f"Evidence capability {invariant_id} oracle must name an allocated evidence ID")
         for evidence_id in evidence_ids:
             if invariant_id not in _as_list(validation_by_id[evidence_id].get("invariant_ids")):
                 raise SystemExit(f"Validation {evidence_id} does not bind {invariant_id}")
@@ -1990,6 +1992,9 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "",
         "## Accepted Truth Basis",
         *_markdown_items([task.get("truth_basis", {})]),
+        "",
+        "## Evidence capability",
+        *_markdown_items([task.get("evidence_capability", {})]),
         "",
         "## Allowed scope",
         *_markdown_items(allowed_scope),
