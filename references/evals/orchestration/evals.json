@@ -495,6 +495,30 @@
     },
     {
       "id": 89,
+      "prompt": "Compile a task with an accepted invariant whose evidence-capability entry cites stable source IDs and a task-local validation oracle.",
+      "expected_output": "Compiles the task-local evidence_capability entry with invariant ID, source IDs, boundary, oracle, capability_reason, freshness, task owner, evidence IDs, and closure_result initialized to pending without executor retrieval.",
+      "files": []
+    },
+    {
+      "id": 90,
+      "prompt": "A greenfield task records WOR-61 none_relevant but still has an accepted validation-bearing requirement and claims no_validation_bearing_obligation.",
+      "expected_output": "Rejects the empty evidence-capability map because none_relevant impact does not prove absence of accepted validation-bearing obligations.",
+      "files": []
+    },
+    {
+      "id": 91,
+      "prompt": "A plan maps a presentation invariant to a unit oracle that cannot observe rendering, while a lighter capable visual inspection is available.",
+      "expected_output": "Rejects the incapable unit mapping and allocates the lightest capable evidence boundary for the named invariant; it does not impose a universal UI gate on unrelated invariants.",
+      "files": []
+    },
+    {
+      "id": 92,
+      "prompt": "A completed executor result reports a green command but omits allocated INV/VAL identities, or reports incapable, contradictory, stale, wrong-boundary, failed, or unexecuted evidence.",
+      "expected_output": "Blocks terminal closure, treats executor closure as corroboration rather than harness proof, and routes repair to the first owning task, plan, or specification while preserving optional task review and WOR-59 G9 separation.",
+      "files": []
+    },
+    {
+      "id": 93,
       "prompt": "A planner allocates source_ids: [EXC-001] for a deferred excellence proposal while compiling an implementation plan.",
       "expected_output": "Rejects EXC-* proposal IDs as non-authoritative; planning and the compiled brief use only the stable requirement, constraint, interface, acceptance-criterion, or validation-target IDs that an accepted proposal projected to.",
       "files": []

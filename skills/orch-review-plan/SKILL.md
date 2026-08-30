@@ -18,6 +18,7 @@ Verify:
 - specification, plan, phase, and task status coherence;
 - executor-result handoffs by applicability;
 - declared completion evidence corresponds to the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints;
+- every mapped invariant has capable, current, correctly bounded harness-observed evidence under its allocated INV/VAL identities; treat incapable green, contradiction, staleness, wrong-boundary, failure, missing, or unexecuted evidence as negative acceptance evidence and route first-owner repair: task repair for failed, stale, or unexecuted implementation evidence; plan repair for missing, wrong-boundary, or incapable allocation; specification repair for contradictory accepted authority;
 - missing `acceptance_review.verdict` blocks only a task that explicitly required independent review; do not require universal task-review evidence;
 - `acceptance_review.verdict: accept` only for those explicitly required reviews;
 - declared plan-level/integration acceptance observed on the final integrated workspace; do not start another implementation-review agent to produce plan-level acceptance;
@@ -28,6 +29,16 @@ Verify:
 - the resulting final Knowledge Base Update disposition is `completed` or `not-needed` before archive;
 - approved `ks-*` return evidence exists when durable knowledge was required;
 - allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh completed or are explicitly not applicable.
+
+## Evidence capability correspondence
+
+Before archive or completion, every accepted validation-bearing invariant must have a compiled `evidence_capability` entry and capable, current, correctly bounded harness-observed evidence under its allocated INV/VAL identities. Incapable green, contradiction, staleness, wrong-boundary, failure, missing, or unexecuted evidence is negative acceptance evidence, not closure.
+
+Use `no_validation_bearing_obligation + reason` only when no accepted validation-bearing obligation or design decision exists. Do not infer an empty evidence-capability map from a WOR-61 `none_relevant` impact result.
+
+Route first-owner repair for this pre-closure oracle-capability check: task repair for failed, stale, or unexecuted implementation evidence; plan repair for missing, wrong-boundary, or incapable allocation; specification repair for contradictory accepted authority. Mechanical helpers validate IDs, completeness, provenance, and observed results; agents own semantic capability judgment. This is not a universal browser, E2E, production, or runtime gate.
+
+Keep this pre-closure oracle-capability check distinct from `RuntimeVerificationClassificationV1`. WOR-59 G9 remains the unchanged post-execution classifier and may use this map only as evidence when triggered.
 
 ## Runtime verification classification
 
@@ -56,6 +67,12 @@ workspace preparation/cleanup/finalization incomplete
   -> workspace-blocked -> bounded execution-workspace helper
 implementation rejected
   -> task repair and independent re-review
+failed, stale, or unexecuted implementation evidence
+  -> task repair
+incapable, missing, or wrong-boundary allocation
+  -> plan repair
+contradictory accepted authority
+  -> specification repair
 plan decomposition defect
   -> repair plan only
 requirement/design/authority defect

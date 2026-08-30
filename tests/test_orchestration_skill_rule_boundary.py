@@ -174,8 +174,39 @@ def test_final_review_is_workflow_audit_not_code_review() -> None:
         "implementation_gap",
         "new_feature",
         "uncovered_fixture",
+        "evidence_capability",
+        "INV/VAL",
+        "incapable green",
+        "pre-closure oracle-capability check",
+        "no_validation_bearing_obligation",
+        "none_relevant",
     ]:
         assert token in text
+
+
+def test_review_enforces_evidence_capability_before_closure() -> None:
+    for relative in [
+        "skills/orch-review-plan/SKILL.md",
+        "rules/orchestration/orch-review-completion.md",
+    ]:
+        text = read(relative)
+        for token in [
+            "evidence_capability",
+            "INV/VAL",
+            "incapable green",
+            "wrong-boundary",
+            "harness-observed",
+            "no_validation_bearing_obligation",
+            "none_relevant",
+            "pre-closure oracle-capability check",
+            "task repair",
+            "plan repair",
+            "specification repair",
+            "RuntimeVerificationClassificationV1",
+            "WOR-59 G9 remains the unchanged post-execution classifier",
+            "universal browser, E2E, production, or runtime gate",
+        ]:
+            assert token in text, f"{relative}: {token}"
 
 
 def test_runtime_verification_classification_contract_routes_the_first_broken_artifact() -> None:

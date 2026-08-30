@@ -19,6 +19,163 @@ import execution_context  # noqa: E402
 from execution_context import build_review_package, build_task_brief  # noqa: E402
 
 
+def test_compile_evidence_capability_maps_stable_task_local_invariants() -> None:
+    validation = [{"id": "VAL-001", "invariant_ids": ["INV-001"], "capability_reason": "Observes violation."}]
+    task = {"evidence_capability": {"result": "mapped", "reason": "Required.", "invariants": [{"id": "INV-001", "source_ids": ["REQ-001"], "invariant": "Observable behavior", "boundary": "unit", "oracle": "VAL-001", "capability_reason": "Unit oracle distinguishes violation.", "freshness": "current_task_batch", "task_id": "task-001", "evidence_ids": ["VAL-001"], "closure_result": "pending"}]}}
+    result = execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], validation)
+    assert result is not None and result["invariants"][0]["id"] == "INV-001"
+
+
+def test_compile_evidence_capability_requires_closure_result() -> None:
+    validation = [{"id": "VAL-001", "invariant_ids": ["INV-001"], "capability_reason": "Observes violation."}]
+    invariant = {"id": "INV-001", "source_ids": ["REQ-001"], "invariant": "Observable behavior", "boundary": "unit", "oracle": "VAL-001", "capability_reason": "Unit oracle distinguishes violation.", "freshness": "current_task_batch", "task_id": "task-001", "evidence_ids": ["VAL-001"]}
+    task = {"evidence_capability": {"result": "mapped", "reason": "Required.", "invariants": [invariant]}}
+    with pytest.raises(SystemExit, match="closure_result"):
+        execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], validation)
+
+
+def test_compile_evidence_capability_rejects_preclosed_invariant() -> None:
+    validation = [{"id": "VAL-001", "invariant_ids": ["INV-001"], "capability_reason": "Observes violation."}]
+    invariant = {"id": "INV-001", "source_ids": ["REQ-001"], "invariant": "Observable behavior", "boundary": "unit", "oracle": "VAL-001", "capability_reason": "Unit oracle distinguishes violation.", "freshness": "current_task_batch", "task_id": "task-001", "evidence_ids": ["VAL-001"], "closure_result": "passed"}
+    task = {"evidence_capability": {"result": "mapped", "reason": "Required.", "invariants": [invariant]}}
+    with pytest.raises(SystemExit, match="initialized to pending"):
+        execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], validation)
+
+
+def test_compile_evidence_capability_requires_explicit_result() -> None:
+    with pytest.raises(SystemExit, match="required"):
+        execution_context._compile_evidence_capability({}, "task-001", ["REQ-001"], [])
+
+
+def test_compile_evidence_capability_allows_agent_decided_bookkeeping_empty_map() -> None:
+    task = {"evidence_capability": {"result": "no_validation_bearing_obligation", "reason": "Accepted IDs are bookkeeping-only and make no closure claim.", "invariants": []}}
+    result = execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], [])
+    assert result is not None and result["invariants"] == []
+
+
+def evidence_closure_fixture(*, boundary: str = "component", result: str = "passed") -> tuple[dict, dict, dict, list[dict]]:
+    task = {
+        "task_id": "task-001",
+        "validation": [{"id": "VAL-001", "invariant_ids": ["INV-001"], "command": "true"}],
+        "evidence_capability": {
+            "result": "mapped",
+            "reason": "Required.",
+            "invariants": [{"id": "INV-001", "boundary": "component", "freshness": "current_task_batch", "evidence_ids": ["VAL-001"], "closure_result": "pending"}],
+        },
+    }
+    handoff = {
+        "evidence_closure": {
+            "result": result,
+            "invariants": [{"id": "INV-001", "boundary": boundary, "freshness": "current_task_batch", "evidence_ids": ["VAL-001"], "closure_result": result, "repair_owner": None}],
+        }
+    }
+    reported = {"true": {"command": "true", "id": "VAL-001", "invariant_ids": ["INV-001"], "result": "passed"}}
+    observed = [{"command": "true", "id": "VAL-001", "invariant_ids": ["INV-001"], "result": "passed", "kind": "process"}]
+    return task, handoff, reported, observed
+
+
+def test_evidence_closure_requires_mapped_terminal_record() -> None:
+    task, _, reported, observed = evidence_closure_fixture()
+    with pytest.raises(SystemExit, match="missing evidence_closure"):
+        execution_context._validate_evidence_closure({}, task, "completed", reported, observed)
+
+
+@pytest.mark.parametrize(
+    ("closure_result", "repair_owner"),
+    [
+        ("incapable", "plan"),
+        ("contradictory", "specification"),
+        ("stale", "task"),
+        ("wrong_boundary", "plan"),
+        ("failed", "task"),
+        ("missing", "plan"),
+        ("unexecuted", "task"),
+    ],
+)
+def test_evidence_closure_blocks_negative_results_and_routes_owner(
+    closure_result: str, repair_owner: str
+) -> None:
+    task, handoff, reported, observed = evidence_closure_fixture(result=closure_result)
+    handoff["evidence_closure"]["invariants"][0]["repair_owner"] = repair_owner
+    with pytest.raises(SystemExit, match=f"{closure_result}.*{repair_owner}"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+
+
+def test_evidence_closure_rejects_wrong_boundary() -> None:
+    task, handoff, reported, observed = evidence_closure_fixture(boundary="unit")
+    with pytest.raises(SystemExit, match="wrong-boundary"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+
+
+def test_evidence_closure_accepts_capable_component_without_ui_gate() -> None:
+    task, handoff, reported, observed = evidence_closure_fixture()
+    result = execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+    assert result["result"] == "passed"
+
+
+def test_evidence_closure_rejects_passed_executor_claim_without_harness_observation() -> None:
+    task, handoff, reported, _ = evidence_closure_fixture()
+    with pytest.raises(SystemExit, match="independent harness observation"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, None)
+
+
+@pytest.mark.parametrize(
+    ("closure_result", "wrong_owner", "expected_owner"),
+    [("incapable", "task", "plan"), ("contradictory", "task", "specification")],
+)
+def test_evidence_closure_rejects_incorrect_first_repair_owner(
+    closure_result: str, wrong_owner: str, expected_owner: str
+) -> None:
+    task, handoff, reported, observed = evidence_closure_fixture(result=closure_result)
+    handoff["evidence_closure"]["invariants"][0]["repair_owner"] = wrong_owner
+    with pytest.raises(SystemExit, match=f"must route {expected_owner}"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+
+
+def test_evidence_closure_rejects_executor_report_without_allocated_identity() -> None:
+    task, handoff, reported, observed = evidence_closure_fixture()
+    reported["true"].pop("id")
+    with pytest.raises(SystemExit, match="reported evidence identity"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+
+
+def test_evidence_closure_rejects_harness_observation_without_allocated_identity() -> None:
+    task, handoff, reported, observed = evidence_closure_fixture()
+    observed[0].pop("id")
+    with pytest.raises(SystemExit, match="harness evidence"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+
+
+def test_completed_mapped_result_requires_produced_observation_batch() -> None:
+    task, handoff, _, _ = evidence_closure_fixture()
+    task.update(
+        {
+            "plan_id": "plan-001",
+            "source_ids": [],
+            "files": {"read": [], "write": []},
+            "truth_basis": {},
+            "validation": [],
+            "review_required": False,
+            "evidence_applicability": {
+                "metadata": {"required": False, "reasons": []},
+                "repository": {"required": False, "reasons": []},
+                "codegraph": {"required": False, "reasons": []},
+            },
+        }
+    )
+    handoff.update(
+        {
+            "type": "executor-result",
+            "related": {"plan": "plan-001", "task": "task-001"},
+            "result": {"state": "completed"},
+            "task_fit_check": {"task": "task-001", "result": "clean"},
+            "knowledge_disposition": {"action": "none", "reason": "No stable authority changed.", "affected_authority": []},
+        }
+    )
+    with pytest.raises(SystemExit, match="produced harness observations"):
+        execution_context.validate_executor_result_for_task(handoff, task, observe=True)
+
+
 ACCEPTED_AUTHORITY_PATH = ".work-bundle/knowledge/notes/accepted-authority.md"
 ACCEPTED_AUTHORITY = "AUTH-001"
 ACCEPTED_CONSTRAINT = "Executors must not retrieve durable knowledge to reconstruct authority."
@@ -108,6 +265,10 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
         "  context_mode: compiled-brief\n"
         "acceptance_review:\n"
         "  required: false\n"
+        "evidence_capability:\n"
+        "  result: no_validation_bearing_obligation\n"
+        "  reason: This shared fixture leaves capability semantics to scenario-specific tests.\n"
+        "  invariants: []\n"
         "validation:\n"
         "  - {kind: process, command: uv run --with pytest pytest -q tests/test_one.py, proves: TEST-004, expected: exit 0}\n"
         "---\n\n# Task\n",
@@ -773,6 +934,23 @@ def test_build_task_brief_rejects_protected_credential_path_scope(tmp_path: Path
 
 def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8")
+        .replace(
+            "  result: no_validation_bearing_obligation\n"
+            "  reason: This shared fixture leaves capability semantics to scenario-specific tests.\n"
+            "  invariants: []\n",
+            "  result: mapped\n"
+            "  reason: This scenario verifies review-package propagation.\n"
+            "  invariants:\n"
+            "    - {id: INV-001, source_ids: [REQ-003, TEST-004], invariant: Review package carries allocated capability, boundary: unit, oracle: VAL-001, capability_reason: The focused process distinguishes omission, freshness: current_task_batch, task_id: task-004, evidence_ids: [VAL-001], closure_result: pending}\n",
+        )
+        .replace(
+            "  - {kind: process, command: uv run --with pytest pytest -q tests/test_one.py, proves: TEST-004, expected: exit 0}\n",
+            "  - {id: VAL-001, invariant_ids: [INV-001], capability_reason: The focused process distinguishes omission, kind: process, command: uv run --with pytest pytest -q tests/test_one.py, proves: TEST-004, expected: exit 0}\n",
+        ),
+        encoding="utf-8",
+    )
     source = root / WRITE_SCOPE_FILE
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("def compile_task():\n    return 'old'\n", encoding="utf-8")
@@ -834,6 +1012,11 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
     assert "dev-test-driven-development" in package
     assert "## Review rubric" in package
     assert "## Accepted Truth Basis" in package
+    assert "## Evidence capability" in package
+    assert "INV-001" in package
+    assert "VAL-001" in package
+    assert "closure_result" in package
+    assert "pending" in package
     assert "## Knowledge disposition" in package
     assert "No stable authority changed." in package
     assert "SHOULD-NOT-APPEAR" not in package

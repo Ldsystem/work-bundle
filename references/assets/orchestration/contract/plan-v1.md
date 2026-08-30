@@ -35,6 +35,10 @@ allocated_skills:
     applies_when: [observable plan-wide condition]
     use_timing: planning|task_execution|review
     required_for: [why executors need this skill context]
+evidence_capability:
+  result: mapped | no_validation_bearing_obligation
+  reason: [non-empty reason]
+  invariants: [stable per-invariant capability entries allocated to task IDs with closure_result initialized to pending]
 ---
 
 # Implementation Plan: [Plan Goal]

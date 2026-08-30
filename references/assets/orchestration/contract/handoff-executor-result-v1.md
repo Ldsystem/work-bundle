@@ -46,9 +46,21 @@ changes:
 
 validation:
   commands:
-    - command: "exact command"
+    - id: VAL-001
+      invariant_ids: [INV-001]
+      command: "exact command"
       result: passed | failed | skipped
       note: "Failure reason or skip reason only."
+
+evidence_closure:
+  result: passed | incapable | contradictory | stale | wrong_boundary | failed | missing | unexecuted
+  invariants:
+    - id: INV-001
+      boundary: unit | component | integration | runtime | ui_visual | performance | accessibility | inspection | other
+      freshness: current_task_batch
+      evidence_ids: [VAL-001]
+      closure_result: passed | incapable | contradictory | stale | wrong_boundary | failed | missing | unexecuted
+      repair_owner: null | task | plan | specification
 
 knowledge_disposition:
   action: none | update | supersede | reclassify
@@ -154,6 +166,7 @@ allocation_evidence:
 - For a task-scoped executor-result, `related.plan` and `related.task` are required and must equal the assigned task's `plan_id` and `id`. Nested `related.plan` and flat `related_plan` must resolve to exactly one identity. Missing, null, conflicting, or mismatched plan identity fails closed before `Completed` and before `build-review-package` produces a review package. The shared `validate-executor-result` helper owns this gate. Do not infer plan identity from a local task ID.
 - `changes.files` is required when files, symbols, artifacts, schemas, commands, or docs changed or were inspected as the task output.
 - `validation.commands` is required when any command, test, lint, inspection, or manual verification was run or intentionally skipped.
+- `evidence_closure` is required for a completed task whose compiled `evidence_capability.result` is `mapped`. Its invariant IDs, boundary, freshness, and evidence IDs must exactly match allocated task authority. Each referenced validation report carries the allocated `id` and `invariant_ids`; direct harness observation reuses those compiled identities. Only all-`passed` capable, current, correctly bounded evidence closes the task. Negative results fail closed and name the first repair owner: task for failed, stale, or unexecuted implementation evidence; plan for missing, wrong-boundary, or incapable allocation; specification for contradictory accepted authority. Executor-authored closure is corroboration and cannot replace harness observation or semantic review.
 - `knowledge_disposition` is required for every completed or partial meaningful move. It records task-local evidence only and does not authorize durable-knowledge retrieval or writes. A change action requires allocated `AUTH-NNN` aliases from the task's accepted decision authority, allocated source IDs, or exact paths already present in the compiled task scope; `none` requires an empty affected-authority list. Invented or unallocated AUTH aliases fail closed.
 - `contract_decoupling` is required when a task is marked contract-decoupled or depends on a common contract group.
 - `barrier` is required when a task is a barrier participant or convergence owner.
