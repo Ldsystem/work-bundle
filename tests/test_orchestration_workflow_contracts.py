@@ -349,6 +349,7 @@ def test_specification_contract_requires_bounded_impact_decisions() -> None:
         assert "projects_to" in text and "stable" in text
         assert "user-observable or contractual outcome" in text
         assert "measurable quality target" in text
+        assert "Stop when further exploration could change none of those surfaces and record the reason" in text
     for text in (contract, skill):
         assert "blocking" in text and "open question" in text.lower()
     assert "blocking relations prevent verification" in workflow
