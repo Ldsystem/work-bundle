@@ -329,6 +329,41 @@ def test_specification_contract_uses_semantic_loop_and_workspace_policy() -> Non
     assert "Extra evidence loop" not in contract
 
 
+def test_specification_contract_requires_bounded_impact_decisions() -> None:
+    contract = read("references/assets/orchestration/contract/specification-v1.md")
+    skill = read("skills/orch-create-specification/SKILL.md")
+    workflow = read("references/assets/orchestration/workflow.md")
+    evals = read("references/evals/orchestration/evals.json")
+    for text in (contract, skill, workflow):
+        for token in [
+            "impact_decisions",
+            "accepted | excluded | blocking",
+            "none_relevant",
+            "stopping_reason",
+            "projects_to",
+            "current-state evidence",
+            "dirty work",
+        ]:
+            assert token in text
+        assert "durable knowledge" in text
+        assert "projects_to" in text and "stable" in text
+        assert "user-observable or contractual outcome" in text
+        assert "measurable quality target" in text
+        assert "Stop when further exploration could change none of those surfaces and record the reason" in text
+    for text in (contract, skill):
+        assert "blocking" in text and "open question" in text.lower()
+    assert "blocking relations prevent verification" in workflow
+    assert "impact-decision view" in skill
+    assert "keep repository traversal out of `dev-semantic-convergence`" in skill
+    assert "Git history, prior work artifacts, execution evidence, or durable knowledge" in skill
+    assert "user did not mention" in contract
+    assert "existing downstream consumer" in evals
+    assert "greenfield isolated utility" in evals
+    assert "mandatory full-history archaeology" in evals
+    assert "prior work artifacts, execution evidence, or durable knowledge" in evals
+    assert "related-but-non-material relation" in evals
+
+
 def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
     from test_orchestration_execution_context import ACCEPTED_AUTHORITY, workspace, write_executor_handoff

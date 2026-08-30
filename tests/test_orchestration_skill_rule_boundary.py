@@ -64,6 +64,11 @@ def test_specification_uses_compact_semantic_convergence_and_workspace_policy() 
         "Quality gate: verified|blocked",
         "Initial User Purpose Evidence",
         "Design Interrogation",
+        "impact-decision view",
+        "accepted | excluded | blocking",
+        "none_relevant",
+        "stopping_reason",
+        "projects_to",
     ]:
         assert token in text
     assert "Extra evidence loop" not in text
