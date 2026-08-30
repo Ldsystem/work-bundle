@@ -32,6 +32,12 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Require the execution-evidence-driven final Knowledge Base Update disposition to be `completed` or `not-needed` before archive; archive remains blocked while promoted closure lacks validated keep-summarizing return evidence.
 - Create or require plan repair only for a decomposition defect, and specification repair only for a requirement, design, or authority defect.
 - Complete allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh only after all gates allow finalization.
+- When a post-execution runtime or UI defect is classified, or the accepted specification or plan explicitly claims runtime acceptance of a user-visible invariant, require a `RuntimeVerificationClassificationV1` before archive. Evaluate the original user request and accepted specification before the plan, task acceptance criteria, executor handoffs, produced commits, and execution-introduced behavior.
+- Require `RuntimeVerificationClassificationV1` to carry `classification`, `invariant_trace`, `negative_evidence`, and `owning_repair`. Accepted classes are `execution_introduced_bug`, `implementation_gap`, `new_feature`, and `uncovered_fixture`.
+- For an accepted-invariant `execution_introduced_bug` or `implementation_gap`, require `invariant_trace` to connect original requirement, specification invariant, owning plan task or acceptance criterion, changed commit, materialization, and runtime or UI proof. Passing component or unit tests alone is insufficient for this triggered runtime claim; do not impose a universal browser or UI gate when neither trigger applies.
+- Permit `new_feature` or `uncovered_fixture` with an empty `invariant_trace` only when `negative_evidence` proves no matching original user request or accepted specification invariant and no plan, handoff, or produced-commit contradiction.
+- Route `owning_repair` to the first broken artifact: task or acceptance criterion present plus implementation miss means task repair and re-review; accepted specification present plus plan omission means plan repair and resume from the owning step; original-request invariant omitted or contradicted by the accepted specification means specification repair. Only after those cases are excluded may a residual class stand.
+- Keep classification agent-owned and evidence-linked. A helper may require and structurally validate the record but must not decide the semantic class.
 
 ## Must Not
 

@@ -32,7 +32,7 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 
 | Mode | Command |
 |---|---|
-| Initialize | `init-project <root> --mode <single-repository|multi-repository> [--name <name>] [--force] [--dry-run] [--disable-work-bundle-git] [--create-project-skill-override]` |
+| Initialize | `init-project <root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>] [--name <name>] [--force] [--dry-run] [--disable-work-bundle-git] [--create-project-skill-override]` |
 | Doctor | `doctor-project <root> [--repair] [--force]` |
 | Inspect only | `show-project [--workspace-root <workspace-root> | --project-root <project-root>]` |
 | Strict validate | `validate-project <root> [--dry-run]` |

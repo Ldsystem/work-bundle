@@ -154,8 +154,42 @@ def test_final_review_is_workflow_audit_not_code_review() -> None:
         "accepted `update`, `supersede`, or `reclassify`",
         "rejected task dispositions",
         "archive remains blocked",
+        "RuntimeVerificationClassificationV1",
+        "invariant_trace",
+        "negative_evidence",
+        "owning_repair",
+        "execution_introduced_bug",
+        "implementation_gap",
+        "new_feature",
+        "uncovered_fixture",
     ]:
         assert token in text
+
+
+def test_runtime_verification_classification_contract_routes_the_first_broken_artifact() -> None:
+    for relative in [
+        "skills/orch-review-plan/SKILL.md",
+        "rules/orchestration/orch-review-completion.md",
+    ]:
+        text = read(relative)
+        for token in [
+            "RuntimeVerificationClassificationV1",
+            "original user request",
+            "accepted specification",
+            "invariant_trace",
+            "negative_evidence",
+            "execution_introduced_bug",
+            "implementation_gap",
+            "new_feature",
+            "uncovered_fixture",
+            "owning_repair",
+            "task repair",
+            "plan repair",
+            "specification repair",
+        ]:
+            assert token in text, f"{relative}: {token}"
+        assert "unit tests alone" in text
+        assert "must not decide the semantic class" in text
 
 
 def test_workflow_makes_task_review_optional_on_the_chain() -> None:

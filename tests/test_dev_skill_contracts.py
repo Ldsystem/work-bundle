@@ -13,11 +13,12 @@ def skill_text(name: str) -> str:
 
 def test_wb_initialize_skill_matches_live_cli() -> None:
     text = skill_text("wb-initialize-project")
+    epilog = (REPO_ROOT / "scripts" / "work-bundle" / "core.py").read_text(encoding="utf-8")
 
-    assert "`init-project <root> --mode <single-repository|multi-repository> [--workspace-root" not in text
+    assert "`init-project <root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>]" in text
+    assert "init-project <project-root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>]" in epilog
     assert "`doctor-project <root> [--workspace-root" not in text
     assert "`validate-project <root> [--workspace-root" not in text
-    assert "`init-project <root> --mode <single-repository|multi-repository> [--name <name>]" in text
     assert "`doctor-project <root> [--repair] [--force]`" in text
     assert "`validate-project <root> [--dry-run]`" in text
     assert "Existing command names and `--project-root` remain supported for single-repository projects." not in text

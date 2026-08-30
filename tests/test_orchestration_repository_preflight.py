@@ -512,3 +512,21 @@ def test_cli_outputs_machine_usable_json(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["repository_preflight"]["status"] == "passed"
     assert payload["repository_preflight"]["repositories"][0]["status"] == "clean"
+
+
+def test_repository_preflight_help_describes_accepted_baseline_contract() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "orch.py"),
+            "repository-preflight",
+            "--help",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--accepted-baseline" in result.stdout
+    assert "JSON file" in result.stdout
+    assert "accepted repository baselines" in result.stdout
