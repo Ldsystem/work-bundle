@@ -100,6 +100,10 @@ def _try_validate_task_handoff(
     compile_args = argparse.Namespace(
         project_root=getattr(args, "project_root", None),
         workspace_root=getattr(args, "workspace_root", None),
+        workspace_id=getattr(args, "workspace_id", None),
+        execution_id=getattr(args, "execution_id", None),
+        repository_id=getattr(args, "repository_id", None),
+        execution_runtime_root=getattr(args, "execution_runtime_root", None),
         task=str(task_path),
         handoff=None,
         base=None,
@@ -108,7 +112,11 @@ def _try_validate_task_handoff(
     try:
         _, brief_document = _compile_task_brief(compile_args)
         brief = brief_document["task_brief"]
-        validate_executor_result_for_task(handoff, brief)
+        observe = all(
+            getattr(args, field, None)
+            for field in ("workspace_id", "execution_id", "repository_id", "execution_runtime_root")
+        )
+        validate_executor_result_for_task(handoff, brief, observe=observe)
     except SystemExit:
         return None
     return handoff, brief

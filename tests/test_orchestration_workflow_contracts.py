@@ -504,6 +504,53 @@ def _write_archive_plan(
     )
 
 
+def test_archive_task_handoff_reentry_preserves_execution_binding_and_observes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import plans
+
+    task = tmp_path / "task.md"
+    task.write_text("---\nid: task-001\n---\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(plans, "_find_plan_task_path", lambda *_args: task)
+
+    def compile_brief(args: argparse.Namespace) -> tuple[Path, dict[str, object]]:
+        captured["compile_args"] = args
+        return task, {"task_brief": {"task_id": "task-001"}}
+
+    def validate(
+        handoff: dict[str, object], brief: dict[str, object], *, observe: bool = False
+    ) -> dict[str, object]:
+        captured["handoff"] = handoff
+        captured["brief"] = brief
+        captured["observe"] = observe
+        return handoff
+
+    monkeypatch.setattr(plans, "_compile_task_brief", compile_brief)
+    monkeypatch.setattr(plans, "validate_executor_result_for_task", validate)
+    args = argparse.Namespace(
+        project_root=str(tmp_path),
+        workspace_root=str(tmp_path),
+        workspace_id="workspace-001",
+        execution_id="execution-001",
+        repository_id="repository-001",
+        execution_runtime_root=str(tmp_path / "runtime"),
+    )
+    handoff = {"related": {"plan": "plan-001", "task": "task-001"}}
+
+    result = plans._try_validate_task_handoff(args, "plan-001", handoff)
+
+    assert result is not None
+    compile_args = captured["compile_args"]
+    assert isinstance(compile_args, argparse.Namespace)
+    assert compile_args.workspace_id == "workspace-001"
+    assert compile_args.execution_id == "execution-001"
+    assert compile_args.repository_id == "repository-001"
+    assert compile_args.execution_runtime_root == str(tmp_path / "runtime")
+    assert captured["observe"] is True
+
+
 FOLLOW_ON_WRITE_SCOPE_FILE = "scripts/orchestration/plans.py"
 ARCHIVE_NEUTRAL_COMMAND = "env true"
 
