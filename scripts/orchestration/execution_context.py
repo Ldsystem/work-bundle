@@ -19,6 +19,7 @@ from repository_preflight import capture_repository_evidence, task_caused_paths
 
 SOURCE_ID_RE = re.compile(r"^[A-Z][A-Z0-9_-]*-\d+$")
 AUTH_ALIAS_RE = re.compile(r"^AUTH-\d{3}$")
+EXCELLENCE_PROPOSAL_RE = re.compile(r"^EXC-\d+$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 SENSITIVE_KEY_RE = re.compile(
     r"(?:^|[_-])(credential_values?|password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)(?:$|[_-])",
@@ -416,7 +417,7 @@ def _source_records(path: Path, body: str) -> dict[str, str]:
     records: dict[str, str] = {}
 
     def add(identifier: str, value: str) -> None:
-        if AUTH_ALIAS_RE.fullmatch(identifier):
+        if AUTH_ALIAS_RE.fullmatch(identifier) or EXCELLENCE_PROPOSAL_RE.fullmatch(identifier):
             return
         value = _strip_markup(value)
         if not value:
@@ -459,8 +460,16 @@ def _assert_no_credential_values(value: Any, context: str = "packet") -> None:
         raise SystemExit(f"Blocked credential-like value in {context}")
 
 
+def _assert_not_excellence_proposal_id(identifier: str, context: str) -> None:
+    if EXCELLENCE_PROPOSAL_RE.fullmatch(identifier):
+        raise SystemExit(
+            f"Non-authoritative source ID {identifier}: excellence proposal IDs are excluded from {context}"
+        )
+
+
 def _resolve_reference(value: Any, records: dict[str, str], source_paths: list[Path]) -> Any:
     if isinstance(value, str) and SOURCE_ID_RE.fullmatch(value):
+        _assert_not_excellence_proposal_id(value, "compiled briefs")
         if value not in records:
             sources = ", ".join(path.as_posix() for path in source_paths)
             raise SystemExit(f"Unresolved source ID {value}; searched: {sources}")
@@ -1625,6 +1634,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
     if not source_ids:
         raise SystemExit(f"Task has no source_ids: {task_path}")
     for identifier in source_ids:
+        _assert_not_excellence_proposal_id(identifier, "compiled briefs")
         if not SOURCE_ID_RE.fullmatch(identifier) or identifier not in records:
             sources = ", ".join(path.as_posix() for path in source_paths)
             raise SystemExit(f"Unresolved source ID {identifier}; searched: {sources}")

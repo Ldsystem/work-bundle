@@ -7,7 +7,7 @@ description: 'Create executable WorkBundle plans, phases, and tasks from a verif
 
 ## Entry gate
 
-Plan only from a verified active specification with converged semantics, resolved blockers, stable source IDs, explicit knowledge disposition, and coherent repository evidence. Repair missing authority.
+Plan only from a verified active specification with converged semantics, resolved blockers, stable source IDs, explicit knowledge disposition, and coherent repository evidence. Repair missing authority. Compile only verified authoritative scope. Do not allocate `EXC-*` proposal IDs or rejected, deferred, or not-material excellence proposals as `source_ids`, task scope, or executor briefs. Accepted excellence work enters planning only through the stable requirement, constraint, interface, acceptance-criterion, or validation-target IDs it projected to.
 
 ## Planning workflow
 
@@ -73,6 +73,7 @@ The compiler resolves each allocated `AUTH-NNN` alias to `AUTH-NNN: <carried con
 Use `dev-semantic-convergence` with these lenses:
 
 - source-ID coverage;
+- non-authoritative excellence exclusion;
 - dependencies, task boundaries, and write scopes;
 - validation ownership;
 - rule, skill, and methodology allocation;

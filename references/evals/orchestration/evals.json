@@ -492,6 +492,12 @@
       "prompt": "An excellence scan finds one adjacent idea that cannot change an accepted contract surface and another option whose acceptance could change a user-observable outcome and validation target.",
       "expected_output": "Omits the related-but-non-material adjacent idea or records it not_material, surfaces the outcome-changing option as a proposal because accepting or rejecting it could change a requirement, constraint, acceptance criterion, user-observable or contractual outcome, architectural boundary, measurable quality target, validation target, or declared boundary, and stops when further exploration can change none of those surfaces with the reason recorded.",
       "files": []
+    },
+    {
+      "id": 89,
+      "prompt": "A planner allocates source_ids: [EXC-001] for a deferred excellence proposal while compiling an implementation plan.",
+      "expected_output": "Rejects EXC-* proposal IDs as non-authoritative; planning and the compiled brief use only the stable requirement, constraint, interface, acceptance-criterion, or validation-target IDs that an accepted proposal projected to.",
+      "files": []
     }
   ],
   "v4_evals": [

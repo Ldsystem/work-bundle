@@ -390,11 +390,15 @@ def test_specification_contract_requires_bounded_excellence_applicability() -> N
         assert "measurable quality target" in text
         assert "further exploration could change none of those surfaces" in text
     assert "excellence-applicability view" in skill
+    plan_skill = read("skills/orch-create-implementation-plan/SKILL.md")
+    assert "EXC-*" in plan_skill or "EXC-" in plan_skill
+    assert "deferred" in plan_skill and "executor briefs" in plan_skill
     assert "user-visible request with no evidenced adjacent improvement" in evals
     assert "silently implements a deferred proposal" in evals
     assert "accepted proposal" in evals and "stable authoritative" in evals
     assert "universal product-quality checklist" in evals
     assert "related-but-non-material adjacent idea" in evals
+    assert "source_ids: [EXC-001]" in evals
 
 
 def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp_path: Path) -> None:
@@ -777,6 +781,8 @@ def test_task_contract_compiles_methodology_capability_and_review() -> None:
         "verdict: pending",
         "Fresh task validation evidence exists",
         "acceptance_review.verdict",
+        "EXC-*",
+        "executor briefs",
     ]:
         assert token in contract
 
