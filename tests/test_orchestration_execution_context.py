@@ -113,6 +113,19 @@ def test_evidence_closure_accepts_capable_component_without_ui_gate() -> None:
     assert result["result"] == "passed"
 
 
+def test_evidence_closure_rejects_passed_executor_claim_without_harness_observation() -> None:
+    task, handoff, reported, _ = evidence_closure_fixture()
+    with pytest.raises(SystemExit, match="independent harness observation"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, None)
+
+
+def test_evidence_closure_rejects_incorrect_first_repair_owner() -> None:
+    task, handoff, reported, observed = evidence_closure_fixture(result="contradictory")
+    handoff["evidence_closure"]["invariants"][0]["repair_owner"] = "task"
+    with pytest.raises(SystemExit, match="must route specification"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+
+
 def test_evidence_closure_rejects_executor_report_without_allocated_identity() -> None:
     task, handoff, reported, observed = evidence_closure_fixture()
     reported["true"].pop("id")

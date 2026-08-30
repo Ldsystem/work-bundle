@@ -42,6 +42,16 @@ KNOWLEDGE_DISPOSITION_ACTIONS = {"none", "update", "supersede", "reclassify"}
 EVIDENCE_CAPABILITY_RESULTS = {"mapped", "no_validation_bearing_obligation"}
 EVIDENCE_BOUNDARIES = {"unit", "component", "integration", "runtime", "ui_visual", "performance", "accessibility", "inspection", "other"}
 EVIDENCE_CLOSURE_RESULTS = {"pending", "passed", "incapable", "contradictory", "stale", "wrong_boundary", "failed", "missing", "unexecuted"}
+EVIDENCE_REPAIR_OWNERS = {
+    "pending": "task",
+    "incapable": "task",
+    "contradictory": "specification",
+    "stale": "task",
+    "wrong_boundary": "plan",
+    "failed": "task",
+    "missing": "plan",
+    "unexecuted": "task",
+}
 KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE = re.compile(
     r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-[a-z0-9-]+\b)",
     re.IGNORECASE,
@@ -729,6 +739,8 @@ def _validate_evidence_closure(
         return {"result": "no_validation_bearing_obligation", "invariants": []}
     if capability.get("result") != "mapped" or state != "completed":
         return {"result": "not-terminal", "invariants": []}
+    if observed_validation is None:
+        raise SystemExit("evidence-closure-blocked: completed mapped invariants require independent harness observation")
     closure = handoff.get("evidence_closure")
     if not isinstance(closure, dict):
         raise SystemExit("Executor result is missing evidence_closure for mapped invariants")
@@ -765,8 +777,11 @@ def _validate_evidence_closure(
             raise SystemExit(f"evidence-closure-blocked: {invariant_id} has invalid closure_result")
         if closure_result != "passed":
             repair_owner = str(actual.get("repair_owner") or "task")
-            if repair_owner not in {"task", "plan", "specification"}:
-                raise SystemExit(f"evidence-closure-blocked: {invariant_id} has invalid repair owner")
+            expected_owner = EVIDENCE_REPAIR_OWNERS[closure_result]
+            if repair_owner != expected_owner:
+                raise SystemExit(
+                    f"evidence-closure-blocked: {invariant_id} {closure_result} must route {expected_owner}"
+                )
             raise SystemExit(
                 f"evidence-closure-blocked: {invariant_id} is {closure_result}; route {repair_owner}"
             )
@@ -1519,9 +1534,16 @@ def validate_executor_result_for_task(
                 raise SystemExit(
                     f"Executor result validation for {command} must be {allowed_text}; got {result_value}"
                 )
-    evidence_closure = _validate_evidence_closure(
-        handoff, task, state, reported_commands, None
-    )
+    capability = task.get("evidence_capability") if isinstance(task.get("evidence_capability"), dict) else {}
+    if state == "completed" and capability.get("result") == "mapped":
+        if not observe:
+            raise SystemExit(
+                "evidence-closure-blocked: completed mapped invariants require independent harness observation"
+            )
+    else:
+        evidence_closure = _validate_evidence_closure(
+            handoff, task, state, reported_commands, None
+        )
 
     evidence_applicability = _task_evidence_applicability(task)
     repository_entries: list[dict[str, Any]] = []
