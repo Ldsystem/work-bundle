@@ -104,6 +104,9 @@ def test_planner_allocates_methodology_capability_and_bounded_context() -> None:
         "earliest ordinary task",
         "cheaply falsify",
         "Do not add a risk score",
+        "EXC-",
+        "deferred",
+        "executor briefs",
     ]:
         assert token in text
 

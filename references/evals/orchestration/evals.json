@@ -516,6 +516,12 @@
       "prompt": "A completed executor result reports a green command but omits allocated INV/VAL identities, or reports incapable, contradictory, stale, wrong-boundary, failed, or unexecuted evidence.",
       "expected_output": "Blocks terminal closure, treats executor closure as corroboration rather than harness proof, and routes repair to the first owning task, plan, or specification while preserving optional task review and WOR-59 G9 separation.",
       "files": []
+    },
+    {
+      "id": 93,
+      "prompt": "A planner allocates source_ids: [EXC-001] for a deferred excellence proposal while compiling an implementation plan.",
+      "expected_output": "Rejects EXC-* proposal IDs as non-authoritative; planning and the compiled brief use only the stable requirement, constraint, interface, acceptance-criterion, or validation-target IDs that an accepted proposal projected to.",
+      "files": []
     }
   ],
   "v4_evals": [

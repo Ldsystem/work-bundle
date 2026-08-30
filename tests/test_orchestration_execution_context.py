@@ -844,6 +844,33 @@ def test_build_task_brief_fails_closed_for_missing_source_id_without_reading_kno
     assert not (root / ".work-bundle/runtime/execution/plan-001/task-004/task-brief.yaml").exists()
 
 
+def test_build_task_brief_fails_closed_for_excellence_proposal_source_id(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    spec.write_text(
+        spec.read_text(encoding="utf-8") + "- **EXC-001**: Deferred visual hierarchy improvement.\n",
+        encoding="utf-8",
+    )
+    task.write_text(task.read_text(encoding="utf-8").replace("TEST-004]", "TEST-004, EXC-001]"), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match=r"EXC-001.*excellence proposal"):
+        build_task_brief(args(root, task))
+
+    assert not (root / ".work-bundle/runtime/execution/plan-001/task-004/task-brief.yaml").exists()
+
+
+def test_build_task_brief_omits_unallocated_excellence_proposal_text(tmp_path: Path) -> None:
+    root, spec, task = workspace(tmp_path)
+    spec.write_text(
+        spec.read_text(encoding="utf-8") + "- **EXC-001**: Deferred visual hierarchy improvement.\n",
+        encoding="utf-8",
+    )
+
+    packet = build_task_brief(args(root, task)).read_text(encoding="utf-8")
+
+    assert "EXC-001" not in packet
+    assert "Deferred visual hierarchy" not in packet
+
+
 def test_build_task_brief_reads_current_task_contract_sections(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
     content = task.read_text(encoding="utf-8")

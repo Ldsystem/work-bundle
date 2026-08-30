@@ -85,7 +85,7 @@ The front-matter `truth_basis` is mandatory and uses the same five fields as the
 
 ## Source references
 
-List stable source IDs and their task-local effect. Do not duplicate full specification prose.
+List stable source IDs and their task-local effect. Do not duplicate full specification prose. Source IDs are authoritative specification IDs only. Do not cite `EXC-*` excellence proposal IDs; rejected, deferred, and not-material proposals stay out of executor briefs.
 
 | ID | Source path | Task-local effect |
 | --- | --- | --- |

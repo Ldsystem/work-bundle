@@ -297,7 +297,13 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         (
             skill_root / "orch-create-implementation-plan" / "SKILL.md",
             "orch-create-implementation-plan skill",
-            ["source-ID coverage", "dev-semantic-convergence", "context_mode: compiled-brief"],
+            [
+                "source-ID coverage",
+                "dev-semantic-convergence",
+                "context_mode: compiled-brief",
+                "EXC-*",
+                "executor briefs",
+            ],
         ),
         (
             skill_root / "orch-execute-plan" / "SKILL.md",
