@@ -57,6 +57,11 @@ def _task_brief(*, plan_id: str = "plan-001", task_id: str = "task-001") -> dict
         "files": {"read": [], "write": []},
         "truth_basis": {},
         "validation": [],
+        "evidence_capability": {
+            "result": "no_validation_bearing_obligation",
+            "reason": "This structural fixture makes no validation-bearing closure claim.",
+            "invariants": [],
+        },
         "review_required": False,
     }
 
@@ -395,6 +400,23 @@ def test_specification_contract_requires_bounded_excellence_applicability() -> N
     assert "accepted proposal" in evals and "stable authoritative" in evals
     assert "universal product-quality checklist" in evals
     assert "related-but-non-material adjacent idea" in evals
+
+
+def test_planning_contract_allocates_evidence_capability() -> None:
+    plan = read("references/assets/orchestration/contract/plan-v1.md")
+    task = read("references/assets/orchestration/contract/task-v1.md")
+    skill = read("skills/orch-create-implementation-plan/SKILL.md")
+    workflow = read("references/assets/orchestration/workflow.md")
+    for text in (plan, task, skill, workflow):
+        assert "evidence_capability" in text
+        assert "no_validation_bearing_obligation" in text
+    for text in (task, skill, workflow):
+        assert "capability_reason" in text
+        assert "freshness" in text
+        assert "task" in text.lower()
+    assert "WOR-61 `none_relevant`" in skill
+    assert "lightest capable" in skill
+    assert "universal runtime" in workflow
 
 
 def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp_path: Path) -> None:
@@ -856,6 +878,12 @@ def test_review_rule_uses_typed_resume_routing() -> None:
         "accepted `update`, `supersede`, or `reclassify`",
         "rejected dispositions",
         "archive",
+        "evidence_capability",
+        "INV/VAL",
+        "incapable green",
+        "pre-closure oracle-capability check",
+        "no_validation_bearing_obligation",
+        "WOR-59 G9 remains the unchanged post-execution classifier",
     ]:
         assert token in rule
 

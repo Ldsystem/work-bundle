@@ -39,6 +39,19 @@ TRUTH_BASIS_FIELDS = (
     "conflict_status",
 )
 KNOWLEDGE_DISPOSITION_ACTIONS = {"none", "update", "supersede", "reclassify"}
+EVIDENCE_CAPABILITY_RESULTS = {"mapped", "no_validation_bearing_obligation"}
+EVIDENCE_BOUNDARIES = {"unit", "component", "integration", "runtime", "ui_visual", "performance", "accessibility", "inspection", "other"}
+EVIDENCE_CLOSURE_RESULTS = {"pending", "passed", "incapable", "contradictory", "stale", "wrong_boundary", "failed", "missing", "unexecuted"}
+EVIDENCE_REPAIR_OWNERS = {
+    "pending": "task",
+    "incapable": "plan",
+    "contradictory": "specification",
+    "stale": "task",
+    "wrong_boundary": "plan",
+    "failed": "task",
+    "missing": "plan",
+    "unexecuted": "task",
+}
 KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE = re.compile(
     r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-[a-z0-9-]+\b)",
     re.IGNORECASE,
@@ -658,6 +671,143 @@ def _compile_truth_basis(
     }
 
 
+def _compile_evidence_capability(
+    task: dict[str, Any], task_id: str, source_ids: list[str], validation: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    raw = task.get("evidence_capability")
+    if raw is None:
+        raise SystemExit("Task evidence_capability is required")
+    if not isinstance(raw, dict) or raw.get("result") not in EVIDENCE_CAPABILITY_RESULTS:
+        raise SystemExit("Task evidence_capability result must be mapped or no_validation_bearing_obligation")
+    reason = _nonempty_text(raw.get("reason"))
+    if reason is None:
+        raise SystemExit("Task evidence_capability reason must be non-empty")
+    invariants = [item for item in _as_list(raw.get("invariants")) if isinstance(item, dict)]
+    if raw["result"] == "no_validation_bearing_obligation":
+        if invariants:
+            raise SystemExit("no_validation_bearing_obligation requires an empty invariant map")
+        return {"result": raw["result"], "reason": reason, "invariants": []}
+    if not invariants:
+        raise SystemExit("mapped evidence_capability requires at least one invariant")
+    validation_by_id = {str(item.get("id")): item for item in validation if _nonempty_text(item.get("id"))}
+    compiled: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in invariants:
+        invariant_id = _nonempty_text(item.get("id"))
+        if invariant_id is None or invariant_id in seen:
+            raise SystemExit("Evidence capability invariant IDs must be stable and unique")
+        seen.add(invariant_id)
+        allocated_sources = [str(value) for value in _as_list(item.get("source_ids"))]
+        if not allocated_sources or any(value not in source_ids for value in allocated_sources):
+            raise SystemExit(f"Evidence capability {invariant_id} cites unallocated source IDs")
+        if item.get("boundary") not in EVIDENCE_BOUNDARIES:
+            raise SystemExit(f"Evidence capability {invariant_id} has an invalid boundary")
+        if item.get("boundary") == "other" and _nonempty_text(item.get("other_mechanism")) is None:
+            raise SystemExit(f"Evidence capability {invariant_id} other boundary requires other_mechanism")
+        if item.get("task_id") != task_id:
+            raise SystemExit(f"Evidence capability {invariant_id} has the wrong task owner")
+        evidence_ids = [str(value) for value in _as_list(item.get("evidence_ids"))]
+        if not evidence_ids or any(value not in validation_by_id for value in evidence_ids):
+            raise SystemExit(f"Evidence capability {invariant_id} cites missing validation evidence")
+        for field in ("invariant", "oracle", "capability_reason", "freshness"):
+            if _nonempty_text(item.get(field)) is None:
+                raise SystemExit(f"Evidence capability {invariant_id} missing {field}")
+        if str(item.get("oracle")) not in evidence_ids:
+            raise SystemExit(f"Evidence capability {invariant_id} oracle must name an allocated evidence ID")
+        if item.get("closure_result") != "pending":
+            raise SystemExit(f"Evidence capability {invariant_id} closure_result must be initialized to pending")
+        for evidence_id in evidence_ids:
+            if invariant_id not in _as_list(validation_by_id[evidence_id].get("invariant_ids")):
+                raise SystemExit(f"Validation {evidence_id} does not bind {invariant_id}")
+            if _nonempty_text(validation_by_id[evidence_id].get("capability_reason")) is None:
+                raise SystemExit(f"Validation {evidence_id} missing capability_reason")
+        compiled.append(dict(item))
+    return {"result": "mapped", "reason": reason, "invariants": compiled}
+
+
+def _validate_evidence_closure(
+    handoff: dict[str, Any],
+    task: dict[str, Any],
+    state: str,
+    reported_commands: dict[str, dict[str, Any]],
+    observed_validation: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    capability = task.get("evidence_capability")
+    if not isinstance(capability, dict):
+        raise SystemExit("Compiled task is missing evidence_capability authority")
+    if capability.get("result") == "no_validation_bearing_obligation":
+        return {"result": "no_validation_bearing_obligation", "invariants": []}
+    if capability.get("result") != "mapped" or state != "completed":
+        return {"result": "not-terminal", "invariants": []}
+    if observed_validation is None:
+        raise SystemExit("evidence-closure-blocked: completed mapped invariants require independent harness observation")
+    closure = handoff.get("evidence_closure")
+    if not isinstance(closure, dict):
+        raise SystemExit("Executor result is missing evidence_closure for mapped invariants")
+    allocated = {
+        str(item.get("id")): item
+        for item in _as_list(capability.get("invariants"))
+        if isinstance(item, dict) and _nonempty_text(item.get("id"))
+    }
+    entries = [item for item in _as_list(closure.get("invariants")) if isinstance(item, dict)]
+    by_id = {str(item.get("id")): item for item in entries if _nonempty_text(item.get("id"))}
+    if len(by_id) != len(entries) or set(by_id) != set(allocated):
+        raise SystemExit("evidence-closure-blocked: mapped invariant closure IDs are missing or unexpected; route plan")
+    validation_by_id = {
+        str(item.get("id")): item
+        for item in _as_list(task.get("validation"))
+        if isinstance(item, dict) and _nonempty_text(item.get("id"))
+    }
+    observed_by_id = {
+        str(item.get("id")): item
+        for item in (observed_validation or [])
+        if isinstance(item, dict) and _nonempty_text(item.get("id"))
+    }
+    for invariant_id, expected in allocated.items():
+        actual = by_id[invariant_id]
+        if actual.get("boundary") != expected.get("boundary"):
+            raise SystemExit(f"evidence-closure-blocked: {invariant_id} is wrong-boundary; route plan")
+        if actual.get("freshness") != expected.get("freshness"):
+            raise SystemExit(f"evidence-closure-blocked: {invariant_id} is stale; route task")
+        evidence_ids = [str(value) for value in _as_list(actual.get("evidence_ids"))]
+        if evidence_ids != [str(value) for value in _as_list(expected.get("evidence_ids"))]:
+            raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence mapping is missing; route plan")
+        closure_result = str(actual.get("closure_result") or "missing")
+        if closure_result not in EVIDENCE_CLOSURE_RESULTS:
+            raise SystemExit(f"evidence-closure-blocked: {invariant_id} has invalid closure_result")
+        if closure_result != "passed":
+            repair_owner = str(actual.get("repair_owner") or "task")
+            expected_owner = EVIDENCE_REPAIR_OWNERS[closure_result]
+            if repair_owner != expected_owner:
+                raise SystemExit(
+                    f"evidence-closure-blocked: {invariant_id} {closure_result} must route {expected_owner}"
+                )
+            raise SystemExit(
+                f"evidence-closure-blocked: {invariant_id} is {closure_result}; route {repair_owner}"
+            )
+        for evidence_id in evidence_ids:
+            validation = validation_by_id.get(evidence_id)
+            if validation is None:
+                raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} is missing; route plan")
+            command = str(validation.get("command") or "").strip()
+            reported = reported_commands.get(command)
+            if not isinstance(reported, dict):
+                raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} is unexecuted; route task")
+            if str(reported.get("id") or "") != evidence_id or invariant_id not in _as_list(reported.get("invariant_ids")):
+                raise SystemExit(f"evidence-closure-blocked: reported evidence identity for {invariant_id} is missing; route task")
+            if reported.get("result") != "passed":
+                raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} failed; route task")
+            if observed_validation is not None:
+                observed = observed_by_id.get(evidence_id)
+                if not isinstance(observed, dict) or invariant_id not in _as_list(observed.get("invariant_ids")):
+                    raise SystemExit(f"evidence-closure-blocked: harness evidence for {invariant_id} is missing; route task")
+                if observed.get("result") != "passed":
+                    raise SystemExit(f"evidence-closure-blocked: harness evidence {evidence_id} failed; route task")
+    if closure.get("result") != "passed":
+        raise SystemExit("evidence-closure-blocked: aggregate closure result is not passed")
+    return {"result": "passed", "invariants": entries}
+
+
 def evaluate_knowledge_closure_state(
     *,
     upstream_disposition: str,
@@ -993,13 +1143,14 @@ def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: d
         observed = {"command": command, "result": "skipped", "kind": kind}
         if kind == "inspection":
             observed["mechanism"] = str(item.get("mechanism") or "").strip()
+        observed.update({"id": item.get("id"), "invariant_ids": list(_as_list(item.get("invariant_ids")))})
         return observed
     if kind == "inspection":
         mechanism = str(item.get("mechanism") or "").strip()
         if not mechanism:
             raise SystemExit("Inspection validation requires a named harness-owned mechanism")
         result_value = _run_named_inspection(mechanism, execution_root, task, item)
-        return {"command": command, "result": result_value, "kind": "inspection", "mechanism": mechanism}
+        return {"command": command, "result": result_value, "kind": "inspection", "mechanism": mechanism, "id": item.get("id"), "invariant_ids": list(_as_list(item.get("invariant_ids")))}
     completed = subprocess.run(
         command,
         shell=True,
@@ -1012,6 +1163,8 @@ def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: d
         "command": command,
         "result": "passed" if completed.returncode == 0 else "failed",
         "kind": "process",
+        "id": item.get("id"),
+        "invariant_ids": list(_as_list(item.get("invariant_ids"))),
     }
 
 
@@ -1352,6 +1505,7 @@ def validate_executor_result_for_task(
         if isinstance(item, dict) and item.get("command")
     ]
     observed_validation = None
+    evidence_closure = None
     reported_commands: dict[str, dict[str, Any]] = {}
     if state == "completed" and required_items:
         reported = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
@@ -1380,6 +1534,16 @@ def validate_executor_result_for_task(
                 raise SystemExit(
                     f"Executor result validation for {command} must be {allowed_text}; got {result_value}"
                 )
+    capability = task.get("evidence_capability") if isinstance(task.get("evidence_capability"), dict) else {}
+    if state == "completed" and capability.get("result") == "mapped":
+        if not observe:
+            raise SystemExit(
+                "evidence-closure-blocked: completed mapped invariants require independent harness observation"
+            )
+    else:
+        evidence_closure = _validate_evidence_closure(
+            handoff, task, state, reported_commands, None
+        )
 
     evidence_applicability = _task_evidence_applicability(task)
     repository_entries: list[dict[str, Any]] = []
@@ -1411,11 +1575,20 @@ def validate_executor_result_for_task(
             repository_id=repository_id,
             execution_runtime_root=execution_runtime_root,
         )
+        evidence_closure = _validate_evidence_closure(
+            handoff, task, state, reported_commands, observed_validation
+        )
+    if state == "completed" and capability.get("result") == "mapped":
+        if observed_validation is None or not isinstance(evidence_closure, dict) or evidence_closure.get("result") != "passed":
+            raise SystemExit(
+                "evidence-closure-blocked: completed mapped invariants require produced harness observations and passed evidence closure"
+            )
     return {
         "knowledge_disposition": knowledge_disposition,
         "unresolved": unresolved,
         "result_state": state,
         "evidence_applicability": evidence_applicability,
+        "evidence_closure": evidence_closure,
         **({"observed_validation": observed_validation} if observed_validation is not None else {}),
     }
 
@@ -1562,7 +1735,7 @@ def _compile_structured_validation_item(item: Any) -> dict[str, Any]:
             "Task validation kind must be process or inspection; untyped structured validation is legacy-untyped"
         )
     compiled["kind"] = kind
-    for key in ("command", "proves", "expected", "acceptable_results", "digest"):
+    for key in ("id", "invariant_ids", "capability_reason", "command", "proves", "expected", "acceptable_results", "digest"):
         if key in item:
             compiled[key] = item[key]
     if kind == "inspection":
@@ -1676,7 +1849,14 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         "constraints": [f"{sid}: {records[sid]}" for sid in source_ids if sid.startswith("CON-")],
     }
     truth_basis = _compile_truth_basis(task, records, source_paths)
-    validation = _resolve_reference(validation_value, records, source_paths)
+    validation = [
+        {
+            key: value if key in {"id", "invariant_ids"} else _resolve_reference(value, records, source_paths)
+            for key, value in item.items()
+        }
+        for item in validation_value
+    ]
+    evidence_capability = _compile_evidence_capability(task, task_id, source_ids, validation)
     acceptance_review = task.get("acceptance_review")
     if acceptance_review in (None, {}):
         review_required = False
@@ -1706,6 +1886,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
             "evidence_applicability": evidence_applicability,
             "workspace": {"root": str(root)},
             "validation": validation,
+            "evidence_capability": evidence_capability,
             "handoff_contract": "executor-result-v1",
             "review_required": review_required,
         }
@@ -1930,6 +2111,9 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "",
         "## Accepted Truth Basis",
         *_markdown_items([task.get("truth_basis", {})]),
+        "",
+        "## Evidence capability",
+        *_markdown_items([task.get("evidence_capability", {})]),
         "",
         "## Allowed scope",
         *_markdown_items(allowed_scope),
