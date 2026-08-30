@@ -34,7 +34,7 @@ Rule-store scope chooses which rules root is created, synced, or validated:
 | `project` | `$workspace_root/.work-bundle/rules/` | Workspace project-scope rules shared by its members. |
 | `explicit` | user-supplied `<rules-root>` | Backward-compatible direct root mode. |
 
-Rule-store scope is not the same as a rule area directory. Area directories inside any rules root remain `work-bundle/`, `keep-summarizing/`, `orchestration/`, and `integrity-check/`.
+Rule-store scope is not the same as a rule area directory. Area directories inside any rules root remain `work-bundle/`, `keep-summarizing/`, and `orchestration/`.
 
 **Toolkit write boundary:** agents must not create, edit, delete, migrate, or index `$work_bundle_root/rules/**` unless `$workspace_root == $work_bundle_root`. If the active workspace root is different from the toolkit root, stop with a boundary blocker instead of mutating toolkit rules.
 
@@ -50,8 +50,6 @@ Rule-store scope is not the same as a rule area directory. Area directories insi
     ks-*.md
   orchestration/
     orch-*.md
-  integrity-check/
-    rule-integrity-check-*.md
 ```
 
 | Rule kind | Location | When to use |
@@ -68,7 +66,6 @@ There is **no** `global/` area directory inside a rules root. Global rules use r
 | `wb-` | `rules/work-bundle/` |
 | `ks-` | `rules/keep-summarizing/` |
 | `orch-` | `rules/orchestration/` |
-| `rule-integrity-check-` | `rules/integrity-check/` |
 | no area prefix / cross-cutting | `<rules-root>/` |
 
 Allowed scope directory names are enumerated in `references/wb-create-rule-validation.yaml` under `allowed_scopes`. Mechanical path placement checks use `id_prefix_scope_map` and `path_rules` from that manifest.

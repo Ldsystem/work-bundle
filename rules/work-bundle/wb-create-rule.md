@@ -19,8 +19,8 @@ Summarize the enforceable contract for creating, migrating, and validating work-
 ## Must
 
 - Resolve rule-store scope before rule work: `toolkit` → `$work_bundle_root/rules/`, `global` → `$work_bundle_config_root/rules/`, `project` → `$workspace_root/.work-bundle/rules/`, or explicit root compatibility mode.
-- Treat rule-store scope separately from rule area directories (`work-bundle/`, `keep-summarizing/`, `orchestration/`, `integrity-check/`).
-- Store scoped rules under `<rules-root>/<scope>/<rule-id>.md` using the prefix map (`wb-` → `work-bundle/`, `ks-` → `keep-summarizing/`, `orch-` → `orchestration/`, `rule-integrity-check-` → `integrity-check/`).
+- Treat rule-store scope separately from rule area directories (`work-bundle/`, `keep-summarizing/`, `orchestration/`).
+- Store scoped rules under `<rules-root>/<scope>/<rule-id>.md` using the prefix map (`wb-` → `work-bundle/`, `ks-` → `keep-summarizing/`, `orch-` → `orchestration/`).
 - Store cross-cutting rules at `<rules-root>/<rule-id>.md` directly under the selected rules root; do not use a `global/` area directory.
 - Use canonical front matter: `id`, `applies_when`, `enforcement`, `load`, `requires`.
 - Include body sections: Purpose, Must, Must Not, Validation, On Violation.
