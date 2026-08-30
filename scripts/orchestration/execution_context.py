@@ -1614,7 +1614,7 @@ def _compile_structured_validation_item(item: Any) -> dict[str, Any]:
             "Task validation kind must be process or inspection; untyped structured validation is legacy-untyped"
         )
     compiled["kind"] = kind
-    for key in ("command", "proves", "expected", "acceptable_results", "digest"):
+    for key in ("id", "invariant_ids", "capability_reason", "command", "proves", "expected", "acceptable_results", "digest"):
         if key in item:
             compiled[key] = item[key]
     if kind == "inspection":
@@ -1728,7 +1728,13 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         "constraints": [f"{sid}: {records[sid]}" for sid in source_ids if sid.startswith("CON-")],
     }
     truth_basis = _compile_truth_basis(task, records, source_paths)
-    validation = _resolve_reference(validation_value, records, source_paths)
+    validation = [
+        {
+            key: value if key in {"id", "invariant_ids"} else _resolve_reference(value, records, source_paths)
+            for key, value in item.items()
+        }
+        for item in validation_value
+    ]
     evidence_capability = _compile_evidence_capability(task, task_id, source_ids, validation)
     acceptance_review = task.get("acceptance_review")
     if acceptance_review in (None, {}):
