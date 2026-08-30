@@ -364,6 +364,34 @@ def test_specification_contract_requires_bounded_impact_decisions() -> None:
     assert "related-but-non-material relation" in evals
 
 
+def test_specification_contract_requires_bounded_excellence_applicability() -> None:
+    contract = read("references/assets/orchestration/contract/specification-v1.md")
+    skill = read("skills/orch-create-specification/SKILL.md")
+    workflow = read("references/assets/orchestration/workflow.md")
+    evals = read("references/evals/orchestration/evals.json")
+    for text in (contract, skill, workflow):
+        for token in [
+            "excellence_applicability",
+            "no_material_opportunity",
+            "material_opportunities",
+            "accepted | rejected | deferred | not_material",
+            "Only accepted proposals",
+            "unanswered proposals become deferred",
+            "evidence",
+            "cost",
+            "risk",
+            "recommendation",
+        ]:
+            assert token in text
+        assert "universal checklist" in text
+        assert "one compact pass" in text
+    assert "excellence-applicability view" in skill
+    assert "user-visible request with no evidenced adjacent improvement" in evals
+    assert "silently implements a deferred proposal" in evals
+    assert "accepted proposal" in evals and "stable authoritative" in evals
+    assert "universal product-quality checklist" in evals
+
+
 def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
     from test_orchestration_execution_context import ACCEPTED_AUTHORITY, workspace, write_executor_handoff
