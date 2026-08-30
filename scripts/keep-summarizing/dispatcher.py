@@ -14,6 +14,14 @@ from query import cmd_query
 from questions import cmd_add_question, cmd_list_questions, cmd_match_questions, cmd_resolve_question
 from registry import cmd_list_projects, cmd_register_project, cmd_registry_doctor, cmd_unregister_project
 
+RECOGNIZED_COMMANDS = frozenset({
+    "init", "resolve", "write-note", "index", "query", "index-open-questions",
+    "git", "doctor", "output", "breakdown-design", "add-question",
+    "list-questions", "match-questions", "resolve-question", "migrate-legacy",
+    "migrate-v3", "register-project", "unregister-project", "list-projects",
+    "registry-doctor",
+})
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
