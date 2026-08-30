@@ -33,6 +33,55 @@ from control_plane import (
 )
 from registry_layout import cmd_migrate_registered_projects
 
+LEGACY_DEFECT_COMMANDS = {
+    'violation-ensure-store': 'defect-ensure-store',
+    'violation-create-evidence': 'defect-create-evidence',
+    'violation-build-index': 'defect-build-index',
+    'violation-write-index': 'defect-write-index',
+    'violation-archive-evidence': 'defect-archive-evidence',
+}
+COMMAND_ALIASES = {
+    'apply-project-initialization': 'init-project',
+    'apply-repository-model': 'initialize-project',
+    'extract-domain-profile': 'generate-project-metadata-profile',
+    'merge-registry-entry': 'register-skill',
+    'validate-project-initialization': 'validate-project',
+    'validate-runtime-artifacts': 'doctor',
+    'validate-repository-health': 'repository-health',
+    'validate-workflow-branches': 'workflow-branches',
+}
+EXECUTION_WORKSPACE_COMMANDS = frozenset({
+    'execution-workspace-prepare',
+    'execution-workspace-status',
+    'execution-workspace-mark-terminal',
+    'execution-workspace-cleanup-owned',
+    'execution-workspace-doctor-stale',
+})
+LIVE_COMMANDS = frozenset({
+    'migrate-work-bundle-config', 'init-project', 'initialize-project',
+    'register-project', 'show-project', 'migrate-project',
+    'migrate-control-plane', 'migrate-registered-projects', 'init-workspace',
+    'publish-control-plane', 'attach-workspace', 'doctor-workspace',
+    'add-workspace-member', 'detach-workspace', 'migrate-to-multi-repository',
+    'doctor-project', 'provision-member', 'cleanup-member', 'credential-list',
+    'instruction-audit', 'session-start', 'inspect-project-initialization',
+    'validate-project', 'set-prefer-subagent', 'create-rules', 'validate-rules',
+    'defect-ensure-store', 'defect-create-evidence', 'defect-build-index',
+    'defect-write-index', 'defect-archive-evidence', 'defect-migrate-store',
+    'doctor', 'repository-health', 'validate-directive-wiring',
+    'validate-skill-registry', 'validate-work-bundle-rules',
+    'render-doctor-report', 'workflow-branches',
+    'generate-project-metadata-profile', 'merge-project-metadata-profile',
+    'validate-project-metadata-profile', 'inspect-skill',
+    'validate-registry-entry', 'register-skill', 'merge-skill-hints',
+}) | EXECUTION_WORKSPACE_COMMANDS
+RECOGNIZED_COMMANDS = frozenset(
+    LIVE_COMMANDS
+    | COMMAND_ALIASES.keys()
+    | LEGACY_DEFECT_COMMANDS.keys()
+    | LEGACY_COMMAND_MIGRATIONS.keys()
+)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -45,28 +94,11 @@ def main() -> int:
     parser.add_argument('args', nargs=argparse.REMAINDER)
     parsed = parser.parse_args()
     command = parsed.command
-    legacy_defect_commands = {
-        'violation-ensure-store': 'defect-ensure-store',
-        'violation-create-evidence': 'defect-create-evidence',
-        'violation-build-index': 'defect-build-index',
-        'violation-write-index': 'defect-write-index',
-        'violation-archive-evidence': 'defect-archive-evidence',
-    }
-    if command in legacy_defect_commands:
-        return cmd_legacy_command_removed(command, legacy_defect_commands[command])
+    if command in LEGACY_DEFECT_COMMANDS:
+        return cmd_legacy_command_removed(command, LEGACY_DEFECT_COMMANDS[command])
     if command in LEGACY_COMMAND_MIGRATIONS:
         return cmd_legacy_command_removed(command, LEGACY_COMMAND_MIGRATIONS[command])
-    aliases = {
-        'apply-project-initialization': 'init-project',
-        'apply-repository-model': 'initialize-project',
-        'extract-domain-profile': 'generate-project-metadata-profile',
-        'merge-registry-entry': 'register-skill',
-        'validate-project-initialization': 'validate-project',
-        'validate-runtime-artifacts': 'doctor',
-        'validate-repository-health': 'repository-health',
-        'validate-workflow-branches': 'workflow-branches',
-    }
-    command = aliases.get(command, command)
+    command = COMMAND_ALIASES.get(command, command)
     if command == 'migrate-work-bundle-config':
         return cmd_migrate_work_bundle_config(parsed.args)
     if command in {'init-project', 'initialize-project'}:
@@ -111,10 +143,9 @@ def main() -> int:
         except CredentialError as exc:
             out({'status': 'blocked', 'failure_code': str(exc)})
             return 1
-    if command.startswith('execution-workspace-'):
+    if command in EXECUTION_WORKSPACE_COMMANDS:
         action = command.removeprefix('execution-workspace-')
-        if action in {'prepare', 'status', 'mark-terminal', 'cleanup-owned', 'doctor-stale'}:
-            return cmd_execution_workspace(action, parsed.args)
+        return cmd_execution_workspace(action, parsed.args)
     if command == 'instruction-audit':
         return cmd_instruction_audit(parsed.args)
     if command == 'session-start':

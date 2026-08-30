@@ -13,6 +13,15 @@ from plans import cmd_archive_plan, cmd_index_plans, cmd_list_plans, cmd_set_pla
 from repository_preflight import cmd_repository_preflight
 from specs import cmd_index_specs, cmd_list_specs, cmd_set_spec_status, cmd_write_spec
 
+RECOGNIZED_COMMANDS = frozenset({
+    "init", "doctor", "state", "next-action-candidates", "git-status",
+    "repository-preflight", "build-task-brief", "build-review-package",
+    "validate-executor-result", "related", "write-doc", "write-spec",
+    "list-specs", "set-spec-status", "index-specs", "write-plan", "list-plans",
+    "set-plan-status", "archive-plan", "index-plans", "write-phase", "write-task",
+    "write-handoff", "list-handoffs", "set-handoff-status", "index-handoffs",
+})
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
