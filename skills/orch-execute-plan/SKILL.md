@@ -42,7 +42,7 @@ python3 scripts/orch.py validate-executor-result --task <task-path> --handoff <h
 - Write a sparse `executor-result-v1` handoff containing task identity, changed paths, validation, repository/CodeGraph fallback, allocated obligations, unresolved blockers, local task-fit evidence, and a knowledge disposition of `none`, `update`, `supersede`, or `reclassify`.
 - Knowledge disposition contains task-local evidence only. It must not name knowledge paths, invoke any `ks-*` skill, or authorize persistence; final orchestration review owns approved follow-up.
 - Do not perform acceptance judgment or mark a review-required task complete.
-- Trigger `wb-violation-evaluation` only for a new unintended WorkBundle-related conflict, error, failed validation, or contradictory workflow behavior. Stop once visible relatedness is established; no chain-of-thought or exhaustive tracing is required.
+- Trigger `wb-defect-evaluation` only for a new unintended WorkBundle-related conflict, error, failed validation, or contradictory workflow behavior. Stop once visible relatedness is established; no chain-of-thought or exhaustive tracing is required.
 
 ## Independent task review
 

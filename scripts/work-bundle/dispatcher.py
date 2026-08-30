@@ -12,12 +12,13 @@ from bootstrap_config import cmd_migrate_work_bundle_config
 from project import cmd_cleanup_member, cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_migrate_to_multi_repository, cmd_project, cmd_provision_member, cmd_register_project_command, cmd_session_start, cmd_set_prefer_subagent, cmd_show_project, cmd_validate_project
 from rules import cmd_create_rules, cmd_validate_rules
 from skill_registry import cmd_merge_skill_hints, cmd_registry
-from violations import (
-    cmd_violation_archive_evidence,
-    cmd_violation_build_index,
-    cmd_violation_create_evidence,
-    cmd_violation_ensure_store,
-    cmd_violation_write_index,
+from defects import (
+    cmd_defect_archive_evidence,
+    cmd_defect_build_index,
+    cmd_defect_create_evidence,
+    cmd_defect_ensure_store,
+    cmd_defect_migrate_store,
+    cmd_defect_write_index,
 )
 from credential import CredentialError, list_metadata
 from execution_workspace import cmd_execution_workspace
@@ -44,6 +45,15 @@ def main() -> int:
     parser.add_argument('args', nargs=argparse.REMAINDER)
     parsed = parser.parse_args()
     command = parsed.command
+    legacy_defect_commands = {
+        'violation-ensure-store': 'defect-ensure-store',
+        'violation-create-evidence': 'defect-create-evidence',
+        'violation-build-index': 'defect-build-index',
+        'violation-write-index': 'defect-write-index',
+        'violation-archive-evidence': 'defect-archive-evidence',
+    }
+    if command in legacy_defect_commands:
+        return cmd_legacy_command_removed(command, legacy_defect_commands[command])
     if command in LEGACY_COMMAND_MIGRATIONS:
         return cmd_legacy_command_removed(command, LEGACY_COMMAND_MIGRATIONS[command])
     aliases = {
@@ -119,16 +129,18 @@ def main() -> int:
         return cmd_create_rules(parsed.args)
     if command == 'validate-rules':
         return cmd_validate_rules(parsed.args)
-    if command == 'violation-ensure-store':
-        return cmd_violation_ensure_store(parsed.args)
-    if command == 'violation-create-evidence':
-        return cmd_violation_create_evidence(parsed.args)
-    if command == 'violation-build-index':
-        return cmd_violation_build_index(parsed.args)
-    if command == 'violation-write-index':
-        return cmd_violation_write_index(parsed.args)
-    if command == 'violation-archive-evidence':
-        return cmd_violation_archive_evidence(parsed.args)
+    if command == 'defect-ensure-store':
+        return cmd_defect_ensure_store(parsed.args)
+    if command == 'defect-create-evidence':
+        return cmd_defect_create_evidence(parsed.args)
+    if command == 'defect-build-index':
+        return cmd_defect_build_index(parsed.args)
+    if command == 'defect-write-index':
+        return cmd_defect_write_index(parsed.args)
+    if command == 'defect-archive-evidence':
+        return cmd_defect_archive_evidence(parsed.args)
+    if command == 'defect-migrate-store':
+        return cmd_defect_migrate_store(parsed.args)
     if command in {'doctor', 'repository-health', 'validate-directive-wiring', 'validate-skill-registry', 'validate-work-bundle-rules'}:
         return cmd_doctor(parsed.args)
     if command == 'render-doctor-report':

@@ -6,7 +6,7 @@ purpose:
   - Orchestration skills: `orch-*`, provide skills for feature-implementation orchestration, including evidence gathering, specification/plan creation, execution instruction, verifying, etc.
   - General conception:
   - `work_bundle_root`: installed WorkBundle toolkit source; it owns builtin skills, rules, references, and toolkit helper code.
-  - `work_bundle_config_root`: user runtime state at `~/.work-bundle/`; it owns bootstrap, global registries, global rules, and violation state.
+  - `work_bundle_config_root`: user runtime state at `~/.work-bundle/`; it owns bootstrap, global registries, global rules, and defect state.
   - `workspace_root`: authority root for one managed workspace; it owns `.work-bundle/`, root `AGENTS.md`, `script/`, and `credentials/`; in multi-repository mode it also owns managed repository member paths.
   - `project_root`: root of one concrete source repository checkout that agents inspect, edit, test, and commit. In multi-repository mode it is a child of `workspace_root`; in single-repository mode it equals `workspace_root`.
 

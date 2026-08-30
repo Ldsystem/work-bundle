@@ -50,7 +50,7 @@ The record contains `classification`, `invariant_trace`, `negative_evidence`, an
 
 Classification remains agent-owned and evidence-linked. A helper may require the record and validate its structure, but must not decide the semantic class. This audit must not expand into a broad source-quality reread or create another implementation-review agent.
 
-Keep same-scope specification-owned handling authoritative for a first-observed classification defect. Persist separate WorkBundle violation evidence only after `wb-violation-evaluation` classifies the finding as work-bundle-scoped or mixed and same-scope specification-owned handling no longer applies.
+Keep same-scope specification-owned handling authoritative for a first-observed classification defect. Persist separate WorkBundle defect evidence only after `wb-defect-evaluation` classifies the finding as work-bundle-scoped or mixed and same-scope specification-owned handling no longer applies.
 
 Use project files only for bounded identity and finalization evidence. Do not broadly inspect source to decide code quality, redo task review, reread implementation for code quality, repair source/tests, or start another implementation-review agent for plan-level acceptance.
 

@@ -92,10 +92,10 @@ convergence:
   checks:
     - "exact command or inspection"
 
-violation_closure:
+defect_closure:
   status: not-applicable | carried-to-review | completed | blocked
   evidence:
-    - violation-id-or-path
+    - defect-id-or-path
   note: "Review-only closure evidence; executors do not delete evidence."
 
 unresolved:
@@ -171,7 +171,7 @@ allocation_evidence:
 - `contract_decoupling` is required when a task is marked contract-decoupled or depends on a common contract group.
 - `barrier` is required when a task is a barrier participant or convergence owner.
 - `convergence` is required when the task owns post-barrier joint debug, integration checks, or cross-branch validation.
-- `violation_closure` is required when a review task closes or carries specification-included violation evidence.
+- `defect_closure` is required when a review task closes or carries specification-included defect evidence.
 - `unresolved` is included only when blockers or issues remain.
 - `task_fit_check` is required for completed and partial task results. It records the assigned task, result `clean|repaired|unresolved|skipped`, artifacts checked, and meaningful findings.
 - `acceptance_review` is required when the task contract requires review. A review-required task cannot become `Completed` until the verdict is `accept`.
@@ -214,7 +214,7 @@ Compact handoffs must not weaken safety gates:
 - `knowledge_disposition.action` is exactly `none`, `update`, `supersede`, or `reclassify`; reasons and affected authority must not name knowledge paths or any `ks-*` skill, and review owns any approved persistence follow-up.
 - Contract-decoupled handoffs must show validation against the common contract and accepted prior handoffs, not sibling in-progress implementation.
 - Barrier handoffs must show whether the participant reached the barrier or blocked before convergence work is scheduled.
-- Violation closure handoffs must use review-owned lifecycle evidence and must not delete violation evidence files.
+- Defect closure handoffs must use review-owned lifecycle evidence and must not delete defect evidence files.
 
 ## Format Guidance
 
