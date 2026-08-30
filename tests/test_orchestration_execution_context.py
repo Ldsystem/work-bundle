@@ -83,7 +83,7 @@ def test_evidence_closure_requires_mapped_terminal_record() -> None:
 @pytest.mark.parametrize(
     ("closure_result", "repair_owner"),
     [
-        ("incapable", "task"),
+        ("incapable", "plan"),
         ("contradictory", "specification"),
         ("stale", "task"),
         ("wrong_boundary", "plan"),
@@ -119,10 +119,16 @@ def test_evidence_closure_rejects_passed_executor_claim_without_harness_observat
         execution_context._validate_evidence_closure(handoff, task, "completed", reported, None)
 
 
-def test_evidence_closure_rejects_incorrect_first_repair_owner() -> None:
-    task, handoff, reported, observed = evidence_closure_fixture(result="contradictory")
-    handoff["evidence_closure"]["invariants"][0]["repair_owner"] = "task"
-    with pytest.raises(SystemExit, match="must route specification"):
+@pytest.mark.parametrize(
+    ("closure_result", "wrong_owner", "expected_owner"),
+    [("incapable", "task", "plan"), ("contradictory", "task", "specification")],
+)
+def test_evidence_closure_rejects_incorrect_first_repair_owner(
+    closure_result: str, wrong_owner: str, expected_owner: str
+) -> None:
+    task, handoff, reported, observed = evidence_closure_fixture(result=closure_result)
+    handoff["evidence_closure"]["invariants"][0]["repair_owner"] = wrong_owner
+    with pytest.raises(SystemExit, match=f"must route {expected_owner}"):
         execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
 
 

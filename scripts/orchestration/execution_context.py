@@ -44,7 +44,7 @@ EVIDENCE_BOUNDARIES = {"unit", "component", "integration", "runtime", "ui_visual
 EVIDENCE_CLOSURE_RESULTS = {"pending", "passed", "incapable", "contradictory", "stale", "wrong_boundary", "failed", "missing", "unexecuted"}
 EVIDENCE_REPAIR_OWNERS = {
     "pending": "task",
-    "incapable": "task",
+    "incapable": "plan",
     "contradictory": "specification",
     "stale": "task",
     "wrong_boundary": "plan",
