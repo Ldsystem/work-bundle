@@ -436,7 +436,7 @@
     {
       "id": 79,
       "prompt": "Current-state evidence fully explains a material relation and is not contradictory, but a reviewer asks for mandatory full-history archaeology before specification verification.",
-      "expected_output": "Declines mandatory archaeology, records the current-state evidence and stopping reason, and escalates to targeted Git history, prior work, or execution evidence only for contradiction, unresolved ownership, regression causality, or governing legacy decisions.",
+      "expected_output": "Declines mandatory archaeology, records the current-state evidence and stopping reason, and escalates to targeted Git history, prior work artifacts, execution evidence, or durable knowledge only for contradiction, unresolved ownership, regression causality, or governing legacy decisions.",
       "files": []
     },
     {
