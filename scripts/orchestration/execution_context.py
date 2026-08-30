@@ -1578,6 +1578,11 @@ def validate_executor_result_for_task(
         evidence_closure = _validate_evidence_closure(
             handoff, task, state, reported_commands, observed_validation
         )
+    if state == "completed" and capability.get("result") == "mapped":
+        if observed_validation is None or not isinstance(evidence_closure, dict) or evidence_closure.get("result") != "passed":
+            raise SystemExit(
+                "evidence-closure-blocked: completed mapped invariants require produced harness observations and passed evidence closure"
+            )
     return {
         "knowledge_disposition": knowledge_disposition,
         "unresolved": unresolved,

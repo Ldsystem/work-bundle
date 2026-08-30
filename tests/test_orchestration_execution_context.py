@@ -140,6 +140,36 @@ def test_evidence_closure_rejects_harness_observation_without_allocated_identity
         execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
 
 
+def test_completed_mapped_result_requires_produced_observation_batch() -> None:
+    task, handoff, _, _ = evidence_closure_fixture()
+    task.update(
+        {
+            "plan_id": "plan-001",
+            "source_ids": [],
+            "files": {"read": [], "write": []},
+            "truth_basis": {},
+            "validation": [],
+            "review_required": False,
+            "evidence_applicability": {
+                "metadata": {"required": False, "reasons": []},
+                "repository": {"required": False, "reasons": []},
+                "codegraph": {"required": False, "reasons": []},
+            },
+        }
+    )
+    handoff.update(
+        {
+            "type": "executor-result",
+            "related": {"plan": "plan-001", "task": "task-001"},
+            "result": {"state": "completed"},
+            "task_fit_check": {"task": "task-001", "result": "clean"},
+            "knowledge_disposition": {"action": "none", "reason": "No stable authority changed.", "affected_authority": []},
+        }
+    )
+    with pytest.raises(SystemExit, match="produced harness observations"):
+        execution_context.validate_executor_result_for_task(handoff, task, observe=True)
+
+
 ACCEPTED_AUTHORITY_PATH = ".work-bundle/knowledge/notes/accepted-authority.md"
 ACCEPTED_AUTHORITY = "AUTH-001"
 ACCEPTED_CONSTRAINT = "Executors must not retrieve durable knowledge to reconstruct authority."
