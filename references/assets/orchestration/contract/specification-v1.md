@@ -77,6 +77,36 @@ When material non-authority evidence appears, record agent-owned polarity and ma
 - **User resolution**: Record accepted answer or unresolved.
 - **Evidence conclusion**: Record any accepted conclusion as specification evidence.
 
+### 4.2 Impact Decisions
+
+Before verification, record one bounded current-state evidence basis covering the requested surface, material upstream dependencies or producers, downstream consumers, validation/test surfaces, and relevant dirty work.
+
+```yaml
+impact_decisions:
+  basis:
+    requested_surface: [path-or-symbol]
+    current_state_sources: [evidence-ref]
+    dirty_work: clean | related | unrelated
+    stopping_reason: string
+  relations:
+    - id: IMP-001
+      relation: string
+      direction: upstream | downstream | validation | cross-cutting
+      materiality: string
+      disposition: accepted | excluded | blocking
+      evidence: [evidence-ref]
+      projects_to: [REQ-001, AC-001]
+      reason: string
+  none_relevant:
+    value: false
+    searched_boundary: string
+    reason: string
+```
+
+Every material relation has exactly one `accepted | excluded | blocking` disposition. `projects_to` is required for accepted relations and must name stable requirements, constraints, interfaces, acceptance criteria, or validation targets. Excluded relations require evidence and a concise reason; "the user did not mention it" is not sufficient. Blocking relations create blocking Open Questions and keep the quality gate blocked.
+
+Use `none_relevant` only after a bounded scan finds no material relation and records its searched boundary, reason, and `stopping_reason`. Stop when every frontier relation is immaterial, already projected, excluded with evidence, or blocked for authority. Escalate to targeted Git history, prior work artifacts, or execution evidence only for contradictory current-state evidence, unresolved ownership, material regression/causality, or a suspected governing legacy decision; do not require full-history archaeology by default.
+
 ## 5. Requirements, Constraints & Guidelines
 
 [Explicitly list all requirements, constraints, rules, and guidelines. Use bullet points or tables for clarity.]
@@ -230,6 +260,7 @@ Semantic convergence lenses:
 - authority and evidence support
 - requirement, constraint, and open-question consistency
 - impact radius
+- impact-decision view, including disposition and `projects_to` agreement
 - Knowledge Base Update disposition
 - execution-workspace policy when applicable
 

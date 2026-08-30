@@ -420,6 +420,30 @@
       "prompt": "Resolve v4 repository context when portable project metadata and device-local checkout observations disagree.",
       "expected_output": "Keeps project.yaml as portable project/topology authority, resolves local observations only from bootstrap-resolved project_registry device_bindings, and blocks the contradiction without restoring v3 local fields.",
       "files": []
+    },
+    {
+      "id": 77,
+      "prompt": "Create a specification for retiring a producer when current source evidence shows an existing downstream consumer that the user did not mention.",
+      "expected_output": "Builds a bounded current-state impact basis, records the consumer as a material relation, and blocks verification until it is accepted and projected to stable IDs or excluded with evidence; omission from the request is not an exclusion reason.",
+      "files": []
+    },
+    {
+      "id": 78,
+      "prompt": "Create a specification for a greenfield isolated utility after a bounded current-state scan finds no material upstream, downstream, validation, or dirty-work relations.",
+      "expected_output": "Records impact_decisions none_relevant with the searched boundary, reason, and stopping_reason, then permits verification without inventing legacy impact.",
+      "files": []
+    },
+    {
+      "id": 79,
+      "prompt": "Current-state evidence fully explains a material relation and is not contradictory, but a reviewer asks for mandatory full-history archaeology before specification verification.",
+      "expected_output": "Declines mandatory archaeology, records the current-state evidence and stopping reason, and escalates to targeted Git history, prior work, or execution evidence only for contradiction, unresolved ownership, regression causality, or governing legacy decisions.",
+      "files": []
+    },
+    {
+      "id": 80,
+      "prompt": "A material current relation has unresolved ownership and could change the accepted API contract.",
+      "expected_output": "Marks the relation blocking, creates a blocking open question, keeps Quality gate blocked, and uses targeted provenance evidence to resolve ownership rather than silently accepting or excluding it.",
+      "files": []
     }
   ],
   "v4_evals": [

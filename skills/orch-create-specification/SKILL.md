@@ -15,10 +15,11 @@ Create the smallest authoritative specification under `.work-bundle/orchestratio
 2. Run project metadata preflight. Record each target repository, expected and actual branch/commit, cleanliness trust, and CodeGraph index or `no-index` state. Repository blockers limit source inspection but do not stop bounded knowledge-gateway classification when it remains accessible.
 3. Through `ks-what-is-helpful`, discover with polarity-neutral and stage/perspective/status-neutral query anchors. `implementation_spec` is classification and output-grouping intent, not a discovery-stage lifecycle filter.
 4. Classify results as authority, candidate, background, or blocked. Only authority shapes requirements and only accepted authority enters front-matter `source_knowledge` as `path` plus the already-reconciled `constraint`; keep candidate, background, blocked, superseded, supporting, opposing, constraining, unresolved/open-question, obsolete, and irrelevant-with-reason evidence in Source Context when material. Downstream planning allocates `AUTH-NNN` aliases from the accepted list so execution does not require `.work-bundle/knowledge/` reads or expose knowledge paths.
-5. Inspect bounded current repository evidence, including upstream/downstream and validation/test impact-radius evidence. For WorkBundle scope, include related active violations by ID, severity, deviation, scope, required resolution, and expected review closure. Exact-current-work conflicts may remain specification-owned.
-6. Ask Design Interrogation questions only for unresolved intent that changes requirements, architecture, workflow, API, persistence, validation, execution safety, or user purpose. Evidence class alone does not make an open question blocking.
-7. Normalize stable IDs, requirements, constraints, interfaces, acceptance criteria, decisions, open questions, and Knowledge Base Update disposition.
-8. Decide execution-workspace policy without provisioning it:
+5. Build one bounded current-state impact basis from the requested surface, material upstream dependencies or producers, downstream consumers, validation/test surfaces, and relevant dirty work. Record `impact_decisions` and give each material relation exactly one disposition: `accepted | excluded | blocking`. An accepted relation must use `projects_to` to name stable requirement, constraint, interface, acceptance-criterion, or validation-target IDs. An excluded relation requires evidence and a reason stronger than user omission. A blocking relation creates a blocking open question. When no material relation exists, record `none_relevant` with the searched boundary, reason, and `stopping_reason`.
+6. Stop current-state traversal when every frontier relation is immaterial, already projected to a stable ID, excluded with evidence, or blocked for authority. Escalate to targeted Git history, prior work artifacts, or execution evidence only when current-state evidence is contradictory, ownership is unresolved, regression or causality is material, or a governing legacy decision is suspected. Do not require full-history archaeology by default. For WorkBundle scope, include related active violations by ID, severity, deviation, scope, required resolution, and expected review closure. Exact-current-work conflicts may remain specification-owned.
+7. Ask Design Interrogation questions only for unresolved intent that changes requirements, architecture, workflow, API, persistence, validation, execution safety, or user purpose. Evidence class alone does not make an open question blocking.
+8. Normalize stable IDs, requirements, constraints, interfaces, acceptance criteria, decisions, open questions, and Knowledge Base Update disposition.
+9. Decide execution-workspace policy without provisioning it:
 
 ```yaml
 execution_workspace:
@@ -37,6 +38,7 @@ Use `dev-semantic-convergence` with these lenses:
 - authority and evidence support;
 - requirement, constraint, and open-question consistency;
 - impact radius;
+- impact-decision view, including disposition and `projects_to` agreement;
 - Knowledge Base Update disposition;
 - execution-workspace policy when applicable.
 
@@ -51,6 +53,8 @@ semantic_loop:
 ```
 
 Do not preserve verbose per-round transcripts.
+
+The caller materializes the impact-decision view. Use `dev-semantic-convergence` to compare and repair it, but keep repository traversal out of `dev-semantic-convergence`.
 
 ## Completion gate
 
