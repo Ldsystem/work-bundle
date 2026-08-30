@@ -69,6 +69,10 @@ def test_specification_uses_compact_semantic_convergence_and_workspace_policy() 
         "none_relevant",
         "stopping_reason",
         "projects_to",
+        "excellence-applicability view",
+        "no_material_opportunity",
+        "material_opportunities",
+        "accepted | rejected | deferred | not_material",
     ]:
         assert token in text
     assert "Extra evidence loop" not in text

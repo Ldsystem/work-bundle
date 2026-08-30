@@ -450,6 +450,48 @@
       "prompt": "An impact scan finds one relation that is merely adjacent and cannot change an accepted contract surface, plus another relation whose disposition can change a user-observable outcome and validation target.",
       "expected_output": "Stops traversing the related-but-non-material relation with a recorded reason, treats the outcome-changing relation as material, and requires accepted, excluded, or blocking disposition because it can change a user-observable or contractual outcome, architectural boundary, measurable quality target, validation target, or declared boundary.",
       "files": []
+    },
+    {
+      "id": 82,
+      "prompt": "Create a specification for a user-visible request with no evidenced adjacent improvement after one compact evidence-routed pass.",
+      "expected_output": "Records excellence_applicability as no_material_opportunity with a non-empty evidence-backed reason and an empty proposal list; it does not manufacture a recommendation merely because the request is user-visible.",
+      "files": []
+    },
+    {
+      "id": 83,
+      "prompt": "A bounded architecture opportunity could materially improve maintainability, but the user has not answered the proposal.",
+      "expected_output": "Records user value, evidence, cost, risk, recommendation, and disposition; defaults the unanswered proposal to deferred and excludes it from authoritative scope, planning, executor briefs, and acceptance obligations.",
+      "files": []
+    },
+    {
+      "id": 84,
+      "prompt": "A specification author discovers an evidence-backed GUI clarity improvement and silently implements a deferred proposal while compiling the plan.",
+      "expected_output": "Rejects the silent scope expansion; the deferred proposal remains traceable but non-authoritative and absent from planning and executor briefs until explicitly accepted.",
+      "files": []
+    },
+    {
+      "id": 85,
+      "prompt": "The user accepts an evidence-backed excellence proposal during Design Interrogation.",
+      "expected_output": "Requires the accepted proposal to project through stable authoritative requirement, constraint, interface, acceptance-criterion, or validation-target IDs before verification and planning.",
+      "files": []
+    },
+    {
+      "id": 86,
+      "prompt": "An agent runs a universal product-quality checklist covering GUI, architecture, performance, and accessibility for a narrow backend repair with no material evidence for those dimensions.",
+      "expected_output": "Rejects the universal product-quality checklist, selects dimensions only from task evidence and change shape, and records no_material_opportunity when no material adjacent improvement exists.",
+      "files": []
+    },
+    {
+      "id": 87,
+      "prompt": "An optional excellence proposal is rejected, while another proposal reveals an unresolved safety authority conflict.",
+      "expected_output": "Keeps the rejected proposal traceable and excluded without blocking, but routes the unresolved safety authority conflict through the existing blocking open-question rules; optionality does not bypass safety authority.",
+      "files": []
+    },
+    {
+      "id": 88,
+      "prompt": "An excellence scan finds one adjacent idea that cannot change an accepted contract surface and another option whose acceptance could change a user-observable outcome and validation target.",
+      "expected_output": "Omits the related-but-non-material adjacent idea or records it not_material, surfaces the outcome-changing option as a proposal because accepting or rejecting it could change a requirement, constraint, acceptance criterion, user-observable or contractual outcome, architectural boundary, measurable quality target, validation target, or declared boundary, and stops when further exploration can change none of those surfaces with the reason recorded.",
+      "files": []
     }
   ],
   "v4_evals": [
