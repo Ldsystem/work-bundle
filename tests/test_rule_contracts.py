@@ -552,6 +552,12 @@ def test_orchestration_rules_require_contract_barrier_and_review_settlement_evid
     assert "Create or require plan repair only for a decomposition defect" in review
     assert "specification repair only for a requirement, design, or authority defect" in review
     assert "Do not create a repair specification for every failed review gate" in review
+    assert "evidence_capability" in review
+    assert "INV/VAL" in review
+    assert "incapable green" in review
+    assert "pre-closure oracle-capability check" in review
+    assert "no_validation_bearing_obligation" in review
+    assert "WOR-59 G9 remains the unchanged post-execution classifier" in review
 
 
 def test_execution_and_review_skills_carry_task003_flow_requirements() -> None:

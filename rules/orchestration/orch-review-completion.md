@@ -18,6 +18,10 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 
 - Confirm each required task review compared the accepted Truth Basis, implementation, test oracle, and task-local knowledge disposition before accepting the task.
 - Check that declared completion evidence corresponds to the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints.
+- Before archive or completion, confirm every accepted validation-bearing invariant has a compiled `evidence_capability` entry and capable, current, correctly bounded harness-observed evidence under its allocated INV/VAL identities. Treat incapable green, contradiction, staleness, wrong-boundary, failure, missing, or unexecuted evidence as negative acceptance evidence, not closure.
+- Use `no_validation_bearing_obligation + reason` only when no accepted validation-bearing obligation or design decision exists. Do not infer an empty evidence-capability map from a WOR-61 `none_relevant` impact result.
+- Route first-owner repair for this pre-closure oracle-capability check: task repair for failed, stale, or unexecuted implementation evidence; plan repair for missing, wrong-boundary, or incapable allocation; specification repair for contradictory accepted authority.
+- Keep this pre-closure oracle-capability check distinct from `RuntimeVerificationClassificationV1`. WOR-59 G9 remains the unchanged post-execution classifier and may use this map only as evidence when triggered. Mechanical helpers validate IDs, completeness, provenance, and observed results; agents own semantic capability judgment and must not impose a universal browser, E2E, production, or runtime gate.
 - Missing `acceptance_review.verdict` blocks only a task that explicitly required independent review. Do not require universal task-review evidence.
 - Keep approved `ks-*` persistence delegation review-owned; executor disposition evidence never authorizes knowledge retrieval or writes.
 
@@ -49,6 +53,10 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Do not substitute project-file inspection for accepted task-review evidence on tasks that explicitly required review.
 - Do not create a repair specification for every failed review gate.
 - Do not archive while required knowledge, validation, review, repository, or workspace evidence is unresolved.
+- Do not close an invariant on a green oracle that cannot observe it or that contradicts accepted authority.
+- Do not treat WOR-59 G9 classification as this pre-closure oracle-capability check, or replace G9 with it.
+- Do not infer an empty evidence-capability map from a WOR-61 `none_relevant` impact result.
+- Do not impose a universal browser, E2E, production, or runtime gate.
 - Do not directly write durable knowledge from orchestration.
 
 ## Validation
@@ -56,6 +64,8 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Confirm every completed review-required task has fresh validation, a valid executor-result handoff, and `accept` review evidence.
 - Confirm missing `acceptance_review.verdict` is not a blocker unless the task explicitly required review.
 - Confirm declared completion evidence matches the compiled Truth Basis, source IDs, and AUTH constraints.
+- Confirm every mapped invariant has capable, current, correctly bounded harness-observed evidence under its allocated INV/VAL identities, or a typed first-owner repair route; confirm `no_validation_bearing_obligation` is not inferred from WOR-61 `none_relevant`.
+- Confirm this pre-closure oracle-capability check remains distinct from `RuntimeVerificationClassificationV1` and that WOR-59 G9 remains the unchanged post-execution classifier.
 - Confirm blocker routing names the owning resume path instead of restarting the lifecycle.
 - Confirm finalization and archive occur only after knowledge disposition and deterministic gates resolve.
 
