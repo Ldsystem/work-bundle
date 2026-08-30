@@ -142,41 +142,6 @@ rules:
     enforcement: must
     load: conditional
     requires: []
-  - id: rule-integrity-check-agent-authority
-    path: integrity-check/rule-integrity-check-agent-authority.md
-    applies_when:
-      - wb-integrity-check runs
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-integrity-check-loading-boundary
-    path: integrity-check/rule-integrity-check-loading-boundary.md
-    applies_when:
-      - integrity-check evaluates startup and compression boundaries
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-integrity-check-report-lifecycle
-    path: integrity-check/rule-integrity-check-report-lifecycle.md
-    applies_when:
-      - integrity report is created or updated
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-integrity-check-scope
-    path: integrity-check/rule-integrity-check-scope.md
-    applies_when:
-      - wb-integrity-check runs
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-integrity-check-script-boundary
-    path: integrity-check/rule-integrity-check-script-boundary.md
-    applies_when:
-      - integrity-check helper CLI commands run
-    enforcement: must
-    load: conditional
-    requires: []
   - id: rule-work-bundle-lifecycle-authority
     path: lifecycle-authority.md
     applies_when:

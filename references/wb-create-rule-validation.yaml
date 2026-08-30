@@ -27,19 +27,16 @@ allowed_scopes:
   - work-bundle
   - keep-summarizing
   - orchestration
-  - integrity-check
 
 allowed_scope_patterns:
   - wb-*
   - ks-*
   - orch-*
-  - rule-integrity-check-*
 
 id_prefix_scope_map:
   wb-: work-bundle
   ks-: keep-summarizing
   orch-: orchestration
-  rule-integrity-check-: integrity-check
 
 path_rules:
   scoped: rules/<scope>/*.md

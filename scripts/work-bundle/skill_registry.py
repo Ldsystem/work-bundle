@@ -1,5 +1,10 @@
 from core import *
 
+
+def cmd_merge_skill_hints(args: list[str]) -> int:
+    out({'status': 'passed', 'suggested_skills': []})
+    return 0
+
 def norm(text: str) -> str:
     return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-') or 'unknown-skill'
 

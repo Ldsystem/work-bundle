@@ -29,12 +29,11 @@ VALIDATION_MANIFEST_REL = "references/wb-create-rule-validation.yaml"
 _DEFAULT_REQUIRED_FRONT_MATTER = ["id", "applies_when", "enforcement", "load", "requires"]
 _DEFAULT_REQUIRED_BODY_SECTIONS = ["Purpose", "Must", "Must Not", "Validation", "On Violation"]
 _DEFAULT_PROHIBITED_RULE_FIELDS = {"scope", "type", "blocks", "severity", "status", "source_authority"}
-_DEFAULT_ALLOWED_SCOPES = ["work-bundle", "keep-summarizing", "orchestration", "integrity-check"]
+_DEFAULT_ALLOWED_SCOPES = ["work-bundle", "keep-summarizing", "orchestration"]
 _DEFAULT_ID_PREFIX_SCOPE_MAP = {
     "wb-": "work-bundle",
     "ks-": "keep-summarizing",
     "orch-": "orchestration",
-    "rule-integrity-check-": "integrity-check",
 }
 _DEFAULT_FORBIDDEN_PATH_PREFIXES = ["global"]
 _RULE_STORE_SCOPES = {"toolkit", "global", "project"}

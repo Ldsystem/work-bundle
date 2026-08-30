@@ -2,7 +2,7 @@
 
 Implementation modules in this directory are the manual maintenance surface for work-bundle helpers.
 
-The top-level `../wb.py` entrypoint remains for compatibility with existing agent instructions. Implementation is split by skill area (`rules.py`, `project.py`, `member.py`, `doctor.py`, `metadata_profile.py`, `skill_registry.py`, `integrity.py`), with `dispatcher.py` only wiring commands.
+The top-level `../wb.py` entrypoint remains for compatibility with existing agent instructions. Implementation is split by skill area (`rules.py`, `project.py`, `member.py`, `doctor.py`, `metadata_profile.py`, `skill_registry.py`), with `dispatcher.py` only wiring commands.
 
 Command examples:
 
@@ -38,7 +38,6 @@ python3 scripts/wb.py violation-create-evidence --status active --short-descript
 python3 scripts/wb.py violation-build-index
 python3 scripts/wb.py violation-write-index
 python3 scripts/wb.py violation-archive-evidence <evidence-id-or-path> --action completed
-python3 scripts/wb.py integrity-check-report new --template references/integrity-check/integrity-check-template.md --output-root /tmp/reports --title check
 ```
 
 Prefer `--scope` for `create-rules` and `validate-rules`: `toolkit` resolves to `$work_bundle_root/rules/`, `global` resolves to `$work_bundle_config_root/rules/`, and `project` resolves to `<workspace-root>/.work-bundle/rules/`. The project-root form remains a single-repository compatibility alias.

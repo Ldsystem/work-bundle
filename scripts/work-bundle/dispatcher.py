@@ -5,14 +5,13 @@ from pathlib import Path
 
 from core import CLI_HELP_EPILOG, LEGACY_COMMAND_MIGRATIONS, out
 from doctor import cmd_doctor
-from integrity import cmd_integrity_report, cmd_merge_skill_hints
 from instruction_audit import cmd_instruction_audit
 from legacy import cmd_legacy_command_removed
 from metadata_profile import cmd_domain_profile
 from bootstrap_config import cmd_migrate_work_bundle_config
 from project import cmd_cleanup_member, cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_migrate_to_multi_repository, cmd_project, cmd_provision_member, cmd_register_project_command, cmd_session_start, cmd_set_prefer_subagent, cmd_show_project, cmd_validate_project
 from rules import cmd_create_rules, cmd_validate_rules
-from skill_registry import cmd_registry
+from skill_registry import cmd_merge_skill_hints, cmd_registry
 from violations import (
     cmd_violation_archive_evidence,
     cmd_violation_build_index,
@@ -56,7 +55,6 @@ def main() -> int:
         'validate-runtime-artifacts': 'doctor',
         'validate-repository-health': 'repository-health',
         'validate-workflow-branches': 'workflow-branches',
-        'integrity-report': 'integrity-check-report',
     }
     command = aliases.get(command, command)
     if command == 'migrate-work-bundle-config':
@@ -151,8 +149,6 @@ def main() -> int:
         return cmd_registry(parsed.args)
     if command == 'merge-skill-hints':
         return cmd_merge_skill_hints(parsed.args)
-    if command == 'integrity-check-report':
-        return cmd_integrity_report(parsed.args)
     parser.error(f'unknown command: {parsed.command}')
     return 2
 
