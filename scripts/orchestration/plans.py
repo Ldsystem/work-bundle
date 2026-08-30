@@ -9,6 +9,7 @@ from execution_context import (
     unique_explicit_handoff_plan_id,
     validate_executor_result_for_task,
     _compile_task_brief,
+    _observation_kwargs,
     _parse_scalar,
 )
 from handoffs import _read_compact_yaml_metadata
@@ -104,11 +105,18 @@ def _try_validate_task_handoff(
         handoff=None,
         base=None,
         head=None,
+        **_observation_kwargs(args),
     )
     try:
         _, brief_document = _compile_task_brief(compile_args)
         brief = brief_document["task_brief"]
-        validate_executor_result_for_task(handoff, brief)
+        capability = brief.get("evidence_capability") if isinstance(brief.get("evidence_capability"), dict) else {}
+        validate_executor_result_for_task(
+            handoff,
+            brief,
+            observe=capability.get("result") == "mapped",
+            **_observation_kwargs(args),
+        )
     except SystemExit:
         return None
     return handoff, brief
@@ -524,6 +532,7 @@ def _assert_completed_task_handoff(args: argparse.Namespace, task_path: Path) ->
             handoff=str(handoff),
             base=None,
             head=None,
+            **_observation_kwargs(args),
         )
     )
 

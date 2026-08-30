@@ -1083,6 +1083,104 @@ def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer
     assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md").is_file()
 
 
+def _mapped_archive_workspace(tmp_path: Path):
+    from test_orchestration_execution_context import (
+        PASSING_PROCESS,
+        _bind_task_execution,
+        _compiled_brief,
+        _handoff_for_command,
+        _set_task_validation,
+        git,
+        workspace,
+    )
+
+    command = ARCHIVE_NEUTRAL_COMMAND
+    root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            "evidence_capability:\n"
+            "  result: no_validation_bearing_obligation\n"
+            "  reason: This shared fixture leaves capability semantics to scenario-specific tests.\n"
+            "  invariants: []\n",
+            "evidence_capability:\n"
+            "  result: mapped\n"
+            "  reason: Archive re-entry must observe mapped invariants.\n"
+            "  invariants:\n"
+            "    - {id: INV-001, source_ids: [REQ-003], invariant: Observable behavior, boundary: integration, oracle: VAL-001, capability_reason: Process oracle distinguishes violation., freshness: current_task_batch, task_id: task-004, evidence_ids: [VAL-001], closure_result: pending}\n",
+        ),
+        encoding="utf-8",
+    )
+    _set_task_validation(
+        task,
+        "validation:\n"
+        f"  - {{kind: process, command: {json.dumps(PASSING_PROCESS)}, proves: TEST-004, expected: passed, id: VAL-001, invariant_ids: [INV-001], capability_reason: Process oracle distinguishes violation.}}\n",
+    )
+    _append_plan_knowledge(root, closure_return="missing")
+    _append_plan_integration_command(root, command)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "mapped archive workspace")
+    brief = _compiled_brief(root, task)
+    binding = _bind_task_execution(root, brief)
+    handoff = _handoff_for_command(root, PASSING_PROCESS)
+    handoff.write_text(
+        handoff.read_text(encoding="utf-8").replace(
+            f"- {{command: {json.dumps(PASSING_PROCESS)}, result: passed}}\n",
+            f"- {{command: {json.dumps(PASSING_PROCESS)}, result: passed, id: VAL-001, invariant_ids: [INV-001]}}\n"
+            f"    - {{command: {command}, result: passed}}\n",
+        )
+        + "evidence_closure:\n"
+        + "  result: passed\n"
+        + "  invariants:\n"
+        + "    - {id: INV-001, boundary: integration, freshness: current_task_batch, evidence_ids: [VAL-001], closure_result: passed}\n",
+        encoding="utf-8",
+    )
+    return root, binding, command
+
+
+def test_archive_plan_accepts_mapped_invariant_handoff_with_harness_observation(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    root, _binding, _command = _mapped_archive_workspace(tmp_path)
+
+    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
+
+
+def test_archive_plan_forwards_execution_binding_into_task_revalidation(tmp_path: Path) -> None:
+    from plans import cmd_archive_plan
+
+    root, binding, command = _mapped_archive_workspace(tmp_path)
+
+    cmd_archive_plan(
+        argparse.Namespace(
+            project_root=str(root),
+            id="plan-001",
+            workspace_id=binding["workspace_id"],
+            execution_id=binding["execution_id"],
+            repository_id=binding["repository_id"],
+            execution_runtime_root=binding["runtime_root"],
+        )
+    )
+    assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
+
+    restored = tmp_path / "restored-mapped"
+    restored.mkdir()
+    restored_root, restored_binding, _command = _mapped_archive_workspace(restored)
+    with pytest.raises(SystemExit, match=rf"acceptance-blocked: declared plan-level acceptance {command} is missing"):
+        cmd_archive_plan(
+            argparse.Namespace(
+                project_root=str(restored_root),
+                id="plan-001",
+                workspace_id="wrong-workspace",
+                execution_id=restored_binding["execution_id"],
+                repository_id=restored_binding["repository_id"],
+                execution_runtime_root=restored_binding["runtime_root"],
+            )
+        )
+    assert (restored_root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
+
+
 def test_passing_declared_plan_acceptance_allows_archive_without_second_reviewer(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
     from test_orchestration_execution_context import (
