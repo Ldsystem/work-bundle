@@ -34,6 +34,14 @@ def test_compile_evidence_capability_requires_closure_result() -> None:
         execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], validation)
 
 
+def test_compile_evidence_capability_rejects_preclosed_invariant() -> None:
+    validation = [{"id": "VAL-001", "invariant_ids": ["INV-001"], "capability_reason": "Observes violation."}]
+    invariant = {"id": "INV-001", "source_ids": ["REQ-001"], "invariant": "Observable behavior", "boundary": "unit", "oracle": "VAL-001", "capability_reason": "Unit oracle distinguishes violation.", "freshness": "current_task_batch", "task_id": "task-001", "evidence_ids": ["VAL-001"], "closure_result": "passed"}
+    task = {"evidence_capability": {"result": "mapped", "reason": "Required.", "invariants": [invariant]}}
+    with pytest.raises(SystemExit, match="initialized to pending"):
+        execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], validation)
+
+
 def test_compile_evidence_capability_requires_explicit_result() -> None:
     with pytest.raises(SystemExit, match="required"):
         execution_context._compile_evidence_capability({}, "task-001", ["REQ-001"], [])
@@ -43,6 +51,80 @@ def test_compile_evidence_capability_allows_agent_decided_bookkeeping_empty_map(
     task = {"evidence_capability": {"result": "no_validation_bearing_obligation", "reason": "Accepted IDs are bookkeeping-only and make no closure claim.", "invariants": []}}
     result = execution_context._compile_evidence_capability(task, "task-001", ["REQ-001"], [])
     assert result is not None and result["invariants"] == []
+
+
+def evidence_closure_fixture(*, boundary: str = "component", result: str = "passed") -> tuple[dict, dict, dict, list[dict]]:
+    task = {
+        "task_id": "task-001",
+        "validation": [{"id": "VAL-001", "invariant_ids": ["INV-001"], "command": "true"}],
+        "evidence_capability": {
+            "result": "mapped",
+            "reason": "Required.",
+            "invariants": [{"id": "INV-001", "boundary": "component", "freshness": "current_task_batch", "evidence_ids": ["VAL-001"], "closure_result": "pending"}],
+        },
+    }
+    handoff = {
+        "evidence_closure": {
+            "result": result,
+            "invariants": [{"id": "INV-001", "boundary": boundary, "freshness": "current_task_batch", "evidence_ids": ["VAL-001"], "closure_result": result, "repair_owner": None}],
+        }
+    }
+    reported = {"true": {"command": "true", "id": "VAL-001", "invariant_ids": ["INV-001"], "result": "passed"}}
+    observed = [{"command": "true", "id": "VAL-001", "invariant_ids": ["INV-001"], "result": "passed", "kind": "process"}]
+    return task, handoff, reported, observed
+
+
+def test_evidence_closure_requires_mapped_terminal_record() -> None:
+    task, _, reported, observed = evidence_closure_fixture()
+    with pytest.raises(SystemExit, match="missing evidence_closure"):
+        execution_context._validate_evidence_closure({}, task, "completed", reported, observed)
+
+
+@pytest.mark.parametrize(
+    ("closure_result", "repair_owner"),
+    [
+        ("incapable", "task"),
+        ("contradictory", "specification"),
+        ("stale", "task"),
+        ("wrong_boundary", "plan"),
+        ("failed", "task"),
+        ("missing", "plan"),
+        ("unexecuted", "task"),
+    ],
+)
+def test_evidence_closure_blocks_negative_results_and_routes_owner(
+    closure_result: str, repair_owner: str
+) -> None:
+    task, handoff, reported, observed = evidence_closure_fixture(result=closure_result)
+    handoff["evidence_closure"]["invariants"][0]["repair_owner"] = repair_owner
+    with pytest.raises(SystemExit, match=f"{closure_result}.*{repair_owner}"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+
+
+def test_evidence_closure_rejects_wrong_boundary() -> None:
+    task, handoff, reported, observed = evidence_closure_fixture(boundary="unit")
+    with pytest.raises(SystemExit, match="wrong-boundary"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+
+
+def test_evidence_closure_accepts_capable_component_without_ui_gate() -> None:
+    task, handoff, reported, observed = evidence_closure_fixture()
+    result = execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+    assert result["result"] == "passed"
+
+
+def test_evidence_closure_rejects_executor_report_without_allocated_identity() -> None:
+    task, handoff, reported, observed = evidence_closure_fixture()
+    reported["true"].pop("id")
+    with pytest.raises(SystemExit, match="reported evidence identity"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
+
+
+def test_evidence_closure_rejects_harness_observation_without_allocated_identity() -> None:
+    task, handoff, reported, observed = evidence_closure_fixture()
+    observed[0].pop("id")
+    with pytest.raises(SystemExit, match="harness evidence"):
+        execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
 
 
 ACCEPTED_AUTHORITY_PATH = ".work-bundle/knowledge/notes/accepted-authority.md"

@@ -510,6 +510,12 @@
       "prompt": "A plan maps a presentation invariant to a unit oracle that cannot observe rendering, while a lighter capable visual inspection is available.",
       "expected_output": "Rejects the incapable unit mapping and allocates the lightest capable evidence boundary for the named invariant; it does not impose a universal UI gate on unrelated invariants.",
       "files": []
+    },
+    {
+      "id": 92,
+      "prompt": "A completed executor result reports a green command but omits allocated INV/VAL identities, or reports incapable, contradictory, stale, wrong-boundary, failed, or unexecuted evidence.",
+      "expected_output": "Blocks terminal closure, treats executor closure as corroboration rather than harness proof, and routes repair to the first owning task, plan, or specification while preserving optional task review and WOR-59 G9 separation.",
+      "files": []
     }
   ],
   "v4_evals": [

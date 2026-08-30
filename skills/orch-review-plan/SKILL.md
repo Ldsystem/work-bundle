@@ -18,6 +18,7 @@ Verify:
 - specification, plan, phase, and task status coherence;
 - executor-result handoffs by applicability;
 - declared completion evidence corresponds to the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints;
+- every mapped invariant has capable, current, correctly bounded harness-observed evidence under its allocated INV/VAL identities; treat incapable green, contradiction, staleness, wrong-boundary, failure, or non-execution as negative acceptance evidence and route repair to the first owning task, plan, or specification;
 - missing `acceptance_review.verdict` blocks only a task that explicitly required independent review; do not require universal task-review evidence;
 - `acceptance_review.verdict: accept` only for those explicitly required reviews;
 - declared plan-level/integration acceptance observed on the final integrated workspace; do not start another implementation-review agent to produce plan-level acceptance;

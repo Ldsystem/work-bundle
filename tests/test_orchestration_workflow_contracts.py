@@ -57,6 +57,11 @@ def _task_brief(*, plan_id: str = "plan-001", task_id: str = "task-001") -> dict
         "files": {"read": [], "write": []},
         "truth_basis": {},
         "validation": [],
+        "evidence_capability": {
+            "result": "no_validation_bearing_obligation",
+            "reason": "This structural fixture makes no validation-bearing closure claim.",
+            "invariants": [],
+        },
         "review_required": False,
     }
 
