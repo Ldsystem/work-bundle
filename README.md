@@ -43,6 +43,22 @@ Both single- and multi-repository workspaces are current. Multi-repository membe
 
 Portable control-plane v4 keeps the single-repository layout flat: the source repository owns `<workspace-root>/.git`, while the independently publishable WorkBundle control plane owns `<workspace-root>/.work-bundle/.git`. Its source entry uses `workspace_binding.type: root`; multi-repository entries use `workspace_binding.type: member` plus a member name. A fresh device clones the control plane into `.work-bundle/`, then `attach-workspace --materialize missing --apply` reconstructs the source checkout directly in the existing workspace root. It never requires converting a single repository into a child of a non-Git container.
 
+To add another source to an initialized v4 multi-repository workspace, use the
+proposal-bound lifecycle (the direct member name and path must agree):
+
+```bash
+python3 scripts/wb.py add-workspace-member <workspace-root> \
+  --repository-id <id> --remote <remote> --name <member> --path <member> \
+  --default-branch main --dry-run
+# Repeat the same request with --accepted-proposal-id <returned-id> --apply.
+```
+
+This preserves multi-repository mode and registers a verified existing checkout
+or a new clone without creating a root Git repository. The checkout and Git
+common directory stay inside the workspace. Replay verifies the local binding;
+failed publication preserves adopted checkouts and removes only newly created
+ones. Single/composite workspaces retain their root-source and exclusion behavior.
+
 ## Skill Links
 
 Install bootstrap/registry and symlink all work-bundle skills into the shared agent skill root:

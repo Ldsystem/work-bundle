@@ -42,6 +42,18 @@
       "prompt": "Attach and doctor a portable v4 multi-repository workspace when bootstrap points project_registry to a non-default path and a later attach step fails after creating member checkouts.",
       "expected_output": "Uses project.yaml only for portable identity and topology, uses device_bindings in the bootstrap-resolved project registry for local paths and observations across attach, doctor, and preflight, and removes only member paths created by the failed attach while preserving user-supplied checkouts and the control plane.",
       "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "Add an already cloned private source repository on main to an initialized v4 multi-repository workspace whose root is not a Git repository. Do not hand-edit membership.",
+      "expected_output": "Uses add-workspace-member dry-run and accepted-proposal apply with matching direct member name/path. Preserves multi-repository mode, validates existing required members and local Git-store containment, adopts the checkout without claiming rollback ownership, and verifies managed-worktree binding, replay and doctor. Does not create root .git or composite exclusions.",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "Add a member to a v4 multi-repository workspace but the requested path is a symlink, credentials, or a linked worktree whose Git common directory is outside the workspace. The user says just force it.",
+      "expected_output": "Rejects the unsafe member through the lifecycle without cloning, publishing metadata, changing mode, overwriting user files or treating a force request as permission to bypass containment. Keeps the existing composite member workflow distinct.",
+      "files": []
     }
   ]
 }

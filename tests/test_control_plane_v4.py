@@ -2176,7 +2176,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         failures = payload["portable"]["failures"] + payload["local_binding"]["failures"]
         self.assertTrue(any("WB_CONTROL_PLANE_MEMBER_PATH_TRACKED" in item for item in failures))
 
-    def test_add_workspace_member_rejects_multi_repository_source(self) -> None:
+    def test_add_workspace_member_rejects_unmaterialized_required_multi_source(self) -> None:
         config = config_root(self.tmp_path / "config-root")
         remote, _, _ = make_remote(self.tmp_path / "source-fixture", "source")
         workspace = self.tmp_path / "multi"
@@ -2196,7 +2196,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
         result = run_wb(config, *add_workspace_member_args(workspace, member_remote), "--dry-run")
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(json.loads(result.stdout)["failure_code"], "WB_CONTROL_PLANE_COMPOSITE_SOURCE_MODE_INVALID")
+        self.assertEqual(json.loads(result.stdout)["failure_code"], "WB_CONTROL_PLANE_BOUND_CHECKOUT_MISSING:source-main")
 
     def test_add_workspace_member_preflight_rejects_absent_binding_and_non_git_root(self) -> None:
         config, workspace, _, workspace_id = init_single_v4(self.tmp_path)
