@@ -409,8 +409,22 @@ def _v3_repositories(text: str) -> list[dict[str, object]]:
     return repositories
 
 
+def _source_repository_bounds(lines: list[str]) -> tuple[int, int] | None:
+    start = next((i for i, line in enumerate(lines)
+                  if re.match(r"^source_repositories:(?:\s|$)", line)), None)
+    if start is None:
+        return None
+    # Any non-comment root content ends the list, including quoted keys and
+    # document markers. Readers and writers must agree on this boundary.
+    end = next((i for i in range(start + 1, len(lines))
+                if re.match(r"^[^\s#]", lines[i])), len(lines))
+    return start, end
+
+
 def _v4_repositories(text: str) -> list[dict[str, object]]:
-    repositories = _parse_list_items(_block(text, "source_repositories"))
+    lines = text.splitlines(keepends=True)
+    bounds = _source_repository_bounds(lines)
+    repositories = _parse_list_items("".join(lines[bounds[0]:bounds[1]])) if bounds else []
     # The generic parser retains remote as a mapping. Normalize its canonical field.
     for repository in repositories:
         remote = repository.get("remote")
@@ -1599,10 +1613,12 @@ def _append_member_metadata(text: str, member: dict[str, str]) -> str:
         text = re.sub(r"^(\s{2}mode: )single-repository\s*$", r"\1composite", text, count=1, flags=re.MULTILINE)
     block = _render_member_metadata_block(member, multi=_workspace_value(text, "mode") == "multi-repository")
     lines = text.splitlines(keepends=True)
-    start = next(i for i, line in enumerate(lines) if line.rstrip() == "source_repositories:")
-    end = next((i for i in range(start + 1, len(lines)) if re.match(r"^[A-Za-z_][\w-]*:", lines[i])), len(lines))
+    bounds = _source_repository_bounds(lines)
+    if bounds is None:
+        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
+    _, end = bounds
     prefix = "".join(lines[:end])
-    return prefix.rstrip("\n") + "\n" + block + "".join(lines[end:])
+    return prefix + ("" if prefix.endswith("\n") else "\n") + block + "".join(lines[end:])
 
 
 def _require_observed_branch(path: Path, expected: str, repository_id: str) -> str:
@@ -1689,6 +1705,15 @@ def _require_add_workspace_member_target(text: str, member: dict[str, str], clas
     failures = _portable_failures(rendered)
     if failures:
         raise ControlPlaneError(failures[0])
+    # Verify the intended change through the portable metadata reader. A block
+    # outside the source list must never pass just because older sources remain
+    # valid. Unmodified owner fields must not inherit the script-index YAML
+    # loader's restricted grammar or acquire an optional dependency requirement.
+    repositories = _v4_repositories(rendered)
+    if _classify_workspace_member(repositories, member) != "match":
+        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
+    if classification != "match" and repositories[:-1] != _v4_repositories(text):
+        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
 
 
 def _require_add_workspace_member_replay_state(

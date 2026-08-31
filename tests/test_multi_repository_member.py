@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from test_control_plane_v4 import (
-    add_workspace_member_args, config_root, git, make_remote, run_wb,
+    add_workspace_member_args, config_root, git, init_single_v4, make_remote, run_wb,
 )
 
 
@@ -199,3 +199,81 @@ def test_multi_member_add_only_and_collisions(multi, tmp_path):
     assert result.returncode == 1
     assert before == metadata.read_bytes()
     assert len(yaml.safe_load(before)["source_repositories"]) == 3
+
+
+@pytest.mark.parametrize("mode", ["single", "multi"])
+@pytest.mark.parametrize("shape", ["commented-header", "anchored-header", "quoted-key", "quoted-nested", "commented-control", "owner-flow", "owner-comment"])
+@pytest.mark.parametrize("dependency_free", [False, True])
+def test_member_add_preserves_yaml_section_boundaries(multi, tmp_path, monkeypatch, mode, shape, dependency_free):
+    config, workspace, remote = multi
+    if mode == "single":
+        config, workspace, _, _ = init_single_v4(tmp_path / "single")
+    metadata = workspace / ".work-bundle/project.yaml"
+    text = metadata.read_text()
+    if shape == "commented-header":
+        text = text.replace("source_repositories:", "source_repositories: # managed members")
+    elif shape == "anchored-header":
+        text = text.replace("source_repositories:", "source_repositories: &sources")
+    elif shape == "quoted-key":
+        text = text.replace("prefer_subagent:", "'custom_owner_field': retained\nprefer_subagent:")
+    elif shape == "quoted-nested":
+        text = text.replace("prefer_subagent:", "'owner_settings':\n  contact:\n    team: engineering\nprefer_subagent:")
+    elif shape == "commented-control":
+        text = text.replace("control_plane:", "control_plane: # portable settings")
+    elif shape == "owner-flow":
+        text += "owner_settings: {}\n"
+    else:
+        text += "owner_settings: # retained\n  team: engineering\n"
+    metadata.write_text(text)
+    original = yaml.safe_load(text)
+    if dependency_free:
+        # Exercise the actual CLI without its optional YAML dependency, while
+        # retaining PyYAML in the test process as an independent output oracle.
+        no_yaml = tmp_path / "no-yaml"
+        no_yaml.mkdir()
+        (no_yaml / "yaml.py").write_text("raise ImportError('dependency-free regression')\n")
+        monkeypatch.setenv("PYTHONPATH", str(no_yaml))
+    proposal = propose(config, workspace, remote)
+    assert metadata.read_text() == text
+    result = apply(config, workspace, remote, proposal)
+    assert result.returncode == 0, result.stdout + result.stderr
+    document = yaml.safe_load(metadata.read_text())
+    assert len(document["source_repositories"]) == 2
+    assert document["source_repositories"][0] == original["source_repositories"][0]
+    for key, value in original.items():
+        if key not in {"source_repositories", "workspace"}:
+            assert document[key] == value
+    if shape == "quoted-key":
+        assert document["custom_owner_field"] == "retained"
+    elif shape == "commented-header":
+        assert "source_repositories: # managed members" in metadata.read_text()
+    elif shape == "anchored-header":
+        assert "source_repositories: &sources" in metadata.read_text()
+    elif shape == "commented-control":
+        assert "control_plane: # portable settings" in metadata.read_text()
+    elif shape == "owner-comment":
+        assert "owner_settings: # retained\n  team: engineering\n" in metadata.read_text()
+    replay = apply(config, workspace, remote, propose(config, workspace, remote))
+    assert replay.returncode == 0, replay.stdout + replay.stderr
+    assert json.loads(replay.stdout)["changed_files"] == []
+
+
+def test_member_add_rejects_misplaced_rendered_block_without_mutation(multi, monkeypatch, capsys):
+    import control_plane
+
+    config, workspace, remote = multi
+    monkeypatch.setenv("WB_CONFIG_ROOT", str(config))
+    # Inject the publication defect reported in review: the generated member
+    # appears after a root scalar instead of inside source_repositories.
+    monkeypatch.setattr(control_plane, "_append_member_metadata", lambda text, member:
+                        text + control_plane._render_member_metadata_block(member, multi=True))
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config / "registry/projects.yaml"
+    before = metadata.read_bytes(), registry.read_bytes()
+    result = control_plane.cmd_add_workspace_member(add_workspace_member_args(workspace, remote)[1:] + ["--dry-run"])
+    assert result == 1
+    output = capsys.readouterr()
+    assert json.loads(output.out)["failure_code"] == "WB_CONTROL_PLANE_METADATA_INVALID"
+    assert "Traceback" not in output.err
+    assert before == (metadata.read_bytes(), registry.read_bytes())
+    assert not (workspace / "execution-flow").exists()
