@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from test_control_plane_v4 import (
-    add_workspace_member_args, config_root, git, make_remote, run_wb,
+    add_workspace_member_args, config_root, git, init_single_v4, make_remote, run_wb,
 )
 
 
@@ -199,3 +199,61 @@ def test_multi_member_add_only_and_collisions(multi, tmp_path):
     assert result.returncode == 1
     assert before == metadata.read_bytes()
     assert len(yaml.safe_load(before)["source_repositories"]) == 3
+
+
+@pytest.mark.parametrize("mode", ["single", "multi"])
+@pytest.mark.parametrize("shape", ["commented-header", "quoted-key"])
+@pytest.mark.parametrize("dependency_free", [False, True])
+def test_member_add_preserves_yaml_section_boundaries(multi, tmp_path, monkeypatch, mode, shape, dependency_free):
+    config, workspace, remote = multi
+    if mode == "single":
+        config, workspace, _, _ = init_single_v4(tmp_path / "single")
+    metadata = workspace / ".work-bundle/project.yaml"
+    text = metadata.read_text()
+    if shape == "commented-header":
+        text = text.replace("source_repositories:", "source_repositories: # managed members")
+    else:
+        text = text.replace("prefer_subagent:", "'custom_owner_field': retained\nprefer_subagent:")
+    metadata.write_text(text)
+    original = yaml.safe_load(text)
+    if dependency_free:
+        # Exercise the actual CLI without its optional YAML dependency, while
+        # retaining PyYAML in the test process as an independent output oracle.
+        no_yaml = tmp_path / "no-yaml"
+        no_yaml.mkdir()
+        (no_yaml / "yaml.py").write_text("raise ImportError('dependency-free regression')\n")
+        monkeypatch.setenv("PYTHONPATH", str(no_yaml))
+    proposal = propose(config, workspace, remote)
+    assert metadata.read_text() == text
+    result = apply(config, workspace, remote, proposal)
+    assert result.returncode == 0, result.stdout + result.stderr
+    document = yaml.safe_load(metadata.read_text())
+    assert len(document["source_repositories"]) == 2
+    assert document["source_repositories"][0] == original["source_repositories"][0]
+    if shape == "quoted-key":
+        assert document["custom_owner_field"] == "retained"
+    else:
+        assert "source_repositories: # managed members" in metadata.read_text()
+    replay = apply(config, workspace, remote, propose(config, workspace, remote))
+    assert replay.returncode == 0, replay.stdout + replay.stderr
+    assert json.loads(replay.stdout)["changed_files"] == []
+
+
+@pytest.mark.parametrize("dependency_free", [False, True])
+def test_member_add_rejects_invalid_complete_document_without_mutation(multi, tmp_path, monkeypatch, dependency_free):
+    config, workspace, remote = multi
+    if dependency_free:
+        no_yaml = tmp_path / "no-yaml"
+        no_yaml.mkdir()
+        (no_yaml / "yaml.py").write_text("raise ImportError('dependency-free regression')\n")
+        monkeypatch.setenv("PYTHONPATH", str(no_yaml))
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config / "registry/projects.yaml"
+    metadata.write_text(metadata.read_text() + "'owner_field': retained\n  invalid_child: value\n")
+    before = metadata.read_bytes(), registry.read_bytes()
+    result = run_wb(config, *add_workspace_member_args(workspace, remote), "--dry-run")
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["failure_code"] == "WB_CONTROL_PLANE_METADATA_INVALID"
+    assert "Traceback" not in result.stderr
+    assert before == (metadata.read_bytes(), registry.read_bytes())
+    assert not (workspace / "execution-flow").exists()

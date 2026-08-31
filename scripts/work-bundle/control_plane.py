@@ -1599,10 +1599,16 @@ def _append_member_metadata(text: str, member: dict[str, str]) -> str:
         text = re.sub(r"^(\s{2}mode: )single-repository\s*$", r"\1composite", text, count=1, flags=re.MULTILINE)
     block = _render_member_metadata_block(member, multi=_workspace_value(text, "mode") == "multi-repository")
     lines = text.splitlines(keepends=True)
-    start = next(i for i, line in enumerate(lines) if line.rstrip() == "source_repositories:")
-    end = next((i for i in range(start + 1, len(lines)) if re.match(r"^[A-Za-z_][\w-]*:", lines[i])), len(lines))
+    start = next((i for i, line in enumerate(lines)
+                  if re.fullmatch(r"source_repositories:\s*(?:#.*)?", line.rstrip())), None)
+    if start is None:
+        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
+    # Any non-comment root content ends the list, including quoted keys and
+    # document markers. Preserve its bytes instead of assuming bare key names.
+    end = next((i for i in range(start + 1, len(lines))
+                if re.match(r"^[^\s#]", lines[i])), len(lines))
     prefix = "".join(lines[:end])
-    return prefix.rstrip("\n") + "\n" + block + "".join(lines[end:])
+    return prefix + ("" if prefix.endswith("\n") else "\n") + block + "".join(lines[end:])
 
 
 def _require_observed_branch(path: Path, expected: str, repository_id: str) -> str:
@@ -1686,6 +1692,16 @@ def _require_add_workspace_member_request(member: dict[str, str]) -> None:
 def _require_add_workspace_member_target(text: str, member: dict[str, str], classification: str) -> None:
     _require_add_workspace_member_request(member)
     rendered = text if classification == "match" else _append_member_metadata(text, member)
+    # Validate the complete target before a proposal or transaction can publish
+    # it. The dependency-free loader needs the list-header comment removed only
+    # in its parsing view; the document written to disk remains byte-preserving.
+    parsing_view = re.sub(r"^source_repositories:[ \t]*#.*$", "source_repositories:", rendered, flags=re.MULTILINE)
+    try:
+        document = _load_yaml(parsing_view)
+    except Exception:
+        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID") from None
+    if not isinstance(document, dict) or not isinstance(document.get("source_repositories"), list):
+        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
     failures = _portable_failures(rendered)
     if failures:
         raise ControlPlaneError(failures[0])
