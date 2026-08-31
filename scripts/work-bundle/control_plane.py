@@ -1692,19 +1692,18 @@ def _require_add_workspace_member_request(member: dict[str, str]) -> None:
 def _require_add_workspace_member_target(text: str, member: dict[str, str], classification: str) -> None:
     _require_add_workspace_member_request(member)
     rendered = text if classification == "match" else _append_member_metadata(text, member)
-    # Validate the complete target before a proposal or transaction can publish
-    # it. The dependency-free loader needs the list-header comment removed only
-    # in its parsing view; the document written to disk remains byte-preserving.
-    parsing_view = re.sub(r"^source_repositories:[ \t]*#.*$", "source_repositories:", rendered, flags=re.MULTILINE)
-    try:
-        document = _load_yaml(parsing_view)
-    except Exception:
-        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID") from None
-    if not isinstance(document, dict) or not isinstance(document.get("source_repositories"), list):
-        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
     failures = _portable_failures(rendered)
     if failures:
         raise ControlPlaneError(failures[0])
+    # Verify the intended change through the portable metadata reader. A block
+    # outside the source list must never pass just because older sources remain
+    # valid. Unmodified owner fields must not inherit the script-index YAML
+    # loader's restricted grammar or acquire an optional dependency requirement.
+    repositories = _v4_repositories(rendered)
+    if _classify_workspace_member(repositories, member) != "match":
+        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
+    if classification != "match" and repositories[:-1] != _v4_repositories(text):
+        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
 
 
 def _require_add_workspace_member_replay_state(
