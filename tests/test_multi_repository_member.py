@@ -202,7 +202,7 @@ def test_multi_member_add_only_and_collisions(multi, tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["single", "multi"])
-@pytest.mark.parametrize("shape", ["commented-header", "quoted-key", "quoted-nested", "commented-control", "owner-flow", "owner-comment"])
+@pytest.mark.parametrize("shape", ["commented-header", "anchored-header", "quoted-key", "quoted-nested", "commented-control", "owner-flow", "owner-comment"])
 @pytest.mark.parametrize("dependency_free", [False, True])
 def test_member_add_preserves_yaml_section_boundaries(multi, tmp_path, monkeypatch, mode, shape, dependency_free):
     config, workspace, remote = multi
@@ -212,6 +212,8 @@ def test_member_add_preserves_yaml_section_boundaries(multi, tmp_path, monkeypat
     text = metadata.read_text()
     if shape == "commented-header":
         text = text.replace("source_repositories:", "source_repositories: # managed members")
+    elif shape == "anchored-header":
+        text = text.replace("source_repositories:", "source_repositories: &sources")
     elif shape == "quoted-key":
         text = text.replace("prefer_subagent:", "'custom_owner_field': retained\nprefer_subagent:")
     elif shape == "quoted-nested":
@@ -245,6 +247,8 @@ def test_member_add_preserves_yaml_section_boundaries(multi, tmp_path, monkeypat
         assert document["custom_owner_field"] == "retained"
     elif shape == "commented-header":
         assert "source_repositories: # managed members" in metadata.read_text()
+    elif shape == "anchored-header":
+        assert "source_repositories: &sources" in metadata.read_text()
     elif shape == "commented-control":
         assert "control_plane: # portable settings" in metadata.read_text()
     elif shape == "owner-comment":

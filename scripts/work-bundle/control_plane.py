@@ -411,7 +411,7 @@ def _v3_repositories(text: str) -> list[dict[str, object]]:
 
 def _source_repository_bounds(lines: list[str]) -> tuple[int, int] | None:
     start = next((i for i, line in enumerate(lines)
-                  if re.fullmatch(r"source_repositories:\s*(?:#.*)?", line.rstrip())), None)
+                  if re.match(r"^source_repositories:(?:\s|$)", line)), None)
     if start is None:
         return None
     # Any non-comment root content ends the list, including quoted keys and
