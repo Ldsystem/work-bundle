@@ -17,7 +17,8 @@ from core import is_relative_to, read_front_matter, resolve_workspace_root
 from repository_preflight import capture_repository_evidence, task_caused_paths
 
 
-SOURCE_ID_RE = re.compile(r"^[A-Z][A-Z0-9_-]*-\d+$")
+SOURCE_ID_TOKEN = r"[A-Z][A-Z0-9_-]*-\d+[A-Z]?"
+SOURCE_ID_RE = re.compile(rf"^{SOURCE_ID_TOKEN}$")
 AUTH_ALIAS_RE = re.compile(r"^AUTH-\d{3}$")
 EXCELLENCE_PROPOSAL_RE = re.compile(r"^EXC-\d+$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -441,15 +442,39 @@ def _source_records(path: Path, body: str) -> dict[str, str]:
         records[identifier] = value
 
     for line in body.splitlines():
-        bullet = re.match(r"^\s*[-*]\s+\*\*([A-Z][A-Z0-9_-]*-\d+)\*\*\s*:\s*(.+)$", line)
+        titled_bullet = re.match(
+            rf"^\s*[-*]\s+\*\*({SOURCE_ID_TOKEN})\s*[—-]\s*(.+?)(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
+            line,
+        )
+        if titled_bullet:
+            title = titled_bullet.group(2).strip()
+            detail = titled_bullet.group(3).strip()
+            add(titled_bullet.group(1), f"{title}: {detail}")
+            continue
+        bullet = re.match(
+            rf"^\s*[-*]\s+\*\*({SOURCE_ID_TOKEN})(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
+            line,
+        )
         if bullet:
             add(bullet.group(1), bullet.group(2))
             continue
-        heading = re.match(r"^#{2,6}\s+([A-Z][A-Z0-9_-]*-\d+)\s*(?:[:—-]\s*)?(.*)$", line)
+        titled_plain = re.match(
+            rf"^\s*\*\*({SOURCE_ID_TOKEN})\s*[—-]\s*(.+?)(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
+            line,
+        )
+        if titled_plain:
+            title = titled_plain.group(2).strip()
+            detail = titled_plain.group(3).strip()
+            add(titled_plain.group(1), f"{title}: {detail}")
+            continue
+        heading = re.match(
+            rf"^#{{2,6}}\s+({SOURCE_ID_TOKEN})(?:(?:\s+[:—-]?\s*)|(?:[:—-]\s*))(.*)$",
+            line,
+        )
         if heading and heading.group(2).strip():
             add(heading.group(1), heading.group(2))
             continue
-        plain = re.match(r"^\s*([A-Z][A-Z0-9_-]*-\d+)\s*:\s*(.+)$", line)
+        plain = re.match(rf"^\s*({SOURCE_ID_TOKEN})\s*:\s*(.+)$", line)
         if plain:
             add(plain.group(1), plain.group(2))
             continue
