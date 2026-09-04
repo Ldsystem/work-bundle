@@ -411,3 +411,93 @@ def retrieve_by_intent(
     if trusted_only:
         candidates = tuple(item for item in candidates if item.trusted)
     return candidates[:limit]
+
+
+@dataclass(frozen=True)
+class TraversalEntry:
+    node_id: str
+    depth: int
+
+
+@dataclass(frozen=True)
+class TraversalResult:
+    depth: str
+    inclusions: tuple[TraversalEntry, ...]
+    frontier: tuple[str, ...]
+    stopping_reason: str
+
+
+TRAVERSAL_DEPTHS = MappingProxyType({"light": 1, "standard": 2, "deep": 4})
+
+
+def traverse_capabilities(
+    index: CapabilityIndex,
+    start_ids: Sequence[str],
+    *,
+    depth: str = "standard",
+    max_nodes: int = 32,
+    relation_types: Sequence[str] | None = None,
+) -> TraversalResult:
+    """Traverse outgoing typed relations with explicit deterministic budgets."""
+    if depth not in TRAVERSAL_DEPTHS:
+        raise CapabilityIndexError("depth must be light, standard, or deep")
+    if not isinstance(max_nodes, int) or isinstance(max_nodes, bool) or max_nodes < 1:
+        raise CapabilityIndexError("max_nodes must be a positive integer")
+    known = {node.node_id for node in index.nodes}
+    starts = tuple(sorted(set(start_ids)))
+    unknown = set(starts) - known
+    if unknown:
+        raise CapabilityIndexError(f"unknown start node: {', '.join(sorted(unknown))}")
+    if not starts:
+        raise CapabilityIndexError("at least one start node is required")
+    allowed_types = set(relation_types) if relation_types is not None else set(RELATION_TYPES)
+    invalid_types = allowed_types - RELATION_TYPES
+    if invalid_types:
+        raise CapabilityIndexError(f"unknown relation types: {', '.join(sorted(invalid_types))}")
+    outgoing: dict[str, set[str]] = {node_id: set() for node_id in known}
+    for relation in index.relations:
+        if relation.type in allowed_types:
+            outgoing[relation.from_id].add(relation.to_id)
+
+    depth_limit = TRAVERSAL_DEPTHS[depth]
+    queue: list[tuple[str, int]] = [(node_id, 0) for node_id in starts]
+    queued = set(starts)
+    visited: set[str] = set()
+    inclusions: list[TraversalEntry] = []
+    frontier: set[str] = set()
+    depth_stopped = False
+    while queue:
+        node_id, current_depth = queue.pop(0)
+        queued.discard(node_id)
+        if node_id in visited:
+            continue
+        if len(inclusions) >= max_nodes:
+            frontier.add(node_id)
+            frontier.update(item[0] for item in queue if item[0] not in visited)
+            break
+        visited.add(node_id)
+        inclusions.append(TraversalEntry(node_id=node_id, depth=current_depth))
+        neighbors = sorted(outgoing[node_id] - visited)
+        if current_depth >= depth_limit:
+            if neighbors:
+                depth_stopped = True
+                frontier.update(neighbors)
+            continue
+        for neighbor in neighbors:
+            if neighbor not in queued:
+                queue.append((neighbor, current_depth + 1))
+                queued.add(neighbor)
+        queue.sort(key=lambda item: (item[1], item[0]))
+
+    if frontier and len(inclusions) >= max_nodes:
+        reason = "node_budget"
+    elif depth_stopped:
+        reason = "depth_budget"
+    else:
+        reason = "frontier_exhausted"
+    return TraversalResult(
+        depth=depth,
+        inclusions=tuple(inclusions),
+        frontier=tuple(sorted(frontier - visited)),
+        stopping_reason=reason,
+    )

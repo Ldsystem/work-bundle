@@ -249,3 +249,69 @@ def test_retrieval_uses_aliases_and_optional_domain_hints() -> None:
 
     assert result[0].node_id == "capability:permission"
     assert result[0].relation_relevance > 0
+
+
+def _traversal_index() -> object:
+    payload = _retrieval_payload()
+    payload["relations"].extend(
+        [
+            {
+                "relation_id": "rel:alpha-beta",
+                "from_id": "capability:alpha",
+                "to_id": "capability:beta",
+                "type": "requires",
+                "evidence_ids": ["ev:spec"],
+            },
+            {
+                "relation_id": "rel:beta-permission",
+                "from_id": "capability:beta",
+                "to_id": "capability:permission",
+                "type": "constrains",
+                "evidence_ids": ["ev:spec"],
+            },
+            {
+                "relation_id": "rel:permission-alpha",
+                "from_id": "capability:permission",
+                "to_id": "capability:alpha",
+                "type": "related_to",
+                "evidence_ids": ["ev:spec"],
+            },
+        ]
+    )
+    return capability_index.CapabilityIndex.from_dict(payload)
+
+
+def test_traversal_terminates_cycles_with_deterministic_order() -> None:
+    result = capability_index.traverse_capabilities(
+        _traversal_index(), ["capability:alpha"], depth="deep", max_nodes=10
+    )
+
+    assert [item.node_id for item in result.inclusions] == [
+        "capability:alpha",
+        "capability:beta",
+        "capability:permission",
+    ]
+    assert result.stopping_reason == "frontier_exhausted"
+    assert result.frontier == ()
+
+
+def test_traversal_enforces_node_budget_and_records_frontier() -> None:
+    result = capability_index.traverse_capabilities(
+        _traversal_index(), ["capability:alpha"], depth="deep", max_nodes=1
+    )
+
+    assert [item.node_id for item in result.inclusions] == ["capability:alpha"]
+    assert result.frontier == ("capability:beta",)
+    assert result.stopping_reason == "node_budget"
+
+
+def test_traversal_enforces_depth_budget_and_rejects_unknown_start() -> None:
+    result = capability_index.traverse_capabilities(
+        _traversal_index(), ["capability:alpha"], depth="light", max_nodes=10
+    )
+
+    assert [item.node_id for item in result.inclusions] == ["capability:alpha", "capability:beta"]
+    assert result.frontier == ("capability:permission",)
+    assert result.stopping_reason == "depth_budget"
+    with pytest.raises(capability_index.CapabilityIndexError, match="unknown start"):
+        capability_index.traverse_capabilities(_traversal_index(), ["capability:missing"])
