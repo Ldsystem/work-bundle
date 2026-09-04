@@ -153,3 +153,99 @@ def test_store_requires_parent_relation_to_match_parent_id() -> None:
 
     with pytest.raises(capability_index.CapabilityIndexError, match="canonical parent relation"):
         capability_index.CapabilityIndex.from_dict(payload)
+
+
+def _retrieval_payload() -> dict[str, object]:
+    payload = _store_payload()
+    payload["evidence"].append(
+        {
+            "evidence_id": "ev:lead",
+            "kind": "source",
+            "locator": "candidate.py",
+            "identity": "sha256:lead",
+            "authority": False,
+            "observed_at": "2026-09-05T00:00:00Z",
+        }
+    )
+    payload["nodes"].extend(
+        [
+            {
+                **_node("capability:permission"),
+                "title": "Reviewer permission boundary",
+                "summary": "Prevent reviewers from modifying the source tree",
+                "aliases": ["reviewer isolation"],
+                "policies": ["source write denied"],
+            },
+            {
+                **_node("capability:stale"),
+                "title": "Legacy permission helper",
+                "summary": "Old reviewer permission implementation",
+                "freshness": "stale",
+            },
+            {
+                **_node("capability:candidate"),
+                "title": "Permission experiment",
+                "summary": "Unconfirmed permission design",
+                "lifecycle": "candidate",
+                "evidence_ids": ["ev:lead"],
+            },
+            {
+                **_node("capability:alpha"),
+                "title": "Shared ranking token",
+                "summary": "equal match",
+            },
+            {
+                **_node("capability:beta"),
+                "title": "Shared ranking token",
+                "summary": "equal match",
+            },
+        ]
+    )
+    for node in payload["nodes"][2:]:
+        payload["relations"].append(
+            {
+                "relation_id": f"rel:root-{node['node_id'].split(':')[1]}",
+                "from_id": "domain:root",
+                "to_id": node["node_id"],
+                "type": "contains",
+                "evidence_ids": list(node["evidence_ids"]),
+            }
+        )
+    return payload
+
+
+def test_retrieval_filters_authority_lifecycle_and_freshness() -> None:
+    index = capability_index.CapabilityIndex.from_dict(_retrieval_payload())
+
+    trusted = capability_index.retrieve_by_intent(index, "reviewer permission source write")
+    searchable = capability_index.retrieve_by_intent(
+        index, "reviewer permission source write", trusted_only=False
+    )
+
+    assert [item.node_id for item in trusted] == ["capability:permission"]
+    assert {item.node_id for item in searchable} >= {
+        "capability:permission",
+        "capability:stale",
+        "capability:candidate",
+    }
+    assert next(item for item in searchable if item.node_id == "capability:stale").trusted is False
+
+
+def test_retrieval_ties_use_stable_node_id_order() -> None:
+    index = capability_index.CapabilityIndex.from_dict(_retrieval_payload())
+
+    ranked = capability_index.rank_candidates(index, "shared ranking token equal match")
+    tied = [item.node_id for item in ranked if item.node_id in {"capability:alpha", "capability:beta"}]
+
+    assert tied == ["capability:alpha", "capability:beta"]
+
+
+def test_retrieval_uses_aliases_and_optional_domain_hints() -> None:
+    index = capability_index.CapabilityIndex.from_dict(_retrieval_payload())
+
+    result = capability_index.retrieve_by_intent(
+        index, "reviewer isolation", domain_hints=["domain:root"]
+    )
+
+    assert result[0].node_id == "capability:permission"
+    assert result[0].relation_relevance > 0

@@ -311,3 +311,103 @@ class CapabilityIndex:
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class RankedCandidate:
+    node_id: str
+    score: float
+    semantic_score: float
+    relation_relevance: float
+    authority_support: float
+    risk_relevance: float
+    trusted: bool
+
+
+def _tokens(value: str) -> set[str]:
+    return {token.casefold() for token in re.findall(r"[A-Za-z0-9_]+", value) if len(token) > 1}
+
+
+def _authority_supported(index: CapabilityIndex, node: FeatureUnit) -> bool:
+    authoritative = {
+        item.evidence_id
+        for item in index.evidence
+        if item.authority is True
+        or isinstance(item.authority, str)
+        and item.authority.casefold() in {"authoritative", "accepted", "current", "confirmed"}
+    }
+    return bool(set(node.evidence_ids) & authoritative)
+
+
+def _semantic_score(node: FeatureUnit, query_tokens: set[str]) -> float:
+    weighted_fields: Sequence[tuple[Sequence[str], float]] = (
+        ((node.title,), 3.0),
+        ((node.summary,), 2.0),
+        (node.aliases, 4.0),
+        ((node.actor, node.outcome), 1.0),
+        (node.preconditions + node.effects + node.failures + node.policies, 1.5),
+    )
+    return sum(
+        len(query_tokens & _tokens(" ".join(values))) * weight
+        for values, weight in weighted_fields
+    )
+
+
+def rank_candidates(
+    index: CapabilityIndex,
+    query_text: str,
+    *,
+    domain_hints: Sequence[str] = (),
+) -> tuple[RankedCandidate, ...]:
+    """Rank searchable nodes deterministically; trust is reported, never inferred from score."""
+    query_tokens = _tokens(_text(query_text, "query_text"))
+    hints = set(domain_hints)
+    unknown_hints = hints - {node.node_id for node in index.nodes}
+    if unknown_hints:
+        raise CapabilityIndexError(f"unknown domain hints: {', '.join(sorted(unknown_hints))}")
+    connected: dict[str, set[str]] = {node.node_id: set() for node in index.nodes}
+    for relation in index.relations:
+        connected[relation.from_id].add(relation.to_id)
+        connected[relation.to_id].add(relation.from_id)
+    risk_tokens = {
+        "permission", "ownership", "destructive", "data", "external", "state",
+        "transition", "compatibility", "conflict", "failure", "write", "delete",
+    }
+    ranked: list[RankedCandidate] = []
+    for node in index.nodes:
+        if node.lifecycle == "superseded":
+            continue
+        semantic = _semantic_score(node, query_tokens)
+        if semantic <= 0:
+            continue
+        relation = 1.0 if hints and (node.parent_id in hints or connected[node.node_id] & hints) else 0.0
+        authority = 1.0 if _authority_supported(index, node) else 0.0
+        risk = float(len(query_tokens & risk_tokens & _tokens(" ".join(node.effects + node.failures + node.policies))))
+        trusted = node.lifecycle in {"grounded", "accepted"} and node.freshness == "current" and bool(authority)
+        generic_penalty = 0.5 if _tokens(node.title) <= {"capability", "domain", "constraint"} else 0.0
+        score = semantic + relation + authority + risk - generic_penalty
+        ranked.append(
+            RankedCandidate(
+                node_id=node.node_id, score=score, semantic_score=semantic,
+                relation_relevance=relation, authority_support=authority,
+                risk_relevance=risk, trusted=trusted,
+            )
+        )
+    return tuple(sorted(ranked, key=lambda item: (-item.score, item.node_id)))
+
+
+def retrieve_by_intent(
+    index: CapabilityIndex,
+    query_text: str,
+    *,
+    domain_hints: Sequence[str] = (),
+    trusted_only: bool = True,
+    limit: int | None = None,
+) -> tuple[RankedCandidate, ...]:
+    """Retrieve ranked candidates, excluding advisory candidates from trusted context by default."""
+    if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
+        raise CapabilityIndexError("limit must be a positive integer")
+    candidates = rank_candidates(index, query_text, domain_hints=domain_hints)
+    if trusted_only:
+        candidates = tuple(item for item in candidates if item.trusted)
+    return candidates[:limit]
