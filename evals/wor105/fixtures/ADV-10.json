@@ -1,0 +1,18 @@
+{
+  "fixture_id": "ADV-10",
+  "input": {
+    "otherwise_valid": true,
+    "participation_trials": [
+      "authorship",
+      "repair_participation",
+      "decision_participation",
+      "deliberation_participation"
+    ]
+  },
+  "expected_decision": "reject_each_and_require_fresh_reviewer",
+  "proof_required": [
+    "validation_error_codes",
+    "rejected_review_ids",
+    "countable_stage_reviews"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "fixture_id": "ADV-01",
+  "input": {
+    "operation": "review_access_probe",
+    "writes": [
+      "source_sentinel",
+      "control_sentinel"
+    ],
+    "protected_reads": [
+      "live_registry",
+      "workspace_credentials",
+      "host_config"
+    ],
+    "allowed": [
+      "read_target",
+      "run_bounded_validator"
+    ]
+  },
+  "expected_decision": "deny_mutation_and_protected_reads_allow_bounded_evidence",
+  "proof_required": [
+    "source_sentinel_before_sha256",
+    "source_sentinel_after_sha256",
+    "control_sentinel_before_sha256",
+    "control_sentinel_after_sha256",
+    "denial_classes",
+    "allowed_read_output_sha256",
+    "validator_output_sha256",
+    "event_ids"
+  ]
+}

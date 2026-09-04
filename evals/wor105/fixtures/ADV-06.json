@@ -1,0 +1,18 @@
+{
+  "fixture_id": "ADV-06",
+  "input": {
+    "product_tree": "1111111111111111111111111111111111111111",
+    "packaging_before": "2222222222222222222222222222222222222222",
+    "packaging_after": "3333333333333333333333333333333333333333"
+  },
+  "expected_decision": "preserve_product_observation_update_packaging_only",
+  "proof_required": [
+    "product_tree_before",
+    "product_tree_after",
+    "observation_before_sha256",
+    "observation_after_sha256",
+    "packaging_before",
+    "packaging_after",
+    "valid"
+  ]
+}

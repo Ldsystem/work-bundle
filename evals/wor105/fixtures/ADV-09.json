@@ -1,0 +1,18 @@
+{
+  "fixture_id": "ADV-09",
+  "input": {
+    "binding_states": [
+      "repair_owned",
+      "rereview_owned"
+    ],
+    "operation": "release"
+  },
+  "expected_decision": "deny_release_preserve_owner_reason_history",
+  "proof_required": [
+    "before_snapshot_sha256",
+    "after_snapshot_sha256",
+    "denial_event_ids",
+    "original_owner",
+    "original_reason"
+  ]
+}

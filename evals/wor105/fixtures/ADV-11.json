@@ -1,0 +1,17 @@
+{
+  "fixture_id": "ADV-11",
+  "input": {
+    "extension_authorized": true,
+    "public_contract_satisfied": true,
+    "fixture_bytes_changed": true,
+    "oracle": "byte_equality"
+  },
+  "expected_decision": "route_validation_oracle_defect_without_product_rollback",
+  "proof_required": [
+    "public_contract_test_output_sha256",
+    "byte_oracle_failure_sha256",
+    "routed_finding_sha256",
+    "product_revision_before",
+    "product_revision_after"
+  ]
+}

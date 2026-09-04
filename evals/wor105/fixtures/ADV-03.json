@@ -1,0 +1,18 @@
+{
+  "fixture_id": "ADV-03",
+  "input": {
+    "finding": {
+      "class": "implementation_defect",
+      "first_broken_artifact": "implementation",
+      "recommended_owner": "task_owner",
+      "disposition": "repair_task"
+    },
+    "known_fact": "missing_plan_allocation"
+  },
+  "expected_decision": "reject_and_route_allocation_gap_to_plan_reslice",
+  "proof_required": [
+    "rejected_record_sha256",
+    "canonical_finding_sha256",
+    "validation_error_code"
+  ]
+}

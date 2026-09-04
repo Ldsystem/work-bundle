@@ -1,0 +1,28 @@
+{
+  "fixture_id": "ADV-02",
+  "input": {
+    "task_id": "fixture-task",
+    "original_scope": [
+      "owned-a"
+    ],
+    "original_evidence_ids": [
+      "E-1"
+    ],
+    "expansions": [
+      [
+        "owned-b"
+      ],
+      [
+        "owned-c"
+      ]
+    ]
+  },
+  "expected_decision": "pause_and_reslice_after_second_expansion",
+  "proof_required": [
+    "original_evidence_sha256",
+    "expansion_event_ids",
+    "binding_state",
+    "reslice_artifact_sha256",
+    "return_owner"
+  ]
+}
