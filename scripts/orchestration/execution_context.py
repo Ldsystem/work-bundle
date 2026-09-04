@@ -97,6 +97,159 @@ SOURCE_SUFFIXES = {
     ".vue",
 }
 
+REQUIRED_EVALUATION_NEIGHBOR_FAMILIES = (
+    "production composition",
+    "identity replay",
+    "owner state",
+    "symlink containment",
+    "effect boundary",
+    "evidence provenance",
+    "evaluator context",
+)
+
+
+def required_evaluation_neighbors() -> tuple[str, ...]:
+    """Return the fixed REQ-064 risk-neighbor obligations in authority order."""
+    return REQUIRED_EVALUATION_NEIGHBOR_FAMILIES
+
+
+def _capability_index_module() -> Any:
+    name = "_work_bundle_semantic_capability_index"
+    existing = sys.modules.get(name)
+    if existing is not None:
+        return existing
+    path = Path(__file__).resolve().parents[1] / "keep-summarizing" / "capability_index.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"Unable to load semantic capability runtime: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(name, None)
+        raise
+    return module
+
+
+def _trusted_capability_node(index: Any, node: Any) -> bool:
+    authority = {
+        item.evidence_id
+        for item in index.evidence
+        if item.authority is True
+        or isinstance(item.authority, str)
+        and item.authority.casefold() in {"authoritative", "accepted", "current", "confirmed"}
+    }
+    return (
+        node.lifecycle in {"grounded", "accepted"}
+        and node.freshness == "current"
+        and bool(set(node.evidence_ids) & authority)
+    )
+
+
+def capability_authority_delta(before: Any, after: Any) -> dict[str, list[str]]:
+    """Describe authority changes without promoting candidate or stale semantic data."""
+    before_nodes = {node.node_id: node for node in before.nodes}
+    after_nodes = {node.node_id: node for node in after.nodes}
+    before_trusted = {key for key, node in before_nodes.items() if _trusted_capability_node(before, node)}
+    after_trusted = {key for key, node in after_nodes.items() if _trusted_capability_node(after, node)}
+    shared = before_trusted & after_trusted
+    changed = sorted(
+        node_id
+        for node_id in shared
+        if before_nodes[node_id].to_dict() != after_nodes[node_id].to_dict()
+    )
+    advisory_only = sorted(
+        node_id
+        for node_id in after_nodes.keys() - before_nodes.keys()
+        if not _trusted_capability_node(after, after_nodes[node_id])
+    )
+    return {
+        "added": sorted(after_trusted - before_trusted),
+        "removed": sorted(before_trusted - after_trusted),
+        "changed": changed,
+        "advisory_only": advisory_only,
+    }
+
+
+def project_capability_neighborhood(
+    index: Any,
+    query_text: str,
+    *,
+    depth: str = "standard",
+    max_nodes: int = 32,
+) -> dict[str, Any]:
+    """Project a bounded, provenance-bearing semantic neighborhood into executor context."""
+    capability = _capability_index_module()
+    if depth not in capability.TRAVERSAL_DEPTHS:
+        raise SystemExit("Capability projection depth must be light, standard, or deep")
+    if not isinstance(max_nodes, int) or isinstance(max_nodes, bool) or max_nodes < 1:
+        raise SystemExit("Capability projection max_nodes must be a positive integer")
+    ranked = capability.rank_candidates(index, query_text)
+    chosen: list[tuple[str, str, str | None]] = []
+    seen: set[str] = set()
+    gaps: list[str] = []
+    obligations: list[dict[str, Any]] = []
+    for family in required_evaluation_neighbors():
+        matches = capability.rank_candidates(index, family)
+        match = next((item for item in matches if item.trusted), None)
+        if match is None:
+            gaps.append(f"missing required evaluation neighbor: {family}")
+            obligations.append({"obligation_id": f"neighbor:{family.replace(' ', '-')}", "kind": "evaluation_neighbor", "status": "blocked", "evidence_ids": []})
+            continue
+        obligations.append({"obligation_id": f"neighbor:{family.replace(' ', '-')}", "kind": "evaluation_neighbor", "status": "satisfied", "evidence_ids": list(index.node(match.node_id).evidence_ids)})
+        if match.node_id not in seen:
+            chosen.append((match.node_id, "required_evaluation_neighbor", family))
+            seen.add(match.node_id)
+    for item in ranked:
+        if item.trusted and item.node_id not in seen:
+            chosen.append((item.node_id, "intent_match", None))
+            seen.add(item.node_id)
+
+    included_candidates = chosen[:max_nodes]
+    frontier = [node_id for node_id, _, _ in chosen[max_nodes:]]
+    inclusions: list[dict[str, Any]] = []
+    for rank, (node_id, reason, family) in enumerate(included_candidates, start=1):
+        node = index.node(node_id)
+        inclusion: dict[str, Any] = {
+            "node_id": node_id, "reason": reason, "rank": rank,
+            "evidence_ids": list(node.evidence_ids),
+        }
+        if family is not None:
+            inclusion["required_neighbor"] = family
+        inclusions.append(inclusion)
+    exclusions = []
+    for node in sorted(index.nodes, key=lambda item: item.node_id):
+        if _trusted_capability_node(index, node):
+            continue
+        reason = "stale" if node.freshness == "stale" else "non_authoritative"
+        exclusions.append({"node_id": node.node_id, "reason": reason})
+    query_tokens = {token.casefold() for token in re.findall(r"[A-Za-z0-9_]+", query_text)}
+    trigger_map = {
+        "permission": {"permission", "access"}, "ownership": {"owner", "ownership"},
+        "destructive_effect": {"delete", "destructive", "remove"}, "data_effect": {"data", "database"},
+        "external_effect": {"external", "remote", "network"}, "state_transition": {"state", "transition"},
+        "compatibility": {"compatibility", "legacy"}, "evidence_conflict": {"conflict", "contradiction"},
+    }
+    triggers = [name for name, tokens in trigger_map.items() if query_tokens & tokens]
+    source_payload = json.dumps(index.to_dict(), sort_keys=True, separators=(",", ":"))
+    return {
+        "query_id": f"query:{hashlib.sha256(query_text.encode('utf-8')).hexdigest()[:20]}",
+        "query_text_digest": f"sha256:{hashlib.sha256(query_text.encode('utf-8')).hexdigest()}",
+        "depth": depth,
+        "obligations": obligations,
+        "triggers": triggers,
+        "inclusions": inclusions,
+        "exclusions": exclusions,
+        "frontier": [
+            {"node_id": node_id, "information_value": 1.0, "evidence_cost": 1.0, "miss_risk": 1.0, "expand": True}
+            for node_id in frontier
+        ],
+        "gaps": gaps,
+        "stopping_reason": "node_budget" if frontier else "frontier_exhausted",
+        "source_index_digest": f"sha256:{hashlib.sha256(source_payload.encode('utf-8')).hexdigest()}",
+    }
+
 
 def _source_paths(values: Any) -> list[str]:
     return [
