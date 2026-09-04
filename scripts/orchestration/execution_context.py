@@ -199,7 +199,7 @@ def project_capability_neighborhood(
             continue
         obligations.append({"obligation_id": f"neighbor:{family.replace(' ', '-')}", "kind": "evaluation_neighbor", "status": "satisfied", "evidence_ids": list(index.node(match.node_id).evidence_ids)})
         if match.node_id not in seen:
-            chosen.append((match.node_id, "required_evaluation_neighbor", family))
+            chosen.append((match.node_id, f"required_evaluation_neighbor:{family}", None))
             seen.add(match.node_id)
     for item in ranked:
         if item.trusted and item.node_id not in seen:
@@ -215,8 +215,6 @@ def project_capability_neighborhood(
             "node_id": node_id, "reason": reason, "rank": rank,
             "evidence_ids": list(node.evidence_ids),
         }
-        if family is not None:
-            inclusion["required_neighbor"] = family
         inclusions.append(inclusion)
     exclusions = []
     for node in sorted(index.nodes, key=lambda item: item.node_id):

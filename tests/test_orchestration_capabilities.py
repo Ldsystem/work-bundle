@@ -124,7 +124,13 @@ def test_required_evaluation_neighbors_surface_every_family_early() -> None:
         _index(), "evaluate native work", depth="light", max_nodes=20
     )
 
-    surfaced = {item["required_neighbor"] for item in result["inclusions"] if "required_neighbor" in item}
+    assert all(set(item) == {"node_id", "reason", "rank", "evidence_ids"} for item in result["inclusions"])
+    prefix = "required_evaluation_neighbor:"
+    surfaced = {
+        item["reason"].removeprefix(prefix)
+        for item in result["inclusions"]
+        if item["reason"].startswith(prefix)
+    }
     assert surfaced == set(NEIGHBORS)
     assert execution_context.required_evaluation_neighbors() == NEIGHBORS
 
