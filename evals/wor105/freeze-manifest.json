@@ -1,12 +1,12 @@
 {
   "schema": "wor105-adversarial-freeze-v1",
-  "evaluation_id": "wor105-native-adversarial-20260905-002",
-  "frozen_at": "2026-09-04T19:28:11Z",
+  "evaluation_id": "wor105-native-adversarial-20260905-003",
+  "frozen_at": "2026-09-04T19:45:00Z",
   "enforcement_mode": "native",
-  "product_tree": "ba4a1befcb9308985eddc8f63e59da6ceeb6ba51",
+  "product_tree": "cd9ca804304a068f422c5a8b199ace7cb8febd61",
   "specification_sha256": "575d4aea84d8d5c88e361017fcc69b97302485bdd6c2074cd2864c9d266d43da",
-  "plan_sha256": "45c71ee3a63368ed66bbf3b95379af2de7a617b5467d5abe91f2ac72b4e5a46e",
-  "task_identity": "task-e01r@plan-20260904-001-wor105-legacy-stabilization",
+  "plan_sha256": "a87d554901ccddb5e8af364ea9e3868b267d22f2ac0f900ae62fa91a3b849745",
+  "task_identity": "task-e01r2@plan-20260904-001-wor105-legacy-stabilization",
   "fixtures": [
     {"fixture_id": "ADV-01", "path": "evals/wor105/fixtures/ADV-01.json", "sha256": "52e6a3f83058f820fe01343e5b009940842874f05bdf47aa2e99ea60a27127bb"},
     {"fixture_id": "ADV-02", "path": "evals/wor105/fixtures/ADV-02.json", "sha256": "78fe6de27c7833336f6883a73dc61aaa0b15b37735ae639e9061e071e0dfcd40"},
@@ -29,7 +29,7 @@
     "result_schema": {"path": "evals/wor105/adversarial-result-v1.schema.json", "sha256": "ef4a96e1682e29e7225dbecf4257e3dad040bff2d549eff1b71067033db64c89"},
     "semantic_schema": {"path": "../.work-bundle/orchestration/docs/wor105/contracts-v1.schema.json", "sha256": "ab6500c1197928450da7e7a438d69d763c376332aeaa72caa23526c613eb1b67"},
     "instructions": {"path": "AGENTS.md", "sha256": "5cc2ba1160a25b767a7e02c957d6f37a14a7fa4be50c711f5b67c5c03442d66a"},
-    "evidence_capabilities": {"path": "../.work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-e01r/task-brief.yaml", "sha256": "98426ea693efb41bf1fc7dbeeefb7f34161c2825d7a42deddd5b9aa900f18c57"}
+    "evidence_capabilities": {"path": "../.work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-e01r2/task-brief.yaml", "sha256": "24e530f502f0360ac44e1ccb1870b4e98db0d5715ff8bb69e721a5dd61d85142"}
   },
   "invalidations": [
     {
@@ -41,6 +41,36 @@
       "affected_run_ids": ["wor105-native-adversarial-20260905-001-attempt-001"],
       "reason": "ADV-12 runner referenced remote instead of the frozen canonical_remote field",
       "timestamp": "2026-09-04T19:30:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-002",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-002",
+      "changed_component": "product",
+      "old_digest": "9c3e40f234141c3de278136bad5736838042b06945f1d9b78a7625569bb9dc3f",
+      "new_digest": "af8cf733a29162cbd1b80c8bb03ee95276c03d931c48fe8bcd6be24701e8bb06",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-002-attempt-001"],
+      "reason": "native dogfood test became part of the exact release candidate tree",
+      "timestamp": "2026-09-04T19:45:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-003",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-002",
+      "changed_component": "tasks",
+      "old_digest": "45c71ee3a63368ed66bbf3b95379af2de7a617b5467d5abe91f2ac72b4e5a46e",
+      "new_digest": "a87d554901ccddb5e8af364ea9e3868b267d22f2ac0f900ae62fa91a3b849745",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-002-attempt-001"],
+      "reason": "release full-suite validation oracle was repaired and independently accepted",
+      "timestamp": "2026-09-04T19:45:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-004",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-002",
+      "changed_component": "evidence_capabilities",
+      "old_digest": "98426ea693efb41bf1fc7dbeeefb7f34161c2825d7a42deddd5b9aa900f18c57",
+      "new_digest": "24e530f502f0360ac44e1ccb1870b4e98db0d5715ff8bb69e721a5dd61d85142",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-002-attempt-001"],
+      "reason": "evaluation evidence ownership moved to the explicit plan-refreeze task",
+      "timestamp": "2026-09-04T19:45:00Z"
     }
   ]
 }
