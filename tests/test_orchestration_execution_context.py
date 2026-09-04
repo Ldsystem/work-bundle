@@ -19,6 +19,48 @@ import execution_context  # noqa: E402
 from execution_context import build_review_package, build_task_brief  # noqa: E402
 
 
+def test_source_records_keep_letter_suffixed_ids_distinct(tmp_path: Path) -> None:
+    specification = tmp_path / "spec.md"
+    body = (
+        "### API-003 — Descriptor and pagination\n"
+        "### API-003A — Closed resource identity inventory\n"
+        "- **AC-005A:** Closed applicability bindings.\n"
+        "- **AC-005B**: Legacy outside-colon form.\n"
+        "- **REQ-001 — Repair first:** Repair the prerelease schema.\n"
+        "**DELTA-017 — Accepted resolution:** Repair in place.\n"
+        "| AC-005C | Closed skill-to-rule edge inventory |\n"
+    )
+
+    records = execution_context._source_records(specification, body)
+
+    assert records == {
+        "API-003": "Descriptor and pagination",
+        "API-003A": "Closed resource identity inventory",
+        "AC-005A": "Closed applicability bindings.",
+        "AC-005B": "Legacy outside-colon form.",
+        "REQ-001": "Repair first: Repair the prerelease schema.",
+        "DELTA-017": "Accepted resolution: Repair in place.",
+        "AC-005C": "Closed skill-to-rule edge inventory",
+    }
+
+
+def test_source_records_reject_malformed_suffixes_and_colonless_bullets(tmp_path: Path) -> None:
+    specification = tmp_path / "spec.md"
+    body = (
+        "### API-003 — Descriptor and pagination\n"
+        "### API-003a — Lowercase suffix must not alias.\n"
+        "- **REQ-001** prose without a delimiter\n"
+    )
+
+    assert execution_context._source_records(specification, body) == {
+        "API-003": "Descriptor and pagination",
+    }
+    assert execution_context.SOURCE_ID_RE.fullmatch("API-003A")
+    assert not execution_context.SOURCE_ID_RE.fullmatch("API-003a")
+    assert not execution_context.SOURCE_ID_RE.fullmatch("API-003-A")
+    assert not execution_context.SOURCE_ID_RE.fullmatch("API-003AB")
+
+
 def test_compile_evidence_capability_maps_stable_task_local_invariants() -> None:
     validation = [{"id": "VAL-001", "invariant_ids": ["INV-001"], "capability_reason": "Observes violation."}]
     task = {"evidence_capability": {"result": "mapped", "reason": "Required.", "invariants": [{"id": "INV-001", "source_ids": ["REQ-001"], "invariant": "Observable behavior", "boundary": "unit", "oracle": "VAL-001", "capability_reason": "Unit oracle distinguishes violation.", "freshness": "current_task_batch", "task_id": "task-001", "evidence_ids": ["VAL-001"], "closure_result": "pending"}]}}
