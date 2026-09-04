@@ -1776,9 +1776,53 @@ def test_deferred_remote_independent_review_identity() -> None:
     assert validated["reviewed_tree"] == git(REPO_ROOT, "rev-parse", "HEAD^{tree}")
 
 
+def canonical_repository_identity(repository: Path) -> dict[str, str]:
+    orchestration = REPO_ROOT / "scripts/orchestration"
+    command = "\n".join(
+        [
+            "import hashlib, json, sys",
+            "from pathlib import Path",
+            f"sys.path.insert(0, {str(orchestration)!r})",
+            "from repository_preflight import capture_repository_evidence",
+            "evidence = capture_repository_evidence(Path(sys.argv[1]))",
+            "digest = hashlib.sha256(json.dumps(evidence, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()",
+            "print(json.dumps({'head': evidence['head'], 'tree': evidence['tree'], 'digest': digest}))",
+        ]
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", command, str(repository)],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def test_deferred_remote_task_identity_equals_canonical_repository_evidence(tmp_path) -> None:
+    _, repository, _ = make_remote(tmp_path, "canonical-identity-source")
+    canonical = canonical_repository_identity(repository)
+    identity = deferred_remote_task_identity(repository)
+    bespoke_evidence = {
+        "repository": repository.resolve().name,
+        "branch": git(repository, "branch", "--show-current"),
+        "head": canonical["head"],
+        "tree": canonical["tree"],
+        "status": "clean",
+    }
+    bespoke_digest = hashlib.sha256(
+        json.dumps(bespoke_evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    assert identity["repository_evidence_sha256"] == canonical["digest"]
+    assert identity["repository_evidence_sha256"] != bespoke_digest
+
+
 def test_deferred_remote_review_identity_contract_rejects_mismatch(tmp_path, monkeypatch) -> None:
     _, repository, _ = make_remote(tmp_path, "identity-source")
+    canonical = canonical_repository_identity(repository)
     identity = deferred_remote_task_identity(repository)
+    assert identity["repository_evidence_sha256"] == canonical["digest"]
     review_path = tmp_path / "review.yaml"
     accepted = {
         "task_id": "task-c02",
@@ -1803,6 +1847,28 @@ def test_deferred_remote_review_identity_contract_rejects_mismatch(tmp_path, mon
         review_path.write_text(json.dumps({**accepted, key: value}), encoding="utf-8")
         with unittest.TestCase().assertRaisesRegex(ControlPlaneError, "REVIEW_IDENTITY_MISMATCH"):
             validate_deferred_remote_independent_review_identity(repository, task_id="task-c02")
+
+    bespoke_evidence = {
+        "repository": repository.resolve().name,
+        "branch": git(repository, "branch", "--show-current"),
+        "head": canonical["head"],
+        "tree": canonical["tree"],
+        "status": "clean",
+    }
+    bespoke_digest = hashlib.sha256(
+        json.dumps(bespoke_evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    review_path.write_text(
+        json.dumps(
+            {
+                **accepted,
+                "reviewed_head": f"{canonical['head']}+repository-evidence-sha256:{bespoke_digest}",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with unittest.TestCase().assertRaisesRegex(ControlPlaneError, "REVIEW_IDENTITY_MISMATCH"):
+        validate_deferred_remote_independent_review_identity(repository, task_id="task-c02")
 
 
 class CompositeMemberLifecycleTests(unittest.TestCase):

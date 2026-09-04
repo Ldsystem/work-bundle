@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from typing import Iterable
 from urllib.parse import parse_qsl, urlsplit
@@ -49,26 +50,39 @@ class ControlPlaneError(RuntimeError):
 
 
 def deferred_remote_task_identity(repository_root: Path) -> dict[str, str]:
-    """Compute the exact clean Git commit, tree, and repository evidence identity."""
+    """Compute identity from the canonical orchestration repository evidence."""
 
     root = repository_root.expanduser().resolve()
-    head = _git(root, "rev-parse", "HEAD")
-    tree = _git(root, "rev-parse", "HEAD^{tree}")
-    branch = _git(root, "branch", "--show-current")
-    status = _git(root, "status", "--porcelain=v1", "--untracked-files=all")
+    orchestration_root = Path(__file__).resolve().parents[1] / "orchestration"
+    command = "\n".join(
+        [
+            "import json, sys",
+            "from pathlib import Path",
+            "sys.path.insert(0, sys.argv[1])",
+            "from repository_preflight import capture_repository_evidence",
+            "print(json.dumps(capture_repository_evidence(Path(sys.argv[2])), sort_keys=True))",
+        ]
+    )
+    captured = subprocess.run(
+        [sys.executable, "-c", command, str(orchestration_root), str(root)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    try:
+        evidence = json.loads(captured.stdout) if captured.returncode == 0 else None
+    except json.JSONDecodeError:
+        evidence = None
+    if not isinstance(evidence, dict):
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_REPOSITORY_INVALID")
+    head = str(evidence.get("head") or "")
+    tree = str(evidence.get("tree") or "")
     if not re.fullmatch(r"[0-9a-f]{40}", head) or not re.fullmatch(r"[0-9a-f]{40}", tree):
         raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_REPOSITORY_INVALID")
-    if status:
+    if evidence.get("status") != "clean" or evidence.get("entries"):
         raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_TASK_TREE_DIRTY")
-    evidence = {
-        "repository": root.name,
-        "branch": branch,
-        "head": head,
-        "tree": tree,
-        "status": "clean",
-    }
     digest = hashlib.sha256(
-        json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     return {
         "reviewed_head": f"{head}+repository-evidence-sha256:{digest}",
