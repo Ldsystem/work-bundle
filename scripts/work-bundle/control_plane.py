@@ -48,18 +48,56 @@ class ControlPlaneError(RuntimeError):
         self.details = details or {}
 
 
-def validate_deferred_remote_independent_review_identity(
-    review: dict[str, object], *, task_id: str, current_tree: str
-) -> dict[str, object]:
-    """Fail closed unless an independent accepted review names this task tree."""
+def deferred_remote_task_identity(repository_root: Path) -> dict[str, str]:
+    """Compute the exact clean Git commit, tree, and repository evidence identity."""
 
+    root = repository_root.expanduser().resolve()
+    head = _git(root, "rev-parse", "HEAD")
+    tree = _git(root, "rev-parse", "HEAD^{tree}")
+    branch = _git(root, "branch", "--show-current")
+    status = _git(root, "status", "--porcelain=v1", "--untracked-files=all")
+    if not re.fullmatch(r"[0-9a-f]{40}", head) or not re.fullmatch(r"[0-9a-f]{40}", tree):
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_REPOSITORY_INVALID")
+    if status:
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_TASK_TREE_DIRTY")
+    evidence = {
+        "repository": root.name,
+        "branch": branch,
+        "head": head,
+        "tree": tree,
+        "status": "clean",
+    }
+    digest = hashlib.sha256(
+        json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "reviewed_head": f"{head}+repository-evidence-sha256:{digest}",
+        "reviewed_tree": tree,
+        "repository_evidence_sha256": digest,
+    }
+
+
+def validate_deferred_remote_independent_review_identity(
+    repository_root: Path, *, task_id: str
+) -> dict[str, object]:
+    """Load the selected real review and bind its acceptance to the current Git tree."""
+
+    raw_path = os.environ.get("WOR105_C02_REVIEW", "").strip()
+    if not raw_path:
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_ARTIFACT_REQUIRED")
+    review_path = Path(raw_path).expanduser().resolve()
+    if not review_path.is_file():
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_ARTIFACT_MISSING")
+    review = _load_yaml(read(review_path))
+    if not isinstance(review, dict):
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_IDENTITY_MISMATCH")
+    identity = deferred_remote_task_identity(repository_root)
     if (
-        set(review) != {"task_id", "reviewer_independent", "verdict", "reviewed_tree"}
-        or review.get("task_id") != task_id
+        review.get("task_id") != task_id
         or review.get("reviewer_independent") is not True
         or review.get("verdict") != "accept"
-        or not re.fullmatch(r"[0-9a-f]{40}", str(review.get("reviewed_tree") or ""))
-        or review.get("reviewed_tree") != current_tree
+        or review.get("reviewed_head") != identity["reviewed_head"]
+        or review.get("reviewed_tree") != identity["reviewed_tree"]
     ):
         raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_IDENTITY_MISMATCH")
     return dict(review)
@@ -2626,8 +2664,7 @@ def _deferred_attachment_preflight(
         )
         if issues:
             raise ControlPlaneError(issues[0])
-        if multi:
-            _require_multi_member_checkout(workspace_root, member_path, member)
+        _require_multi_member_checkout(workspace_root, member_path, member)
     return binding, member_path, multi
 
 

@@ -15,7 +15,11 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts/work-bundle"))
 from workspace_resources import CREDENTIAL_TEMPLATE, SCRIPT_INDEX_TEMPLATE
-from control_plane import ControlPlaneError, validate_deferred_remote_independent_review_identity
+from control_plane import (
+    ControlPlaneError,
+    deferred_remote_task_identity,
+    validate_deferred_remote_independent_review_identity,
+)
 
 
 def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -1766,28 +1770,39 @@ def write_composite_metadata(workspace: Path, *, include_root: bool = True, memb
 
 
 def test_deferred_remote_independent_review_identity() -> None:
-    current_tree = "1" * 40
+    if not os.environ.get("WOR105_C02_REVIEW"):
+        raise unittest.SkipTest("WOR105_C02_REVIEW selects the real independent review artifact")
+    validated = validate_deferred_remote_independent_review_identity(REPO_ROOT, task_id="task-c02")
+    assert validated["reviewed_tree"] == git(REPO_ROOT, "rev-parse", "HEAD^{tree}")
+
+
+def test_deferred_remote_review_identity_contract_rejects_mismatch(tmp_path, monkeypatch) -> None:
+    _, repository, _ = make_remote(tmp_path, "identity-source")
+    identity = deferred_remote_task_identity(repository)
+    review_path = tmp_path / "review.yaml"
     accepted = {
         "task_id": "task-c02",
         "reviewer_independent": True,
         "verdict": "accept",
-        "reviewed_tree": current_tree,
+        "reviewed_head": identity["reviewed_head"],
+        "reviewed_tree": identity["reviewed_tree"],
     }
+    review_path.write_text(json.dumps(accepted), encoding="utf-8")
+    monkeypatch.setenv("WOR105_C02_REVIEW", str(review_path))
     assert validate_deferred_remote_independent_review_identity(
-        accepted, task_id="task-c02", current_tree=current_tree
-    ) == accepted
+        repository, task_id="task-c02"
+    )["reviewed_head"] == identity["reviewed_head"]
 
-    mismatches = (
-        {**accepted, "task_id": "task-c01"},
-        {**accepted, "reviewer_independent": False},
-        {**accepted, "verdict": "repair"},
-        {**accepted, "reviewed_tree": "2" * 40},
-    )
-    for mismatch in mismatches:
+    for key, value in (
+        ("task_id", "task-c01"),
+        ("reviewer_independent", False),
+        ("verdict", "repair"),
+        ("reviewed_head", "0" * 40 + "+repository-evidence-sha256:" + "0" * 64),
+        ("reviewed_tree", "0" * 40),
+    ):
+        review_path.write_text(json.dumps({**accepted, key: value}), encoding="utf-8")
         with unittest.TestCase().assertRaisesRegex(ControlPlaneError, "REVIEW_IDENTITY_MISMATCH"):
-            validate_deferred_remote_independent_review_identity(
-                mismatch, task_id="task-c02", current_tree=current_tree
-            )
+            validate_deferred_remote_independent_review_identity(repository, task_id="task-c02")
 
 
 class CompositeMemberLifecycleTests(unittest.TestCase):

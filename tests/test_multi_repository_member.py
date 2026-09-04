@@ -37,13 +37,13 @@ def apply(config, workspace, remote, proposal, **kwargs):
                   "--accepted-proposal-id", proposal["proposal_id"], "--apply")
 
 
-def deferred_args(workspace, *, replay_key="replay-c02"):
+def deferred_args(workspace, *, replay_key="replay-c02", default_branch="main"):
     return [
         "defer-workspace-member", str(workspace),
         "--repository-id", "execution-flow",
         "--name", "execution-flow",
         "--path", "execution-flow",
-        "--default-branch", "main",
+        "--default-branch", default_branch,
         "--replay-key", replay_key,
     ]
 
@@ -189,6 +189,36 @@ def test_deferred_remote_attach_interruption_rolls_back_and_retry_converges(mult
     )
     assert retried.returncode == 0, retried.stdout + retried.stderr
     assert json.loads(retried.stdout)["member"]["materialization"] == "attached"
+
+
+def test_deferred_remote_composite_attach_rejects_external_git_common_dir(tmp_path):
+    config, workspace, remote, _ = init_single_v4(tmp_path / "workspace")
+    proposal = json.loads(
+        run_wb(config, *deferred_args(workspace, default_branch="main-local"), "--dry-run").stdout
+    )
+    applied = run_wb(
+        config,
+        *deferred_args(workspace, default_branch="main-local"),
+        "--accepted-proposal-id", proposal["proposal_id"],
+        "--apply",
+    )
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+
+    external = tmp_path / "external-owner"
+    subprocess.run(["git", "clone", "-q", str(remote), str(external)], check=True)
+    git(external, "branch", "main-local")
+    member = workspace / "execution-flow"
+    git(external, "worktree", "add", "-q", str(member), "main-local")
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config / "registry/projects.yaml"
+    before = metadata.read_bytes(), registry.read_bytes()
+
+    attach = run_wb(config, *attach_deferred_args(workspace, remote), "--dry-run")
+
+    assert attach.returncode == 1
+    assert json.loads(attach.stdout)["failure_code"] == "WB_CONTROL_PLANE_BOUND_GIT_INVALID:execution-flow"
+    assert before == (metadata.read_bytes(), registry.read_bytes())
+    assert Path(git(member, "rev-parse", "--path-format=absolute", "--git-common-dir")).is_relative_to(external)
 
 
 @pytest.mark.parametrize("adopt", [False, True])
