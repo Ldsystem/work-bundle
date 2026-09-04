@@ -27,7 +27,9 @@ from credential import CredentialError, list_metadata
 from execution_workspace import cmd_execution_workspace
 from control_plane import (
     cmd_add_workspace_member,
+    cmd_attach_deferred_remote,
     cmd_attach_workspace,
+    cmd_defer_workspace_member,
     cmd_detach_workspace,
     cmd_doctor_workspace,
     cmd_init_workspace,
@@ -99,6 +101,7 @@ LIVE_COMMANDS = frozenset({
     'migrate-control-plane', 'migrate-registered-projects', 'init-workspace',
     'publish-control-plane', 'attach-workspace', 'doctor-workspace',
     'add-workspace-member', 'detach-workspace', 'migrate-to-multi-repository',
+    'defer-workspace-member', 'attach-deferred-remote',
     'doctor-project', 'provision-member', 'cleanup-member', 'credential-list',
     'instruction-audit', 'session-start', 'inspect-project-initialization',
     'validate-project', 'set-prefer-subagent', 'create-rules', 'validate-rules',
@@ -165,6 +168,10 @@ def main() -> int:
         return cmd_doctor_workspace(parsed.args)
     if command == 'add-workspace-member':
         return cmd_add_workspace_member(parsed.args)
+    if command == 'defer-workspace-member':
+        return cmd_defer_workspace_member(parsed.args)
+    if command == 'attach-deferred-remote':
+        return cmd_attach_deferred_remote(parsed.args)
     if command == 'detach-workspace':
         return cmd_detach_workspace(parsed.args)
     if command == 'migrate-to-multi-repository':

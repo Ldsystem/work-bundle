@@ -15,6 +15,7 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts/work-bundle"))
 from workspace_resources import CREDENTIAL_TEMPLATE, SCRIPT_INDEX_TEMPLATE
+from control_plane import ControlPlaneError, validate_deferred_remote_independent_review_identity
 
 
 def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -1762,6 +1763,31 @@ def write_composite_metadata(workspace: Path, *, include_root: bool = True, memb
     )
     text = text.replace("prefer_subagent:", member + "prefer_subagent:")
     metadata.write_text(text, encoding="utf-8")
+
+
+def test_deferred_remote_independent_review_identity() -> None:
+    current_tree = "1" * 40
+    accepted = {
+        "task_id": "task-c02",
+        "reviewer_independent": True,
+        "verdict": "accept",
+        "reviewed_tree": current_tree,
+    }
+    assert validate_deferred_remote_independent_review_identity(
+        accepted, task_id="task-c02", current_tree=current_tree
+    ) == accepted
+
+    mismatches = (
+        {**accepted, "task_id": "task-c01"},
+        {**accepted, "reviewer_independent": False},
+        {**accepted, "verdict": "repair"},
+        {**accepted, "reviewed_tree": "2" * 40},
+    )
+    for mismatch in mismatches:
+        with unittest.TestCase().assertRaisesRegex(ControlPlaneError, "REVIEW_IDENTITY_MISMATCH"):
+            validate_deferred_remote_independent_review_identity(
+                mismatch, task_id="task-c02", current_tree=current_tree
+            )
 
 
 class CompositeMemberLifecycleTests(unittest.TestCase):

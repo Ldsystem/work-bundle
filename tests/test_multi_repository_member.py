@@ -37,6 +37,160 @@ def apply(config, workspace, remote, proposal, **kwargs):
                   "--accepted-proposal-id", proposal["proposal_id"], "--apply")
 
 
+def deferred_args(workspace, *, replay_key="replay-c02"):
+    return [
+        "defer-workspace-member", str(workspace),
+        "--repository-id", "execution-flow",
+        "--name", "execution-flow",
+        "--path", "execution-flow",
+        "--default-branch", "main",
+        "--replay-key", replay_key,
+    ]
+
+
+def attach_deferred_args(workspace, remote):
+    return [
+        "attach-deferred-remote", str(workspace),
+        "--repository-id", "execution-flow",
+        "--remote", str(remote),
+    ]
+
+
+def test_deferred_remote_apply_replay_and_attach_are_portable_and_idempotent(multi):
+    config, workspace, remote = multi
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config / "registry/projects.yaml"
+    member_path = workspace / "execution-flow"
+
+    dry = run_wb(config, *deferred_args(workspace), "--dry-run")
+    assert dry.returncode == 0, dry.stdout + dry.stderr
+    proposal = json.loads(dry.stdout)
+    assert proposal["member"]["remote"] is None
+    assert proposal["member"]["materialization"] == "deferred"
+    assert proposal["member"]["device_binding"] is None
+    assert not member_path.exists()
+
+    applied = run_wb(
+        config, *deferred_args(workspace), "--accepted-proposal-id", proposal["proposal_id"], "--apply"
+    )
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    assert not member_path.exists()
+    portable = yaml.safe_load(metadata.read_text())
+    deferred = portable["source_repositories"][-1]
+    assert deferred["remote"]["canonical"] is None
+    assert deferred["materialization"] == {"required": True, "state": "deferred"}
+    assert deferred["deferred_remote"]["replay_key"] == "replay-c02"
+    bindings = yaml.safe_load(registry.read_text())["device_bindings"]
+    assert "execution-flow" not in next(iter(bindings.values()))["repositories"]
+    doctor = run_wb(config, "doctor-workspace", str(workspace))
+    assert doctor.returncode == 0, doctor.stdout + doctor.stderr
+    generic_attach = run_wb(config, "attach-workspace", str(workspace), "--materialize", "missing", "--apply")
+    assert generic_attach.returncode == 0, generic_attach.stdout + generic_attach.stderr
+    assert not member_path.exists()
+
+    before = metadata.read_bytes(), registry.read_bytes()
+    replay = run_wb(
+        config, *deferred_args(workspace), "--accepted-proposal-id", proposal["proposal_id"], "--apply"
+    )
+    assert replay.returncode == 0, replay.stdout + replay.stderr
+    assert json.loads(replay.stdout)["replay"] is True
+    assert json.loads(replay.stdout)["changed_files"] == []
+    assert before == (metadata.read_bytes(), registry.read_bytes())
+
+    attach_dry = run_wb(config, *attach_deferred_args(workspace, remote), "--dry-run")
+    assert attach_dry.returncode == 0, attach_dry.stdout + attach_dry.stderr
+    attached = run_wb(
+        config,
+        *attach_deferred_args(workspace, remote),
+        "--accepted-proposal-id", json.loads(attach_dry.stdout)["proposal_id"],
+        "--apply",
+    )
+    assert attached.returncode == 0, attached.stdout + attached.stderr
+    record = json.loads(attached.stdout)["member"]
+    assert record["materialization"] == "attached"
+    assert set(record["device_binding"]) == {
+        "device_id", "checkout_path_token", "remote_fingerprint", "observed_revision", "observed_tree"
+    }
+    assert git(member_path, "branch", "--show-current") == "main"
+    assert yaml.safe_load(metadata.read_text())["source_repositories"][-1]["materialization"]["state"] == "attached"
+
+
+def test_deferred_remote_attach_rejects_stale_and_collision_without_mutation(multi):
+    config, workspace, remote = multi
+    proposal = json.loads(run_wb(config, *deferred_args(workspace), "--dry-run").stdout)
+    applied = run_wb(
+        config, *deferred_args(workspace), "--accepted-proposal-id", proposal["proposal_id"], "--apply"
+    )
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    attach = json.loads(run_wb(config, *attach_deferred_args(workspace, remote), "--dry-run").stdout)
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config / "registry/projects.yaml"
+    metadata.write_text(metadata.read_text() + "owner_field: changed\n")
+    before = metadata.read_bytes(), registry.read_bytes()
+    stale = run_wb(
+        config,
+        *attach_deferred_args(workspace, remote),
+        "--accepted-proposal-id", attach["proposal_id"],
+        "--apply",
+    )
+    assert stale.returncode == 1
+    assert json.loads(stale.stdout)["failure_code"] == "WB_CONTROL_PLANE_PROPOSAL_STALE"
+    assert before == (metadata.read_bytes(), registry.read_bytes())
+    assert not (workspace / "execution-flow").exists()
+
+    fresh = json.loads(run_wb(config, *attach_deferred_args(workspace, remote), "--dry-run").stdout)
+    (workspace / "execution-flow").mkdir()
+    before = metadata.read_bytes(), registry.read_bytes()
+    collision = run_wb(
+        config,
+        *attach_deferred_args(workspace, remote),
+        "--accepted-proposal-id", fresh["proposal_id"],
+        "--apply",
+    )
+    assert collision.returncode == 1
+    assert json.loads(collision.stdout)["failure_code"] == "WB_CONTROL_PLANE_MEMBER_COLLISION"
+    assert before == (metadata.read_bytes(), registry.read_bytes())
+    assert (workspace / "execution-flow").is_dir()
+
+
+def test_deferred_remote_attach_interruption_rolls_back_and_retry_converges(multi, monkeypatch, capsys):
+    import control_plane
+
+    config, workspace, remote = multi
+    proposal = json.loads(run_wb(config, *deferred_args(workspace), "--dry-run").stdout)
+    applied = run_wb(
+        config, *deferred_args(workspace), "--accepted-proposal-id", proposal["proposal_id"], "--apply"
+    )
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    attach = json.loads(run_wb(config, *attach_deferred_args(workspace, remote), "--dry-run").stdout)
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config / "registry/projects.yaml"
+    before = metadata.read_bytes(), registry.read_bytes()
+    original_publish = control_plane._atomic_publish
+    monkeypatch.setenv("WB_CONFIG_ROOT", str(config))
+    monkeypatch.setattr(control_plane, "_atomic_publish", lambda payloads: (_ for _ in ()).throw(OSError("injected")))
+
+    result = control_plane.cmd_attach_deferred_remote(
+        attach_deferred_args(workspace, remote)[1:]
+        + ["--accepted-proposal-id", attach["proposal_id"], "--apply"]
+    )
+
+    assert result == 1
+    assert json.loads(capsys.readouterr().out)["failure_code"] == "WB_CONTROL_PLANE_TRANSACTION_FAILED"
+    assert before == (metadata.read_bytes(), registry.read_bytes())
+    assert not (workspace / "execution-flow").exists()
+
+    monkeypatch.setattr(control_plane, "_atomic_publish", original_publish)
+    retried = run_wb(
+        config,
+        *attach_deferred_args(workspace, remote),
+        "--accepted-proposal-id", attach["proposal_id"],
+        "--apply",
+    )
+    assert retried.returncode == 0, retried.stdout + retried.stderr
+    assert json.loads(retried.stdout)["member"]["materialization"] == "attached"
+
+
 @pytest.mark.parametrize("adopt", [False, True])
 def test_multi_member_add_preserves_mode_and_replays_without_root_git(multi, adopt):
     config, workspace, remote = multi
