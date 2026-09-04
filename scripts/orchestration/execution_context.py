@@ -441,16 +441,24 @@ def _source_records(path: Path, body: str) -> dict[str, str]:
             raise SystemExit(f"Ambiguous source ID {identifier} in {path}")
         records[identifier] = value
 
-    for line in body.splitlines():
-        titled_bullet = re.match(
-            rf"^\s*[-*]\s+\*\*({SOURCE_ID_TOKEN})\s*[—-]\s*(.+?)(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
-            line,
-        )
-        if titled_bullet:
-            title = titled_bullet.group(2).strip()
-            detail = titled_bullet.group(3).strip()
-            add(titled_bullet.group(1), f"{title}: {detail}")
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        block = re.match(rf"^(\s+)({SOURCE_ID_TOKEN})\s*:\s*$", line)
+        if not block:
             continue
+        base_indent = len(block.group(1))
+        detail: list[str] = []
+        for child in lines[index + 1 :]:
+            if not child.strip():
+                continue
+            child_indent = len(child) - len(child.lstrip())
+            if child_indent <= base_indent:
+                break
+            detail.append(child.strip())
+        if detail:
+            add(block.group(2), " ".join(detail))
+
+    for line in lines:
         bullet = re.match(
             rf"^\s*[-*]\s+\*\*({SOURCE_ID_TOKEN})(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
             line,
@@ -458,8 +466,24 @@ def _source_records(path: Path, body: str) -> dict[str, str]:
         if bullet:
             add(bullet.group(1), bullet.group(2))
             continue
+        titled_bullet = re.match(
+            rf"^\s*[-*]\s+\*\*({SOURCE_ID_TOKEN})\s+[—-]\s+(.+?)(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
+            line,
+        )
+        if titled_bullet:
+            title = titled_bullet.group(2).strip()
+            detail = titled_bullet.group(3).strip()
+            add(titled_bullet.group(1), f"{title}: {detail}")
+            continue
+        bold_plain = re.match(
+            rf"^\s*\*\*({SOURCE_ID_TOKEN})(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
+            line,
+        )
+        if bold_plain:
+            add(bold_plain.group(1), bold_plain.group(2))
+            continue
         titled_plain = re.match(
-            rf"^\s*\*\*({SOURCE_ID_TOKEN})\s*[—-]\s*(.+?)(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
+            rf"^\s*\*\*({SOURCE_ID_TOKEN})\s+[—-]\s+(.+?)(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
             line,
         )
         if titled_plain:
@@ -931,6 +955,7 @@ def _validated_knowledge_disposition(
 
 
 _EW_MODULE = None
+_CP_MODULE = None
 
 
 def _execution_workspace_module():
@@ -947,6 +972,15 @@ def _execution_workspace_module():
         spec.loader.exec_module(module)
         _EW_MODULE = module
     return _EW_MODULE
+
+
+def _completion_provenance_module():
+    global _CP_MODULE
+    if _CP_MODULE is None:
+        import completion_provenance
+
+        _CP_MODULE = completion_provenance
+    return _CP_MODULE
 
 
 def _binding_path(control_root: Path, plan_id: str, task_id: str) -> Path:
@@ -1077,6 +1111,13 @@ def create_or_load_task_execution_binding(
     loaded = _execution_workspace_module().load_state(runtime_root, workspace_id, execution_id, repository_id)
     state = loaded["execution_workspace_state"]
     identity = loaded["git_identity"]
+    target_kind = "isolated_worktree" if state.get("kind") == "worktree" else "git_backed"
+    ownership = _completion_provenance_module().execution_binding_ownership(
+        control_root / ".work-bundle/runtime/completion-provenance",
+        binding_id=f"binding:{plan_id}:{task_id}",
+        target_kind=target_kind,
+        owner=task_id,
+    )
     binding = {
         "plan_id": plan_id,
         "task_id": task_id,
@@ -1090,6 +1131,7 @@ def create_or_load_task_execution_binding(
         "git_identity": identity,
         "write_scope": list(write_scope or []),
         "forbidden_scope": list(forbidden_scope or []),
+        "ownership": ownership,
         "mutating": True,
         "baseline": None,
     }
@@ -1100,6 +1142,8 @@ def create_or_load_task_execution_binding(
 
 def load_task_execution_binding(control_root: Path, plan_id: str, task_id: str) -> dict[str, Any]:
     binding = _read_binding_file(_binding_path(control_root.expanduser().resolve(), plan_id, task_id))
+    if "ownership" not in binding:
+        raise SystemExit("Task execution binding ownership is invalid")
     required = {
         "plan_id",
         "task_id",
@@ -1110,11 +1154,21 @@ def load_task_execution_binding(control_root: Path, plan_id: str, task_id: str) 
         "execution_path",
         "state_path",
         "git_identity",
+        "ownership",
     }
     if not required.issubset(binding):
         raise SystemExit("Task execution binding provenance is invalid")
     if binding.get("plan_id") != plan_id or binding.get("task_id") != task_id:
         raise SystemExit("Task execution binding identity mismatch")
+    try:
+        ownership = _completion_provenance_module().validate_execution_binding_ownership(
+            control_root.expanduser().resolve() / ".work-bundle/runtime/completion-provenance",
+            binding["ownership"],
+        )
+    except (KeyError, TypeError, _completion_provenance_module().CompletionProvenanceError) as error:
+        raise SystemExit("Task execution binding ownership is invalid") from error
+    if ownership.get("binding_id") != f"binding:{plan_id}:{task_id}":
+        raise SystemExit("Task execution binding ownership identity mismatch")
     _verify_binding_provenance(binding)
     return binding
 

@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:work-bundle:orchestration:evaluation-identity:v1",
+  "$ref": "#/$defs/evaluationIdentity",
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "time": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "gitPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "revision", "tree"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "revision": {"$ref": "#/$defs/gitOid"},
+        "tree": {"$ref": "#/$defs/gitOid"}
+      }
+    },
+    "targetIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "revision", "sha256", "source_tree"],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/id"},
+        "revision": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "source_tree": {"anyOf": [{"$ref": "#/$defs/gitOid"}, {"type": "null"}]}
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "sourceSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files", "sha256"],
+      "properties": {
+        "files": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/sourceFile"}},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "entrypointIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "entrypoint"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "entrypoint": {"type": "string", "minLength": 1}
+      }
+    },
+    "specificationFreeze": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "revision", "sha256", "source_tree", "path"],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/id"},
+        "revision": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "source_tree": {"anyOf": [{"$ref": "#/$defs/gitOid"}, {"type": "null"}]},
+        "path": {"type": "string", "minLength": 1}
+      }
+    },
+    "evaluationFreeze": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluation_id", "frozen_at", "product", "specification", "task_set", "instruction", "fixture", "runner", "verifier", "semantic_schema", "evidence_capabilities"],
+      "properties": {
+        "evaluation_id": {"$ref": "#/$defs/id"},
+        "frozen_at": {"$ref": "#/$defs/time"},
+        "product": {"$ref": "#/$defs/gitPoint"},
+        "specification": {"$ref": "#/$defs/specificationFreeze"},
+        "task_set": {"$ref": "#/$defs/sourceSet"},
+        "instruction": {"$ref": "#/$defs/sourceSet"},
+        "fixture": {"$ref": "#/$defs/sourceSet"},
+        "runner": {"$ref": "#/$defs/entrypointIdentity"},
+        "verifier": {"$ref": "#/$defs/entrypointIdentity"},
+        "semantic_schema": {"$ref": "#/$defs/sourceSet"},
+        "evidence_capabilities": {"$ref": "#/$defs/sourceSet"}
+      }
+    },
+    "invalidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invalidation_id", "changed_component", "old_digest", "new_digest", "affected_run_ids", "reason", "timestamp"],
+      "properties": {
+        "invalidation_id": {"$ref": "#/$defs/id"},
+        "changed_component": {"enum": ["product", "specification", "tasks", "instruction", "fixture", "runner", "verifier", "semantic_schema", "evidence_capabilities"]},
+        "old_digest": {"$ref": "#/$defs/sha256"},
+        "new_digest": {"$ref": "#/$defs/sha256"},
+        "affected_run_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/id"}},
+        "reason": {"type": "string", "minLength": 1},
+        "timestamp": {"$ref": "#/$defs/time"}
+      }
+    },
+    "evaluationIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluation_id", "product", "specification", "task_set_digest", "instruction_digest", "fixture_digest", "runner_digest", "verifier_digest", "semantic_schema_digest", "evidence_capabilities_digest", "invocation_digest", "raw_response_digest", "raw_trace_digest", "adjudication_digest", "packaging", "status", "invalidations"],
+      "properties": {
+        "evaluation_id": {"$ref": "#/$defs/id"},
+        "product": {"$ref": "#/$defs/gitPoint"},
+        "specification": {"$ref": "#/$defs/targetIdentity"},
+        "task_set_digest": {"$ref": "#/$defs/sha256"},
+        "instruction_digest": {"$ref": "#/$defs/sha256"},
+        "fixture_digest": {"$ref": "#/$defs/sha256"},
+        "runner_digest": {"$ref": "#/$defs/sha256"},
+        "verifier_digest": {"$ref": "#/$defs/sha256"},
+        "semantic_schema_digest": {"$ref": "#/$defs/sha256"},
+        "evidence_capabilities_digest": {"$ref": "#/$defs/sha256"},
+        "invocation_digest": {"$ref": "#/$defs/sha256"},
+        "raw_response_digest": {"$ref": "#/$defs/sha256"},
+        "raw_trace_digest": {"$ref": "#/$defs/sha256"},
+        "adjudication_digest": {"$ref": "#/$defs/sha256"},
+        "packaging": {"anyOf": [{"$ref": "#/$defs/gitPoint"}, {"type": "null"}]},
+        "status": {"enum": ["frozen", "valid", "stale", "invalid"]},
+        "invalidations": {"type": "array", "items": {"$ref": "#/$defs/invalidation"}}
+      }
+    }
+  }
+}

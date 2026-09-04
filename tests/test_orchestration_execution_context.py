@@ -61,6 +61,33 @@ def test_source_records_reject_malformed_suffixes_and_colonless_bullets(tmp_path
     assert not execution_context.SOURCE_ID_RE.fullmatch("API-003AB")
 
 
+def test_source_records_keep_compound_ids_and_parse_structured_contract_blocks(tmp_path: Path) -> None:
+    specification = tmp_path / "spec.md"
+    body = (
+        "- **DEC-101-001**: Stable feature identity.\n"
+        "- **DEC-101-002**: Stable feature metadata.\n"
+        "```yaml\n"
+        "api_contracts:\n"
+        "  API-005:\n"
+        "    schema: observation_identity_v1\n"
+        "    required: [observation_id, mutation_epoch]\n"
+        "  API-006:\n"
+        "    schema: execution_binding_ownership_v1\n"
+        "    required: [binding_id, current_owner]\n"
+        "```\n"
+    )
+
+    records = execution_context._source_records(specification, body)
+
+    assert records["DEC-101-001"] == "Stable feature identity."
+    assert records["DEC-101-002"] == "Stable feature metadata."
+    assert "observation_identity_v1" in records["API-005"]
+    assert "mutation_epoch" in records["API-005"]
+    assert "execution_binding_ownership_v1" in records["API-006"]
+    assert "current_owner" in records["API-006"]
+    assert "DEC-101" not in records
+
+
 def test_compile_evidence_capability_maps_stable_task_local_invariants() -> None:
     validation = [{"id": "VAL-001", "invariant_ids": ["INV-001"], "capability_reason": "Observes violation."}]
     task = {"evidence_capability": {"result": "mapped", "reason": "Required.", "invariants": [{"id": "INV-001", "source_ids": ["REQ-001"], "invariant": "Observable behavior", "boundary": "unit", "oracle": "VAL-001", "capability_reason": "Unit oracle distinguishes violation.", "freshness": "current_task_batch", "task_id": "task-001", "evidence_ids": ["VAL-001"], "closure_result": "pending"}]}}

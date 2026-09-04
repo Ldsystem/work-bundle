@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:work-bundle:orchestration:stage-event:v1",
+  "$ref": "#/$defs/stageEvent",
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "time": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "nullableId": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+    "eventType": {
+      "enum": [
+        "stage_started", "stage_completed", "finding_recorded", "work_returned",
+        "reslice_recorded", "suite_started", "suite_reused", "suite_completed",
+        "evidence_invalidated", "reviewer_mutation_denied", "control_plane_repaired",
+        "binding_retained", "binding_released"
+      ]
+    },
+    "findingClass": {
+      "enum": [
+        "specification_gap", "decomposition_gap", "allocation_gap", "implementation_defect",
+        "validation_oracle_defect", "environment_failure", "advisory_enhancement"
+      ]
+    },
+    "joinIds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["specification_id", "plan_id", "phase_id", "task_id", "review_id", "evaluation_id"],
+      "properties": {
+        "specification_id": {"$ref": "#/$defs/nullableId"},
+        "plan_id": {"$ref": "#/$defs/nullableId"},
+        "phase_id": {"$ref": "#/$defs/nullableId"},
+        "task_id": {"$ref": "#/$defs/nullableId"},
+        "review_id": {"$ref": "#/$defs/nullableId"},
+        "evaluation_id": {"$ref": "#/$defs/nullableId"}
+      }
+    },
+    "clocks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wall_ms", "active_ms", "billed_ms"],
+      "properties": {
+        "wall_ms": {"type": "integer", "minimum": 0},
+        "active_ms": {"type": "integer", "minimum": 0},
+        "billed_ms": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product_tree", "artifact_digest", "mutation_epoch"],
+      "properties": {
+        "product_tree": {"anyOf": [{"$ref": "#/$defs/gitOid"}, {"type": "null"}]},
+        "artifact_digest": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "mutation_epoch": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "stageEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id", "timestamp", "process_id", "stage", "attempt_id", "event_type",
+        "enforcement_mode", "join_ids", "clocks", "finding_class", "return_reason",
+        "owner", "identity", "privacy"
+      ],
+      "properties": {
+        "event_id": {"$ref": "#/$defs/id"},
+        "timestamp": {"$ref": "#/$defs/time"},
+        "process_id": {"$ref": "#/$defs/id"},
+        "stage": {"type": "string", "minLength": 1},
+        "attempt_id": {"$ref": "#/$defs/id"},
+        "event_type": {"$ref": "#/$defs/eventType"},
+        "enforcement_mode": {"enum": ["bootstrap_policy", "native"]},
+        "join_ids": {"$ref": "#/$defs/joinIds"},
+        "clocks": {"$ref": "#/$defs/clocks"},
+        "finding_class": {"anyOf": [{"$ref": "#/$defs/findingClass"}, {"type": "null"}]},
+        "return_reason": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "owner": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "identity": {"$ref": "#/$defs/identity"},
+        "privacy": {"const": "operational_metadata_only"}
+      }
+    }
+  }
+}

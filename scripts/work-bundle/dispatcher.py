@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
+import sys
 from pathlib import Path
 
 from core import CLI_HELP_EPILOG, LEGACY_COMMAND_MIGRATIONS, out
@@ -12,6 +14,7 @@ from bootstrap_config import cmd_migrate_work_bundle_config
 from project import cmd_cleanup_member, cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_migrate_to_multi_repository, cmd_project, cmd_provision_member, cmd_register_project_command, cmd_session_start, cmd_set_prefer_subagent, cmd_show_project, cmd_validate_project
 from rules import cmd_create_rules, cmd_validate_rules
 from skill_registry import cmd_merge_skill_hints, cmd_registry
+from stage_events import cmd_stage_events
 from defects import (
     cmd_defect_archive_evidence,
     cmd_defect_build_index,
@@ -32,6 +35,39 @@ from control_plane import (
     cmd_publish_control_plane,
 )
 from registry_layout import cmd_migrate_registered_projects
+
+
+def _load_review_runtime():
+    module_path = Path(__file__).resolve().parents[1] / 'orchestration' / 'review_runtime.py'
+    spec = importlib.util.spec_from_file_location('_wb_review_runtime', module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f'Unable to load review runtime: {module_path}')
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_reviewer_workspace():
+    module_path = Path(__file__).with_name('reviewer_workspace.py')
+    spec = importlib.util.spec_from_file_location('_wb_reviewer_workspace', module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f'Unable to load reviewer workspace runtime: {module_path}')
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_evaluation_identity():
+    module_path = Path(__file__).resolve().parents[1] / 'orchestration' / 'evaluation_identity.py'
+    spec = importlib.util.spec_from_file_location('_wb_evaluation_identity', module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f'Unable to load evaluation identity runtime: {module_path}')
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 LEGACY_DEFECT_COMMANDS = {
     'violation-ensure-store': 'defect-ensure-store',
@@ -68,6 +104,12 @@ LIVE_COMMANDS = frozenset({
     'validate-project', 'set-prefer-subagent', 'create-rules', 'validate-rules',
     'defect-ensure-store', 'defect-create-evidence', 'defect-build-index',
     'defect-write-index', 'defect-archive-evidence', 'defect-migrate-store',
+    'validate-contract', 'assert-migration-stop',
+    'reviewer-workspace-create', 'reviewer-workspace-operation',
+    'reviewer-workspace-cleanup', 'reviewer-process-run',
+    'evaluation-identity-freeze', 'evaluation-identity-complete',
+    'evaluation-identity-transition',
+    'stage-event-append', 'stage-event-query', 'stage-event-export',
     'doctor', 'repository-health', 'validate-directive-wiring',
     'validate-skill-registry', 'validate-work-bundle-rules',
     'render-doctor-report', 'workflow-branches',
@@ -133,6 +175,17 @@ def main() -> int:
         return cmd_provision_member(parsed.args)
     if command == 'cleanup-member':
         return cmd_cleanup_member(parsed.args)
+    if command in {'validate-contract', 'assert-migration-stop'}:
+        review_runtime = _load_review_runtime()
+        if command == 'validate-contract':
+            return review_runtime.cmd_validate_contract(parsed.args)
+        return review_runtime.cmd_assert_migration_stop(parsed.args)
+    if command in {'reviewer-workspace-create', 'reviewer-workspace-operation', 'reviewer-workspace-cleanup', 'reviewer-process-run'}:
+        return _load_reviewer_workspace().cmd_reviewer_workspace(command, parsed.args)
+    if command in {'evaluation-identity-freeze', 'evaluation-identity-complete', 'evaluation-identity-transition'}:
+        return _load_evaluation_identity().cmd_evaluation_identity(command, parsed.args)
+    if command in {'stage-event-append', 'stage-event-query', 'stage-event-export'}:
+        return cmd_stage_events(command, parsed.args)
     if command == 'credential-list':
         credential_parser = argparse.ArgumentParser(prog='wb.py credential-list')
         credential_parser.add_argument('--workspace-root', required=True)
