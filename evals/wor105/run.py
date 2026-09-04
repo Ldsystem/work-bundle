@@ -109,7 +109,7 @@ def _proof(fixture: dict[str, Any], product_tree: str) -> tuple[str, dict[str, A
     if fixture_id == "ADV-12":
         state = h("deferred-state")
         invalid_placeholder = str(data["placeholder_remote"]).startswith("dummy://")
-        decision = "reject_placeholder_apply_deferred_without_checkout_or_origin_and_replay_noop" if invalid_placeholder and data["remote"] is None and data["apply_count"] == 2 else "invalid_fixture"
+        decision = "reject_placeholder_apply_deferred_without_checkout_or_origin_and_replay_noop" if invalid_placeholder and data["canonical_remote"] is None and data["apply_count"] == 2 else "invalid_fixture"
         return decision, {"validation_error_code": "placeholder_remote_forbidden", "member_snapshot_sha256": state, "checkout_absent": True, "origin_absent": True, "first_apply_state_sha256": state, "replay_state_sha256": state}, event_ids
     raise EvaluationError(f"unknown fixture: {fixture_id}")
 

@@ -1,0 +1,46 @@
+{
+  "schema": "wor105-adversarial-freeze-v1",
+  "evaluation_id": "wor105-native-adversarial-20260905-002",
+  "frozen_at": "2026-09-04T19:28:11Z",
+  "enforcement_mode": "native",
+  "product_tree": "ba4a1befcb9308985eddc8f63e59da6ceeb6ba51",
+  "specification_sha256": "575d4aea84d8d5c88e361017fcc69b97302485bdd6c2074cd2864c9d266d43da",
+  "plan_sha256": "45c71ee3a63368ed66bbf3b95379af2de7a617b5467d5abe91f2ac72b4e5a46e",
+  "task_identity": "task-e01r@plan-20260904-001-wor105-legacy-stabilization",
+  "fixtures": [
+    {"fixture_id": "ADV-01", "path": "evals/wor105/fixtures/ADV-01.json", "sha256": "52e6a3f83058f820fe01343e5b009940842874f05bdf47aa2e99ea60a27127bb"},
+    {"fixture_id": "ADV-02", "path": "evals/wor105/fixtures/ADV-02.json", "sha256": "78fe6de27c7833336f6883a73dc61aaa0b15b37735ae639e9061e071e0dfcd40"},
+    {"fixture_id": "ADV-03", "path": "evals/wor105/fixtures/ADV-03.json", "sha256": "490ebdd8890adb88bd52a6cd24a54d02bdc6750d0a3f9cc63e78cc6a2d68d260"},
+    {"fixture_id": "ADV-04", "path": "evals/wor105/fixtures/ADV-04.json", "sha256": "19db36abd1deb09f95179b572e2c559509aea0a2607aa1a04cd4b5af7db291ef"},
+    {"fixture_id": "ADV-05", "path": "evals/wor105/fixtures/ADV-05.json", "sha256": "42251cea32fd52341f87067be6bbc4194da7139b65b823dcf230b11f50baa3f7"},
+    {"fixture_id": "ADV-06", "path": "evals/wor105/fixtures/ADV-06.json", "sha256": "f5241e874cd284c3e41ecab7e2790d265a8ca7f0e53785d9bb151ebeefb16d6e"},
+    {"fixture_id": "ADV-07", "path": "evals/wor105/fixtures/ADV-07.json", "sha256": "f9446f50289c62fd1115d89d2121576950174cbad68bb4e76cdd8cef1a962d47"},
+    {"fixture_id": "ADV-08", "path": "evals/wor105/fixtures/ADV-08.json", "sha256": "b8b07a687c7d492ad983b88a72b837f18ae50b6c384aa394a732c60e940bd01e"},
+    {"fixture_id": "ADV-09", "path": "evals/wor105/fixtures/ADV-09.json", "sha256": "5a347c746583f3bc1175b50aa5b2fdf8250e07a929206d777a48bdb7e50ca70f"},
+    {"fixture_id": "ADV-10", "path": "evals/wor105/fixtures/ADV-10.json", "sha256": "7ea520dcefa78d9348f354b1a9dcc9726798a0759b0b768d1ae476770731c673"},
+    {"fixture_id": "ADV-11", "path": "evals/wor105/fixtures/ADV-11.json", "sha256": "4520983615ce735ab5cd6ba1729e464085e0af0ec2f152fcf32872e201041ef7"},
+    {"fixture_id": "ADV-12", "path": "evals/wor105/fixtures/ADV-12.json", "sha256": "7f29996db2939960f308f7bfe72e139e3eded355804a72860b98add5d0ce0e18"}
+  ],
+  "components": {
+    "profile": {"path": "../.work-bundle/orchestration/docs/wor105/native-transition-record.yaml", "sha256": "aa01163346022ddc9b55481cf1698614da08a1c0f75a98d38b5ce3008b57cd56"},
+    "fixtures": {"path": "evals/wor105/fixtures", "sha256": "bc4568dae581546c21f60275ad4dc60ae762df36238b98cf89b569f40edde5f2"},
+    "runner": {"path": "evals/wor105/run.py", "sha256": "6367a19b7b462c50b62e034e0ec7aa436fed21c696cf0e23d5a73be0b8eb9351"},
+    "verifier": {"path": "evals/wor105/verify.py", "sha256": "08503554ed5e586251a6c722361d8deb5ca03f8b7fb5c81958acd811ff9a29d4"},
+    "result_schema": {"path": "evals/wor105/adversarial-result-v1.schema.json", "sha256": "ef4a96e1682e29e7225dbecf4257e3dad040bff2d549eff1b71067033db64c89"},
+    "semantic_schema": {"path": "../.work-bundle/orchestration/docs/wor105/contracts-v1.schema.json", "sha256": "ab6500c1197928450da7e7a438d69d763c376332aeaa72caa23526c613eb1b67"},
+    "instructions": {"path": "AGENTS.md", "sha256": "5cc2ba1160a25b767a7e02c957d6f37a14a7fa4be50c711f5b67c5c03442d66a"},
+    "evidence_capabilities": {"path": "../.work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-e01r/task-brief.yaml", "sha256": "98426ea693efb41bf1fc7dbeeefb7f34161c2825d7a42deddd5b9aa900f18c57"}
+  },
+  "invalidations": [
+    {
+      "invalidation_id": "wor105-eval-invalidation-001",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-001",
+      "changed_component": "runner",
+      "old_digest": "4e577385985c220bf254969d58e7b861329e46d17b11f2409b0919efd3ad4b0a",
+      "new_digest": "6367a19b7b462c50b62e034e0ec7aa436fed21c696cf0e23d5a73be0b8eb9351",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-001-attempt-001"],
+      "reason": "ADV-12 runner referenced remote instead of the frozen canonical_remote field",
+      "timestamp": "2026-09-04T19:30:00Z"
+    }
+  ]
+}

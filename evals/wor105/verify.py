@@ -36,6 +36,72 @@ def _file_sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _schema_value(schema: dict[str, Any], value: Any, root: dict[str, Any], label: str) -> None:
+    if "$ref" in schema:
+        target: Any = root
+        for token in schema["$ref"].removeprefix("#/").split("/"):
+            target = target[token]
+        _schema_value(target, value, root, label)
+        return
+    expected_type = schema.get("type")
+    matches_type = {
+        "object": isinstance(value, dict),
+        "array": isinstance(value, list),
+        "string": isinstance(value, str),
+        "boolean": isinstance(value, bool),
+        "integer": isinstance(value, int) and not isinstance(value, bool),
+    }
+    if expected_type in matches_type and not matches_type[expected_type]:
+        raise VerificationError(f"schema type mismatch: {label}")
+    if "const" in schema and value != schema["const"]:
+        raise VerificationError(f"schema constant mismatch: {label}")
+    if "enum" in schema and value not in schema["enum"]:
+        raise VerificationError(f"schema enum mismatch: {label}")
+    if isinstance(value, str):
+        if len(value) < schema.get("minLength", 0):
+            raise VerificationError(f"schema string length mismatch: {label}")
+        if "pattern" in schema and re.fullmatch(schema["pattern"], value) is None:
+            raise VerificationError(f"schema pattern mismatch: {label}")
+    if isinstance(value, list):
+        if len(value) < schema.get("minItems", 0) or len(value) > schema.get("maxItems", len(value)):
+            raise VerificationError(f"schema array length mismatch: {label}")
+        if schema.get("uniqueItems") and len({_canonical(item) for item in value}) != len(value):
+            raise VerificationError(f"schema array uniqueness mismatch: {label}")
+        if "items" in schema:
+            for index, item in enumerate(value):
+                _schema_value(schema["items"], item, root, f"{label}[{index}]")
+    if isinstance(value, dict):
+        required = set(schema.get("required", []))
+        if not required.issubset(value):
+            raise VerificationError(f"schema required fields mismatch: {label}")
+        properties = schema.get("properties", {})
+        if schema.get("additionalProperties") is False and not set(value).issubset(properties):
+            raise VerificationError(f"schema closed shape mismatch: {label}")
+        if "propertyNames" in schema and not set(value).issubset(schema["propertyNames"].get("enum", [])):
+            raise VerificationError(f"schema property names mismatch: {label}")
+        for key, item_schema in properties.items():
+            if key in value:
+                _schema_value(item_schema, value[key], root, f"{label}.{key}")
+
+
+def _verify_result_schema(manifest: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    schema_path = REPO_ROOT / manifest["components"]["result_schema"]["path"]
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    if schema.get("$id") != "urn:work-bundle:wor105:adversarial-result:v1":
+        raise VerificationError("result schema identity mismatch")
+    base = {key: value for key, value in schema.items() if key != "allOf"}
+    branches = schema.get("allOf", [])
+    branch_by_fixture = {
+        item["if"]["properties"]["fixture_id"]["const"]: item["then"]
+        for item in branches
+    }
+    if set(branch_by_fixture) != {f"ADV-{number:02d}" for number in range(1, 13)}:
+        raise VerificationError("result schema branch set mismatch")
+    for row in rows:
+        _schema_value(base, row, schema, row["fixture_id"])
+        _schema_value(branch_by_fixture[row["fixture_id"]], row, schema, row["fixture_id"])
+
+
 def _load_fixtures(manifest: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
     records = []
     aggregate_input = b""
@@ -99,6 +165,7 @@ def verify_results(manifest_path: Path, results_path: Path) -> dict[str, Any]:
     rows = [json.loads(line) for line in results_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if len(rows) != 12 or len(fixtures) != 12:
         raise VerificationError("exactly twelve results required")
+    _verify_result_schema(manifest, rows)
     if [row["fixture_id"] for row in rows] != [fixture["fixture_id"] for fixture, _ in fixtures]:
         raise VerificationError("result ordering mismatch")
     for row, (fixture, fixture_sha) in zip(rows, fixtures, strict=True):

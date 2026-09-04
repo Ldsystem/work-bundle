@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 
@@ -45,12 +46,15 @@ def test_independent_verifier_rejects_missing_proof_and_relation_drift(tmp_path:
 
     rows[0]["proof"].pop("validator_output_sha256")
     output.write_text("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n", encoding="utf-8")
-    with pytest.raises(verifier.VerificationError, match="proof keys"):
+    with pytest.raises(verifier.VerificationError, match="schema required fields"):
         verifier.verify_results(EVAL_ROOT / "freeze-manifest.json", output)
 
     runner.run_manifest(EVAL_ROOT / "freeze-manifest.json", output)
     rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
     rows[7]["proof"]["reuse_of"] = "different-observation"
+    rows[7]["adjudication_sha256"] = hashlib.sha256(
+        json.dumps(rows[7]["proof"], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     output.write_text("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n", encoding="utf-8")
     with pytest.raises(verifier.VerificationError, match="ADV-08 reuse"):
         verifier.verify_results(EVAL_ROOT / "freeze-manifest.json", output)
@@ -68,6 +72,19 @@ def test_verifier_rejects_fixture_or_evaluator_identity_drift(tmp_path: Path) ->
 
     with pytest.raises(verifier.VerificationError, match="fixture aggregate"):
         verifier.verify_results(drifted, output)
+
+
+def test_verifier_enforces_normative_result_schema_types(tmp_path: Path) -> None:
+    runner = _load("wor105_runner_schema", "run.py")
+    verifier = _load("wor105_verifier_schema", "verify.py")
+    output = tmp_path / "results.jsonl"
+    runner.run_manifest(EVAL_ROOT / "freeze-manifest.json", output)
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    rows[7]["proof"]["subprocess_invocation_count"] = "1"
+    output.write_text("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n", encoding="utf-8")
+
+    with pytest.raises(verifier.VerificationError, match="schema constant"):
+        verifier.verify_results(EVAL_ROOT / "freeze-manifest.json", output)
 
 
 def test_runner_does_not_import_verifier_or_copy_expected_as_decision() -> None:
