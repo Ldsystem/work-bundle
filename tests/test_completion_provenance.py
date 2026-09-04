@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import threading
 import json
+import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,14 +17,20 @@ from completion_provenance import (  # noqa: E402
     CompletionProvenanceError,
     FailureOwnershipV1,
     ManagedProvenanceStore,
+    claim_observation_identity,
     consume_observation,
     load_observation,
     record_relevant_mutation,
+    release_completion_binding,
+    resolve_completion_owner,
+    resume_failed_stage,
+    retain_binding_owner,
     reuse_observation,
     validate_predecessor_extension,
     validate_resume_owner,
 )
 import execution_context  # noqa: E402
+import plans  # noqa: E402
 
 
 NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
@@ -53,6 +60,44 @@ def _result():
         "started_at": NOW.isoformat().replace("+00:00", "Z"),
         "completed_at": (NOW + timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
     }
+
+
+def _native_event(**changes):
+    event = {
+        "event_id": "event-template",
+        "timestamp": NOW.isoformat().replace("+00:00", "Z"),
+        "process_id": "process-c01",
+        "stage": "completion",
+        "attempt_id": "attempt-c01",
+        "event_type": "stage_started",
+        "enforcement_mode": "native",
+        "join_ids": {
+            "specification_id": "spec-001",
+            "plan_id": "plan-001",
+            "phase_id": "phase-c",
+            "task_id": "task-c01",
+            "review_id": None,
+            "evaluation_id": None,
+        },
+        "clocks": {"wall_ms": 1, "active_ms": 1, "billed_ms": None},
+        "finding_class": None,
+        "return_reason": None,
+        "owner": "task-c01",
+        "identity": {"product_tree": "1" * 40, "artifact_digest": "a" * 64, "mutation_epoch": 0},
+        "privacy": "operational_metadata_only",
+    }
+    event.update(changes)
+    return event
+
+
+def _stage_events_module():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "work-bundle" / "stage_events.py"
+    spec = importlib.util.spec_from_file_location("_c01_stage_events", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_kernel_failure_owner_lifecycle_preserves_origin_and_blocks_early_release(tmp_path):
@@ -287,3 +332,153 @@ def test_predecessor_extension_uses_public_contract_not_byte_identity():
         validate_predecessor_extension(predecessor, extension, authorized=False, public_contract_validator=lambda *_: True)
     with pytest.raises(CompletionProvenanceError, match="public contract"):
         validate_predecessor_extension(predecessor, extension, authorized=True, public_contract_validator=lambda *_: False)
+
+
+def test_completion_claim_deduplicates_and_consumes_once_with_native_events(tmp_path):
+    store = ManagedProvenanceStore(tmp_path / "provenance")
+    events_root = tmp_path / "events"
+    events_root.mkdir()
+    calls = 0
+
+    def run():
+        nonlocal calls
+        calls += 1
+        return _result()
+
+    first = claim_observation_identity(
+        store,
+        _request(),
+        run,
+        finalization_id="final-001",
+        now=NOW,
+        stage_event_workspace=events_root,
+        stage_event=_native_event(),
+    )
+    second = claim_observation_identity(
+        store,
+        _request(observation_id="obs-002", invocation_id="invoke-002"),
+        run,
+        finalization_id="final-001",
+        now=NOW,
+        stage_event_workspace=events_root,
+        stage_event=_native_event(),
+    )
+
+    assert calls == 1
+    assert first.consumed_by_finalization == "final-001"
+    assert second.reuse_of == first.observation_id
+    assert second.consumed_by_finalization == "final-001"
+    with pytest.raises(CompletionProvenanceError, match="already consumed"):
+        claim_observation_identity(
+            store,
+            _request(observation_id="obs-003", invocation_id="invoke-003"),
+            run,
+            finalization_id="final-002",
+            now=NOW,
+        )
+    events = _stage_events_module().query_stage_events(events_root)
+    assert [event.event_type for event in events] == ["suite_completed", "suite_reused"]
+    assert all(event.enforcement_mode == "native" for event in events)
+
+
+def test_failure_resume_and_release_preserve_first_owner_and_emit_native_events(tmp_path):
+    store = ManagedProvenanceStore(tmp_path / "provenance")
+    events_root = tmp_path / "events"
+    events_root.mkdir()
+    FailureOwnershipV1.create(store, "bind-c01", "isolated_worktree", "task-c01")
+
+    retained = retain_binding_owner(
+        store,
+        "bind-c01",
+        repair_owner="repair-c01",
+        reason="validation failed",
+        stage_event_workspace=events_root,
+        stage_event=_native_event(),
+    )
+    assert retained.original_owner == "task-c01"
+    assert resolve_completion_owner(store, "bind-c01") == "repair-c01"
+    with pytest.raises(CompletionProvenanceError, match="current owner"):
+        resume_failed_stage(store, "bind-c01", owner="task-c01")
+    resumed = resume_failed_stage(
+        store,
+        "bind-c01",
+        owner="repair-c01",
+        stage_event_workspace=events_root,
+        stage_event=_native_event(),
+    )
+    ready = resumed.complete_repair("repair-c01", "review-c01").complete_rereview("review-c01")
+    released = release_completion_binding(
+        store,
+        "bind-c01",
+        owner="task-c01",
+        stage_event_workspace=events_root,
+        stage_event=_native_event(),
+    )
+
+    assert ready.original_owner == released.original_owner == "task-c01"
+    assert released.state == "released"
+    events = _stage_events_module().query_stage_events(events_root)
+    assert [event.event_type for event in events] == ["binding_retained", "stage_started", "binding_released"]
+
+
+def test_execution_workspace_cleanup_rejects_retained_binding():
+    module = execution_context._execution_workspace_module()
+    retained = {
+        "binding_id": "bind-c01",
+        "target_kind": "isolated_worktree",
+        "state": "repair_owned",
+        "original_owner": "task-c01",
+        "current_owner": "repair-c01",
+        "reason": "validation failed",
+        "repair_owner": "repair-c01",
+        "rereview_owner": None,
+        "releasable": False,
+        "history": [{
+            "transition_id": "transition-c01",
+            "from": "active",
+            "to": "repair_owned",
+            "owner": "repair-c01",
+            "reason": "validation failed",
+            "timestamp": NOW.isoformat().replace("+00:00", "Z"),
+        }],
+    }
+    with pytest.raises(module.ExecutionWorkspaceError, match="WB_EXECUTION_BINDING_RETAINED"):
+        module.assert_binding_released_for_cleanup(retained)
+    released = {**retained, "state": "released", "current_owner": "task-c01", "repair_owner": None, "releasable": True}
+    assert module.assert_binding_released_for_cleanup(released)["original_owner"] == "task-c01"
+
+
+def test_completed_task_transition_releases_active_binding_and_persists_workspace_owner(tmp_path, monkeypatch):
+    control_root = tmp_path / "workspace"
+    (control_root / ".work-bundle").mkdir(parents=True)
+    store = ManagedProvenanceStore(control_root / ".work-bundle/runtime/completion-provenance")
+    created = FailureOwnershipV1.create(store, "binding:plan-001:task-c01", "isolated_worktree", "task-c01")
+    binding = {
+        "plan_id": "plan-001",
+        "task_id": "task-c01",
+        "workspace_id": "workspace-001",
+        "execution_id": "execution-c01",
+        "repository_id": "repo-main",
+        "runtime_root": str(tmp_path / "runtime"),
+        "ownership": created.to_dict(),
+    }
+    persisted = []
+    retained = []
+
+    monkeypatch.setattr(plans, "resolve_workspace_root", lambda _args: control_root)
+    monkeypatch.setattr(plans, "load_task_execution_binding", lambda *_args: binding)
+    monkeypatch.setattr(plans, "_persist_binding", lambda value, _root: persisted.append(value))
+    monkeypatch.setattr(
+        plans,
+        "_execution_workspace_module",
+        lambda: type("Workspace", (), {"retain_binding_owner": staticmethod(lambda *args, **kwargs: retained.append((args, kwargs)))})(),
+    )
+
+    released = plans._release_completed_task_binding(
+        type("Args", (), {"workspace_root": str(control_root)})(),
+        {"id": "task-c01", "plan_id": "plan-001", "phase_id": "phase-c"},
+    )
+
+    assert released["state"] == "released"
+    assert persisted[0]["ownership"] == released
+    assert retained[0][1]["ownership"] == released

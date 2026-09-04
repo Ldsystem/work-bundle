@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 # Load the sibling module by path: both script families expose a top-level
 # `core.py`, and shared Python harnesses must not bind this helper to the other one.
@@ -448,6 +449,76 @@ def _identity_matches(state: dict[str, object], expected: dict[str, str]) -> boo
     return all(actual.get(key) == expected.get(key) for key in keys)
 
 
+def assert_binding_released_for_cleanup(ownership: dict[str, object]) -> dict[str, object]:
+    """Fail closed while API-006 still assigns completion, repair, or rereview ownership."""
+
+    normalized = _validated_binding_ownership(ownership)
+    if (
+        normalized.get("state") != "released"
+        or normalized.get("releasable") is not True
+        or normalized.get("repair_owner") is not None
+        or normalized.get("rereview_owner") is not None
+        or normalized.get("current_owner") != normalized.get("original_owner")
+    ):
+        raise ExecutionWorkspaceError(
+            "WB_EXECUTION_BINDING_RETAINED",
+            {
+                "binding_id": normalized.get("binding_id"),
+                "current_owner": normalized.get("current_owner"),
+            },
+        )
+    return normalized
+
+
+_COMPLETION_PROVENANCE_MODULE = None
+
+
+def _completion_provenance_module():
+    global _COMPLETION_PROVENANCE_MODULE
+    if _COMPLETION_PROVENANCE_MODULE is None:
+        path = Path(__file__).resolve().parents[1] / "orchestration" / "completion_provenance.py"
+        spec = importlib.util.spec_from_file_location("_execution_workspace_completion_provenance", path)
+        if spec is None or spec.loader is None:
+            raise ExecutionWorkspaceError("WB_EXECUTION_BINDING_OWNERSHIP_INVALID")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _COMPLETION_PROVENANCE_MODULE = module
+    return _COMPLETION_PROVENANCE_MODULE
+
+
+def _validated_binding_ownership(ownership: dict[str, object]) -> dict[str, object]:
+    try:
+        return _completion_provenance_module().validate_ownership_shape(ownership)
+    except Exception as error:
+        raise ExecutionWorkspaceError("WB_EXECUTION_BINDING_OWNERSHIP_INVALID") from error
+
+
+def retain_binding_owner(
+    runtime_root: Path,
+    workspace_id: str,
+    execution_id: str,
+    repository_id: str,
+    *,
+    ownership: dict[str, object],
+) -> dict[str, object]:
+    """Persist API-006 ownership so terminal cleanup cannot lose a retained owner."""
+
+    record = state_path(runtime_root.expanduser().resolve(), workspace_id, execution_id, repository_id)
+    state, identity = _read_record(record)
+    if state.get("owner") != "work-bundle" or state.get("kind") != "worktree":
+        raise ExecutionWorkspaceError("WB_EXECUTION_WORKSPACE_NOT_OWNED")
+    if state.get("id") != execution_id or state.get("repository_id") != repository_id:
+        raise ExecutionWorkspaceError("WB_EXECUTION_PROVENANCE_IDENTITY_MISMATCH")
+    expected_target = workspace_path(runtime_root, workspace_id, execution_id, repository_id)
+    if Path(str(state.get("path", ""))).resolve() != expected_target or not _identity_matches(state, identity):
+        raise ExecutionWorkspaceError("WB_EXECUTION_GIT_IDENTITY_MISMATCH")
+    normalized = _validated_binding_ownership(ownership)
+    state["completion_binding_ownership"] = normalized
+    _write_state(record, state, identity)
+    return {"status": "binding-owner-retained", "completion_binding_ownership": normalized}
+
+
 def workspace_status(
     runtime_root: Path,
     workspace_id: str,
@@ -500,6 +571,9 @@ def cleanup_owned(
         raise ExecutionWorkspaceError("WB_EXECUTION_GIT_IDENTITY_MISMATCH")
     if state.get("lifecycle_status", "active") not in TERMINAL_LIFECYCLE_STATUSES:
         raise ExecutionWorkspaceError("WB_EXECUTION_WORKSPACE_NOT_TERMINAL")
+    completion_ownership = state.get("completion_binding_ownership")
+    if completion_ownership is not None:
+        assert_binding_released_for_cleanup(completion_ownership)
     dirty = _git("-C", str(expected_target), "status", "--porcelain=v1", "--untracked-files=all")
     if dirty:
         raise ExecutionWorkspaceError(
@@ -512,7 +586,10 @@ def cleanup_owned(
         raise ExecutionWorkspaceError("WB_EXECUTION_CLEANUP_INCOMPLETE")
     record.unlink()
     _remove_empty_runtime_parents(record, runtime_root)
-    return {"status": "cleaned", "path": str(expected_target), "state_path": str(record)}
+    result = {"status": "cleaned", "path": str(expected_target), "state_path": str(record)}
+    if isinstance(completion_ownership, dict):
+        result["completion_binding_ownership"] = completion_ownership
+    return result
 
 
 def mark_terminal(
@@ -523,6 +600,7 @@ def mark_terminal(
     *,
     lifecycle_status: str,
     evidence: str,
+    completion_binding_ownership: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if lifecycle_status not in TERMINAL_LIFECYCLE_STATUSES:
         raise ExecutionWorkspaceError("WB_EXECUTION_LIFECYCLE_STATUS_INVALID")
@@ -545,6 +623,8 @@ def mark_terminal(
     state["lifecycle_status"] = lifecycle_status
     state["terminal_evidence"] = evidence.strip()
     state["terminal_recorded_at"] = utc_now_rfc3339()
+    if completion_binding_ownership is not None:
+        state["completion_binding_ownership"] = _validated_binding_ownership(completion_binding_ownership)
     _write_state(record, state, identity)
     return {
         "status": "terminal-recorded",

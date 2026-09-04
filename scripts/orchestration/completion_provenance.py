@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
+import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
@@ -275,6 +277,185 @@ def validate_resume_owner(binding: FailureOwnershipV1 | Mapping[str, Any], owner
     return True
 
 
+def _validate_ownership_shape(ownership: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(ownership, Mapping) or set(ownership) != OWNERSHIP_FIELDS:
+        raise CompletionProvenanceError("execution binding ownership fields are not closed and complete")
+    _identifier(ownership["binding_id"], "binding_id")
+    if ownership["target_kind"] not in TARGET_KINDS:
+        raise CompletionProvenanceError("execution binding ownership target_kind is invalid")
+    if ownership["state"] not in OWNERSHIP_STATES:
+        raise CompletionProvenanceError("execution binding ownership state is invalid")
+    for field_name in ("original_owner", "current_owner"):
+        _identifier(ownership[field_name], field_name)
+    _nonempty(ownership["reason"], "reason")
+    for field_name in ("repair_owner", "rereview_owner"):
+        value = ownership[field_name]
+        if value is not None:
+            _identifier(value, field_name)
+    if not isinstance(ownership["releasable"], bool):
+        raise CompletionProvenanceError("execution binding ownership releasable must be boolean")
+    history = ownership["history"]
+    if not isinstance(history, list) or not history:
+        raise CompletionProvenanceError("execution binding ownership history must be non-empty")
+    transition_fields = {"transition_id", "from", "to", "owner", "reason", "timestamp"}
+    for transition in history:
+        if not isinstance(transition, Mapping) or set(transition) != transition_fields:
+            raise CompletionProvenanceError("execution binding ownership history is invalid")
+        _identifier(transition["transition_id"], "transition_id")
+        if transition["from"] not in OWNERSHIP_STATES or transition["to"] not in OWNERSHIP_STATES:
+            raise CompletionProvenanceError("execution binding ownership transition state is invalid")
+        _identifier(transition["owner"], "transition owner")
+        _nonempty(transition["reason"], "transition reason")
+        _utc(transition["timestamp"], "transition timestamp")
+    return deepcopy(dict(ownership))
+
+
+def validate_ownership_shape(ownership: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate API-006 without asserting membership in a particular managed store."""
+
+    return _validate_ownership_shape(ownership)
+
+
+def _load_failure_ownership(store: ManagedProvenanceStore, binding_id: str) -> FailureOwnershipV1:
+    _identifier(binding_id, "binding_id")
+    with store.locked():
+        state = store._read_unlocked()
+        raw = state.get("bindings", {}).get(binding_id)
+    if raw is None:
+        raise CompletionProvenanceError("execution binding does not exist")
+    ownership = _validate_ownership_shape(raw)
+    ownership["history"] = tuple(ownership["history"])
+    return FailureOwnershipV1(**ownership, _store=store)
+
+
+_STAGE_EVENTS_MODULE = None
+
+
+def _stage_events_module():
+    global _STAGE_EVENTS_MODULE
+    if _STAGE_EVENTS_MODULE is None:
+        path = Path(__file__).resolve().parents[1] / "work-bundle" / "stage_events.py"
+        spec = importlib.util.spec_from_file_location("_completion_stage_events", path)
+        if spec is None or spec.loader is None:
+            raise CompletionProvenanceError("stage event API is unavailable")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _STAGE_EVENTS_MODULE = module
+    return _STAGE_EVENTS_MODULE
+
+
+def _emit_native_stage_event(
+    workspace: str | Path | None,
+    template: Mapping[str, Any] | None,
+    *,
+    event_type: str,
+    owner: str | None = None,
+    mutation_epoch: int | None = None,
+) -> None:
+    if workspace is None and template is None:
+        return
+    if workspace is None or not isinstance(template, Mapping):
+        raise CompletionProvenanceError("native stage event workspace and template are both required")
+    payload = deepcopy(dict(template))
+    payload["event_id"] = f"event-{uuid.uuid4()}"
+    payload["event_type"] = event_type
+    payload["enforcement_mode"] = "native"
+    if owner is not None:
+        payload["owner"] = owner
+    if mutation_epoch is not None:
+        identity = payload.get("identity")
+        if not isinstance(identity, Mapping):
+            raise CompletionProvenanceError("native stage event identity is required")
+        payload["identity"] = {**identity, "mutation_epoch": mutation_epoch}
+    try:
+        _stage_events_module().append_stage_event(Path(workspace), payload)
+    except Exception as error:
+        raise CompletionProvenanceError("native stage event emission failed") from error
+
+
+def resolve_completion_owner(store: ManagedProvenanceStore, binding_id: str) -> str:
+    """Return the only owner currently authorized to resume the binding."""
+
+    return _load_failure_ownership(store, binding_id).current_owner
+
+
+def retain_binding_owner(
+    store: ManagedProvenanceStore,
+    binding_id: str,
+    *,
+    repair_owner: str,
+    reason: str,
+    stage_event_workspace: str | Path | None = None,
+    stage_event: Mapping[str, Any] | None = None,
+) -> FailureOwnershipV1:
+    """Assign typed repair ownership without losing the original lifecycle owner."""
+
+    binding = _load_failure_ownership(store, binding_id)
+    if binding.state == "repair_owned" and binding.repair_owner == repair_owner:
+        retained = binding
+    else:
+        retained = binding.record_failure(repair_owner, reason)
+    _emit_native_stage_event(
+        stage_event_workspace,
+        stage_event,
+        event_type="binding_retained",
+        owner=retained.current_owner,
+        mutation_epoch=store.mutation_epoch,
+    )
+    return retained
+
+
+def resume_failed_stage(
+    store: ManagedProvenanceStore,
+    binding_id: str,
+    *,
+    owner: str,
+    stage_event_workspace: str | Path | None = None,
+    stage_event: Mapping[str, Any] | None = None,
+) -> FailureOwnershipV1:
+    """Validate the current repair or rereview owner before resuming work."""
+
+    binding = _load_failure_ownership(store, binding_id)
+    validate_resume_owner(binding, owner)
+    if binding.state not in {"repair_owned", "rereview_owned"}:
+        raise CompletionProvenanceError("resume requires a failed stage owner")
+    _emit_native_stage_event(
+        stage_event_workspace,
+        stage_event,
+        event_type="stage_started",
+        owner=owner,
+        mutation_epoch=store.mutation_epoch,
+    )
+    return binding
+
+
+def release_completion_binding(
+    store: ManagedProvenanceStore,
+    binding_id: str,
+    *,
+    owner: str,
+    stage_event_workspace: str | Path | None = None,
+    stage_event: Mapping[str, Any] | None = None,
+) -> FailureOwnershipV1:
+    """Release only a releasable binding whose repair and rereview owners cleared."""
+
+    binding = _load_failure_ownership(store, binding_id)
+    if binding.state == "released":
+        return binding
+    if binding.state == "active":
+        binding = binding.mark_releasable(owner)
+    released = binding.release(owner)
+    _emit_native_stage_event(
+        stage_event_workspace,
+        stage_event,
+        event_type="binding_released",
+        owner=released.original_owner,
+        mutation_epoch=store.mutation_epoch,
+    )
+    return released
+
+
 @dataclass(frozen=True)
 class ObservationIdentityV1:
     observation_id: str
@@ -365,6 +546,32 @@ def reuse_observation(
         return observation
 
 
+def claim_observation_identity(
+    store: ManagedProvenanceStore,
+    request: Mapping[str, Any],
+    execute: Callable[[], Mapping[str, Any]],
+    *,
+    finalization_id: str,
+    now: datetime | None = None,
+    stage_event_workspace: str | Path | None = None,
+    stage_event: Mapping[str, Any] | None = None,
+) -> ObservationIdentityV1:
+    """Reuse or execute one exact observation and bind it to one finalization."""
+
+    observation = reuse_observation(store, request, execute, now=now)
+    consume_observation(store, observation.observation_id, finalization_id)
+    claimed = load_observation(store, observation.observation_id)
+    if observation.reuse_of is not None:
+        claimed = replace(claimed, invocation_id=observation.invocation_id, reuse_of=observation.reuse_of)
+    _emit_native_stage_event(
+        stage_event_workspace,
+        stage_event,
+        event_type="suite_reused" if observation.reuse_of is not None else "suite_completed",
+        mutation_epoch=claimed.mutation_epoch,
+    )
+    return claimed
+
+
 def consume_observation(store: ManagedProvenanceStore, observation_id: str, finalization_id: str) -> None:
     _identifier(observation_id, "observation_id")
     _identifier(finalization_id, "finalization_id")
@@ -449,40 +656,11 @@ def validate_execution_binding_ownership(
     ownership: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Validate the closed API-006 shape and equality with the managed ownership store."""
-    if not isinstance(ownership, Mapping) or set(ownership) != OWNERSHIP_FIELDS:
-        raise CompletionProvenanceError("execution binding ownership fields are not closed and complete")
-    _identifier(ownership["binding_id"], "binding_id")
-    if ownership["target_kind"] not in TARGET_KINDS:
-        raise CompletionProvenanceError("execution binding ownership target_kind is invalid")
-    if ownership["state"] not in OWNERSHIP_STATES:
-        raise CompletionProvenanceError("execution binding ownership state is invalid")
-    for field_name in ("original_owner", "current_owner"):
-        _identifier(ownership[field_name], field_name)
-    _nonempty(ownership["reason"], "reason")
-    for field_name in ("repair_owner", "rereview_owner"):
-        value = ownership[field_name]
-        if value is not None:
-            _identifier(value, field_name)
-    if not isinstance(ownership["releasable"], bool):
-        raise CompletionProvenanceError("execution binding ownership releasable must be boolean")
-    history = ownership["history"]
-    if not isinstance(history, list) or not history:
-        raise CompletionProvenanceError("execution binding ownership history must be non-empty")
-    transition_fields = {"transition_id", "from", "to", "owner", "reason", "timestamp"}
-    for transition in history:
-        if not isinstance(transition, Mapping) or set(transition) != transition_fields:
-            raise CompletionProvenanceError("execution binding ownership history is invalid")
-        _identifier(transition["transition_id"], "transition_id")
-        if transition["from"] not in OWNERSHIP_STATES or transition["to"] not in OWNERSHIP_STATES:
-            raise CompletionProvenanceError("execution binding ownership transition state is invalid")
-        _identifier(transition["owner"], "transition owner")
-        _nonempty(transition["reason"], "transition reason")
-        _utc(transition["timestamp"], "transition timestamp")
+    normalized = _validate_ownership_shape(ownership)
     store = ManagedProvenanceStore(store_root)
     with store.locked():
         state = store._read_unlocked()
         stored = state.get("bindings", {}).get(ownership["binding_id"])
-    normalized = deepcopy(dict(ownership))
     if stored != normalized:
         raise CompletionProvenanceError("execution binding ownership does not match managed store")
     return normalized

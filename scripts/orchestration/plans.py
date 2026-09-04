@@ -1,4 +1,6 @@
+import hashlib
 import subprocess
+from datetime import datetime, timezone
 
 from core import *
 from core import _member_roots
@@ -11,7 +13,11 @@ from execution_context import (
     _compile_task_brief,
     _observation_kwargs,
     _parse_scalar,
+    _execution_workspace_module,
+    _persist_binding,
+    load_task_execution_binding,
 )
+from completion_provenance import ManagedProvenanceStore, release_completion_binding
 from handoffs import _read_compact_yaml_metadata
 from repository_preflight import capture_repository_evidence, task_caused_paths
 from specs import load_index, replace_front_matter_value
@@ -537,6 +543,59 @@ def _assert_completed_task_handoff(args: argparse.Namespace, task_path: Path) ->
     )
 
 
+def _release_completed_task_binding(args: argparse.Namespace, row: dict[str, object]) -> dict[str, object]:
+    """Release and persist API-006 ownership after executor-result validation succeeds."""
+
+    control_root = resolve_workspace_root(args)
+    plan_id = str(row["plan_id"])
+    task_id = str(row["id"])
+    binding = load_task_execution_binding(control_root, plan_id, task_id)
+    handoff = Path(str(getattr(args, "handoff", "")))
+    artifact_digest = hashlib.sha256(handoff.read_bytes()).hexdigest() if handoff.is_file() else None
+    event = {
+        "event_id": "event-template",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "process_id": "process-plan-status",
+        "stage": "task-completion",
+        "attempt_id": str(binding["execution_id"]),
+        "event_type": "binding_released",
+        "enforcement_mode": "native",
+        "join_ids": {
+            "specification_id": None,
+            "plan_id": plan_id,
+            "phase_id": str(row.get("phase_id") or "") or None,
+            "task_id": task_id,
+            "review_id": None,
+            "evaluation_id": None,
+        },
+        "clocks": {"wall_ms": 0, "active_ms": 0, "billed_ms": None},
+        "finding_class": None,
+        "return_reason": "validated completion",
+        "owner": task_id,
+        "identity": {"product_tree": None, "artifact_digest": artifact_digest, "mutation_epoch": 0},
+        "privacy": "operational_metadata_only",
+    }
+    store = ManagedProvenanceStore(control_root / ".work-bundle/runtime/completion-provenance")
+    released = release_completion_binding(
+        store,
+        str(binding["ownership"]["binding_id"]),
+        owner=task_id,
+        stage_event_workspace=control_root,
+        stage_event=event,
+    ).to_dict()
+    updated = {**binding, "ownership": released}
+    _persist_binding(updated, control_root)
+    if released["target_kind"] == "isolated_worktree":
+        _execution_workspace_module().retain_binding_owner(
+            Path(str(binding["runtime_root"])),
+            str(binding["workspace_id"]),
+            str(binding["execution_id"]),
+            str(binding["repository_id"]),
+            ownership=released,
+        )
+    return released
+
+
 def cmd_set_plan_status(args: argparse.Namespace) -> None:
     if args.status not in PLAN_STATUSES:
         raise SystemExit(f"Invalid plan status: {args.status}")
@@ -564,6 +623,7 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
     path = artifact_path_from_row(row, args)
     if args.status == "Completed" and row.get("type") == "task":
         _assert_completed_task_handoff(args, path)
+        _release_completed_task_binding(args, row)
     replace_front_matter_value(path, "status", args.status)
     if args.status == "Deprecated":
         active_root = orchestration_root(args) / "plan" / "active"
