@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -501,3 +502,134 @@ def traverse_capabilities(
         frontier=tuple(sorted(frontier - visited)),
         stopping_reason=reason,
     )
+
+
+def _stable_fragment(value: object, label: str) -> str:
+    text = _text(value, label).casefold()
+    fragment = re.sub(r"[^a-z0-9._-]+", "-", text).strip("-")
+    if not fragment:
+        raise CapabilityIndexError(f"{label} cannot produce a stable identifier")
+    return fragment
+
+
+def _legacy_list(record: Mapping[str, Any], key: str) -> list[str]:
+    value = record.get(key, [])
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+        raise CapabilityIndexError(f"legacy record {key} must be a string list")
+    return list(dict.fromkeys(value))
+
+
+def bootstrap_legacy_capabilities(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    index_id: str,
+    generated_at: str,
+) -> CapabilityIndex:
+    """Normalize evidence-bearing legacy records without inventing semantic authority."""
+    normalized = [_record(record, "legacy record") for record in records]
+    normalized.sort(key=lambda item: _stable_fragment(item.get("id"), "legacy record.id"))
+    legacy_ids = [_stable_fragment(item.get("id"), "legacy record.id") for item in normalized]
+    if len(legacy_ids) != len(set(legacy_ids)):
+        raise CapabilityIndexError("duplicate legacy record id")
+
+    evidence_by_id: dict[str, EvidenceRecord] = {}
+    prepared: list[tuple[dict[str, Any], str, str, tuple[str, ...], str]] = []
+    for record, legacy_id in zip(normalized, legacy_ids, strict=True):
+        domain = _stable_fragment(record.get("domain", "general"), "legacy record.domain")
+        raw_evidence = record.get("evidence", [])
+        if not isinstance(raw_evidence, list):
+            raise CapabilityIndexError("legacy record evidence must be a list")
+        record_evidence: list[str] = []
+        for raw in raw_evidence:
+            item = _record(raw, "legacy evidence")
+            required = {"kind", "locator", "identity", "authority", "observed_at"}
+            missing = required - item.keys()
+            if missing:
+                raise CapabilityIndexError(f"legacy evidence missing fields: {', '.join(sorted(missing))}")
+            canonical = json.dumps({key: item[key] for key in sorted(required)}, sort_keys=True, separators=(",", ":"))
+            evidence_id = f"evidence:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:20]}"
+            evidence = EvidenceRecord.from_dict({"evidence_id": evidence_id, **{key: item[key] for key in required}})
+            previous = evidence_by_id.setdefault(evidence_id, evidence)
+            if previous != evidence:
+                raise CapabilityIndexError(f"evidence identity collision: {evidence_id}")
+            record_evidence.append(evidence_id)
+        authoritative = any(
+            evidence_by_id[evidence_id].authority is True
+            or isinstance(evidence_by_id[evidence_id].authority, str)
+            and evidence_by_id[evidence_id].authority.casefold() in {"authoritative", "accepted", "current", "confirmed"}
+            for evidence_id in record_evidence
+        )
+        status = str(record.get("status", "candidate")).casefold()
+        if status in {"superseded", "deprecated", "rejected"}:
+            lifecycle = "superseded"
+        elif authoritative and status in {"implemented", "current", "confirmed", "accepted"}:
+            lifecycle = "accepted"
+        elif record_evidence:
+            lifecycle = "grounded"
+        else:
+            lifecycle = "candidate"
+        prepared.append((record, legacy_id, domain, tuple(sorted(record_evidence)), lifecycle))
+
+    domain_evidence: dict[str, set[str]] = {}
+    for _, _, domain, evidence_ids, _ in prepared:
+        domain_evidence.setdefault(domain, set()).update(evidence_ids)
+    nodes: list[dict[str, Any]] = []
+    for domain in sorted(domain_evidence):
+        evidence_ids = sorted(domain_evidence[domain])
+        authority = any(
+            evidence_by_id[evidence_id].authority is True
+            or isinstance(evidence_by_id[evidence_id].authority, str)
+            and evidence_by_id[evidence_id].authority.casefold() in {"authoritative", "accepted", "current", "confirmed"}
+            for evidence_id in evidence_ids
+        )
+        nodes.append(
+            {
+                "node_id": f"domain:{domain}", "kind": "domain", "title": domain.replace("-", " ").title(),
+                "summary": f"Semantic domain for {domain}", "actor": "knowledge owner",
+                "outcome": "bounded semantic grouping", "preconditions": [], "effects": [],
+                "failures": [], "policies": [], "aliases": [],
+                "lifecycle": "accepted" if authority else "candidate", "freshness": "current",
+                "parent_id": None, "evidence_ids": evidence_ids,
+            }
+        )
+    relations: list[dict[str, Any]] = []
+    for record, legacy_id, domain, evidence_ids, lifecycle in prepared:
+        kind = str(record.get("kind", "capability"))
+        if kind not in NODE_KINDS - {"domain"}:
+            raise CapabilityIndexError(f"invalid bootstrapped capability kind: {kind}")
+        node_id = f"{kind}:{legacy_id}"
+        parent_id = f"domain:{domain}"
+        nodes.append(
+            {
+                "node_id": node_id, "kind": kind,
+                "title": _text(record.get("title"), "legacy record.title"),
+                "summary": _text(record.get("summary"), "legacy record.summary"),
+                "actor": _text(record.get("actor", "unspecified actor"), "legacy record.actor"),
+                "outcome": _text(record.get("outcome", "documented outcome"), "legacy record.outcome"),
+                "preconditions": _legacy_list(record, "preconditions"),
+                "effects": _legacy_list(record, "effects"),
+                "failures": _legacy_list(record, "failures"),
+                "policies": _legacy_list(record, "policies"),
+                "aliases": _legacy_list(record, "aliases"),
+                "lifecycle": lifecycle, "freshness": str(record.get("freshness", "current")),
+                "parent_id": parent_id, "evidence_ids": list(evidence_ids),
+            }
+        )
+        relations.append(
+            {
+                "relation_id": f"relation:{domain}-{legacy_id}", "from_id": parent_id,
+                "to_id": node_id, "type": "contains", "evidence_ids": list(evidence_ids),
+            }
+        )
+    source_payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
+    payload = {
+        "schema_version": "1.0.0", "index_id": index_id,
+        "nodes": sorted(nodes, key=lambda item: item["node_id"]),
+        "relations": sorted(relations, key=lambda item: item["relation_id"]),
+        "evidence": [evidence_by_id[key].to_dict() for key in sorted(evidence_by_id)],
+        "generated_at": generated_at,
+        "source_digest": f"sha256:{hashlib.sha256(source_payload.encode('utf-8')).hexdigest()}",
+    }
+    return CapabilityIndex.from_dict(payload)
