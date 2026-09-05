@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import shlex
@@ -21,6 +22,20 @@ sys.path.insert(0, str(ORCHESTRATION))
 
 import execution_context  # noqa: E402
 from execution_context import build_review_package, build_task_brief  # noqa: E402
+
+
+def _load_orchestration_dispatcher():
+    path = ORCHESTRATION / "dispatcher.py"
+    spec = importlib.util.spec_from_file_location(
+        "test_orchestration_execution_context_dispatcher", path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+orchestration_dispatcher = _load_orchestration_dispatcher()
 
 
 def _counted_validation(tmp_path: Path, reuse_seconds: int = 3600, suffix: str = ""):
@@ -272,9 +287,7 @@ def test_normal_cli_projects_controller_mutation_events_into_acceptance(
             "--handoff",
             str(handoff_path),
         ]
-    from dispatcher import build_parser
-
-    parsed = build_parser().parse_args(
+    parsed = orchestration_dispatcher.build_parser().parse_args(
         [*operation, "--project-root", str(root), "--mutation-events", runtime]
     )
     with pytest.raises(SystemExit, match="controller mutated task-owned implementation scope"):
@@ -285,8 +298,6 @@ def test_normal_cli_projects_controller_mutation_events_into_acceptance(
 
 @pytest.mark.parametrize("command", ["validate-executor-result", "set-plan-status"])
 def test_acceptance_cli_projects_all_controller_owned_runtime_inputs(command: str) -> None:
-    from dispatcher import build_parser
-
     expected = {
         "mutation_events": [{"actor_kind": "controller", "paths": ["src/a.py"]}],
         "accepted_dependency_deltas": [{"task_id": "task-a"}],
@@ -302,7 +313,7 @@ def test_acceptance_cli_projects_all_controller_owned_runtime_inputs(command: st
     for name, value in expected.items():
         argv.extend(["--" + name.replace("_", "-"), json.dumps(value)])
 
-    parsed = build_parser().parse_args(argv)
+    parsed = orchestration_dispatcher.build_parser().parse_args(argv)
 
     projected = execution_context._observation_kwargs(parsed)
     assert {name: projected[name] for name in expected} == expected
