@@ -208,8 +208,21 @@ def project_capability_neighborhood(
             chosen.append((item.node_id, "intent_match", None))
             seen.add(item.node_id)
 
+    from dataclasses import replace
+    trusted = {node.node_id for node in index.nodes if _trusted_capability_node(index, node)}
+    graph = replace(index, nodes=tuple(node for node in index.nodes if node.node_id in trusted),
+                    relations=tuple(edge for edge in index.relations
+                                    if edge.from_id in trusted and edge.to_id in trusted))
+    traversal = capability.traverse_capabilities(graph, list(seen), depth=depth, max_nodes=max_nodes) if seen else None
+    if traversal:
+        for entry in traversal.inclusions:
+            if entry.node_id not in seen:
+                chosen.append((entry.node_id, "typed_relation", None))
+                seen.add(entry.node_id)
     included_candidates = chosen[:max_nodes]
-    frontier = [node_id for node_id, _, _ in chosen[max_nodes:]]
+    included_ids = {item[0] for item in included_candidates}
+    frontier = sorted(({node_id for node_id, _, _ in chosen[max_nodes:]} |
+                       set(traversal.frontier if traversal else ())) - included_ids)
     inclusions: list[dict[str, Any]] = []
     for rank, (node_id, reason, family) in enumerate(included_candidates, start=1):
         node = index.node(node_id)
@@ -246,7 +259,8 @@ def project_capability_neighborhood(
             for node_id in frontier
         ],
         "gaps": gaps,
-        "stopping_reason": "node_budget" if frontier else "frontier_exhausted",
+        "stopping_reason": ("node_budget" if len(chosen) > max_nodes else
+                            traversal.stopping_reason if traversal else "frontier_exhausted"),
         "source_index_digest": f"sha256:{hashlib.sha256(source_payload.encode('utf-8')).hexdigest()}",
     }
 
@@ -1247,6 +1261,8 @@ def create_or_load_task_execution_binding(
 ) -> dict[str, Any]:
     control_root = control_root.expanduser().resolve()
     runtime_root = runtime_root.expanduser().resolve()
+    from review_runtime import require_plan_reviews
+    require_plan_reviews(control_root, _find_plan(control_root, plan_id)[0])
     path = _binding_path(control_root, plan_id, task_id)
     if path.exists():
         binding = load_task_execution_binding(control_root, plan_id, task_id)
@@ -1458,6 +1474,8 @@ def _observe_completed_validation(
     if not control_root_raw:
         raise SystemExit("Task execution binding is missing harness provenance")
     control_root = Path(str(control_root_raw))
+    from review_runtime import require_plan_reviews
+    require_plan_reviews(control_root, _find_plan(control_root, str(task["plan_id"]))[0])
     binding = load_task_execution_binding(control_root, str(task["plan_id"]), str(task["task_id"]))
     if workspace_id and str(binding.get("workspace_id") or "") != str(workspace_id):
         raise SystemExit("Task execution binding workspace_id mismatch")

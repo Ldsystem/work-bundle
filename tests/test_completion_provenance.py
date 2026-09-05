@@ -190,6 +190,9 @@ def test_kernel_ids_are_globally_unique_across_managed_store(tmp_path):
 
 
 def test_kernel_execution_context_creates_typed_binding_ownership(tmp_path, monkeypatch):
+    # Unit-test ownership after the independently tested stage-gate boundary.
+    monkeypatch.setattr(execution_context, "_find_plan", lambda *_: (tmp_path / "plan.md", {}))
+    monkeypatch.setattr("review_runtime.require_plan_reviews", lambda *_: None)
     execution_root = tmp_path / "execution"
     execution_root.mkdir()
     runtime_root = tmp_path / "runtime"
@@ -227,6 +230,8 @@ def test_kernel_execution_context_creates_typed_binding_ownership(tmp_path, monk
 
 
 def test_kernel_execution_context_rejects_missing_malformed_or_store_mismatched_ownership(tmp_path, monkeypatch):
+    monkeypatch.setattr(execution_context, "_find_plan", lambda *_: (tmp_path / "plan.md", {}))
+    monkeypatch.setattr("review_runtime.require_plan_reviews", lambda *_: None)
     execution_root = tmp_path / "execution"
     execution_root.mkdir()
     runtime_root = tmp_path / "runtime"
@@ -324,6 +329,44 @@ def test_observation_concurrent_requests_execute_once(tmp_path):
     assert calls == 1
     assert len({item.observation_id for item in observations}) == 1
     assert sum(item.reuse_of is not None for item in observations) == 1
+
+
+def test_different_observation_identities_execute_concurrently(tmp_path):
+    store = ManagedProvenanceStore(tmp_path)
+    executing = threading.Barrier(2)
+
+    def invoke(number):
+        def run():
+            executing.wait(timeout=2)
+            # Re-enter a store operation while the other observation is running.
+            assert store.mutation_epoch == 0
+            return _result()
+        return reuse_observation(store, _request(observation_id=f"parallel-{number}",
+            command_digest=str(number) * 64), run, now=NOW)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert len(list(pool.map(invoke, (1, 2)))) == 2
+
+
+def test_epoch_revocation_during_execution_prevents_publication(tmp_path):
+    store = ManagedProvenanceStore(tmp_path)
+    def run():
+        record_relevant_mutation(store, "concurrent revocation")
+        return _result()
+    with pytest.raises(CompletionProvenanceError, match="epoch"):
+        reuse_observation(store, _request(), run, now=NOW)
+    with store.locked():
+        assert store._read_unlocked()["observations"] == []
+
+
+def test_failed_execution_releases_identity_reservation_for_retry(tmp_path):
+    store = ManagedProvenanceStore(tmp_path)
+    def fail():
+        raise RuntimeError("interrupted execution")
+    with pytest.raises(RuntimeError, match="interrupted"):
+        reuse_observation(store, _request(), fail, now=NOW)
+    result = reuse_observation(store, _request(), _result, now=NOW)
+    assert result.reuse_of is None
 
 
 def test_observation_can_be_consumed_by_only_one_finalization(tmp_path):

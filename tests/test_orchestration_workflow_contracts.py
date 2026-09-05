@@ -23,6 +23,16 @@ from handoffs import cmd_write_handoff, index_handoffs
 from plans import _material_repository_root, _verified_handoff_tree
 
 
+@pytest.fixture(autouse=True)
+def accepted_stage_boundary_for_legacy_archive_unit_tests(monkeypatch):
+    """These tests isolate task evidence/knowledge/archive semantics.
+
+    Real stage admission (including missing/stale review and source transitions)
+    is tested without this stub in test_orchestration_reviews.py.
+    """
+    monkeypatch.setattr("plans.require_plan_reviews", lambda *args, **kwargs: None)
+
+
 def read(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 

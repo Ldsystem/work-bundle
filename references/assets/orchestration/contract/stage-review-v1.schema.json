@@ -48,6 +48,34 @@
       }
     },
     "stageReview": {
+      "allOf": [
+        {
+          "if": {"properties": {"verdict": {"const": "accepted"}}},
+          "then": {
+            "properties": {
+              "reviewer": {"properties": {
+                "context_origin": {"enum": ["direct_source", "reproducible_snapshot"]},
+                "authorship": {"const": "none"}, "repair_participation": {"const": "none"},
+                "decision_participation": {"const": "none"}, "deliberation_participation": {"const": "none"}
+              }},
+              "evidence": {"properties": {
+                "mode": {"enum": ["direct_source", "reproducible_snapshot", "direct"]},
+                "unavailable_evidence": {"maxItems": 0}
+              }},
+              "findings": {"not": {"contains": {"properties": {"severity": {"const": "blocking"}}, "required": ["severity"]}}}
+            },
+            "allOf": [{
+              "if": {"anyOf": [
+                {"properties": {"evidence": {"properties": {"mode": {"const": "reproducible_snapshot"}}}}},
+                {"properties": {"reviewer": {"properties": {"context_origin": {"const": "reproducible_snapshot"}}}}}
+              ]},
+              "then": {"properties": {"evidence": {"properties": {
+                "mode": {"const": "reproducible_snapshot"}, "artifacts": {"minItems": 1}
+              }}}}
+            }]
+          }
+        }
+      ],
       "type": "object",
       "additionalProperties": false,
       "required": ["review_id", "stage", "target_identity", "reviewer", "evidence", "verdict", "findings", "started_at", "completed_at", "staleness"],
@@ -61,12 +89,12 @@
           "required": ["agent_id", "capability", "authorship", "repair_participation", "decision_participation", "deliberation_participation", "context_origin"],
           "properties": {
             "agent_id": {"$ref": "#/$defs/id"},
-            "capability": {"type": "string", "minLength": 1},
+            "capability": {"enum": ["standard", "judgment"]},
             "authorship": {"enum": ["none", "present"]},
             "repair_participation": {"enum": ["none", "present"]},
             "decision_participation": {"enum": ["none", "present"]},
             "deliberation_participation": {"enum": ["none", "present"]},
-            "context_origin": {"enum": ["direct_source", "carried_summary"]}
+            "context_origin": {"enum": ["direct_source", "reproducible_snapshot", "packet_only", "carried_summary"]}
           }
         },
         "evidence": {
@@ -74,7 +102,7 @@
           "additionalProperties": false,
           "required": ["mode", "capabilities", "unavailable_evidence", "commands", "artifacts"],
           "properties": {
-            "mode": {"enum": ["direct", "constrained_direct"]},
+            "mode": {"enum": ["direct_source", "reproducible_snapshot", "packet_only", "direct", "constrained_direct"]},
             "capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}},
             "unavailable_evidence": {"type": "array", "items": {"type": "string", "minLength": 1}},
             "commands": {

@@ -114,6 +114,22 @@ class ManagedProvenanceStore:
             raise CompletionProvenanceError("managed provenance store schema is invalid")
         return state
 
+    @contextmanager
+    def observation_reservation(self, request: Mapping[str, Any]):
+        """Identity-local single flight; the OS releases reservations on process death.
+
+        Never remove lock files: unlinking a lock can split waiters across inodes.
+        The shared store lock is acquired only inside this reservation, never vice versa.
+        """
+        identity = _canonical_digest({key: request[key] for key in OBSERVATION_IDENTITY_FIELDS})
+        path = self.root / f".observation-{identity}.lock"
+        with path.open("a+") as reservation:
+            fcntl.flock(reservation.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(reservation.fileno(), fcntl.LOCK_UN)
+
     def _write_unlocked(self, state: Mapping[str, Any]) -> None:
         payload = json.dumps(state, sort_keys=True, ensure_ascii=False, indent=2) + "\n"
         fd, raw_path = tempfile.mkstemp(prefix=".completion-provenance-", dir=self.root)
@@ -517,27 +533,26 @@ def reuse_observation(
 ) -> ObservationIdentityV1:
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     _validate_observation_request(request, observed_at)
-    with store.locked():
-        if now is None:
-            observed_at = datetime.now(timezone.utc)
+    with store.observation_reservation(request):
+        with store.locked():
+            observed_at = now or datetime.now(timezone.utc)
             _validate_observation_request(request, observed_at)
-        state = store._read_unlocked()
-        if request["mutation_epoch"] != state["mutation_epoch"]:
-            raise CompletionProvenanceError("observation mutation epoch is stale")
-        for raw in reversed(state["observations"]):
-            if all(raw[field] == request[field] for field in OBSERVATION_IDENTITY_FIELDS) and (
-                _utc(raw["freshness_deadline"], "freshness_deadline") >= observed_at
-            ):
-                _validate_result(raw["result"])
-                return ObservationIdentityV1(
-                    **{
-                        **raw,
-                        "invocation_id": request["invocation_id"],
-                        "reuse_of": raw["observation_id"],
+            state = store._read_unlocked()
+            if request["mutation_epoch"] != state["mutation_epoch"]:
+                raise CompletionProvenanceError("observation mutation epoch is stale")
+            for raw in reversed(state["observations"]):
+                if all(raw[field] == request[field] for field in OBSERVATION_IDENTITY_FIELDS) and (
+                    _utc(raw["freshness_deadline"], "freshness_deadline") >= observed_at
+                ):
+                    _validate_result(raw["result"])
+                    return ObservationIdentityV1(**{**raw,
+                        "invocation_id": request["invocation_id"], "reuse_of": raw["observation_id"],
                         "consumed_by_finalization": state["consumptions"].get(raw["observation_id"]),
-                    }
-                )
-        store._register_unlocked(state, request["observation_id"], "observation")
+                    })
+            store._register_unlocked(state, request["observation_id"], "observation")
+            # Check collisions now, but persist the ID only with its result.
+            # A failed/crashed execution must not strand an unpublished ID.
+        # Independent identities and nested store operations are not serialized.
         result = execute()
         _validate_result(result)
         observation = ObservationIdentityV1(
@@ -546,8 +561,14 @@ def reuse_observation(
             reuse_of=None,
             consumed_by_finalization=None,
         )
-        state["observations"].append(observation.to_dict())
-        store._write_unlocked(state)
+        with store.locked():
+            state = store._read_unlocked()
+            _validate_observation_request(request, now or datetime.now(timezone.utc))
+            if request["mutation_epoch"] != state["mutation_epoch"]:
+                raise CompletionProvenanceError("observation mutation epoch changed during execution")
+            store._register_unlocked(state, request["observation_id"], "observation")
+            state["observations"].append(observation.to_dict())
+            store._write_unlocked(state)
         return observation
 
 

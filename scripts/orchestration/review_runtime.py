@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -68,6 +70,113 @@ STALENESS_KEYS = frozenset({"is_stale", "reason", "supersedes"})
 
 class ReviewContractError(ValueError):
     pass
+
+
+def artifact_review_identity(path: Path, *, content: str | None = None) -> dict[str, Any]:
+    """Semantic artifact identity; only lifecycle bookkeeping is non-semantic.
+
+    Body, version, links, validation definitions and all other metadata remain bound.
+    This permits the approved status transition without invalidating its own review.
+    """
+    from execution_context import parse_yaml_subset
+    text = path.read_text(encoding="utf-8") if content is None else content.rstrip() + "\n"
+    if not text.startswith("---\n") or "\n---\n" not in text[4:]:
+        raise SystemExit(f"stage review: missing artifact front matter: {path}")
+    raw, body = text[4:].split("\n---\n", 1)
+    metadata = parse_yaml_subset(raw)
+    if not isinstance(metadata, dict) or not metadata.get("id"):
+        raise SystemExit(f"stage review: missing artifact identity: {path}")
+    semantic = {key: value for key, value in metadata.items() if key not in {
+        "status", "last_updated", "updated_at",
+    }}
+    payload = json.dumps([semantic, body], sort_keys=True, default=str, separators=(",", ":"))
+    return {"artifact_id": str(metadata["id"]), "revision": str(metadata.get("version", "1")),
+            "sha256": hashlib.sha256(payload.encode()).hexdigest(), "source_tree": None}
+
+
+def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any]) -> None:
+    """Read native records; historical prose is not an acceptance envelope."""
+    accepted = []
+    review_ids: set[str] = set()
+    review_root = root / ".work-bundle/orchestration/reviews"
+    try:
+        for path in sorted(review_root.rglob("*")):
+            if path.suffix not in {".json", ".yaml", ".yml"} or not path.is_file():
+                continue
+            if not path.resolve().is_relative_to(review_root.resolve()):
+                raise ReviewContractError("review record escapes review store")
+            value = _read_document(path)
+            if not isinstance(value, dict) or "review_id" not in value or "stage" not in value:
+                continue
+            # Old target records remain history, not current acceptance candidates.
+            # In particular, a superseded legacy evidence mode must not poison a
+            # valid replacement review for the actual current artifact.
+            if value["stage"] != stage or value.get("target_identity") != identity:
+                continue
+            record = validate_stage_review(value)
+            if record.review_id in review_ids:
+                raise ReviewContractError("stage review IDs must be globally unique")
+            review_ids.add(record.review_id)
+            if record.stage == stage and record.target_identity == identity:
+                accepted.append(record)
+        latest_time = max((_rfc3339_utc(item.completed_at, "completed_at") for item in accepted), default=None)
+        latest = [item for item in accepted if _rfc3339_utc(item.completed_at, "completed_at") == latest_time]
+        if latest and all(item.verdict == "accepted" and not item.staleness["is_stale"] for item in latest):
+            return
+    except (ValueError, OSError) as error:
+        raise SystemExit(f"stage review blocked: {error}") from error
+    raise SystemExit(f"stage review blocked: fresh accepted {stage} review required for {dict(identity)}")
+
+
+def require_specification_review(root: Path, path: Path, *, content: str | None = None) -> None:
+    if not path.resolve().is_relative_to((root / ".work-bundle/orchestration/spec").resolve()):
+        raise SystemExit("stage review: specification escapes spec store")
+    _require_current_review(root, "specification", artifact_review_identity(path, content=content))
+
+
+def plan_review_identity(root: Path, plan_path: Path, *, content: str | None = None) -> dict[str, Any]:
+    from execution_context import _read_structured, _resolve_spec_paths, parse_yaml_subset
+    plan_root = root / ".work-bundle/orchestration/plan"
+    if not plan_path.resolve().is_relative_to(plan_root.resolve()):
+        raise SystemExit("stage review: root plan escapes plan store")
+    identity = artifact_review_identity(plan_path, content=content)
+    members = {str(plan_path.relative_to(plan_root)): identity["sha256"]}
+    for path in sorted(plan_root.rglob("*.md")):
+        if path == plan_path:
+            continue
+        if not path.resolve().is_relative_to(plan_root.resolve()):
+            raise SystemExit("stage review: plan member escapes plan store")
+        data, _ = _read_structured(path)
+        if str(data.get("plan_id", "")) != identity["artifact_id"]:
+            continue
+        members[str(path.relative_to(plan_root))] = artifact_review_identity(path)["sha256"]
+    plan_data = (_read_structured(plan_path)[0] if content is None
+                 else parse_yaml_subset(content.split("---", 2)[1]))
+    specifications = [artifact_review_identity(path) for path in _resolve_spec_paths(root, {}, plan_data)]
+    payload = {"members": members, "specifications": specifications}
+    identity["sha256"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return identity
+
+
+def require_plan_reviews(root: Path, plan_path: Path, *, source_root: Path | None = None,
+                         content: str | None = None) -> None:
+    from execution_context import _read_structured, _resolve_spec_paths, parse_yaml_subset
+    data = (_read_structured(plan_path)[0] if content is None
+            else parse_yaml_subset(content.split("---", 2)[1]))
+    for spec in _resolve_spec_paths(root, {}, data):
+        require_specification_review(root, spec)
+    identity = plan_review_identity(root, plan_path, content=content)
+    _require_current_review(root, "plan", identity)
+    if source_root is not None:
+        def git(*args: str) -> str:
+            result = subprocess.run(["git", "-C", str(source_root), *args], capture_output=True, text=True)
+            if result.returncode:
+                raise SystemExit("stage review: final source repository unavailable")
+            return result.stdout.strip()
+        if git("status", "--porcelain", "--untracked-files=all"):
+            raise SystemExit("stage review: final source must be clean, including untracked files")
+        final = dict(identity, source_tree=git("rev-parse", "HEAD^{tree}"))
+        _require_current_review(root, "integrated_implementation", final)
 
 
 @dataclass(frozen=True)
@@ -262,14 +371,14 @@ def validate_stage_review(
     reviewer = _mapping(record["reviewer"], "reviewer")
     _closed(reviewer, REVIEWER_KEYS, "reviewer")
     _identifier(reviewer["agent_id"], "reviewer.agent_id")
-    _nonempty(reviewer["capability"], "reviewer.capability")
+    _enum(reviewer["capability"], {"standard", "judgment"}, "reviewer.capability")
     for field in PARTICIPATION_FIELDS:
         _enum(reviewer[field], {"none", "present"}, f"reviewer.{field}")
-    _enum(reviewer["context_origin"], {"direct_source", "carried_summary"}, "reviewer.context_origin")
+    _enum(reviewer["context_origin"], {"direct_source", "reproducible_snapshot", "packet_only", "carried_summary"}, "reviewer.context_origin")
 
     evidence = _mapping(record["evidence"], "evidence")
     _closed(evidence, REVIEW_EVIDENCE_KEYS, "evidence")
-    _enum(evidence["mode"], {"direct", "constrained_direct"}, "evidence.mode")
+    _enum(evidence["mode"], {"direct_source", "reproducible_snapshot", "packet_only", "direct", "constrained_direct"}, "evidence.mode")
     _string_list(evidence["capabilities"], "evidence.capabilities")
     _string_list(evidence["unavailable_evidence"], "evidence.unavailable_evidence")
     commands = evidence["commands"]
@@ -329,8 +438,13 @@ def validate_stage_review(
         for field in PARTICIPATION_FIELDS:
             if reviewer[field] != "none":
                 raise ReviewContractError(f"accepted review requires reviewer.{field}: none")
-        if reviewer["context_origin"] != "direct_source":
-            raise ReviewContractError("accepted review requires reviewer.context_origin: direct_source")
+        if reviewer["context_origin"] not in {"direct_source", "reproducible_snapshot"}:
+            raise ReviewContractError("accepted review requires direct_source or reproducible_snapshot context")
+        if evidence["mode"] in {"packet_only", "constrained_direct"} or evidence["unavailable_evidence"]:
+            raise ReviewContractError("accepted review requires complete claim-relevant evidence, not packet-only or constrained evidence")
+        if evidence["mode"] == "reproducible_snapshot" or reviewer["context_origin"] == "reproducible_snapshot":
+            if evidence["mode"] != "reproducible_snapshot" or not artifacts:
+                raise ReviewContractError("snapshot review requires explicit reproducible_snapshot artifacts")
     return StageReviewV1(
         review_id,
         stage,
@@ -345,14 +459,22 @@ def validate_stage_review(
     )
 
 
-def validate_stage_reviews(values: Sequence[Mapping[str, Any]]) -> dict[str, StageReviewV1]:
+def validate_stage_reviews(
+    values: Sequence[Mapping[str, Any]], *,
+    current_target_identities: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, StageReviewV1]:
+    if current_target_identities is None or set(current_target_identities) != STAGE_REVIEW_STAGES:
+        raise ReviewContractError("actual current target identities are required for all three stages")
     records = [validate_stage_review(value) for value in values]
     ids = [record.review_id for record in records]
     if len(ids) != len(set(ids)):
         raise ReviewContractError("stage review IDs must be globally unique")
     countable: dict[str, StageReviewV1] = {}
     for record in sorted(records, key=lambda item: item.completed_at):
-        if record.verdict == "accepted" and record.staleness["is_stale"] is False:
+        current = _target_identity(current_target_identities[record.stage], "current_target_identity")
+        if record.target_identity == current:
+            countable.pop(record.stage, None)
+        if record.verdict == "accepted" and record.staleness["is_stale"] is False and record.target_identity == current:
             countable[record.stage] = record
     if set(countable) != STAGE_REVIEW_STAGES or len(countable) != 3:
         raise ReviewContractError("exactly three mandatory stage identities must have current accepted reviews")

@@ -145,3 +145,18 @@ def test_capability_authority_delta_excludes_advisory_promotions() -> None:
 
     assert delta["added"] == ["capability:new-accepted"]
     assert delta["advisory_only"] == ["capability:new-lead"]
+
+
+def test_projection_depth_traverses_typed_dependency_chain():
+    value = _index([_node(f"capability:chain-{n}", "needle" if n == 0 else f"hop{n}") for n in range(4)]).to_dict()
+    value["relations"].extend({"relation_id": f"rel:dependency-{n}", "from_id": f"capability:chain-{n}",
+        "to_id": f"capability:chain-{n+1}", "type": "requires", "evidence_ids": ["ev:accepted"]} for n in range(3))
+    index = capability_index.CapabilityIndex.from_dict(value)
+    results = {depth: execution_context.project_capability_neighborhood(index, "needle", depth=depth)
+               for depth in ("light", "standard", "deep")}
+    ids = {depth: {item["node_id"] for item in result["inclusions"]} for depth, result in results.items()}
+    assert "capability:chain-1" in ids["light"]
+    assert "capability:chain-2" not in ids["light"]
+    assert "capability:chain-2" in ids["standard"]
+    assert "capability:chain-3" not in ids["standard"]
+    assert "capability:chain-3" in ids["deep"]

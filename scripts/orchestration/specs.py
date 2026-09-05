@@ -1,4 +1,5 @@
 from core import *
+from review_runtime import require_specification_review
 
 def index_specs(args: argparse.Namespace) -> list[dict[str, object]]:
     root = orchestration_root(args) / "spec"
@@ -51,6 +52,10 @@ def cmd_write_spec(args: argparse.Namespace) -> None:
         },
     )
     target = root / filename
+    from execution_context import parse_yaml_subset
+    effective_status = parse_yaml_subset(content.split("---", 2)[1]).get("status")
+    if effective_status in {"verified", "archived"} or args.status in {"verified", "archived"}:
+        require_specification_review(project_root(args), target, content=content)
     write_text_safely(target, content, args)
     index_specs(args)
     print(rel(target, args))
@@ -100,6 +105,8 @@ def cmd_set_spec_status(args: argparse.Namespace) -> None:
     if not match:
         raise SystemExit(f"Spec not found: {args.id}")
     path = project_root(args) / str(match["path"])
+    if args.status in {"verified", "archived"}:
+        require_specification_review(project_root(args), path)
     replace_front_matter_value(path, "status", args.status)
     if args.status == "archived":
         target = orchestration_root(args) / "spec" / "archived" / path.name
@@ -107,4 +114,3 @@ def cmd_set_spec_status(args: argparse.Namespace) -> None:
         shutil.move(str(path), str(target))
     index_specs(args)
     print(args.id)
-

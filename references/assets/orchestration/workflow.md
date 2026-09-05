@@ -67,6 +67,56 @@ When isolation is required or preferred, `orch-execute-plan` selects or prepares
 
 ## Task execution and acceptance
 
+Full orchestration has three stage gates, separate from optional task review:
+specification before `verified`, plan before execution, and integrated implementation
+before plan `Completed` or archive. Native lifecycle commands read JSON/YAML
+`stage-review-v1` envelopes under `.work-bundle/orchestration/reviews/`; a shape-valid
+record or a self-declared `is_stale: false` is not sufficient. Direct writes with an
+embedded terminal status also pass the gate. Binding creation/reuse and observed
+task validation recheck current specification/plan reviews. Brief compilation alone
+remains available for drafting. Lightweight development does not create these stages.
+
+`review_runtime.artifact_review_identity(path)` binds artifact ID, version (default
+`1`), and SHA-256 of canonical parsed front matter plus the complete body. Only
+top-level `status`, `last_updated`, and `updated_at` are excluded so the approved
+mechanical status transition does not invalidate itself. All other fields, including
+review links, requirements and validation definitions, remain bound.
+`plan_review_identity(workspace_root, plan_path)` aggregates the root and every
+phase/task Markdown artifact declaring that plan ID, keyed by path under the plan
+store, plus the identities of its linked specifications. A source, plan-member,
+version, or body edit requires fresh review; old target
+records remain history. These are semantic identities, not raw file checksums.
+The final identity uses the same plan identity plus the resolved source repository's
+current Git tree. Final admission requires a clean tracked/untracked source state;
+a dirty checkout cannot claim that its HEAD tree is the reviewed candidate. Archive
+rechecks admission after downstream acceptance checks, before moving artifacts.
+Missing/ambiguous source repositories fail closed. Local tests do not substitute for
+platform-specific release evidence. `validate_stage_reviews` requires all three
+actual current target identities supplied by its lifecycle caller, not by reviews.
+
+Reviewer capability is closed to `standard | judgment`. Evidence access uses
+`direct_source | reproducible_snapshot | packet_only`; legacy `direct` maps to
+direct-source access. Legacy `constrained_direct` and `carried_summary` context are
+retained for blocked/repair evidence, never sole acceptance. Accepted review requires
+direct-source or reproducible-snapshot context and no unavailable claim-relevant
+evidence. Snapshot access additionally requires explicit snapshot artifact digests.
+The record describes evidence access; it does not itself prove reviewer isolation or
+introduce mandatory subagent ownership. WOR-108 remains separate.
+
+Deterministic observation reuse retains the existing complete evidence identity and
+freshness policy. The provenance store reserves each identity with an OS-released
+file lock, executes outside the shared store lock, then rereads and publishes under
+the shared lock. Different identities can run concurrently; identical identities
+remain single-flight. Publication rejects an intervening mutation epoch or expired
+freshness. Reservation lock files are retained to avoid splitting concurrent waiters;
+they are runtime artifacts, not source inputs or a separate cache subsystem.
+
+Capability context projects trusted intent/evaluation seeds through the existing
+typed-relation traversal (`light`: 1 hop, `standard`: 2, `deep`: 4), bounded by
+`max_nodes`. Stale/non-authoritative nodes cannot be transit nodes; frontier and
+stopping reason expose depth/node-budget limits. Required evaluation seeds retain
+their ordering priority. This does not introduce an initial-versus-repair frontier.
+
 ```text
 scheduler selects executable task
   -> compile task brief

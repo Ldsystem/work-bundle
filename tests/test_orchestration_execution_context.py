@@ -572,6 +572,8 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 def test_set_spec_status_verified_compiles_task_brief(tmp_path: Path) -> None:
     from specs import cmd_set_spec_status
+    from test_orchestration_reviews import stage_review
+    from review_runtime import artifact_review_identity
 
     root, spec, task = workspace(tmp_path)
     spec.write_text(
@@ -579,6 +581,11 @@ def test_set_spec_status_verified_compiles_task_brief(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    review = stage_review("specification")
+    review["target_identity"] = artifact_review_identity(spec)
+    review_root = root / ".work-bundle/orchestration/reviews"
+    review_root.mkdir(parents=True)
+    (review_root / "spec.json").write_text(json.dumps(review))
     cmd_set_spec_status(
         argparse.Namespace(project_root=str(root), workspace_root=None, id="spec-001", status="verified")
     )
@@ -2705,6 +2712,19 @@ def _bind_task_execution(
             owner="harness",
             runtime_root=runtime_root,
         )
+    # The harness fixture represents an independently accepted current plan.
+    from test_orchestration_reviews import stage_review
+    from review_runtime import artifact_review_identity, plan_review_identity
+    plan_path, plan_data = execution_context._find_plan(root, str(brief["plan_id"]))
+    review_root = root / ".work-bundle/orchestration/reviews"
+    review_root.mkdir(parents=True, exist_ok=True)
+    for spec in execution_context._resolve_spec_paths(root, {}, plan_data):
+        review = stage_review("specification")
+        review["target_identity"] = artifact_review_identity(spec)
+        (review_root / f"{spec.stem}.json").write_text(json.dumps(review))
+    review = stage_review("plan")
+    review["target_identity"] = plan_review_identity(root, plan_path)
+    (review_root / "plan.json").write_text(json.dumps(review))
     binding = execution_context.create_or_load_task_execution_binding(
         control_root=root,
         plan_id=str(brief["plan_id"]),
@@ -2810,6 +2830,8 @@ def test_nonzero_process_fails_unless_acceptable_results_include_failed(tmp_path
         encoding="utf-8",
     )
     brief = _compiled_brief(root, task)
+    # Changing acceptable results is a semantic plan repair requiring a fresh review.
+    _bind_task_execution(root, brief)
     validated = _validate_observed(_read_handoff(handoff), brief)
     assert validated["result_state"] == "completed"
 

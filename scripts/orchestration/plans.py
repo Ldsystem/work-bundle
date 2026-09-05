@@ -21,6 +21,7 @@ from completion_provenance import ManagedProvenanceStore, release_completion_bin
 from handoffs import _read_compact_yaml_metadata
 from repository_preflight import capture_repository_evidence, task_caused_paths
 from specs import load_index, replace_front_matter_value
+from review_runtime import require_plan_reviews
 
 
 def _plan_knowledge_field(body: str, label: str) -> str | None:
@@ -511,6 +512,11 @@ def cmd_write_plan(args: argparse.Namespace) -> None:
     content = Path(args.content_file).read_text(encoding="utf-8")
     content = ensure_front_matter(content, {"id": pid, "goal": args.title, "purpose": args.purpose, "component": args.component, "version": args.version, "date_created": now_date(), "last_updated": now_date(), "owner": "agent", "status": args.status})
     target = orchestration_root(args) / "plan" / "active" / filename
+    from execution_context import parse_yaml_subset
+    effective_status = parse_yaml_subset(content.split("---", 2)[1]).get("status")
+    if effective_status in {"In progress", "Completed"} or args.status in {"In progress", "Completed"}:
+        require_plan_reviews(project_root(args), target, content=content,
+                             source_root=_resolve_final_plan_workspace(args) if "Completed" in {effective_status, args.status} else None)
     write_text_safely(target, content, args)
     index_plans(args)
     print(rel(target, args))
@@ -621,6 +627,9 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
         raise SystemExit(f"Multiple plan artifacts match {args.id}{guidance}")
     row = matches[0]
     path = artifact_path_from_row(row, args)
+    if row.get("type") == "plan" and args.status in {"In progress", "Completed"}:
+        require_plan_reviews(project_root(args), path,
+                             source_root=_resolve_final_plan_workspace(args) if args.status == "Completed" else None)
     if args.status == "Completed" and row.get("type") == "task":
         _assert_completed_task_handoff(args, path)
         _release_completed_task_binding(args, row)
@@ -645,9 +654,11 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
     moved = []
 
     root_path = artifact_path_from_row(root_match, args)
+    require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))
     validated = _validated_plan_task_handoffs(args, args.id)
     _assert_archive_knowledge_gate(args, args.id, root_path, validated)
     _assert_archive_plan_acceptance(args, args.id, root_path, validated)
+    require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))
     if is_relative_to(root_path, active_root):
         replace_front_matter_value(root_path, "status", "Completed")
         moved.append(move_to_archive(root_path, active_root, archived_root))
