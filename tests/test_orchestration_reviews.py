@@ -7,6 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from reviewer_run_fixtures import bind_review_receipt
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -238,6 +239,7 @@ def test_lifecycle_gate_reads_current_artifact_not_claimed_staleness(tmp_path):
     review["target_identity"] = review_runtime.artifact_review_identity(spec)
     reviews = root / "reviews"
     reviews.mkdir()
+    review = bind_review_receipt(tmp_path, review)
     (reviews / "accepted.json").write_text(json.dumps(review))
     review_runtime.require_specification_review(tmp_path, spec)
     spec.write_text(spec.read_text().replace("draft", "verified"))
@@ -247,7 +249,7 @@ def test_lifecycle_gate_reads_current_artifact_not_claimed_staleness(tmp_path):
         review_runtime.require_specification_review(tmp_path, spec)
 
 
-def _reviewed_plan_fixture(root):
+def _reviewed_plan_fixture(root, *, provenance=True):
     import review_runtime
     orch = root / ".work-bundle/orchestration"
     spec = orch / "spec/active/spec.md"
@@ -262,8 +264,144 @@ def _reviewed_plan_fixture(root):
                             ("plan", review_runtime.plan_review_identity(root, plan))):
         review = stage_review(stage)
         review["target_identity"] = identity
+        if provenance:
+            review = bind_review_receipt(root, review)
         (reviews / f"{stage}.json").write_text(json.dumps(review))
     return spec, plan, reviews
+
+
+def test_manually_authored_accepted_review_cannot_advance_lifecycle(tmp_path):
+    import review_runtime
+    spec, _, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    # Valid shape and an exact current target are not reviewer execution proof.
+    with pytest.raises(SystemExit, match="provenance|receipt"):
+        review_runtime.require_specification_review(tmp_path, spec)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="native sandbox-exec boundary is macOS-only")
+def test_native_reviewer_receipt_advances_lifecycle_and_survives_cleanup(tmp_path):
+    import review_runtime
+    import reviewer_workspace
+    import argparse
+    import specs
+    spec, _, reviews = _reviewed_plan_fixture(tmp_path, provenance=False)
+    record = json.loads((reviews / "specification.json").read_text())
+    bound = bind_review_receipt(tmp_path, record, real_process=True)
+    (reviews / "specification.json").write_text(json.dumps(bound))
+    runtime = review_runtime.reviewer_runtime_root(tmp_path)
+    state = json.loads((runtime / ".state" / f"{bound['review_id']}.json").read_text())
+    terminal = {"schema": "reviewer-terminal-review-v1", "review_id": bound["review_id"],
+                "verdict": "accepted", **{key: state[key] for key in ("packet_sha256", "evidence_digest", "sentinel_digest")}}
+    reviewer_workspace.cleanup_reviewer_workspace(runtime, bound["review_id"], terminal_review=terminal,
+        source_root=tmp_path, control_root=tmp_path, protected_roots=[tmp_path / ".work-bundle/protected-test"])
+    specs.cmd_set_spec_status(argparse.Namespace(project_root=str(tmp_path), id="spec-test", status="verified"))
+    assert "status: verified" in spec.read_text()
+
+
+@pytest.mark.parametrize("change", ["missing", "digest", "review_id", "target", "result", "mutable", "packet", "profile", "events", "future"])
+def test_stage_receipt_integrity_failures_block_acceptance(tmp_path, change):
+    import review_runtime
+    spec, _, reviews = _reviewed_plan_fixture(tmp_path)
+    path = reviews / "specification.json"
+    record = json.loads(path.read_text())
+    receipt = review_runtime.reviewer_runtime_root(tmp_path) / "receipts/reviewer-process" / f"{record['reviewer_run']['run_id']}.json"
+    if change == "missing":
+        receipt.unlink()
+    elif change == "digest":
+        record["reviewer_run"]["sha256"] = ZERO_SHA
+    elif change == "review_id":
+        record["review_id"] = "forged-review"
+    elif change == "target":
+        spec.write_text(spec.read_text().replace("Original body", "different target"))
+        record["target_identity"] = review_runtime.artifact_review_identity(spec)
+    elif change == "result":
+        record["evidence"]["capabilities"].append("forged evidence claim")
+    elif change == "mutable":
+        receipt.chmod(0o600)
+    elif change == "future":
+        import hashlib
+        value = json.loads(receipt.read_text())
+        value["completed_at"] = "2999-01-01T00:00:00Z"
+        receipt.chmod(0o600)
+        receipt.write_text(json.dumps(value))
+        receipt.chmod(0o400)
+        record["reviewer_run"]["sha256"] = hashlib.sha256(receipt.read_bytes()).hexdigest()
+    else:
+        suffix = {"packet": ".packet.json", "profile": ".profile.sb", "events": ".events.jsonl"}[change]
+        receipt.with_suffix(suffix).unlink()
+    path.write_text(json.dumps(record))
+    with pytest.raises(SystemExit, match="provenance"):
+        review_runtime.require_specification_review(tmp_path, spec)
+
+
+@pytest.mark.parametrize("field", ["author_execution_id", "repair_execution_id"])
+def test_known_author_or_repair_execution_cannot_receive_stage_credit(tmp_path, field):
+    import review_runtime
+    spec, _, reviews = _reviewed_plan_fixture(tmp_path, provenance=False)
+    spec.write_text(spec.read_text().replace("status: draft", f"status: draft\n{field}: same-worker"))
+    record = stage_review("specification")
+    record["target_identity"] = review_runtime.artifact_review_identity(spec)
+    record = bind_review_receipt(tmp_path, record, execution_id="same-worker")
+    (reviews / "specification.json").write_text(json.dumps(record))
+    with pytest.raises(SystemExit, match="overlaps author/repair"):
+        review_runtime.require_specification_review(tmp_path, spec)
+
+
+def test_current_plan_execution_binding_excludes_its_worker_from_review(tmp_path):
+    import review_runtime
+    _, plan, reviews = _reviewed_plan_fixture(tmp_path)
+    record = json.loads((reviews / "plan.json").read_text())
+    record = bind_review_receipt(tmp_path, record, execution_id="bound-author")
+    (reviews / "plan.json").write_text(json.dumps(record))
+    binding = tmp_path / ".work-bundle/runtime/execution/plan-test/task-1/execution-binding.json"
+    binding.parent.mkdir(parents=True)
+    binding.write_text(json.dumps({"execution_id": "bound-author"}))
+    with pytest.raises(SystemExit, match="overlaps author/repair"):
+        review_runtime.require_plan_reviews(tmp_path, plan)
+
+
+def test_old_packet_bytes_cannot_be_relabelled_as_current_target(tmp_path):
+    import review_runtime
+    import reviewer_workspace
+    spec, _, reviews = _reviewed_plan_fixture(tmp_path)
+    record = json.loads((reviews / "specification.json").read_text())
+    runtime = review_runtime.reviewer_runtime_root(tmp_path)
+    workspace = runtime / "reviews" / record["review_id"]
+    packet = json.loads((workspace / "packet.json").read_text())
+    spec.write_text(spec.read_text().replace("Original body", "new requirement"))
+    packet["stage_review_context"]["target_identity"] = review_runtime.artifact_review_identity(spec)
+    packet["policy_roots"] = {"source": str(tmp_path), "control": str(tmp_path),
+                              "protected": [str(tmp_path / ".work-bundle/protected-test")]}
+    with pytest.raises(reviewer_workspace.ReviewerWorkspaceError, match="STAGE_PACKET_STALE"):
+        reviewer_workspace.create_reviewer_workspace(runtime, "relabelled", packet)
+
+
+@pytest.mark.parametrize("change", ["review_id", "target", "capability", "failed"])
+def test_launcher_does_not_publish_acceptance_for_unbound_worker_output(tmp_path, monkeypatch, change):
+    import reviewer_workspace
+    import review_runtime
+    spec, _, reviews = _reviewed_plan_fixture(tmp_path)
+    record = json.loads((reviews / "specification.json").read_text())
+    workspace = review_runtime.reviewer_runtime_root(tmp_path) / "reviews" / record["review_id"]
+    record.pop("reviewer_run")
+    if change == "review_id":
+        record["review_id"] = "another-review"
+    elif change == "target":
+        record["target_identity"]["sha256"] = ZERO_SHA
+    elif change == "capability":
+        record["reviewer"]["capability"] = "standard"
+    monkeypatch.setattr(reviewer_workspace, "_run_sandboxed_process",
+        lambda *_: subprocess.CompletedProcess(["worker"], 1 if change == "failed" else 0, json.dumps(record), ""))
+    if change != "failed":
+        with pytest.raises(reviewer_workspace.ReviewerWorkspaceError, match="STAGE_OUTPUT_MISMATCH"):
+            reviewer_workspace.run_sandboxed_reviewer(workspace, ["worker"])
+    else:
+        receipt = reviewer_workspace.run_sandboxed_reviewer(workspace, ["worker"])
+        import hashlib
+        record["reviewer_run"] = {"run_id": receipt["run_id"], "sha256": hashlib.sha256(Path(receipt["receipt_path"]).read_bytes()).hexdigest()}
+        (reviews / "specification.json").write_text(json.dumps(record))
+        with pytest.raises(SystemExit, match="provenance"):
+            review_runtime.require_specification_review(tmp_path, spec)
 
 
 def test_plan_execution_transition_and_binding_reject_stale_plan(tmp_path):
@@ -319,6 +457,7 @@ def test_new_spec_review_does_not_refresh_old_plan_review(tmp_path):
     spec.write_text(spec.read_text().replace("Original body", "Changed requirement"))
     replacement = stage_review("specification")
     replacement["target_identity"] = review_runtime.artifact_review_identity(spec)
+    replacement = bind_review_receipt(tmp_path, replacement)
     (reviews / "specification.json").write_text(json.dumps(replacement))
     with pytest.raises(SystemExit, match="plan review"):
         review_runtime.require_plan_reviews(tmp_path, plan)
@@ -375,6 +514,7 @@ def test_final_transition_binds_current_source_tree(tmp_path, monkeypatch, trans
     review = stage_review("integrated_implementation")
     review["target_identity"] = dict(review_runtime.plan_review_identity(tmp_path, plan),
                                       source_tree=git("rev-parse", "HEAD^{tree}"))
+    review = bind_review_receipt(tmp_path, review)
     (reviews / "final.json").write_text(json.dumps(review))
     source.write_text("B")
     with pytest.raises(SystemExit, match="clean"):
@@ -384,6 +524,7 @@ def test_final_transition_binds_current_source_tree(tmp_path, monkeypatch, trans
     with pytest.raises(SystemExit, match="integrated_implementation"):
         run()
     review["target_identity"]["source_tree"] = git("rev-parse", "HEAD^{tree}")
+    review = bind_review_receipt(tmp_path, review)
     (reviews / "final.json").write_text(json.dumps(review))
     run()
 

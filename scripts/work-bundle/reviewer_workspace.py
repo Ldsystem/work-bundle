@@ -22,6 +22,27 @@ VALIDATOR_KINDS = frozenset({"json", "sha256", "command"})
 TERMINAL_VERDICTS = frozenset({"accepted", "repair", "blocked"})
 
 
+def _review_runtime():
+    orchestration = Path(__file__).resolve().parents[1] / "orchestration"
+    if str(orchestration) not in sys.path:
+        sys.path.insert(0, str(orchestration))
+    import review_runtime
+    return review_runtime
+
+
+def _validate_stage_context(context: object) -> dict[str, object]:
+    fields = {"stage", "target_identity", "target_locator", "agent_id", "capability", "execution_id", "evidence_mode"}
+    if not isinstance(context, dict) or set(context) != fields:
+        raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID")
+    if (context["stage"] not in {"specification", "plan", "integrated_implementation"}
+            or context["capability"] not in {"standard", "judgment"}
+            or context["evidence_mode"] not in {"direct_source", "reproducible_snapshot"}
+            or not all(isinstance(context[key], str) and context[key] for key in ("agent_id", "execution_id"))):
+        raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID")
+    _review_runtime()._target_identity(context["target_identity"])
+    return context
+
+
 class ReviewerWorkspaceError(RuntimeError):
     def __init__(self, code: str, result: dict[str, object] | None = None) -> None:
         super().__init__(code)
@@ -108,6 +129,7 @@ def build_direct_evidence_packet(
     validators: list[dict[str, object]],
     sentinels: list[str],
     network_state: str,
+    stage_review_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Copy only named direct evidence into a location-free packet.
 
@@ -174,6 +196,7 @@ def build_direct_evidence_packet(
         )
     return {
         "schema": "review-direct-evidence-packet-v1",
+        **({"stage_review_context": _validate_stage_context(stage_review_context)} if stage_review_context is not None else {}),
         "artifacts": records,
         "search_roots": normalized_search,
         "validators": normalized_validators,
@@ -333,6 +356,22 @@ def create_reviewer_workspace(
     )
     if effective_source != Path(str(policy.get("source"))).resolve() or effective_control != Path(str(policy.get("control"))).resolve():
         raise ReviewerWorkspaceError("WB_REVIEW_POLICY_ROOT_MISMATCH")
+    if "stage_review_context" in packet:
+        context = _validate_stage_context(packet["stage_review_context"])
+        # A caller cannot relabel stale copied bytes with a fresh target identity.
+        for raw in artifacts:
+            if not isinstance(raw, dict):
+                raise ReviewerWorkspaceError("WB_REVIEW_PACKET_INVALID")
+            _, _, current_artifact = _source_path(effective_source, effective_control, effective_protected, raw.get("locator"))
+            if _sha256_bytes(current_artifact.read_bytes()) != raw.get("sha256"):
+                raise ReviewerWorkspaceError("WB_REVIEW_STAGE_PACKET_STALE")
+        scope, _, target = _source_path(effective_source, effective_control, effective_protected, context["target_locator"])
+        if scope != "control" or context["target_locator"] not in {item.get("locator") for item in artifacts}:
+            raise ReviewerWorkspaceError("WB_REVIEW_STAGE_TARGET_MISSING")
+        current = _review_runtime().stage_target_identity(effective_control, str(context["stage"]), target,
+                                                        source_root=effective_source)
+        if current != context["target_identity"]:
+            raise ReviewerWorkspaceError("WB_REVIEW_STAGE_TARGET_MISMATCH")
     try:
         workspace.mkdir(parents=True)
         scope_digests: dict[str, list[str]] = {"source": [], "control": []}
@@ -561,7 +600,13 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
     """Launch the entire reviewer under the frozen deny-default profile."""
     workspace = workspace.expanduser().resolve()
     runtime_root, review_id, state = _runtime_identity(workspace)
+    packet, _ = _load_workspace(workspace)
+    if _canonical_digest(packet) != state.get("packet_sha256") or _artifact_digest(workspace, packet) != state.get("evidence_digest"):
+        raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
+    started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     completed = _run_sandboxed_process(workspace, argv)
+    if _artifact_digest(workspace, packet) != state.get("evidence_digest"):
+        raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
     denied = _sandbox_denied(completed)
     if denied:
         _append_denial_event(
@@ -585,14 +630,43 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
         "stderr_sha256": _sha256_bytes(completed.stderr.encode("utf-8")),
         "event_log_sha256": sealed["event_log_sha256"],
         "event_log_mode": sealed["event_log_mode"],
+        "started_at": started_at,
+        "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    if "stage_review_context" in packet:
+        context = _validate_stage_context(packet["stage_review_context"])
+        try:
+            review = json.loads(completed.stdout)
+            validated = _review_runtime().validate_stage_review(review)
+        except (ValueError, TypeError) as error:
+            raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_INVALID") from error
+        mode = "direct_source" if validated.evidence["mode"] == "direct" else validated.evidence["mode"]
+        if ("reviewer_run" in review or validated.review_id != review_id
+                or validated.stage != context["stage"] or validated.target_identity != context["target_identity"]
+                or validated.reviewer["agent_id"] != context["agent_id"]
+                or validated.reviewer["capability"] != context["capability"] or mode != context["evidence_mode"]):
+            raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_MISMATCH")
+        receipt["stage_review_context"] = context
+        receipt["review_result_sha256"] = _canonical_digest(review)
+        receipt["isolation"] = {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
     receipt_path = (runtime_root / "receipts" / "reviewer-process" / f"{run_id}.json").resolve(strict=False)
     if not _inside(runtime_root, receipt_path):
         raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_PATH_ESCAPE")
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Retain immutable run-scoped evidence after workspace cleanup or later runs.
+    for suffix, content in (("packet.json", json.dumps(packet, sort_keys=True).encode()),
+                            ("profile.sb", (workspace / "sandbox.sb").read_bytes()),
+                            ("events.jsonl", Path(str(sealed["event_log_path"])).read_bytes())):
+        retained = receipt_path.with_suffix(f".{suffix}")
+        with retained.open("xb") as stream:
+            stream.write(content)
+        retained.chmod(0o400)
+    with receipt_path.open("x", encoding="utf-8") as stream:
+        stream.write(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     receipt_path.chmod(0o400)
-    return {**receipt, "receipt_path": str(receipt_path), "event_log_path": sealed["event_log_path"]}
+    reference = {"run_id": run_id, "sha256": _sha256_bytes(receipt_path.read_bytes())}
+    return {**receipt, "receipt_path": str(receipt_path), "event_log_path": sealed["event_log_path"],
+            **({"reviewer_run": reference} if "stage_review_context" in packet else {})}
 
 
 def _execute_reviewer_request(workspace: Path, request: dict[str, object]) -> dict[str, object]:

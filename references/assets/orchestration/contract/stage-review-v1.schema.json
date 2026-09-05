@@ -81,6 +81,10 @@
       "required": ["review_id", "stage", "target_identity", "reviewer", "evidence", "verdict", "findings", "started_at", "completed_at", "staleness"],
       "properties": {
         "review_id": {"$ref": "#/$defs/id"},
+        "reviewer_run": {
+          "type": "object", "additionalProperties": false, "required": ["run_id", "sha256"],
+          "properties": {"run_id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/sha256"}}
+        },
         "stage": {"enum": ["specification", "plan", "integrated_implementation"]},
         "target_identity": {"$ref": "#/$defs/targetIdentity"},
         "reviewer": {

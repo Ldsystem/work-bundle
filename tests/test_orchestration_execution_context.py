@@ -12,6 +12,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from reviewer_run_fixtures import bind_review_receipt
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -583,6 +584,7 @@ def test_set_spec_status_verified_compiles_task_brief(tmp_path: Path) -> None:
 
     review = stage_review("specification")
     review["target_identity"] = artifact_review_identity(spec)
+    review = bind_review_receipt(root, review)
     review_root = root / ".work-bundle/orchestration/reviews"
     review_root.mkdir(parents=True)
     (review_root / "spec.json").write_text(json.dumps(review))
@@ -2721,9 +2723,11 @@ def _bind_task_execution(
     for spec in execution_context._resolve_spec_paths(root, {}, plan_data):
         review = stage_review("specification")
         review["target_identity"] = artifact_review_identity(spec)
+        review = bind_review_receipt(root, review)
         (review_root / f"{spec.stem}.json").write_text(json.dumps(review))
     review = stage_review("plan")
     review["target_identity"] = plan_review_identity(root, plan_path)
+    review = bind_review_receipt(root, review)
     (review_root / "plan.json").write_text(json.dumps(review))
     binding = execution_context.create_or_load_task_execution_binding(
         control_root=root,

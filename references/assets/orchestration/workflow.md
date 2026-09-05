@@ -100,8 +100,37 @@ direct-source access. Legacy `constrained_direct` and `carried_summary` context 
 retained for blocked/repair evidence, never sole acceptance. Accepted review requires
 direct-source or reproducible-snapshot context and no unavailable claim-relevant
 evidence. Snapshot access additionally requires explicit snapshot artifact digests.
-The record describes evidence access; it does not itself prove reviewer isolation or
-introduce mandatory subagent ownership. WOR-108 remains separate.
+The record describes evidence access; lifecycle acceptance additionally requires
+`reviewer_run: {run_id, sha256}` referencing a native `reviewer-process-receipt-v1`.
+Envelope validation alone (including historical records without that reference) is
+not lifecycle admission. The gate resolves the controller-owned store through
+`reviewer_runtime_root(workspace_root)` under `~/.work-bundle/reviewer-runtime/workspaces/`;
+the envelope cannot select an arbitrary receipt path or store.
+
+Before workspace creation, the controller adds `stage_review_context` to the direct
+evidence packet: `stage`, `target_identity`, `target_locator` (a copied control
+artifact), `agent_id`, `capability`, `execution_id`, and `evidence_mode`.
+`stage_target_identity` computes the target from current source artifacts, and
+workspace creation checks it again. Run the worker with `reviewer-process-run` using
+that runtime root. Its stdout must be exactly one stage-review JSON object, without
+`reviewer_run`; the native publisher verifies it against the frozen context and
+binds its canonical digest into the receipt. The controller then attaches the run
+ID and SHA-256 of the immutable receipt bytes to that exact result.
+
+The lifecycle gate verifies review ID, exact result/target/profile, successful
+completion, sandbox/network/write boundary, and immutable packet/profile/event
+digests. Run-scoped evidence remains available after workspace cleanup; full traces
+are never embedded into the stage envelope. Missing, altered, failed, mutable, or
+mismatched provenance cannot grant acceptance. Known execution IDs are obtained
+from artifact `execution_id`, `author_execution_id(s)`, `repair_execution_id(s)` and
+current plan execution bindings; overlap with the reviewer execution/run ID blocks
+admission. Undeclared author identities cannot be inferred.
+
+The controller/runtime store is a trusted boundary, not a cryptographic defense
+against a compromised same-OS-user host. The receipt proves the launched worker's
+process/evidence boundary and binds its controller-selected capability; it does not
+turn a mechanical fixture into semantic review. WOR-108 mandatory task ownership
+and bounded context/history projection remain separate.
 
 Deterministic observation reuse retains the existing complete evidence identity and
 freshness policy. The provenance store reserves each identity with an OS-released

@@ -7,7 +7,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -72,6 +72,94 @@ class ReviewContractError(ValueError):
     pass
 
 
+def reviewer_runtime_root(root: Path) -> Path:
+    """Controller-owned runtime location; never selected by a review envelope."""
+    workspace_key = hashlib.sha256(str(root.resolve()).encode()).hexdigest()
+    return Path.home() / ".work-bundle/reviewer-runtime/workspaces" / workspace_key
+
+
+def stage_target_identity(root: Path, stage: str, path: Path, *, source_root: Path | None = None) -> dict[str, Any]:
+    identity = artifact_review_identity(path) if stage == "specification" else plan_review_identity(root, path)
+    if stage == "integrated_implementation":
+        if source_root is None:
+            raise ReviewContractError("review provenance requires source repository")
+        result = subprocess.run(["git", "-C", str(source_root), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True)
+        tree = subprocess.run(["git", "-C", str(source_root), "rev-parse", "HEAD^{tree}"], capture_output=True, text=True)
+        if result.returncode or result.stdout.strip() or tree.returncode:
+            raise ReviewContractError("review provenance requires clean source tree")
+        identity["source_tree"] = tree.stdout.strip()
+    return identity
+
+
+def _known_execution_ids(root: Path, stage: str, identity: Mapping[str, Any]) -> set[str]:
+    from execution_context import _read_structured
+    area = root / ".work-bundle/orchestration" / ("spec" if stage == "specification" else "plan")
+    ids: set[str] = set()
+    for path in area.rglob("*.md"):
+        if not path.resolve().is_relative_to(area.resolve()):
+            raise ReviewContractError("review provenance artifact path escapes store")
+        data, _ = _read_structured(path)
+        if identity["artifact_id"] not in {str(data.get("id", "")), str(data.get("plan_id", ""))}:
+            continue
+        for field in ("execution_id", "author_execution_id", "repair_execution_id", "author_execution_ids", "repair_execution_ids"):
+            value = data.get(field, [])
+            ids.update(str(item) for item in (value if isinstance(value, list) else [value]) if item)
+    if stage != "specification":
+        bindings = root / ".work-bundle/runtime/execution" / str(identity["artifact_id"])
+        for path in bindings.glob("*/execution-binding.json"):
+            if not path.resolve().is_relative_to(bindings.resolve()):
+                raise ReviewContractError("review provenance binding path escapes store")
+            binding = json.loads(path.read_text())
+            if binding.get("execution_id"):
+                ids.add(str(binding["execution_id"]))
+    return ids
+
+
+def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
+    reference = review.get("reviewer_run")
+    if not isinstance(reference, dict) or set(reference) != {"run_id", "sha256"}:
+        raise ReviewContractError("reviewer-run provenance receipt is required")
+    run_id = _identifier(reference["run_id"], "reviewer_run.run_id")
+    if not re.fullmatch(r"reviewer-run-[0-9a-f-]{36}", run_id):
+        raise ReviewContractError("reviewer-run provenance identity is invalid")
+    runtime = reviewer_runtime_root(root).resolve()
+    path = runtime / "receipts/reviewer-process" / f"{run_id}.json"
+    def immutable_file(target: Path) -> bytes:
+        if (target.is_symlink() or not target.resolve().is_relative_to(runtime)
+                or not target.is_file() or target.stat().st_mode & 0o222):
+            raise ReviewContractError("reviewer-run provenance is missing or mutable")
+        return target.read_bytes()
+    raw = immutable_file(path)
+    if hashlib.sha256(raw).hexdigest() != reference["sha256"]:
+        raise ReviewContractError("reviewer-run provenance receipt digest mismatch")
+    receipt = _mapping(json.loads(raw), "reviewer-run provenance receipt")
+    started = _rfc3339_utc(receipt.get("started_at"), "reviewer receipt started_at")
+    completed = _rfc3339_utc(receipt.get("completed_at"), "reviewer receipt completed_at")
+    if started > completed or completed > datetime.now(timezone.utc):
+        raise ReviewContractError("reviewer-run provenance has invalid completion time")
+    packet = _mapping(json.loads(immutable_file(path.with_suffix(".packet.json"))), "reviewer-run provenance packet")
+    def canonical(value: Any) -> str:
+        return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    result = {key: value for key, value in review.items() if key != "reviewer_run"}
+    context = _mapping(receipt.get("stage_review_context", {}), "reviewer-run provenance context")
+    mode = "direct_source" if review["evidence"]["mode"] == "direct" else review["evidence"]["mode"]
+    if (receipt.get("schema") != "reviewer-process-receipt-v1" or receipt.get("run_id") != run_id
+            or receipt.get("review_id") != review["review_id"] or receipt.get("status") != "passed"
+            or receipt.get("exit_code") != 0 or receipt.get("review_result_sha256") != canonical(result)
+            or receipt.get("packet_sha256") != canonical(packet) or packet.get("stage_review_context") != context
+            or context.get("target_identity") != review["target_identity"] or context.get("stage") != review["stage"]
+            or context.get("agent_id") != review["reviewer"]["agent_id"]
+            or context.get("capability") != review["reviewer"]["capability"] or context.get("evidence_mode") != mode
+            or receipt.get("isolation") != {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
+            or not context.get("execution_id")
+            or receipt.get("sandbox_profile_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".profile.sb"))).hexdigest()
+            or receipt.get("event_log_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".events.jsonl"))).hexdigest()):
+        raise ReviewContractError("reviewer-run provenance does not bind this accepted review")
+    known = _known_execution_ids(root, str(review["stage"]), review["target_identity"])
+    if run_id in known or context["execution_id"] in known:
+        raise ReviewContractError("reviewer-run provenance overlaps author/repair execution")
+
+
 def artifact_review_identity(path: Path, *, content: str | None = None) -> dict[str, Any]:
     """Semantic artifact identity; only lifecycle bookkeeping is non-semantic.
 
@@ -97,6 +185,7 @@ def artifact_review_identity(path: Path, *, content: str | None = None) -> dict[
 def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any]) -> None:
     """Read native records; historical prose is not an acceptance envelope."""
     accepted = []
+    matching_values = []
     review_ids: set[str] = set()
     review_root = root / ".work-bundle/orchestration/reviews"
     try:
@@ -119,9 +208,13 @@ def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any])
             review_ids.add(record.review_id)
             if record.stage == stage and record.target_identity == identity:
                 accepted.append(record)
+                matching_values.append(value)
         latest_time = max((_rfc3339_utc(item.completed_at, "completed_at") for item in accepted), default=None)
         latest = [item for item in accepted if _rfc3339_utc(item.completed_at, "completed_at") == latest_time]
         if latest and all(item.verdict == "accepted" and not item.staleness["is_stale"] for item in latest):
+            for item in latest:
+                value = next(value for value in matching_values if value["review_id"] == item.review_id)
+                _validate_reviewer_run(root, value)
             return
     except (ValueError, OSError) as error:
         raise SystemExit(f"stage review blocked: {error}") from error
@@ -364,7 +457,13 @@ def validate_stage_review(
     value: Mapping[str, Any], *, current_target_identity: Mapping[str, Any] | None = None
 ) -> StageReviewV1:
     record = _mapping(value, "stage_review_v1")
-    _closed(record, STAGE_REVIEW_KEYS, "stage_review_v1")
+    _closed({key: item for key, item in record.items() if key != "reviewer_run"}, STAGE_REVIEW_KEYS, "stage_review_v1")
+    if "reviewer_run" in record:
+        reference = _mapping(record["reviewer_run"], "reviewer_run")
+        _closed(reference, frozenset({"run_id", "sha256"}), "reviewer_run")
+        _identifier(reference["run_id"], "reviewer_run.run_id")
+        if not isinstance(reference["sha256"], str) or not SHA256_RE.fullmatch(reference["sha256"]):
+            raise ReviewContractError("reviewer_run.sha256 must be a lowercase SHA-256")
     review_id = _identifier(record["review_id"], "review_id")
     stage = _enum(record["stage"], STAGE_REVIEW_STAGES, "stage")
     target = _target_identity(record["target_identity"])
