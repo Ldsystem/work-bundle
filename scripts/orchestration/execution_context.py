@@ -19,7 +19,12 @@ from core import is_relative_to, read_front_matter, resolve_workspace_root
 from artifact_inputs import (_split_top_level, _split_key_value, _parse_scalar, parse_yaml_subset,
                              _read_structured, _as_list, _input_path, _resolve_spec_paths)
 from repository_preflight import capture_repository_evidence, task_caused_paths
-from task_ownership import OwnershipBlocker, validate_task_acceptance_ownership
+from task_ownership import (
+    OwnershipBlocker,
+    RepairContinuity,
+    normalize_subagent_provenance,
+    validate_task_acceptance_ownership,
+)
 
 
 SOURCE_ID_TOKEN = r"[A-Z][A-Z0-9_-]*-\d+[A-Z]?"
@@ -1877,6 +1882,9 @@ def validate_executor_result_for_task(
     execution_runtime_root: str | None = None,
     mutation_events: Iterable[Mapping[str, object]] | None = None,
     accepted_dependency_deltas: Iterable[Mapping[str, object]] | None = None,
+    prior_ownership: Mapping[str, Mapping[str, object]] | None = None,
+    repair_continuity: Mapping[str, Mapping[str, object] | RepairContinuity] | None = None,
+    authorized_replacements: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     if handoff.get("type") != "executor-result":
         raise SystemExit("Handoff is not executor-result")
@@ -2015,6 +2023,15 @@ def validate_executor_result_for_task(
                 validations_passed=True,
                 operation=operation,
             )
+            if operation == "repair":
+                _validate_repair_acceptance_continuity(
+                    task=task,
+                    handoff=handoff,
+                    current_ownership=task_ownership,
+                    prior_ownership=prior_ownership,
+                    repair_continuity=repair_continuity,
+                    authorized_replacements=authorized_replacements,
+                )
         except OwnershipBlocker as error:
             raise SystemExit(str(error)) from error
     return {
@@ -2026,6 +2043,78 @@ def validate_executor_result_for_task(
         **({"task_ownership": task_ownership} if task_ownership is not None else {}),
         **({"observed_validation": observed_validation} if observed_validation is not None else {}),
     }
+
+
+def _validate_repair_acceptance_continuity(
+    *,
+    task: Mapping[str, object],
+    handoff: Mapping[str, object],
+    current_ownership: Mapping[str, object],
+    prior_ownership: Mapping[str, Mapping[str, object]] | None,
+    repair_continuity: Mapping[str, Mapping[str, object] | RepairContinuity] | None,
+    authorized_replacements: Iterable[str] | None,
+) -> None:
+    """Bind repair acceptance to the scheduler's original owner and identities."""
+
+    task_id = str(task.get("task_id") or "")
+    if prior_ownership is not None and not isinstance(prior_ownership, Mapping):
+        raise OwnershipBlocker("review-blocked", "repair prior_ownership must be a task mapping")
+    if repair_continuity is not None and not isinstance(repair_continuity, Mapping):
+        raise OwnershipBlocker("review-blocked", "repair_continuity must be a task mapping")
+    previous_value = (prior_ownership or {}).get(task_id)
+    continuity_value = (repair_continuity or {}).get(task_id)
+    if previous_value is None:
+        raise OwnershipBlocker("review-blocked", f"{task_id} repair lacks prior owner")
+    if continuity_value is None:
+        raise OwnershipBlocker("review-blocked", f"{task_id} repair lacks continuity identities")
+    previous = normalize_subagent_provenance(previous_value)
+    if isinstance(continuity_value, RepairContinuity):
+        continuity = continuity_value
+    else:
+        if not isinstance(continuity_value, Mapping) or set(continuity_value) != {
+            "binding_id",
+            "baseline_identity",
+            "evidence_identity",
+            "previous_review_identity",
+        }:
+            raise OwnershipBlocker("review-blocked", f"{task_id} repair continuity is not closed")
+        try:
+            continuity = RepairContinuity(**{key: str(value) for key, value in continuity_value.items()})
+        except (TypeError, ValueError) as error:
+            raise OwnershipBlocker("review-blocked", f"{task_id} repair continuity is invalid") from error
+
+    workspace = task.get("workspace") if isinstance(task.get("workspace"), Mapping) else {}
+    control_root = Path(str(workspace.get("root") or "")).expanduser().resolve()
+    if not control_root.is_dir():
+        raise OwnershipBlocker("review-blocked", f"{task_id} repair control root is unavailable")
+    binding = load_task_execution_binding(control_root, str(task.get("plan_id") or ""), task_id)
+    baseline = binding.get("baseline")
+    if not isinstance(baseline, Mapping) or not baseline.get("head"):
+        raise OwnershipBlocker("review-blocked", f"{task_id} repair baseline identity is unavailable")
+    review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), Mapping) else {}
+    frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), Mapping) else {}
+    ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
+    try:
+        expected = RepairContinuity(
+            binding_id=str(ownership.get("binding_id") or ""),
+            baseline_identity=semantic_digest(dict(baseline)),
+            evidence_identity=str(frontier.get("frozen_evidence_reference") or ""),
+            previous_review_identity=str(frontier.get("prior_review_id") or ""),
+        )
+    except ValueError as error:
+        raise OwnershipBlocker(
+            "review-blocked", f"{task_id} repair frontier continuity is unavailable"
+        ) from error
+    if continuity != expected:
+        raise OwnershipBlocker("review-blocked", f"{task_id} repair continuity identities do not match")
+    if isinstance(authorized_replacements, (str, bytes, Mapping)):
+        raise OwnershipBlocker("review-blocked", "authorized_replacements must be task IDs")
+    replacements = {str(value) for value in (authorized_replacements or [])}
+    replaced = current_ownership.get("agent_id") != previous.get("agent_id")
+    if replaced and task_id not in replacements:
+        raise OwnershipBlocker(
+            "review-blocked", f"{task_id} repair owner replacement is not authorized"
+        )
 
 
 def _acceptable_validation_results(item: dict[str, Any]) -> set[str]:
@@ -2755,7 +2844,23 @@ def cmd_build_review_package(args: argparse.Namespace) -> None:
 def cmd_observe_task_validation(args: argparse.Namespace) -> None:
     _, brief_document = _compile_task_brief(args)
     task = brief_document["task_brief"]
-    observed = _observe_completed_validation({}, task, task["validation"], None, **_observation_kwargs(args))
+    runtime = _observation_kwargs(args)
+    observed = _observe_completed_validation(
+        {},
+        task,
+        task["validation"],
+        None,
+        **{
+            key: runtime[key]
+            for key in (
+                "workspace_id",
+                "execution_id",
+                "repository_id",
+                "execution_runtime_root",
+                "accepted_dependency_deltas",
+            )
+        },
+    )
     print(json.dumps({"validation": observed}, sort_keys=True))
 
 
@@ -2781,6 +2886,10 @@ def _observation_kwargs(args: argparse.Namespace) -> dict[str, Any]:
         "accepted_dependency_deltas": (
             getattr(args, "accepted_dependency_deltas", None) or None
         ),
+        "mutation_events": getattr(args, "mutation_events", None) or None,
+        "prior_ownership": getattr(args, "prior_ownership", None) or None,
+        "repair_continuity": getattr(args, "repair_continuity", None) or None,
+        "authorized_replacements": getattr(args, "authorized_replacements", None) or None,
     }
 
 

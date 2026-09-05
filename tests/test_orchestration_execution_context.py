@@ -244,6 +244,70 @@ def test_observe_task_validation_is_dispatched() -> None:
     assert "--task" in completed.stdout
 
 
+@pytest.mark.parametrize("command", ["validate-executor-result", "set-plan-status"])
+def test_normal_cli_projects_controller_mutation_events_into_acceptance(
+    tmp_path: Path, command: str
+) -> None:
+    root, task, brief, handoff, _ = _counted_validation(tmp_path)
+    handoff_path = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff_path.write_text(
+        "\n".join(execution_context._dump_yaml(handoff)) + "\n", encoding="utf-8"
+    )
+    runtime = json.dumps(
+        [{"actor_kind": "controller", "paths": [brief["files"]["write"][0]]}]
+    )
+    if command == "validate-executor-result":
+        operation = [command, "--task", str(task), "--handoff", str(handoff_path)]
+    else:
+        operation = [
+            command,
+            "--id",
+            "task-004",
+            "--kind",
+            "task",
+            "--plan-id",
+            "plan-001",
+            "--status",
+            "Completed",
+            "--handoff",
+            str(handoff_path),
+        ]
+    from dispatcher import build_parser
+
+    parsed = build_parser().parse_args(
+        [*operation, "--project-root", str(root), "--mutation-events", runtime]
+    )
+    with pytest.raises(SystemExit, match="controller mutated task-owned implementation scope"):
+        parsed.func(parsed)
+    task_data, _ = execution_context._read_structured(task)
+    assert task_data.get("status") != "Completed"
+
+
+@pytest.mark.parametrize("command", ["validate-executor-result", "set-plan-status"])
+def test_acceptance_cli_projects_all_controller_owned_runtime_inputs(command: str) -> None:
+    from dispatcher import build_parser
+
+    expected = {
+        "mutation_events": [{"actor_kind": "controller", "paths": ["src/a.py"]}],
+        "accepted_dependency_deltas": [{"task_id": "task-a"}],
+        "prior_ownership": {"task-b": {"agent_id": "agent-a"}},
+        "repair_continuity": {"task-b": {"binding_id": "binding-b"}},
+        "authorized_replacements": ["task-b"],
+    }
+    if command == "validate-executor-result":
+        operation = [command, "--task", "task.md", "--handoff", "handoff.yaml"]
+    else:
+        operation = [command, "--id", "task-b", "--status", "Completed"]
+    argv = list(operation)
+    for name, value in expected.items():
+        argv.extend(["--" + name.replace("_", "-"), json.dumps(value)])
+
+    parsed = build_parser().parse_args(argv)
+
+    projected = execution_context._observation_kwargs(parsed)
+    assert {name: projected[name] for name in expected} == expected
+
+
 def test_source_records_keep_letter_suffixed_ids_distinct(tmp_path: Path) -> None:
     specification = tmp_path / "spec.md"
     body = (
@@ -2473,22 +2537,22 @@ def test_rf_task_repair_completion_rejects_stale_repair_frontier(tmp_path: Path)
         "staleness": {"is_stale": False, "reason": None, "supersedes": None},
     }
     handoff["repository"] = [{"root": str(tmp_path), "target_kind": "git-backed", "preflight_kind": "git-clean-worktree", "baseline": "initial", "status": "clean"}]
-    assert execution_context.validate_executor_result_for_task(handoff, brief)["result_state"] == "completed"
+    execution_context._assert_handoff_review_matches_task(handoff, brief, "completed")
     stale = deepcopy(handoff)
     stale["acceptance_review"]["target_identity"] = {**new, "sha256": "3" * 64}
     with pytest.raises(SystemExit, match="repaired identity|frontier"):
-        execution_context.validate_executor_result_for_task(stale, brief)
+        execution_context._assert_handoff_review_matches_task(stale, brief, "completed")
     for field, value in (("required", False), ("reviewer_independent", False), ("review_target_kind", "wrong-kind")):
         invalid_prior = deepcopy(handoff)
         invalid_prior["acceptance_review"]["previous_review"][field] = value
         with pytest.raises(SystemExit, match="previous|task acceptance|review_target_kind"):
-            execution_context.validate_executor_result_for_task(invalid_prior, brief)
+            execution_context._assert_handoff_review_matches_task(invalid_prior, brief, "completed")
     fabricated = deepcopy(handoff)
     fabricated_identity = {**new, "sha256": "3" * 64, "source_tree": "f" * 40}
     fabricated["acceptance_review"]["target_identity"] = fabricated_identity
     fabricated["acceptance_review"]["repair_frontier"]["repaired_identity"] = fabricated_identity
     with pytest.raises(SystemExit, match="head|tree|Git identity"):
-        execution_context.validate_executor_result_for_task(fabricated, brief)
+        execution_context._assert_handoff_review_matches_task(fabricated, brief, "completed")
 
 
 def test_no_review_update_stays_closure_eligible_when_handoff_self_upgrades() -> None:

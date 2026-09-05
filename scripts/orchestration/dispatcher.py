@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from core import HANDOFF_TYPES
 from doctor import cmd_doctor
@@ -21,6 +22,23 @@ RECOGNIZED_COMMANDS = frozenset({
     "set-plan-status", "archive-plan", "index-plans", "write-phase", "write-task",
     "write-handoff", "list-handoffs", "set-handoff-status", "index-handoffs",
 })
+
+
+def _runtime_json(value: str) -> object:
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as error:
+        raise argparse.ArgumentTypeError(f"invalid controller runtime JSON: {error.msg}") from error
+
+
+def _add_acceptance_runtime_inputs(parser: argparse.ArgumentParser) -> None:
+    """Expose harness observations without adding them to durable executor results."""
+
+    parser.add_argument("--mutation-events", type=_runtime_json)
+    parser.add_argument("--accepted-dependency-deltas", type=_runtime_json)
+    parser.add_argument("--prior-ownership", type=_runtime_json)
+    parser.add_argument("--repair-continuity", type=_runtime_json)
+    parser.add_argument("--authorized-replacements", type=_runtime_json)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate_result = sub.add_parser("validate-executor-result", parents=[parent])
     validate_result.add_argument("--task", required=True)
     validate_result.add_argument("--handoff", required=True)
+    _add_acceptance_runtime_inputs(validate_result)
     validate_result.set_defaults(func=cmd_validate_executor_result)
     observe_validation = sub.add_parser("observe-task-validation", parents=[parent])
     observe_validation.add_argument("--task", required=True)
@@ -108,6 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     set_plan.add_argument("--kind", choices=["plan", "phase", "task"])
     set_plan.add_argument("--plan-id")
     set_plan.add_argument("--handoff")
+    _add_acceptance_runtime_inputs(set_plan)
     set_plan.set_defaults(func=cmd_set_plan_status)
     archive_plan = sub.add_parser("archive-plan", parents=[parent])
     archive_plan.add_argument("--id", required=True)

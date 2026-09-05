@@ -348,6 +348,85 @@ def test_completed_task_acceptance_rejects_controller_task_scope_mutation(
         execution_context.validate_executor_result_for_task(durable_history, brief)
 
 
+def test_repair_acceptance_requires_exact_runtime_owner_and_continuity(
+    tmp_path: Path,
+) -> None:
+    root, _, task = workspace(tmp_path)
+    scoped = _ensure_source_file(root)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "baseline")
+    brief = _without_terminal_evidence(
+        _document(root, task)["task_brief"], "Repair ownership fixture."
+    )
+    binding = _bind_task_execution(root, brief)
+    scoped.write_text("def compile_task():\n    return 'repair'\n", encoding="utf-8")
+    frontier = {
+        "prior_review_id": "review-prior",
+        "frozen_evidence_reference": execution_context.semantic_digest("evidence"),
+    }
+    handoff = {
+        "type": "executor-result",
+        "related": {"plan": brief["plan_id"], "task": brief["task_id"]},
+        "result": {"state": "completed"},
+        "task_fit_check": {"task": brief["task_id"], "result": "repaired"},
+        "delegation_evidence": _delegation_evidence(),
+        "acceptance_review": {"required": False, "repair_frontier": frontier},
+        "knowledge_disposition": {
+            "action": "none",
+            "reason": "No stable authority changed.",
+            "affected_authority": [],
+        },
+    }
+    continuity = {
+        brief["task_id"]: {
+            "binding_id": binding["ownership"]["binding_id"],
+            "baseline_identity": execution_context.semantic_digest(binding["baseline"]),
+            "evidence_identity": frontier["frozen_evidence_reference"],
+            "previous_review_identity": frontier["prior_review_id"],
+        }
+    }
+    prior = {brief["task_id"]: _delegation_evidence()}
+
+    accepted = execution_context.validate_executor_result_for_task(
+        handoff,
+        brief,
+        prior_ownership=prior,
+        repair_continuity=continuity,
+    )
+    assert accepted["task_ownership"]["agent_id"] == "ctx-fixture-agent"
+
+    replacement = deepcopy(handoff)
+    replacement["delegation_evidence"] = {
+        **_delegation_evidence(),
+        "agent_id": "unrelated-agent",
+        "run_id": "unrelated-run",
+    }
+    with pytest.raises(SystemExit, match="replacement is not authorized"):
+        execution_context.validate_executor_result_for_task(
+            replacement,
+            brief,
+            prior_ownership=prior,
+            repair_continuity=continuity,
+        )
+    execution_context.validate_executor_result_for_task(
+        replacement,
+        brief,
+        prior_ownership=prior,
+        repair_continuity=continuity,
+        authorized_replacements={brief["task_id"]},
+    )
+
+    stale = deepcopy(continuity)
+    stale[brief["task_id"]]["baseline_identity"] = "stale"
+    with pytest.raises(SystemExit, match="continuity identities do not match"):
+        execution_context.validate_executor_result_for_task(
+            handoff,
+            brief,
+            prior_ownership=prior,
+            repair_continuity=stale,
+        )
+
+
 def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
     tmp_path: Path,
 ) -> None:
