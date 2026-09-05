@@ -12,6 +12,9 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from datetime import datetime, timezone
+
+import validation_observation
 
 from core import is_relative_to, read_front_matter, resolve_workspace_root
 from repository_preflight import capture_repository_evidence, task_caused_paths
@@ -1369,7 +1372,7 @@ def _run_named_inspection(mechanism: str, execution_root: Path, task: dict[str, 
     return "passed" if actual == expected else "failed"
 
 
-def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: dict[str, Any]) -> dict[str, Any]:
+def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: dict[str, Any], receipt: dict | None = None) -> dict[str, Any]:
     command = str(item.get("command") or "").strip()
     kind = str(item.get("kind") or "").strip().lower()
     if kind not in VALIDATION_KINDS:
@@ -1390,6 +1393,7 @@ def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: d
             raise SystemExit("Inspection validation requires a named harness-owned mechanism")
         result_value = _run_named_inspection(mechanism, execution_root, task, item)
         return {"command": command, "result": result_value, "kind": "inspection", "mechanism": mechanism, "id": item.get("id"), "invariant_ids": list(_as_list(item.get("invariant_ids")))}
+    started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     completed = subprocess.run(
         command,
         shell=True,
@@ -1398,6 +1402,11 @@ def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: d
         text=True,
         check=False,
     )
+    if receipt is not None:
+        receipt.update(exit_code=completed.returncode,
+                       stdout_digest=hashlib.sha256(completed.stdout.encode()).hexdigest(),
+                       stderr_digest=hashlib.sha256(completed.stderr.encode()).hexdigest(),
+                       started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     return {
         "command": command,
         "result": "passed" if completed.returncode == 0 else "failed",
@@ -1435,7 +1444,7 @@ def _observe_completed_validation(
     handoff: dict[str, Any],
     task: dict[str, Any],
     required_items: list[dict[str, Any]],
-    reported_commands: dict[str, dict[str, Any]],
+    reported_commands: dict[str, dict[str, Any]] | None,
     *,
     workspace_id: str | None = None,
     execution_id: str | None = None,
@@ -1470,11 +1479,17 @@ def _observe_completed_validation(
     except RuntimeError as error:
         raise SystemExit(str(error)) from error
     observed_items: list[dict[str, Any]] = []
+    task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
+    _assert_task_caused_delta_in_write_scope(task_caused_paths(baseline, pre_batch, execution_root), task_files)
     for item in required_items:
-        observed = _observe_validation_item(item, execution_root, task)
+        observed = validation_observation.observe(
+            _completion_provenance_module(), binding, task, item, pre_batch,
+            lambda receipt: _observe_validation_item(item, execution_root, task, receipt),
+            lambda: capture_repository_evidence(execution_root),
+        )
         command = str(item.get("command")).strip()
-        reported_item = reported_commands[command]
-        if reported_item.get("result") != observed["result"]:
+        reported_item = reported_commands[command] if reported_commands is not None else None
+        if reported_item is not None and reported_item.get("result") != observed["result"]:
             raise SystemExit(
                 f"Executor result validation for {command} does not match observed {observed['result']}"
             )
@@ -1974,6 +1989,8 @@ def _compile_structured_validation_item(item: Any) -> dict[str, Any]:
             "Task validation kind must be process or inspection; untyped structured validation is legacy-untyped"
         )
     compiled["kind"] = kind
+    if "reuse_seconds" in item:
+        compiled["reuse_seconds"] = validation_observation.reuse_seconds(item)
     for key in ("id", "invariant_ids", "capability_reason", "command", "proves", "expected", "acceptable_results", "digest"):
         if key in item:
             compiled[key] = item[key]
@@ -2420,6 +2437,13 @@ def cmd_build_task_brief(args: argparse.Namespace) -> None:
 def cmd_build_review_package(args: argparse.Namespace) -> None:
     target = build_review_package(args)
     print(target.relative_to(resolve_workspace_root(args)).as_posix())
+
+
+def cmd_observe_task_validation(args: argparse.Namespace) -> None:
+    _, brief_document = _compile_task_brief(args)
+    task = brief_document["task_brief"]
+    observed = _observe_completed_validation({}, task, task["validation"], None, **_observation_kwargs(args))
+    print(json.dumps({"validation": observed}, sort_keys=True))
 
 
 def cmd_validate_executor_result(args: argparse.Namespace) -> None:

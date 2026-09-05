@@ -4,8 +4,11 @@ import argparse
 import hashlib
 import json
 import re
+import shlex
 import subprocess
 import sys
+from copy import deepcopy
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -17,6 +20,103 @@ sys.path.insert(0, str(ORCHESTRATION))
 
 import execution_context  # noqa: E402
 from execution_context import build_review_package, build_task_brief  # noqa: E402
+
+
+def _counted_validation(tmp_path: Path, reuse_seconds: int = 3600, suffix: str = ""):
+    root, _, task = workspace(tmp_path)
+    _ensure_source_file(root)
+    counter = tmp_path / "invocations.txt"
+    script = f"from pathlib import Path; p=Path({str(counter)!r}); p.write_text(str(int(p.read_text())+1) if p.exists() else '1')"
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script + suffix)}"
+    _set_process_validation(task, command, reuse_seconds=reuse_seconds)
+    brief = _compiled_brief(root, task)
+    _bind_task_execution(root, brief)
+    handoff = _read_handoff(_handoff_for_command(root, command))
+    return root, task, brief, handoff, counter
+
+
+def test_handoff_validation_reuses_current_observation(tmp_path: Path) -> None:
+    _, _, brief, handoff, counter = _counted_validation(tmp_path)
+    first = _validate_observed(handoff, brief)
+    handoff["result"]["summary"] = "Reworded summary of the same result"
+    second = _validate_observed(handoff, brief)
+    assert counter.read_text() == "1"
+    assert first["observed_validation"][0]["observation_id"] == second["observed_validation"][0]["reuse_of"]
+
+
+def test_observe_task_validation_records_before_handoff(tmp_path: Path, capsys) -> None:
+    root, task, brief, handoff, counter = _counted_validation(tmp_path)
+    execution_context.cmd_observe_task_validation(args(root, task))
+    assert json.loads(capsys.readouterr().out)["validation"][0]["result"] == "passed"
+    _validate_observed(handoff, brief)
+    assert counter.read_text() == "1"
+
+
+@pytest.mark.parametrize("change", ["source", "oracle", "environment"])
+def test_handoff_validation_invalidates_changed_inputs(tmp_path: Path, monkeypatch, change: str) -> None:
+    root, _, brief, handoff, counter = _counted_validation(tmp_path)
+    _validate_observed(handoff, brief)
+    if change == "source":
+        (root / WRITE_SCOPE_FILE).write_text("# changed implementation\n")
+    elif change == "oracle":
+        brief = deepcopy(brief)
+        brief["validation"][0]["proves"] = "Changed oracle obligation"
+    else:
+        monkeypatch.setenv("PYTHONHASHSEED", "42")
+    _validate_observed(handoff, brief)
+    assert counter.read_text() == "2"
+
+
+def test_handoff_validation_live_checks_do_not_reuse(tmp_path: Path) -> None:
+    _, _, brief, handoff, counter = _counted_validation(tmp_path, reuse_seconds=0)
+    _validate_observed(handoff, brief)
+    _validate_observed(handoff, brief)
+    assert counter.read_text() == "2"
+
+
+def test_handoff_validation_expiry_requires_new_observation(tmp_path: Path, monkeypatch) -> None:
+    _, _, brief, handoff, counter = _counted_validation(tmp_path)
+    _validate_observed(handoff, brief)
+    clock = execution_context.validation_observation.now_utc
+    monkeypatch.setattr(execution_context.validation_observation, "now_utc", lambda: clock() + timedelta(seconds=3601))
+    _validate_observed(handoff, brief)
+    assert counter.read_text() == "2"
+
+
+def test_handoff_validation_seen_mutation_then_revert_invalidates(tmp_path: Path) -> None:
+    root, _, brief, handoff, counter = _counted_validation(tmp_path)
+    target = root / WRITE_SCOPE_FILE
+    original = target.read_text()
+    _validate_observed(handoff, brief)
+    target.write_text("# changed\n")
+    _validate_observed(handoff, brief)
+    target.write_text(original)
+    _validate_observed(handoff, brief)
+    assert counter.read_text() == "3"
+
+
+@pytest.mark.parametrize("mutation", [False, True])
+def test_handoff_validation_failed_checks_are_not_cached(tmp_path: Path, mutation: bool) -> None:
+    suffix = f"; Path({WRITE_SCOPE_FILE!r}).write_text('changed')" if mutation else "; raise SystemExit(1)"
+    root, _, brief, handoff, counter = _counted_validation(tmp_path, suffix=suffix)
+    original = (root / WRITE_SCOPE_FILE).read_text()
+    for _ in range(2):
+        with pytest.raises(SystemExit, match="validation-blocked|does not match observed failed"):
+            _validate_observed(handoff, brief)
+        (root / WRITE_SCOPE_FILE).write_text(original)
+    assert counter.read_text() == "2"
+
+
+@pytest.mark.parametrize("seconds", [-1, True, 1.5, "3600", 86401])
+def test_validation_reuse_rejects_invalid_policy(seconds) -> None:
+    with pytest.raises(SystemExit, match="reuse_seconds"):
+        execution_context._compile_structured_validation_item({"kind": "process", "reuse_seconds": seconds})
+
+
+def test_observe_task_validation_is_dispatched() -> None:
+    completed = subprocess.run([sys.executable, str(REPO_ROOT / "scripts/orch.py"), "observe-task-validation", "--help"], capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    assert "--task" in completed.stdout
 
 
 def test_source_records_keep_letter_suffixed_ids_distinct(tmp_path: Path) -> None:

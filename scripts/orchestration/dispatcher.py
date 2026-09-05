@@ -6,7 +6,7 @@ import argparse
 from core import HANDOFF_TYPES
 from doctor import cmd_doctor
 from documents import cmd_git_status, cmd_next_action_candidates, cmd_related, cmd_state, cmd_write_doc
-from execution_context import cmd_build_review_package, cmd_build_task_brief, cmd_validate_executor_result
+from execution_context import cmd_build_review_package, cmd_build_task_brief, cmd_validate_executor_result, cmd_observe_task_validation
 from handoffs import cmd_index_handoffs, cmd_list_handoffs, cmd_set_handoff_status, cmd_write_handoff
 from init import cmd_init
 from plans import cmd_archive_plan, cmd_index_plans, cmd_list_plans, cmd_set_plan_status, cmd_write_phase, cmd_write_plan, cmd_write_task
@@ -16,7 +16,7 @@ from specs import cmd_index_specs, cmd_list_specs, cmd_set_spec_status, cmd_writ
 RECOGNIZED_COMMANDS = frozenset({
     "init", "doctor", "state", "next-action-candidates", "git-status",
     "repository-preflight", "build-task-brief", "build-review-package",
-    "validate-executor-result", "related", "write-doc", "write-spec",
+    "validate-executor-result", "observe-task-validation", "related", "write-doc", "write-spec",
     "list-specs", "set-spec-status", "index-specs", "write-plan", "list-plans",
     "set-plan-status", "archive-plan", "index-plans", "write-phase", "write-task",
     "write-handoff", "list-handoffs", "set-handoff-status", "index-handoffs",
@@ -60,6 +60,9 @@ def build_parser() -> argparse.ArgumentParser:
     validate_result.add_argument("--task", required=True)
     validate_result.add_argument("--handoff", required=True)
     validate_result.set_defaults(func=cmd_validate_executor_result)
+    observe_validation = sub.add_parser("observe-task-validation", parents=[parent])
+    observe_validation.add_argument("--task", required=True)
+    observe_validation.set_defaults(func=cmd_observe_task_validation)
     related = sub.add_parser("related", parents=[parent])
     related.add_argument("--id", required=True)
     related.set_defaults(func=cmd_related)

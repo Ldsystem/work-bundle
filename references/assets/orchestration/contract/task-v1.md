@@ -116,6 +116,8 @@ Structured front-matter `validation` is the sole canonical terminal authority fo
 
 Body `## Validation` is optional non-authoritative presentation and must not grant or block terminal authority. Prefer omitting it on new tasks. Do not add a YAML-versus-body equality gate, renderer, or synchronization machinery.
 
+Process checks may declare `reuse_seconds: 3600` (integer 0–86400; default 0 disables reuse). Opt in only for deterministic checks whose inputs are covered by the bound repository's Git-observable state, compiled task/check, and fixed execution environment. Remote status, mutable services, ignored dependencies, external files, or changing tools require fresh execution (0) unless their identity is brought into the covered inputs. A successful harness-owned observation can be reused within the same bound execution/task until expiry; handoff text and executor-provided receipts cannot create observations. Changed repository state, environment, task/check, or harness implementation invalidates reuse. Identity, write-scope, handoff shape, and Git-neutrality checks still run on every request.
+
 A legacy 3-column `Command or inspection | Proves | Expected` row without YAML `kind` is `legacy-untyped`. It fails closed until ordinary artifact repair migrates it to front-matter `kind: process|inspection`. Do not default it to `process`. Never shell-execute ambiguous legacy text.
 
 ## Completion
