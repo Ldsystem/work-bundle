@@ -11,6 +11,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DARWIN_SANDBOX_SHELL = "/bin/sh"
 WORK_BUNDLE_SCRIPTS = REPO_ROOT / "scripts" / "work-bundle"
 if str(WORK_BUNDLE_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(WORK_BUNDLE_SCRIPTS))
@@ -409,16 +410,15 @@ def test_entire_reviewer_process_is_deny_default_and_receipted(
 
     denied = reviewer_workspace.run_sandboxed_reviewer(
         workspace,
-        [sys.executable, "-c", f"open({str(source_target)!r}).read()"],
+        [DARWIN_SANDBOX_SHELL, "-c", 'IFS= read -r line < "$1"', "reviewer", str(source_target)],
     )
     allowed = reviewer_workspace.run_sandboxed_reviewer(
         workspace,
         [
-            sys.executable,
+            DARWIN_SANDBOX_SHELL,
             "-c",
-            "from pathlib import Path; "
-            "assert 'return 1' in Path('evidence/source/src/target.py').read_text(); "
-            "Path('scratch/result').write_text('passed')",
+            "{ IFS= read -r first; IFS= read -r second; } < evidence/source/src/target.py; "
+            "[ \"$second\" = '    return 1' ] && printf passed > scratch/result",
         ],
     )
 
@@ -443,12 +443,14 @@ def test_deny_default_blocks_omitted_host_root_and_event_truncation(
     workspace = Path(str(created["workspace_path"]))
 
     first = reviewer_workspace.run_sandboxed_reviewer(
-        workspace, [sys.executable, "-c", f"open({str(omitted_file)!r}).read()"]
+        workspace,
+        [DARWIN_SANDBOX_SHELL, "-c", 'IFS= read -r line < "$1"', "reviewer", str(omitted_file)],
     )
     event_path = runtime / "events" / "review-sealed-events.jsonl"
     before = event_path.read_bytes()
     second = reviewer_workspace.run_sandboxed_reviewer(
-        workspace, [sys.executable, "-c", f"open({str(event_path)!r}, 'w').write('truncated')"]
+        workspace,
+        [DARWIN_SANDBOX_SHELL, "-c", 'printf truncated > "$1"', "reviewer", str(event_path)],
     )
 
     assert first["status"] == second["status"] == "denied"
