@@ -95,6 +95,7 @@ FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
     "knowledge_persistence",
     "baseline",
     "mutation_events",
+    "accepted_dependency_deltas",
 }
 VALID_RESULT_STATES = {"completed", "blocked", "partial", "failed"}
 TASK_FIT_RESULTS = {"clean", "repaired", "unresolved", "skipped"}
@@ -1479,12 +1480,102 @@ def _path_is_forbidden(relative: str, forbidden: list[str]) -> bool:
 def _assert_task_caused_delta_in_write_scope(
     caused: list[str],
     task_files: dict[str, Any],
+    *,
+    accepted_dependency_paths: set[str] | None = None,
 ) -> None:
     write_paths = [str(path) for path in _as_list(task_files.get("write"))]
     forbidden = [str(path) for path in _as_list(task_files.get("forbidden"))]
     for relative in caused:
+        if relative in (accepted_dependency_paths or set()):
+            continue
         if _path_is_forbidden(relative, forbidden) or not _write_scope_match(relative, write_paths):
             raise SystemExit(f"Unauthorized task-caused delta outside write scope: {relative}")
+
+
+def _accepted_dependency_paths(
+    task: dict[str, Any],
+    execution_root: Path,
+    accepted_dependency_deltas: Iterable[Mapping[str, object]] | None,
+) -> set[str]:
+    descriptors = list(accepted_dependency_deltas or [])
+    if not descriptors:
+        return set()
+    dependencies = {str(value) for value in _as_list(task.get("depends_on"))}
+    workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
+    control_root = Path(str(workspace.get("root") or "")).resolve()
+    handoff_root = control_root / ".work-bundle/orchestration/handoff"
+    admitted: set[str] = set()
+    required_fields = {
+        "task_id", "handoff_id", "handoff_sha256", "integrated_base", "integrated_head"
+    }
+    for descriptor in descriptors:
+        if not isinstance(descriptor, Mapping) or set(descriptor) != required_fields:
+            raise SystemExit("accepted_dependency_deltas entries must use the closed runtime identity shape")
+        dependency_id = str(descriptor["task_id"])
+        handoff_id = str(descriptor["handoff_id"])
+        if dependency_id not in dependencies:
+            raise SystemExit(f"accepted_dependency_deltas names undeclared dependency: {dependency_id}")
+        matches: list[tuple[Path, dict[str, Any]]] = []
+        for path in sorted(handoff_root.glob("executor/*/*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                document, _ = _read_structured(path)
+            except (OSError, SystemExit, ValueError):
+                continue
+            if document.get("id") == handoff_id:
+                matches.append((path, document))
+        if len(matches) != 1:
+            raise SystemExit(f"accepted dependency handoff identity is missing or ambiguous: {handoff_id}")
+        handoff_path, handoff = matches[0]
+        actual_digest = hashlib.sha256(handoff_path.read_bytes()).hexdigest()
+        if actual_digest != str(descriptor["handoff_sha256"]):
+            raise SystemExit(f"accepted dependency handoff identity is stale: {handoff_id}")
+        related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+        result = handoff.get("result") if isinstance(handoff.get("result"), dict) else {}
+        review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
+        frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), dict) else {}
+        previous = frontier.get("previous_reviewed_identity") if isinstance(frontier.get("previous_reviewed_identity"), dict) else {}
+        repaired = frontier.get("repaired_identity") if isinstance(frontier.get("repaired_identity"), dict) else {}
+        if (related.get("task") != dependency_id or result.get("state") != "completed"
+                or review.get("verdict") != "accept" or review.get("review_mode") != "repair"
+                or repaired != review.get("target_identity")):
+            raise SystemExit(f"dependency handoff is not an accepted repair result: {handoff_id}")
+        source_base = str(previous.get("revision") or "")
+        source_head = str(repaired.get("revision") or "")
+        integrated_base = _resolve_commit(execution_root, str(descriptor["integrated_base"]))
+        integrated_head = _resolve_commit(execution_root, str(descriptor["integrated_head"]))
+        current_head = _resolve_commit(execution_root, "HEAD")
+        if not source_base or not source_head:
+            raise SystemExit(f"accepted dependency repair identity is incomplete: {handoff_id}")
+        for commit, identity in ((source_base, previous), (source_head, repaired)):
+            resolved = _resolve_commit(execution_root, commit)
+            tree = _git(execution_root, "rev-parse", f"{resolved}^{{tree}}").strip()
+            if tree != identity.get("source_tree"):
+                raise SystemExit(f"accepted dependency Git identity is mismatched: {handoff_id}")
+        if subprocess.run(
+            ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", integrated_head, current_head],
+            capture_output=True,
+            check=False,
+        ).returncode:
+            raise SystemExit(f"accepted dependency integration checkpoint is not current: {handoff_id}")
+        source_diff = _git(execution_root, "diff", "--binary", source_base, source_head, "--")
+        integrated_diff = _git(
+            execution_root, "diff", "--binary", integrated_base, integrated_head, "--"
+        )
+        if source_diff != integrated_diff:
+            raise SystemExit(f"accepted dependency integration checkpoint is mismatched: {handoff_id}")
+        paths = {
+            path
+            for line in _git(execution_root, "diff", "--name-status", source_base, source_head, "--").splitlines()
+            for path in _paths_from_name_status(line)
+        }
+        if paths and _git(
+            execution_root, "diff", "--name-only", integrated_head, "--", *sorted(paths)
+        ).strip():
+            raise SystemExit(f"accepted dependency path changed after integration: {handoff_id}")
+        admitted.update(paths)
+    return admitted
 
 
 def _observe_completed_validation(
@@ -1497,6 +1588,7 @@ def _observe_completed_validation(
     execution_id: str | None = None,
     repository_id: str | None = None,
     execution_runtime_root: str | None = None,
+    accepted_dependency_deltas: Iterable[Mapping[str, object]] | None = None,
 ) -> list[dict[str, Any]]:
     if "harness_receipt" in handoff or (
         isinstance(handoff.get("validation"), dict) and "harness_receipt" in handoff["validation"]
@@ -1529,7 +1621,12 @@ def _observe_completed_validation(
         raise SystemExit(str(error)) from error
     observed_items: list[dict[str, Any]] = []
     task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
-    _assert_task_caused_delta_in_write_scope(task_caused_paths(baseline, pre_batch, execution_root), task_files)
+    accepted_paths = _accepted_dependency_paths(task, execution_root, accepted_dependency_deltas)
+    _assert_task_caused_delta_in_write_scope(
+        task_caused_paths(baseline, pre_batch, execution_root),
+        task_files,
+        accepted_dependency_paths=accepted_paths,
+    )
     for item in required_items:
         observed = _completion_provenance_module().observe_validation(
             binding, task, item, pre_batch,
@@ -1561,7 +1658,9 @@ def _observe_completed_validation(
         )
     caused = task_caused_paths(baseline, post_batch, execution_root)
     task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
-    _assert_task_caused_delta_in_write_scope(caused, task_files)
+    _assert_task_caused_delta_in_write_scope(
+        caused, task_files, accepted_dependency_paths=accepted_paths
+    )
     if binding.get("mutating") is True:
         updated = dict(binding)
         updated["mutating"] = False
@@ -1660,6 +1759,7 @@ def _observe_repository_and_codegraph_evidence(
     codegraph_entries: list[dict[str, Any]],
     *,
     codegraph_required: bool,
+    accepted_dependency_deltas: Iterable[Mapping[str, object]] | None = None,
 ) -> None:
     workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
     control_root_raw = workspace.get("root")
@@ -1684,7 +1784,13 @@ def _observe_repository_and_codegraph_evidence(
         raise SystemExit("Task execution binding is missing harness provenance baseline")
     caused = task_caused_paths(baseline, observed_repository, execution_root)
     task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
-    _assert_task_caused_delta_in_write_scope(caused, task_files)
+    _assert_task_caused_delta_in_write_scope(
+        caused,
+        task_files,
+        accepted_dependency_paths=_accepted_dependency_paths(
+            task, execution_root, accepted_dependency_deltas
+        ),
+    )
 
     metadata = repository.get("metadata")
     if isinstance(metadata, dict):
@@ -1770,6 +1876,7 @@ def validate_executor_result_for_task(
     repository_id: str | None = None,
     execution_runtime_root: str | None = None,
     mutation_events: Iterable[Mapping[str, object]] | None = None,
+    accepted_dependency_deltas: Iterable[Mapping[str, object]] | None = None,
 ) -> dict[str, Any]:
     if handoff.get("type") != "executor-result":
         raise SystemExit("Handoff is not executor-result")
@@ -1863,10 +1970,11 @@ def validate_executor_result_for_task(
     if observe and (repository_entries or codegraph_entries):
         _observe_repository_and_codegraph_evidence(
             task,
-            repository_entries,
-            codegraph_entries,
-            codegraph_required=evidence_applicability["codegraph"]["required"],
-        )
+                repository_entries,
+                codegraph_entries,
+                codegraph_required=evidence_applicability["codegraph"]["required"],
+                accepted_dependency_deltas=accepted_dependency_deltas,
+            )
 
     if state == "completed" and required_items and observe:
         observed_validation = _observe_completed_validation(
@@ -1878,6 +1986,7 @@ def validate_executor_result_for_task(
             execution_id=execution_id,
             repository_id=repository_id,
             execution_runtime_root=execution_runtime_root,
+            accepted_dependency_deltas=accepted_dependency_deltas,
         )
         evidence_closure = _validate_evidence_closure(
             handoff, task, state, reported_commands, observed_validation
@@ -2242,6 +2351,7 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
     task_brief = {
             "task_id": task_id,
             "plan_id": plan_id,
+            "depends_on": [str(value) for value in _as_list(task.get("depends_on"))],
             "source_ids": source_ids,
             "goal": resolved_goal,
             "truth_basis": truth_basis,
@@ -2662,12 +2772,15 @@ def cmd_validate_executor_result(args: argparse.Namespace) -> None:
     print(handoff_path.relative_to(root).as_posix())
 
 
-def _observation_kwargs(args: argparse.Namespace) -> dict[str, str | None]:
+def _observation_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "workspace_id": getattr(args, "workspace_id", None) or None,
         "execution_id": getattr(args, "execution_id", None) or None,
         "repository_id": getattr(args, "repository_id", None) or None,
         "execution_runtime_root": getattr(args, "execution_runtime_root", None) or None,
+        "accepted_dependency_deltas": (
+            getattr(args, "accepted_dependency_deltas", None) or None
+        ),
     }
 
 

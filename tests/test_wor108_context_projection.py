@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import json
 import sys
 from copy import deepcopy
@@ -345,6 +346,137 @@ def test_completed_task_acceptance_rejects_controller_task_scope_mutation(
     durable_history = {**handoff, "mutation_events": []}
     with pytest.raises(SystemExit, match="forbidden field mutation_events"):
         execution_context.validate_executor_result_for_task(durable_history, brief)
+
+
+def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
+    tmp_path: Path,
+) -> None:
+    root, _, task = workspace(tmp_path)
+    scoped = _ensure_source_file(root)
+    dependency = root / "references/assets/orchestration/workflow.md"
+    dependency.parent.mkdir(parents=True, exist_ok=True)
+    dependency.write_text("before\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "baseline")
+    baseline = git(root, "rev-parse", "HEAD")
+    baseline_tree = git(root, "rev-parse", "HEAD^{tree}")
+
+    brief = _document(root, task)["task_brief"]
+    brief["depends_on"] = ["task-dependency"]
+    _bind_task_execution(root, brief)
+
+    dependency.write_text("accepted dependency\n", encoding="utf-8")
+    git(root, "add", str(dependency.relative_to(root)))
+    git(root, "commit", "-qm", "accepted dependency")
+    checkpoint = git(root, "rev-parse", "HEAD")
+    checkpoint_tree = git(root, "rev-parse", "HEAD^{tree}")
+    scoped.write_text("def compile_task():\n    return 'task repair'\n", encoding="utf-8")
+    git(root, "add", str(scoped.relative_to(root)))
+    git(root, "commit", "-qm", "task repair")
+
+    identity = lambda commit, tree: {
+        "artifact_id": "task-dependency",
+        "revision": commit,
+        "sha256": execution_context.semantic_digest({"commit": commit, "tree": tree}),
+        "source_tree": tree,
+    }
+    dependency_handoff = {
+        "id": "handoff-accepted-dependency",
+        "type": "executor-result",
+        "related": {"plan": brief["plan_id"], "task": "task-dependency"},
+        "result": {"state": "completed"},
+        "acceptance_review": {
+            "required": True,
+            "verdict": "accept",
+            "review_mode": "repair",
+            "target_identity": identity(checkpoint, checkpoint_tree),
+            "repair_frontier": {
+                "previous_reviewed_identity": identity(baseline, baseline_tree),
+                "repaired_identity": identity(checkpoint, checkpoint_tree),
+            },
+        },
+    }
+    accepted_path = (
+        root
+        / ".work-bundle/orchestration/handoff/executor/active/handoff-accepted-dependency.yaml"
+    )
+    accepted_path.parent.mkdir(parents=True, exist_ok=True)
+    accepted_path.write_text(
+        "\n".join(execution_context._dump_yaml(dependency_handoff)) + "\n",
+        encoding="utf-8",
+    )
+    descriptor = {
+        "task_id": "task-dependency",
+        "handoff_id": "handoff-accepted-dependency",
+        "handoff_sha256": hashlib.sha256(accepted_path.read_bytes()).hexdigest(),
+        "integrated_base": baseline,
+        "integrated_head": checkpoint,
+    }
+
+    current = _without_terminal_evidence(brief, "Dependency attribution fixture.")
+    current["evidence_applicability"] = {
+        "metadata": {"required": False, "reasons": []},
+        "repository": {"required": True, "reasons": ["accepted dependency delta"]},
+        "codegraph": {"required": False, "reasons": []},
+    }
+    handoff = {
+        "type": "executor-result",
+        "related": {"plan": brief["plan_id"], "task": brief["task_id"]},
+        "result": {"state": "completed"},
+        "task_fit_check": {"task": brief["task_id"], "result": "clean"},
+        "delegation_evidence": _delegation_evidence(),
+        "repository": [{
+            "root": str(root.resolve()),
+            "target_kind": "git-backed",
+            "preflight_kind": "git-clean-worktree",
+            "baseline": "initial",
+            "status": "clean",
+        }],
+        "knowledge_disposition": {
+            "action": "none",
+            "reason": "No stable authority changed.",
+            "affected_authority": [],
+        },
+    }
+
+    with pytest.raises(SystemExit, match="workflow.md"):
+        execution_context.validate_executor_result_for_task(handoff, current, observe=True)
+    accepted = execution_context.validate_executor_result_for_task(
+        handoff, current, observe=True, accepted_dependency_deltas=[descriptor]
+    )
+    assert accepted["result_state"] == "completed"
+
+    stale = {**descriptor, "handoff_sha256": "0" * 64}
+    with pytest.raises(SystemExit, match="handoff identity is stale"):
+        execution_context.validate_executor_result_for_task(
+            handoff, current, observe=True, accepted_dependency_deltas=[stale]
+        )
+    mismatched = {**descriptor, "integrated_head": git(root, "rev-parse", "HEAD")}
+    with pytest.raises(SystemExit, match="checkpoint is mismatched"):
+        execution_context.validate_executor_result_for_task(
+            handoff, current, observe=True, accepted_dependency_deltas=[mismatched]
+        )
+    accepted_bytes = accepted_path.read_bytes()
+    unaccepted_handoff = deepcopy(dependency_handoff)
+    unaccepted_handoff["acceptance_review"]["verdict"] = "pending"
+    accepted_path.write_text(
+        "\n".join(execution_context._dump_yaml(unaccepted_handoff)) + "\n",
+        encoding="utf-8",
+    )
+    unaccepted = {
+        **descriptor,
+        "handoff_sha256": hashlib.sha256(accepted_path.read_bytes()).hexdigest(),
+    }
+    with pytest.raises(SystemExit, match="not an accepted repair result"):
+        execution_context.validate_executor_result_for_task(
+            handoff, current, observe=True, accepted_dependency_deltas=[unaccepted]
+        )
+    accepted_path.write_bytes(accepted_bytes)
+    dependency.write_text("later task mutation\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="changed after integration"):
+        execution_context.validate_executor_result_for_task(
+            handoff, current, observe=True, accepted_dependency_deltas=[descriptor]
+        )
 
 
 def test_rf_07_brief_rebuild_retains_original_execution_binding_and_baseline(
