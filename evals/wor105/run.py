@@ -7,7 +7,9 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+import subprocess
+import sys
+from typing import Any, NamedTuple
 
 
 EVAL_ROOT = Path(__file__).resolve().parent
@@ -16,6 +18,29 @@ REPO_ROOT = EVAL_ROOT.parents[1]
 
 class EvaluationError(RuntimeError):
     pass
+
+
+class NativeProbe(NamedTuple):
+    fixture_id: str
+    invocation_count: int
+    output_sha256: str
+    target: str
+
+
+NATIVE_PROBE_TARGETS = {
+    "ADV-01": "tests/test_reviewer_workspace.py::test_sandboxed_process_denies_origin_write_protected_read_and_network",
+    "ADV-02": "tests/test_orchestration_reviews.py::test_api_001_reslice_pauses_repeated_expansion_and_preserves_evidence",
+    "ADV-03": "tests/test_orchestration_reviews.py::test_api_001_rejects_unclassified_wrong_layer_and_unauthorized_blocking_advisory",
+    "ADV-04": "tests/test_orchestration_reviews.py::test_api_001_rejects_unclassified_wrong_layer_and_unauthorized_blocking_advisory",
+    "ADV-05": "tests/test_orchestration_evaluations.py::test_component_drift_marks_stale_appends_and_preserves_raw",
+    "ADV-06": "tests/test_orchestration_evaluations.py::test_packaging_only_advance_preserves_source_observation",
+    "ADV-07": "tests/test_orchestration_reviews.py::test_api_002_preserves_but_does_not_count_stale_accepted_review",
+    "ADV-08": "tests/test_completion_provenance.py::test_observation_concurrent_requests_execute_once",
+    "ADV-09": "tests/test_completion_provenance.py::test_failure_resume_and_release_preserve_first_owner_and_emit_native_events",
+    "ADV-10": "tests/test_orchestration_reviews.py::test_api_002_requires_independent_direct_accepted_review_and_current_target",
+    "ADV-11": "tests/test_completion_provenance.py::test_predecessor_extension_uses_public_contract_not_byte_identity",
+    "ADV-12": "tests/test_multi_repository_member.py::test_deferred_remote_apply_replay_and_attach_are_portable_and_idempotent",
+}
 
 
 def _canonical(value: object) -> bytes:
@@ -57,9 +82,32 @@ def _validate_components(manifest: dict[str, Any]) -> None:
             raise EvaluationError(f"frozen component changed: {name}")
 
 
-def _proof(fixture: dict[str, Any], product_tree: str) -> tuple[str, dict[str, Any], list[str]]:
+def _run_native_probe(fixture_id: str) -> NativeProbe:
+    target = NATIVE_PROBE_TARGETS.get(fixture_id)
+    if target is None:
+        raise EvaluationError(f"native probe unavailable: {fixture_id}")
+    command = [sys.executable, "-m", "pytest", "-q", target]
+    completed = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    observed = {
+        "command": command,
+        "returncode": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
+    if completed.returncode != 0:
+        raise EvaluationError(f"native probe failed: {fixture_id}: {_sha(observed)}")
+    return NativeProbe(fixture_id, 1, _sha(observed), target)
+
+
+def _proof(fixture: dict[str, Any], product_tree: str, probe: NativeProbe) -> tuple[str, dict[str, Any], list[str]]:
     fixture_id, data = fixture["fixture_id"], fixture["input"]
-    h = lambda label: _sha({"fixture": fixture_id, "proof": label, "input": data})
+    h = lambda label: _sha({"fixture": fixture_id, "proof": label, "input": data, "native_probe": probe.output_sha256})
     event_ids = [f"event:{fixture_id}:1"]
     if fixture_id == "ADV-01":
         if len(data["writes"]) != 2 or len(data["protected_reads"]) != 3:
@@ -123,7 +171,12 @@ def run_manifest(manifest_path: Path, output_path: Path) -> list[dict[str, Any]]
     component_digests = {name: item["sha256"] for name, item in manifest["components"].items()}
     results = []
     for _, fixture, fixture_sha in records:
-        decision, proof, event_ids = _proof(fixture, manifest["product_tree"])
+        probe = _run_native_probe(fixture["fixture_id"])
+        if probe.invocation_count < 1:
+            raise EvaluationError(f"zero native invocations: {fixture['fixture_id']}")
+        if probe.fixture_id != fixture["fixture_id"] or not probe.output_sha256:
+            raise EvaluationError(f"native probe identity invalid: {fixture['fixture_id']}")
+        decision, proof, event_ids = _proof(fixture, manifest["product_tree"], probe)
         raw_digest = _sha(fixture["input"])
         result = {
             "fixture_id": fixture["fixture_id"], "fixture_sha256": fixture_sha,
