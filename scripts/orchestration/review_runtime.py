@@ -22,7 +22,6 @@ FINDING_SEVERITIES = frozenset({"blocking", "non_blocking", "advisory"})
 OBLIGATION_BASES = frozenset({"accepted_requirement", "essential_safety", "evidence_integrity", "none"})
 TERMINAL_FINDING_DISPOSITIONS = frozenset({"accepted", "rejected"})
 STAGE_REVIEW_STAGES = frozenset({"specification", "plan", "integrated_implementation"})
-REVIEW_STAGES = STAGE_REVIEW_STAGES | {"implementation"}
 REVIEW_VERDICTS = frozenset({"accepted", "repair", "blocked"})
 REVIEW_MODES = frozenset({"initial", "repair"})
 REVIEW_TARGET_KINDS = frozenset({"task", "stage"})
@@ -91,7 +90,7 @@ def reviewer_runtime_root(root: Path) -> Path:
 
 
 def stage_target_identity(root: Path, stage: str, path: Path, *, source_root: Path | None = None) -> dict[str, Any]:
-    identity = artifact_review_identity(path) if stage in {"specification", "implementation"} else plan_review_identity(root, path)
+    identity = artifact_review_identity(path) if stage == "specification" else plan_review_identity(root, path)
     if stage == "integrated_implementation":
         if source_root is None:
             raise ReviewContractError("review provenance requires source repository")
@@ -120,8 +119,6 @@ def stage_evidence_requirements(root: Path, stage: str, target: Path) -> tuple[d
         required["control:" + path.relative_to(root).as_posix()] = role
 
     control(target, "target")
-    if stage == "implementation":
-        return required, missing
     data, _ = _read_structured(target)
     members = [target]
     specifications = [target] if stage == "specification" else []
@@ -790,9 +787,9 @@ def validate_stage_review(
             raise ReviewContractError("initial review cannot carry repair_frontier")
         repair_frontier = None
         review_reset = _review_reset(raw_reset) if raw_reset is not None else None
-    stage = _enum(record["stage"], REVIEW_STAGES, "stage")
-    if (review_target_kind == "task") != (stage == "implementation"):
-        raise ReviewContractError("task review target kind requires implementation stage; stage kind requires a WOR-98 stage")
+    stage = _enum(record["stage"], STAGE_REVIEW_STAGES, "stage")
+    if review_target_kind != "stage":
+        raise ReviewContractError("stage_review_v1 review_target_kind must be stage")
     target = _target_identity(record["target_identity"])
     if repair_frontier is not None and repair_frontier["repaired_identity"] != target:
         raise ReviewContractError("repair frontier repaired identity must equal target_identity")
@@ -929,6 +926,57 @@ def validate_review_sequence(
     elif current.review_reset is not None:
         raise ReviewContractError("review_reset requires a classified material change")
     return current
+
+
+def _task_review_as_stage(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Adapt the existing task acceptance record to the native review validator."""
+    record = _mapping(value, "task acceptance_review")
+    verdict = {"accept": "accepted", "repair": "repair", "blocked": "blocked"}.get(record.get("verdict"))
+    if verdict is None:
+        raise ReviewContractError("task acceptance_review verdict must be accept, repair, or blocked")
+    return {
+        "review_id": record.get("review_id"),
+        "review_mode": record.get("review_mode"),
+        "review_target_kind": "stage",
+        "repair_frontier": record.get("repair_frontier"),
+        "review_reset": record.get("review_reset"),
+        # This is an adapter discriminator, not a fourth stage-review seat.
+        "stage": "plan",
+        "target_identity": record.get("target_identity"),
+        "reviewer": record.get("reviewer"),
+        "evidence": record.get("evidence"),
+        "verdict": verdict,
+        "findings": record.get("findings"),
+        "started_at": record.get("started_at"),
+        "completed_at": record.get("completed_at"),
+        "staleness": record.get("staleness"),
+        **({"reviewer_run": record["reviewer_run"]} if "reviewer_run" in record else {}),
+    }
+
+
+def validate_task_acceptance_review(value: Mapping[str, Any]) -> StageReviewV1:
+    """Validate a task acceptance review and its one bounded predecessor."""
+    record = _mapping(value, "task acceptance_review")
+    if (record.get("required") is not True or record.get("review_target_kind") != "task"
+            or record.get("reviewer_independent") is not True):
+        raise ReviewContractError("task acceptance_review requires review_target_kind: task")
+    mode = _enum(record.get("review_mode"), REVIEW_MODES, "task acceptance_review.review_mode")
+    current = _task_review_as_stage(record)
+    previous = record.get("previous_review")
+    if mode == "repair":
+        if not isinstance(previous, Mapping):
+            raise ReviewContractError("task repair review requires its exact previous_review")
+        if "previous_review" in previous:
+            raise ReviewContractError("task repair review may carry exactly one previous_review; older history stays lazy")
+        return validate_review_sequence(current, previous_review=_task_review_as_stage(previous))
+    if record.get("review_reset") is not None:
+        if not isinstance(previous, Mapping):
+            raise ReviewContractError("task initial reset requires its exact previous_review")
+        reset = _mapping(record["review_reset"], "review_reset")
+        return validate_review_sequence(
+            current, previous_review=_task_review_as_stage(previous), material_change=str(reset.get("reason_class"))
+        )
+    return validate_review_sequence(current)
 
 
 def validate_stage_reviews(

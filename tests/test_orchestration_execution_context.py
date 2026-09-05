@@ -2381,6 +2381,77 @@ def test_validate_executor_result_rejects_review_required_upgrade(tmp_path: Path
         _validate_observed(_read_handoff(handoff), brief)
 
 
+def _repair_completion_fixture() -> tuple[dict, dict]:
+    brief = {
+        "task_id": "task-rf", "plan_id": "plan-rf", "review_required": True,
+        "source_ids": [], "files": {"read": [], "write": [], "forbidden": []},
+        "truth_basis": {}, "validation": [],
+        "evidence_applicability": {
+            "metadata": {"required": False, "reasons": []},
+            "repository": {"required": False, "reasons": []},
+            "codegraph": {"required": False, "reasons": []},
+        },
+        "evidence_capability": {"result": "no_validation_bearing_obligation", "invariants": []},
+    }
+    handoff = {
+        "type": "executor-result", "related": {"plan": "plan-rf", "task": "task-rf"},
+        "result": {"state": "completed"},
+        "task_fit_check": {"task": "task-rf", "result": "repaired"},
+        "acceptance_review": {"required": True, "verdict": "accept"},
+        "knowledge_disposition": {"action": "none", "reason": "No authority change.", "affected_authority": []},
+    }
+    return brief, handoff
+
+
+def test_rf_task_repair_completion_rejects_unsequenced_acceptance_review() -> None:
+    brief, handoff = _repair_completion_fixture()
+    with pytest.raises(SystemExit, match="repair.*review|review.*repair"):
+        execution_context.validate_executor_result_for_task(handoff, brief)
+
+
+def test_rf_task_repair_completion_rejects_stale_repair_frontier() -> None:
+    brief, handoff = _repair_completion_fixture()
+    old = {"artifact_id": "task-rf", "revision": "1", "sha256": "1" * 64, "source_tree": None}
+    new = {"artifact_id": "task-rf", "revision": "1", "sha256": "2" * 64, "source_tree": None}
+    prior = {
+        "required": True, "reviewer_independent": True, "verdict": "repair", "review_id": "review-prior",
+        "review_mode": "initial", "review_target_kind": "task", "repair_frontier": None, "review_reset": None,
+        "target_identity": old,
+        "reviewer": {"agent_id": "reviewer-prior", "capability": "judgment", "authorship": "none", "repair_participation": "none", "decision_participation": "none", "deliberation_participation": "none", "context_origin": "direct_source"},
+        "evidence": {"mode": "direct", "capabilities": ["source inspection"], "unavailable_evidence": [], "commands": [], "artifacts": []},
+        "findings": [{
+            "finding_id": "RF-FINDING-1", "stage": "implementation", "class": "implementation_defect", "severity": "blocking",
+            "first_broken_artifact": "implementation", "obligation_basis": "accepted_requirement",
+            "evidence": [{"kind": "test", "locator": "RF", "digest_or_identity": "RF-RED", "observation": "failed"}],
+            "target_identity": old, "summary": "repair", "recommended_owner": "task_owner", "disposition": "repair_task",
+        }],
+        "started_at": "2026-09-06T00:00:00Z", "completed_at": "2026-09-06T00:01:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    from review_runtime import review_evidence_identity
+    handoff["acceptance_review"] = {
+        "required": True, "reviewer_independent": True, "verdict": "accept", "review_id": "review-repair",
+        "review_mode": "repair", "review_target_kind": "task", "review_reset": None,
+        "repair_frontier": {
+            "prior_review_id": "review-prior", "blocking_finding_ids": ["RF-FINDING-1"],
+            "previous_reviewed_identity": old, "repaired_identity": new,
+            "affected_boundaries": ["scripts/orchestration/execution_context.py:_assert_handoff_review_matches_task"],
+            "frozen_evidence_reference": review_evidence_identity(prior),
+        },
+        "target_identity": new,
+        "reviewer": {**prior["reviewer"], "agent_id": "reviewer-new"},
+        "evidence": {"mode": "direct", "capabilities": ["bounded source inspection"], "unavailable_evidence": [], "commands": [], "artifacts": []},
+        "findings": [], "previous_review": prior,
+        "started_at": "2026-09-06T00:02:00Z", "completed_at": "2026-09-06T00:03:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    assert execution_context.validate_executor_result_for_task(handoff, brief)["result_state"] == "completed"
+    stale = deepcopy(handoff)
+    stale["acceptance_review"]["target_identity"] = {**new, "sha256": "3" * 64}
+    with pytest.raises(SystemExit, match="repaired identity|frontier"):
+        execution_context.validate_executor_result_for_task(stale, brief)
+
+
 def test_no_review_update_stays_closure_eligible_when_handoff_self_upgrades() -> None:
     handoffs = [
         {

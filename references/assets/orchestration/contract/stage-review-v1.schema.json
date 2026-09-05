@@ -80,9 +80,8 @@
           "else": {"properties": {"repair_frontier": {"type": "null"}}}
         },
         {
-          "if": {"required": ["review_target_kind"], "properties": {"review_target_kind": {"const": "task"}}},
-          "then": {"properties": {"stage": {"const": "implementation"}}},
-          "else": {"properties": {"stage": {"enum": ["specification", "plan", "integrated_implementation"]}}}
+          "if": {"required": ["review_target_kind"]},
+          "then": {"properties": {"review_target_kind": {"const": "stage"}}}
         },
         {
           "if": {"properties": {"verdict": {"const": "accepted"}}},
@@ -124,7 +123,7 @@
           "type": "object", "additionalProperties": false, "required": ["run_id", "sha256"],
           "properties": {"run_id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/sha256"}}
         },
-        "stage": {"enum": ["specification", "plan", "integrated_implementation", "implementation"]},
+        "stage": {"enum": ["specification", "plan", "integrated_implementation"]},
         "target_identity": {"$ref": "#/$defs/targetIdentity"},
         "reviewer": {
           "type": "object",

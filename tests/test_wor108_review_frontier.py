@@ -40,14 +40,14 @@ def finding(target: dict[str, object], finding_id: str = "RF-FINDING-1") -> dict
     }
 
 
-def review(*, target: dict[str, object], mode: str = "initial", kind: str = "task", agent: str = "reviewer-new") -> dict[str, object]:
+def review(*, target: dict[str, object], mode: str = "initial", kind: str = "stage", agent: str = "reviewer-new") -> dict[str, object]:
     return {
         "review_id": f"review-{mode}-{agent}",
         "review_mode": mode,
         "review_target_kind": kind,
         "repair_frontier": None,
         "review_reset": None,
-        "stage": "implementation" if kind == "task" else "plan",
+        "stage": "plan",
         "target_identity": target,
         "reviewer": {
             "agent_id": agent,
@@ -89,7 +89,7 @@ def repair_pair() -> tuple[dict[str, object], dict[str, object]]:
 def test_rf_01_initial_and_repair_modes_are_native_and_closed() -> None:
     initial = review(target=identity("task-rf", ZERO_SHA))
     validated = review_runtime.validate_stage_review(initial)
-    assert (validated.review_mode, validated.review_target_kind, validated.repair_frontier) == ("initial", "task", None)
+    assert (validated.review_mode, validated.review_target_kind, validated.repair_frontier) == ("initial", "stage", None)
     schema = json.loads((REPO_ROOT / "references/assets/orchestration/contract/stage-review-v1.schema.json").read_text())
     assert schema["$defs"]["reviewMode"]["enum"] == ["initial", "repair"]
     assert schema["$defs"]["reviewTargetKind"]["enum"] == ["task", "stage"]
@@ -157,18 +157,21 @@ def test_rf_08_repair_packet_is_bounded_for_task_and_stage_targets(tmp_path: Pat
     target.write_text("---\nid: task-rf\n---\nrepaired\n")
     current["target_identity"] = review_runtime.artifact_review_identity(target)
     current["repair_frontier"]["repaired_identity"] = current["target_identity"]
-    for kind in ("task", "stage"):
-        current["review_target_kind"] = kind
-        current["stage"] = "implementation" if kind == "task" else "plan"
-        context = {
-            "stage": current["stage"], "target_identity": current["target_identity"], "target_locator": "control:target.md",
-            "agent_id": "reviewer-new", "capability": "judgment", "execution_id": "exec-rf",
-            "evidence_mode": "reproducible_snapshot", "review_mode": "repair", "review_target_kind": kind,
-            "repair_frontier": current["repair_frontier"], "review_reset": None,
-        }
-        artifact = {"locator": "control:target.md", "sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "content_base64": ""}
-        manifest = review_runtime.stage_evidence_manifest(tmp_path, tmp_path, context, [artifact])
-        assert manifest["missing"] == []
-        assert [entry["locator"] for entry in manifest["entries"]] == ["control:target.md"]
-        assert manifest["repair_frontier_reference"] == current["repair_frontier"]["frozen_evidence_reference"]
-        assert reviewer_workspace._validate_stage_context(context)["review_target_kind"] == kind
+    context = {
+        "stage": "plan", "target_identity": current["target_identity"], "target_locator": "control:target.md",
+        "agent_id": "reviewer-new", "capability": "judgment", "execution_id": "exec-rf",
+        "evidence_mode": "reproducible_snapshot", "review_mode": "repair", "review_target_kind": "stage",
+        "repair_frontier": current["repair_frontier"], "review_reset": None,
+    }
+    artifact = {"locator": "control:target.md", "sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "content_base64": ""}
+    manifest = review_runtime.stage_evidence_manifest(tmp_path, tmp_path, context, [artifact])
+    assert manifest["missing"] == []
+    assert [entry["locator"] for entry in manifest["entries"]] == ["control:target.md"]
+    assert manifest["repair_frontier_reference"] == current["repair_frontier"]["frozen_evidence_reference"]
+    assert reviewer_workspace._validate_stage_context(context)["review_target_kind"] == "stage"
+
+    task_prior = {key: value for key, value in prior.items() if key != "stage"}
+    task_prior.update(required=True, reviewer_independent=True, review_target_kind="task")
+    task_current = {key: value for key, value in current.items() if key != "stage"}
+    task_current.update(required=True, reviewer_independent=True, verdict="accept", review_target_kind="task", previous_review=task_prior)
+    assert review_runtime.validate_task_acceptance_review(task_current).target_identity == current["target_identity"]

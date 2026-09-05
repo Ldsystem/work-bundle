@@ -1743,6 +1743,21 @@ def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str,
         raise SystemExit("Executor result acceptance_review.required must match compiled review_required")
     if compiled_required and state == "completed" and review.get("verdict") != "accept":
         raise SystemExit("Review-required task cannot complete without acceptance_review.verdict: accept")
+    if not compiled_required or state != "completed":
+        return
+    fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
+    repaired = fit.get("result") == "repaired"
+    mode = review.get("review_mode")
+    if repaired and mode != "repair":
+        raise SystemExit("Repaired task completion requires a sequenced repair acceptance_review")
+    if mode is not None:
+        try:
+            from review_runtime import ReviewContractError, validate_task_acceptance_review
+            validated = validate_task_acceptance_review(review)
+        except (ReviewContractError, TypeError, ValueError) as error:
+            raise SystemExit(f"Task acceptance review is invalid: {error}") from error
+        if validated.verdict != "accepted":
+            raise SystemExit("Review-required task cannot complete without an accepted task review")
 
 
 def _yaml_scalar(value: Any) -> str:

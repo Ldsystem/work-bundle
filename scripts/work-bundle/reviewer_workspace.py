@@ -50,7 +50,7 @@ def _validate_stage_context(context: object) -> dict[str, object]:
     repair_fields = {"review_mode", "review_target_kind", "repair_frontier", "review_reset"}
     if not isinstance(context, dict) or frozenset(context) not in {frozenset(fields), frozenset(fields | repair_fields)}:
         raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID")
-    if (context["stage"] not in {"specification", "plan", "integrated_implementation", "implementation"}
+    if (context["stage"] not in {"specification", "plan", "integrated_implementation"}
             or context["capability"] not in {"standard", "judgment"}
             or context["evidence_mode"] not in {"direct_source", "reproducible_snapshot", "packet_only"}
             or not all(isinstance(context[key], str) and context[key] for key in ("agent_id", "execution_id"))):

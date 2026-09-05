@@ -146,6 +146,9 @@ A legacy 3-column `Command or inspection | Proves | Expected` row without YAML `
 - Shared completion validation has passed: task/plan identity, executor-result shape, fresh required validation, `knowledge_disposition`, and unresolved/blocker state.
 - When `acceptance_review.required` is false or omitted, `Completed` does not require an independent reviewer or `accept`.
 - When `acceptance_review.required` is true, `acceptance_review.verdict` is `accept`.
+- A newly authored task acceptance record exposes `review_mode: initial|repair` and `review_target_kind: task`. Legacy records without these fields are tolerated only as initial-review migration input.
+- When `task_fit_check.result` is `repaired`, completion requires `review_mode: repair`, the native review envelope fields, and exactly one `previous_review`. The closed `repair_frontier` binds that predecessor's review ID, blocking finding IDs, previous and repaired target identities, affected boundaries, and frozen evidence identity. Whole review history is not embedded or reacquired.
+- Material redesign or changed authority, scope, acceptance, decomposition, or validation allocation uses a fresh `initial` review with `review_reset`; it may not reuse the repair reviewer identity.
 
 ## Planning verification
 
