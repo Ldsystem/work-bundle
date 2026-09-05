@@ -2409,10 +2409,23 @@ def test_rf_task_repair_completion_rejects_unsequenced_acceptance_review() -> No
         execution_context.validate_executor_result_for_task(handoff, brief)
 
 
-def test_rf_task_repair_completion_rejects_stale_repair_frontier() -> None:
+def test_rf_task_repair_completion_rejects_stale_repair_frontier(tmp_path: Path) -> None:
     brief, handoff = _repair_completion_fixture()
-    old = {"artifact_id": "task-rf", "revision": "1", "sha256": "1" * 64, "source_tree": None}
-    new = {"artifact_id": "task-rf", "revision": "1", "sha256": "2" * 64, "source_tree": None}
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.com")
+    source = tmp_path / "source.py"
+    source.write_text("OLD = True\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "old")
+    old_tree = git(tmp_path, "rev-parse", "HEAD^{tree}")
+    source.write_text("NEW = True\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "repaired")
+    repaired_head = git(tmp_path, "rev-parse", "HEAD")
+    repaired_tree = git(tmp_path, "rev-parse", "HEAD^{tree}")
+    old = {"artifact_id": "task-rf", "revision": "1", "sha256": "1" * 64, "source_tree": old_tree}
+    new = {"artifact_id": "task-rf", "revision": "1", "sha256": "2" * 64, "source_tree": repaired_tree}
     prior = {
         "required": True, "reviewer_independent": True, "verdict": "repair", "review_id": "review-prior",
         "review_mode": "initial", "review_target_kind": "task", "repair_frontier": None, "review_reset": None,
@@ -2431,6 +2444,7 @@ def test_rf_task_repair_completion_rejects_stale_repair_frontier() -> None:
     from review_runtime import review_evidence_identity
     handoff["acceptance_review"] = {
         "required": True, "reviewer_independent": True, "verdict": "accept", "review_id": "review-repair",
+        "reviewed_head": repaired_head,
         "review_mode": "repair", "review_target_kind": "task", "review_reset": None,
         "repair_frontier": {
             "prior_review_id": "review-prior", "blocking_finding_ids": ["RF-FINDING-1"],
@@ -2445,11 +2459,23 @@ def test_rf_task_repair_completion_rejects_stale_repair_frontier() -> None:
         "started_at": "2026-09-06T00:02:00Z", "completed_at": "2026-09-06T00:03:00Z",
         "staleness": {"is_stale": False, "reason": None, "supersedes": None},
     }
+    handoff["repository"] = [{"root": str(tmp_path), "target_kind": "git-backed", "preflight_kind": "git-clean-worktree", "baseline": "initial", "status": "clean"}]
     assert execution_context.validate_executor_result_for_task(handoff, brief)["result_state"] == "completed"
     stale = deepcopy(handoff)
     stale["acceptance_review"]["target_identity"] = {**new, "sha256": "3" * 64}
     with pytest.raises(SystemExit, match="repaired identity|frontier"):
         execution_context.validate_executor_result_for_task(stale, brief)
+    for field, value in (("required", False), ("reviewer_independent", False), ("review_target_kind", "wrong-kind")):
+        invalid_prior = deepcopy(handoff)
+        invalid_prior["acceptance_review"]["previous_review"][field] = value
+        with pytest.raises(SystemExit, match="previous|task acceptance|review_target_kind"):
+            execution_context.validate_executor_result_for_task(invalid_prior, brief)
+    fabricated = deepcopy(handoff)
+    fabricated_identity = {**new, "sha256": "3" * 64, "source_tree": "f" * 40}
+    fabricated["acceptance_review"]["target_identity"] = fabricated_identity
+    fabricated["acceptance_review"]["repair_frontier"]["repaired_identity"] = fabricated_identity
+    with pytest.raises(SystemExit, match="head|tree|Git identity"):
+        execution_context.validate_executor_result_for_task(fabricated, brief)
 
 
 def test_no_review_update_stays_closure_eligible_when_handoff_self_upgrades() -> None:

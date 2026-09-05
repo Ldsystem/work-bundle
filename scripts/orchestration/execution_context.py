@@ -1758,6 +1758,23 @@ def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str,
             raise SystemExit(f"Task acceptance review is invalid: {error}") from error
         if validated.verdict != "accepted":
             raise SystemExit("Review-required task cannot complete without an accepted task review")
+        if validated.target_identity["artifact_id"] != str(task.get("task_id")):
+            raise SystemExit("Task acceptance review target identity does not match the completed task")
+        if validated.review_mode == "repair":
+            repositories = [
+                item for item in _as_list(handoff.get("repository"))
+                if isinstance(item, dict) and item.get("target_kind") == "git-backed"
+            ]
+            if len(repositories) != 1:
+                raise SystemExit("Task repair review requires one observed Git repository identity")
+            root = Path(str(repositories[0].get("root") or "")).expanduser().resolve()
+            head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
+            tree = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD^{tree}"], capture_output=True, text=True)
+            if head.returncode or tree.returncode:
+                raise SystemExit("Task repair review Git identity is unavailable")
+            if (review.get("reviewed_head") != head.stdout.strip()
+                    or validated.target_identity["source_tree"] != tree.stdout.strip()):
+                raise SystemExit("Task repair review does not match the observed Git head/tree identity")
 
 
 def _yaml_scalar(value: Any) -> str:

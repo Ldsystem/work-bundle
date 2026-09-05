@@ -957,26 +957,37 @@ def _task_review_as_stage(value: Mapping[str, Any]) -> dict[str, Any]:
 def validate_task_acceptance_review(value: Mapping[str, Any]) -> StageReviewV1:
     """Validate a task acceptance review and its one bounded predecessor."""
     record = _mapping(value, "task acceptance_review")
-    if (record.get("required") is not True or record.get("review_target_kind") != "task"
-            or record.get("reviewer_independent") is not True):
-        raise ReviewContractError("task acceptance_review requires review_target_kind: task")
-    mode = _enum(record.get("review_mode"), REVIEW_MODES, "task acceptance_review.review_mode")
-    current = _task_review_as_stage(record)
+    current = validate_task_review_record(record)
+    mode = current.review_mode
     previous = record.get("previous_review")
     if mode == "repair":
         if not isinstance(previous, Mapping):
             raise ReviewContractError("task repair review requires its exact previous_review")
         if "previous_review" in previous:
             raise ReviewContractError("task repair review may carry exactly one previous_review; older history stays lazy")
-        return validate_review_sequence(current, previous_review=_task_review_as_stage(previous))
+        validate_task_review_record(previous)
+        return validate_review_sequence(_task_review_as_stage(record), previous_review=_task_review_as_stage(previous))
     if record.get("review_reset") is not None:
         if not isinstance(previous, Mapping):
             raise ReviewContractError("task initial reset requires its exact previous_review")
+        validate_task_review_record(previous)
         reset = _mapping(record["review_reset"], "review_reset")
         return validate_review_sequence(
-            current, previous_review=_task_review_as_stage(previous), material_change=str(reset.get("reason_class"))
+            _task_review_as_stage(record), previous_review=_task_review_as_stage(previous), material_change=str(reset.get("reason_class"))
         )
-    return validate_review_sequence(current)
+    return validate_review_sequence(_task_review_as_stage(record))
+
+
+def validate_task_review_record(value: Mapping[str, Any]) -> StageReviewV1:
+    """Validate one native task-review record without traversing history."""
+    record = _mapping(value, "task acceptance_review")
+    if (record.get("required") is not True or record.get("review_target_kind") != "task"
+            or record.get("reviewer_independent") is not True):
+        raise ReviewContractError(
+            "task acceptance_review requires required: true, reviewer_independent: true, and review_target_kind: task"
+        )
+    _enum(record.get("review_mode"), REVIEW_MODES, "task acceptance_review.review_mode")
+    return validate_stage_review(_task_review_as_stage(record))
 
 
 def validate_stage_reviews(
