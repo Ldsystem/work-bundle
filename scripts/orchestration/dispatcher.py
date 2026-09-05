@@ -73,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     review_package.add_argument("--handoff", required=True)
     review_package.add_argument("--base", required=True)
     review_package.add_argument("--head", required=True)
+    _add_acceptance_runtime_inputs(review_package)
     review_package.set_defaults(func=cmd_build_review_package)
     validate_result = sub.add_parser("validate-executor-result", parents=[parent])
     validate_result.add_argument("--task", required=True)

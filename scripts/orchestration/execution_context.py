@@ -1511,6 +1511,7 @@ def _accepted_dependency_paths(
     handoff_root = control_root / ".work-bundle/orchestration/handoff"
     admitted: set[str] = set()
     chain_tail_by_dependency: dict[str, dict[str, Any]] = {}
+    chain_by_dependency: dict[str, dict[str, Any]] = {}
     last_checkpoint_by_path: dict[str, tuple[str, str]] = {}
     current_head = _resolve_commit(execution_root, "HEAD")
     required_fields = {
@@ -1593,8 +1594,51 @@ def _accepted_dependency_paths(
             "repaired_identity": repaired,
             "integrated_head": integrated_head,
         }
+        chain = chain_by_dependency.setdefault(
+            dependency_id,
+            {
+                "first_previous_identity": previous,
+                "last_repaired_identity": repaired,
+                "accepted_edges": set(),
+            },
+        )
+        chain["last_repaired_identity"] = repaired
+        chain["accepted_edges"].add(
+            semantic_digest({"previous": previous, "repaired": repaired})
+        )
         for path in paths:
             last_checkpoint_by_path[path] = (integrated_head, handoff_id)
+    for dependency_id, chain in chain_by_dependency.items():
+        for path in sorted(handoff_root.glob("executor/*/*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                candidate, _ = _read_structured(path)
+            except (OSError, SystemExit, ValueError):
+                continue
+            related = candidate.get("related") if isinstance(candidate.get("related"), dict) else {}
+            result = candidate.get("result") if isinstance(candidate.get("result"), dict) else {}
+            review = candidate.get("acceptance_review") if isinstance(candidate.get("acceptance_review"), dict) else {}
+            frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), dict) else {}
+            previous = frontier.get("previous_reviewed_identity") if isinstance(frontier.get("previous_reviewed_identity"), dict) else {}
+            repaired = frontier.get("repaired_identity") if isinstance(frontier.get("repaired_identity"), dict) else {}
+            if (related.get("task") != dependency_id or result.get("state") != "completed"
+                    or review.get("verdict") != "accept" or review.get("review_mode") != "repair"
+                    or repaired != review.get("target_identity") or not previous or not repaired):
+                continue
+            edge = semantic_digest({"previous": previous, "repaired": repaired})
+            if edge in chain["accepted_edges"]:
+                continue
+            if repaired == chain["first_previous_identity"]:
+                raise SystemExit(
+                    "accepted dependency repair chain is not anchored at its known accepted start: "
+                    f"{dependency_id}"
+                )
+            if previous == chain["last_repaired_identity"]:
+                raise SystemExit(
+                    "accepted dependency repair chain is incomplete at its known accepted head: "
+                    f"{dependency_id}"
+                )
     for path, (integrated_head, handoff_id) in last_checkpoint_by_path.items():
         if _git(execution_root, "diff", "--name-only", integrated_head, "--", path).strip():
             raise SystemExit(f"accepted dependency path changed after integration: {handoff_id}")

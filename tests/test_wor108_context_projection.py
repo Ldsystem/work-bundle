@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import hashlib
 import json
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -431,6 +432,13 @@ def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
     tmp_path: Path,
 ) -> None:
     root, _, task = workspace(tmp_path)
+    task.write_text(
+        task.read_text(encoding="utf-8").replace(
+            "phase_id: phase-001\n",
+            "phase_id: phase-001\ndepends_on: [task-dependency]\n",
+        ),
+        encoding="utf-8",
+    )
     scoped = _ensure_source_file(root)
     dependency = root / "references/assets/orchestration/workflow.md"
     dependency.parent.mkdir(parents=True, exist_ok=True)
@@ -441,7 +449,6 @@ def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
     baseline_tree = git(root, "rev-parse", "HEAD^{tree}")
 
     brief = _document(root, task)["task_brief"]
-    brief["depends_on"] = ["task-dependency"]
     _bind_task_execution(root, brief)
 
     dependency.write_text("accepted dependency\n", encoding="utf-8")
@@ -524,6 +531,54 @@ def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
         handoff, current, observe=True, accepted_dependency_deltas=[descriptor]
     )
     assert accepted["result_state"] == "completed"
+
+    cli_handoff = deepcopy(handoff)
+    cli_handoff["result"]["state"] = "partial"
+    cli_handoff["changes"] = {
+        "files": [
+            {
+                "path": "scripts/orchestration/execution_context.py",
+                "action": "modified",
+            }
+        ]
+    }
+    cli_handoff["codegraph"] = [
+        {
+            "root": str(root.resolve()),
+            "applicable": False,
+            "up_to_date": False,
+            "reason": "no-index",
+        }
+    ]
+    cli_handoff_path = (
+        root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    )
+    cli_handoff_path.write_text(
+        "\n".join(execution_context._dump_yaml(cli_handoff)) + "\n", encoding="utf-8"
+    )
+    cli = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/orch.py"),
+            "build-review-package",
+            "--project-root",
+            str(root),
+            "--task",
+            str(task),
+            "--handoff",
+            str(cli_handoff_path),
+            "--base",
+            baseline,
+            "--head",
+            git(root, "rev-parse", "HEAD"),
+            "--accepted-dependency-deltas",
+            json.dumps([descriptor]),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert cli.returncode == 0, cli.stderr
+    assert "review-package.md" in cli.stdout
 
     stale = {**descriptor, "handoff_sha256": "0" * 64}
     with pytest.raises(SystemExit, match="handoff identity is stale"):
@@ -639,6 +694,11 @@ def test_accepted_dependency_repair_chain_is_ordered_contiguous_and_last_wins(
     assert execution_context._accepted_dependency_paths(task, root, descriptors) == {
         dependency_path
     }
+
+    with pytest.raises(SystemExit, match="anchored|incomplete"):
+        execution_context._accepted_dependency_paths(task, root, descriptors[1:])
+    with pytest.raises(SystemExit, match="anchored|incomplete"):
+        execution_context._accepted_dependency_paths(task, root, descriptors[-1:])
 
     with pytest.raises(SystemExit, match="ordered|source.*contiguous"):
         execution_context._accepted_dependency_paths(

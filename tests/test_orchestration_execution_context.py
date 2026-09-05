@@ -296,7 +296,9 @@ def test_normal_cli_projects_controller_mutation_events_into_acceptance(
     assert task_data.get("status") != "Completed"
 
 
-@pytest.mark.parametrize("command", ["validate-executor-result", "set-plan-status"])
+@pytest.mark.parametrize(
+    "command", ["validate-executor-result", "set-plan-status", "build-review-package"]
+)
 def test_acceptance_cli_projects_all_controller_owned_runtime_inputs(command: str) -> None:
     expected = {
         "mutation_events": [{"actor_kind": "controller", "paths": ["src/a.py"]}],
@@ -307,8 +309,20 @@ def test_acceptance_cli_projects_all_controller_owned_runtime_inputs(command: st
     }
     if command == "validate-executor-result":
         operation = [command, "--task", "task.md", "--handoff", "handoff.yaml"]
-    else:
+    elif command == "set-plan-status":
         operation = [command, "--id", "task-b", "--status", "Completed"]
+    else:
+        operation = [
+            command,
+            "--task",
+            "task.md",
+            "--handoff",
+            "handoff.yaml",
+            "--base",
+            "base",
+            "--head",
+            "head",
+        ]
     argv = list(operation)
     for name, value in expected.items():
         argv.extend(["--" + name.replace("_", "-"), json.dumps(value)])
