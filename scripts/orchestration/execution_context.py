@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Mapping
 from datetime import datetime, timezone
 
 
@@ -94,6 +94,7 @@ FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
     "strategy_advice",
     "knowledge_persistence",
     "baseline",
+    "mutation_events",
 }
 VALID_RESULT_STATES = {"completed", "blocked", "partial", "failed"}
 TASK_FIT_RESULTS = {"clean", "repaired", "unresolved", "skipped"}
@@ -1768,6 +1769,7 @@ def validate_executor_result_for_task(
     execution_id: str | None = None,
     repository_id: str | None = None,
     execution_runtime_root: str | None = None,
+    mutation_events: Iterable[Mapping[str, object]] | None = None,
 ) -> dict[str, Any]:
     if handoff.get("type") != "executor-result":
         raise SystemExit("Handoff is not executor-result")
@@ -1887,11 +1889,9 @@ def validate_executor_result_for_task(
             )
     task_ownership = None
     if state == "completed":
-        mutation_events = handoff.get("mutation_events", [])
-        if not isinstance(mutation_events, list) or any(
-            not isinstance(event, dict) for event in mutation_events
-        ):
-            raise SystemExit("Executor result mutation_events must be a list of mappings")
+        runtime_mutation_events = list(mutation_events or [])
+        if any(not isinstance(event, Mapping) for event in runtime_mutation_events):
+            raise SystemExit("Runtime mutation_events must contain mappings")
         fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
         operation = "repair" if fit.get("result") == "repaired" else "implementation"
         try:
@@ -1901,7 +1901,7 @@ def validate_executor_result_for_task(
                     if isinstance(handoff.get("delegation_evidence"), dict)
                     else None
                 ),
-                mutation_events=mutation_events,
+                mutation_events=runtime_mutation_events,
                 write_scope=_as_list(task_files.get("write")),
                 validations_passed=True,
                 operation=operation,

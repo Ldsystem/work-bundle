@@ -325,10 +325,6 @@ def test_completed_task_acceptance_rejects_controller_task_scope_mutation(
         "result": {"state": "completed"},
         "task_fit_check": {"task": brief["task_id"], "result": "clean"},
         "delegation_evidence": _delegation_evidence(),
-        "mutation_events": [{
-            "actor_kind": "controller",
-            "paths": [brief["files"]["write"][0]],
-        }],
         "knowledge_disposition": {
             "action": "none",
             "reason": "No stable authority changed.",
@@ -337,7 +333,18 @@ def test_completed_task_acceptance_rejects_controller_task_scope_mutation(
     }
 
     with pytest.raises(SystemExit, match="review-blocked.*controller mutated"):
-        execution_context.validate_executor_result_for_task(handoff, brief)
+        execution_context.validate_executor_result_for_task(
+            handoff,
+            brief,
+            mutation_events=[{
+                "actor_kind": "controller",
+                "paths": [brief["files"]["write"][0]],
+            }],
+        )
+    assert "mutation_events" not in handoff
+    durable_history = {**handoff, "mutation_events": []}
+    with pytest.raises(SystemExit, match="forbidden field mutation_events"):
+        execution_context.validate_executor_result_for_task(durable_history, brief)
 
 
 def test_rf_07_brief_rebuild_retains_original_execution_binding_and_baseline(
