@@ -31,14 +31,5 @@ jobs:
           python-version: "3.13"
           enable-cache: false
 
-      - name: Run full tests
-        run: >-
-          uvx --python 3.13 --from pytest==9.1.1
-          --with pyyaml==6.0.3 --with sqlite-vec==0.1.9
-          --with fastembed==0.8.0 python -c
-          "import glob,subprocess,sys; raise SystemExit(0 if
-          all(subprocess.run([sys.executable, '-m', 'pytest', '-q', path]).returncode
-          == 0 for path in sorted(glob.glob('tests/test_*.py'))) else 1)"
-
-      - name: Validate skill packages
-        run: bin/work-bundle-skill validate
+      - name: Run canonical release gate
+        run: bin/work-bundle-ci
