@@ -49,7 +49,13 @@ def _verify_schema(path: Path) -> None:
     if schema.get("additionalProperties") is not False:
         raise VerificationError("closure schema must be closed")
     fixture = schema.get("$defs", {}).get("fixture", {})
-    if fixture.get("additionalProperties") is not False or set(fixture.get("required", [])) != FIXTURE_KEYS:
+    fixture_id = fixture.get("properties", {}).get("fixture_id", {})
+    if (
+        fixture.get("type") != "object"
+        or fixture.get("additionalProperties") is not False
+        or set(fixture.get("required", [])) != FIXTURE_KEYS
+        or fixture_id.get("type") != "string"
+    ):
         raise VerificationError("fixture schema is not a closed required shape")
 
 

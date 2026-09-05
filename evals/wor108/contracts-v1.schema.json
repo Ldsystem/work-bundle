@@ -21,7 +21,7 @@
       "additionalProperties": false,
       "required": ["fixture_id", "area", "title", "oracle", "pytest_nodes", "expected"],
       "properties": {
-        "fixture_id": {"pattern": "^(RF|SG|CTX)-[0-9]{2}$"},
+        "fixture_id": {"type": "string", "pattern": "^(RF|SG|CTX)-[0-9]{2}$"},
         "area": {"enum": ["repair_frontier", "subagent_ownership", "context_projection"]},
         "title": {"type": "string", "minLength": 1},
         "oracle": {"const": "pytest"},
