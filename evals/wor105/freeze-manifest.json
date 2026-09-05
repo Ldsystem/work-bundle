@@ -22,14 +22,14 @@
     {"fixture_id": "ADV-12", "path": "evals/wor105/fixtures/ADV-12.json", "sha256": "7f29996db2939960f308f7bfe72e139e3eded355804a72860b98add5d0ce0e18"}
   ],
   "components": {
-    "profile": {"path": "../.work-bundle/orchestration/docs/wor105/native-transition-record.yaml", "sha256": "aa01163346022ddc9b55481cf1698614da08a1c0f75a98d38b5ce3008b57cd56"},
+    "profile": {"path": "evals/wor105/components/native-transition-record.yaml", "sha256": "aa01163346022ddc9b55481cf1698614da08a1c0f75a98d38b5ce3008b57cd56"},
     "fixtures": {"path": "evals/wor105/fixtures", "sha256": "bc4568dae581546c21f60275ad4dc60ae762df36238b98cf89b569f40edde5f2"},
     "runner": {"path": "evals/wor105/run.py", "sha256": "c4d0d310ebced9819c4f28b6fe8b5e9fbd9d8d0fdfaf3a08564e974abfce7653"},
     "verifier": {"path": "evals/wor105/verify.py", "sha256": "08503554ed5e586251a6c722361d8deb5ca03f8b7fb5c81958acd811ff9a29d4"},
     "result_schema": {"path": "evals/wor105/adversarial-result-v1.schema.json", "sha256": "ef4a96e1682e29e7225dbecf4257e3dad040bff2d549eff1b71067033db64c89"},
-    "semantic_schema": {"path": "../.work-bundle/orchestration/docs/wor105/contracts-v1.schema.json", "sha256": "ab6500c1197928450da7e7a438d69d763c376332aeaa72caa23526c613eb1b67"},
+    "semantic_schema": {"path": "evals/wor105/components/contracts-v1.schema.json", "sha256": "ab6500c1197928450da7e7a438d69d763c376332aeaa72caa23526c613eb1b67"},
     "instructions": {"path": "AGENTS.md", "sha256": "5cc2ba1160a25b767a7e02c957d6f37a14a7fa4be50c711f5b67c5c03442d66a"},
-    "evidence_capabilities": {"path": "../.work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-f01r2/task-brief.yaml", "sha256": "e2638e31f2d61c09e8975cc81e52b03dcd2bdbf854053eed13f327e6bb6972eb"}
+    "evidence_capabilities": {"path": "evals/wor105/components/task-f01r2-brief.yaml", "sha256": "f3799b5e1c37bebfdca33be98231b0b026f1cd8d35f481769cebc6a45c285605"}
   },
   "invalidations": [
     {

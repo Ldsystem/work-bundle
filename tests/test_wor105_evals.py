@@ -33,6 +33,17 @@ def _manifest_for_current_runner(tmp_path: Path) -> Path:
     return target
 
 
+def test_frozen_manifest_components_are_repository_local() -> None:
+    manifest = json.loads((EVAL_ROOT / "freeze-manifest.json").read_text(encoding="utf-8"))
+
+    for name, component in manifest["components"].items():
+        if name == "fixtures":
+            continue
+        target = (REPO_ROOT / component["path"]).resolve()
+        assert target.is_relative_to(REPO_ROOT), name
+        assert target.is_file(), name
+
+
 def test_frozen_manifest_runs_and_independent_verifier_accepts_twelve(tmp_path: Path) -> None:
     runner = _load("wor105_runner", "run.py")
     verifier = _load("wor105_verifier", "verify.py")

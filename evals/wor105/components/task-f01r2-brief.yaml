@@ -1,0 +1,100 @@
+task_brief:
+  task_id: task-f01r2
+  plan_id: plan-20260904-001-wor105-legacy-stabilization
+  source_ids:
+    - AC-005
+    - AC-011
+    - AC-012
+  goal: "Refreeze evaluation after release-oracle plan repair"
+  truth_basis:
+    purpose: "Append invalidations for every frozen identity changed by the release CI repairs and produce a fresh deterministic native evaluation"
+    as_is_evidence:
+      - "task-f01r4 accepted CI-oracle repair"
+      - "task-f01r5 accepted clean-checkout evaluator repair"
+      - "task-f01r6 accepted sandbox-status repair"
+      - "evaluation 006"
+      - "accepted repaired plan identity"
+    decision_authority:
+      - "AUTH-001: Every validation-bearing invariant needs a capable current correctly bounded harness observation before closure, with typed first-owner repair."
+      - "AUTH-006: Decide every material relation with explicit stopping and no silent expansion."
+    expected_delta:
+      - "evaluation 006 remains invalidated for plan tasks evidence-capability and post-F01R6 product-tree drift"
+      - "fresh manifest binds the accepted root plan digest F01R2 task brief and post-F01R6 product tree"
+      - "fresh 12/12 result is recorded"
+    conflict_status: clear
+  requirements:
+    - "AC-005: Evaluator drift invalidates affected runs, raw evidence stays immutable, append-only adjudication obeys frozen schema, and packaging-only advance preserves source-bound observations."
+    - "AC-011: Final adversarial replay passes all twelve user-specified cases with frozen inputs/runner/verifier/schema and exact source identity."
+    - "AC-012: Full pinned suite, behavior evals, Ubuntu/macOS CI, exact final-tree independent review, knowledge closure, release identity, and migration handoff pass before completion."
+  constraints: []
+  interfaces:
+    consumes: []
+    produces: []
+  files:
+    read:
+      - evals/wor105/freeze-manifest.json
+      - evals/wor105/results.jsonl
+      - evals/wor105/run.py
+      - evals/wor105/verify.py
+    write:
+      - evals/wor105/freeze-manifest.json
+      - evals/wor105/results.jsonl
+    forbidden: []
+  methodology:
+    primary: direct
+    skills:
+      - dev-systematic-debugging
+  allocated_rules:
+    - id: verification-evidence-before-claim
+      requirement: "release refreeze is claimed"
+  executor_profile:
+    capability: judgment
+    context_mode: compiled-brief
+    review_capability: judgment
+    escalation:
+      after_failed_repairs: 2
+      next_capability: judgment
+  evidence_applicability:
+    metadata:
+      required: false
+      reasons: []
+    repository:
+      required: true
+      reasons:
+        - source-inspection
+        - source-analysis
+    codegraph:
+      required: true
+      reasons:
+        - source-inspection
+        - source-analysis
+  workspace:
+    root: /Users/shenglong/Documents/Repository/work-bundle-workspace/.worktrees/wor105
+  validation:
+    - kind: process
+      id: VAL-F01R2
+      invariant_ids:
+        - INV-F01R2
+      capability_reason: "two native runs independent verification and exact digest equality bind all changed frozen identities to deterministic observations"
+      command: "uvx --python 3.13 --from pyyaml==6.0.3 python evals/wor105/run.py --manifest evals/wor105/freeze-manifest.json --output evals/wor105/results.jsonl && uvx --python 3.13 --from pyyaml==6.0.3 python evals/wor105/verify.py --manifest evals/wor105/freeze-manifest.json --results evals/wor105/results.jsonl && first=$(sha256sum evals/wor105/results.jsonl | awk '{print $1}') && uvx --python 3.13 --from pyyaml==6.0.3 python evals/wor105/run.py --manifest evals/wor105/freeze-manifest.json --output evals/wor105/results.jsonl && uvx --python 3.13 --from pyyaml==6.0.3 python evals/wor105/verify.py --manifest evals/wor105/freeze-manifest.json --results evals/wor105/results.jsonl && second=$(sha256sum evals/wor105/results.jsonl | awk '{print $1}') && test \"$first\" = \"$second\""
+      proves: "current-plan current-task current-product deterministic native evaluation identity"
+      expected: "both 12/12 passed and digests equal"
+  evidence_capability:
+    result: mapped
+    reason: "Fresh deterministic replay closes plan task evidence-capability and product identity drift."
+    invariants:
+      - id: INV-F01R2
+        source_ids:
+          - AC-005
+          - AC-011
+        invariant: "Plan task evidence-capability and post-F01R6 product drift invalidate evaluation 006 and a fully current native evaluation passes 12/12 deterministically"
+        boundary: integration
+        oracle: VAL-F01R2
+        capability_reason: "two native replays independent verification and exact result digest equality"
+        freshness: current_task_batch
+        task_id: task-f01r2
+        evidence_ids:
+          - VAL-F01R2
+        closure_result: pending
+  handoff_contract: executor-result-v1
+  review_required: false
