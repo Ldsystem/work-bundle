@@ -113,7 +113,11 @@ def validate_task_acceptance_ownership(
 
 
 def _ready_wave(tasks: Sequence[TaskCandidate], completed: set[str]) -> list[TaskCandidate]:
-    ready = [task for task in tasks if set(task.dependencies).issubset(completed)]
+    ready = [
+        task
+        for task in tasks
+        if task.task_id not in completed and set(task.dependencies).issubset(completed)
+    ]
     wave: list[TaskCandidate] = []
     for task in ready:
         if any(task.execution_workspace == selected.execution_workspace for selected in wave):

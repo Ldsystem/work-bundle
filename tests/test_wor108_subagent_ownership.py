@@ -129,6 +129,30 @@ def test_sg06_same_execution_workspace_is_never_fanned_out() -> None:
     assert result.dispatched == ("task-a",)
 
 
+def test_sg06_serialized_tasks_progress_across_successive_waves() -> None:
+    tasks = [
+        TaskCandidate("task-a", (), ("src/shared.py",), "workspace-a"),
+        TaskCandidate("task-b", (), ("src/shared.py",), "workspace-b"),
+    ]
+    first = dispatch_ready_wave(
+        tasks,
+        completed=set(),
+        subagents_available=True,
+        dispatch=lambda task: task.task_id,
+        wait=lambda _handle: None,
+    )
+    second = dispatch_ready_wave(
+        tasks,
+        completed=set(first.dispatched),
+        subagents_available=True,
+        dispatch=lambda task: task.task_id,
+        wait=lambda _handle: None,
+    )
+
+    assert first.dispatched == ("task-a",)
+    assert second.dispatched == ("task-b",)
+
+
 def test_sg07_repair_remains_subagent_owned() -> None:
     assert normalize_subagent_provenance(provenance(), operation="repair")["agent_id"] == "agent-task-001"
     with pytest.raises(OwnershipBlocker, match="workspace-blocked"):
