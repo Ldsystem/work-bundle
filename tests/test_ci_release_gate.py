@@ -4,6 +4,8 @@ import runpy
 import subprocess
 from pathlib import Path
 
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_ENTRY = REPO_ROOT / "bin" / "work-bundle-ci"
@@ -129,3 +131,12 @@ def test_workflow_delegates_to_canonical_release_gate() -> None:
         '"fastembed==0.8.0"',
     ]:
         assert pin in entry
+
+
+def test_workflow_fetches_full_history_for_historical_transition_identity() -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["deterministic"]["steps"]
+    checkout = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
+
+    assert len(checkout) == 1
+    assert checkout[0].get("with", {}).get("fetch-depth") == 0
