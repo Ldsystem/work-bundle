@@ -47,14 +47,27 @@ def _review_runtime():
 
 def _validate_stage_context(context: object) -> dict[str, object]:
     fields = {"stage", "target_identity", "target_locator", "agent_id", "capability", "execution_id", "evidence_mode"}
-    if not isinstance(context, dict) or set(context) != fields:
+    repair_fields = {"review_mode", "review_target_kind", "repair_frontier", "review_reset"}
+    if not isinstance(context, dict) or frozenset(context) not in {frozenset(fields), frozenset(fields | repair_fields)}:
         raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID")
-    if (context["stage"] not in {"specification", "plan", "integrated_implementation"}
+    if (context["stage"] not in {"specification", "plan", "integrated_implementation", "implementation"}
             or context["capability"] not in {"standard", "judgment"}
             or context["evidence_mode"] not in {"direct_source", "reproducible_snapshot", "packet_only"}
             or not all(isinstance(context[key], str) and context[key] for key in ("agent_id", "execution_id"))):
         raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID")
     _review_runtime()._target_identity(context["target_identity"])
+    if repair_fields.issubset(context):
+        try:
+            mode = _review_runtime()._enum(context["review_mode"], _review_runtime().REVIEW_MODES, "review_mode")
+            _review_runtime()._enum(context["review_target_kind"], _review_runtime().REVIEW_TARGET_KINDS, "review_target_kind")
+            if mode == "repair":
+                _review_runtime()._repair_frontier(context["repair_frontier"])
+                if context["review_reset"] is not None:
+                    raise ValueError("repair reset")
+            elif context["repair_frontier"] is not None:
+                raise ValueError("initial frontier")
+        except (ValueError, TypeError):
+            raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID") from None
     return context
 
 
@@ -668,11 +681,24 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
         except (ValueError, TypeError) as error:
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_INVALID") from error
         mode = "direct_source" if validated.evidence["mode"] == "direct" else validated.evidence["mode"]
+        review_context = {
+            "review_mode": validated.review_mode,
+            "review_target_kind": validated.review_target_kind,
+            "repair_frontier": validated.repair_frontier,
+            "review_reset": validated.review_reset,
+        }
+        packet_context = {
+            "review_mode": context.get("review_mode", "initial"),
+            "review_target_kind": context.get("review_target_kind", "stage"),
+            "repair_frontier": context.get("repair_frontier"),
+            "review_reset": context.get("review_reset"),
+        }
         if ("reviewer_run" in review or validated.review_id != review_id
                 or validated.stage != context["stage"] or validated.target_identity != context["target_identity"]
                 or validated.reviewer["agent_id"] != context["agent_id"]
                 or validated.reviewer["context_origin"] != context["evidence_mode"]
-                or validated.reviewer["capability"] != context["capability"] or mode != context["evidence_mode"]):
+                or validated.reviewer["capability"] != context["capability"] or mode != context["evidence_mode"]
+                or review_context != packet_context):
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_MISMATCH")
         if validated.verdict == "accepted":
             try:

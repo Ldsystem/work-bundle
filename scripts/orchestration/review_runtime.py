@@ -22,7 +22,13 @@ FINDING_SEVERITIES = frozenset({"blocking", "non_blocking", "advisory"})
 OBLIGATION_BASES = frozenset({"accepted_requirement", "essential_safety", "evidence_integrity", "none"})
 TERMINAL_FINDING_DISPOSITIONS = frozenset({"accepted", "rejected"})
 STAGE_REVIEW_STAGES = frozenset({"specification", "plan", "integrated_implementation"})
+REVIEW_STAGES = STAGE_REVIEW_STAGES | {"implementation"}
 REVIEW_VERDICTS = frozenset({"accepted", "repair", "blocked"})
+REVIEW_MODES = frozenset({"initial", "repair"})
+REVIEW_TARGET_KINDS = frozenset({"task", "stage"})
+MATERIAL_CHANGE_CLASSES = frozenset(
+    {"material_redesign", "authority", "scope", "acceptance", "decomposition", "validation_allocation"}
+)
 PARTICIPATION_FIELDS = (
     "authorship",
     "repair_participation",
@@ -58,8 +64,13 @@ FINDING_KEYS = frozenset(
 TARGET_KEYS = frozenset({"artifact_id", "revision", "sha256", "source_tree"})
 EVIDENCE_ITEM_KEYS = frozenset({"kind", "locator", "digest_or_identity", "observation"})
 STAGE_REVIEW_KEYS = frozenset(
-    {"review_id", "stage", "target_identity", "reviewer", "evidence", "verdict", "findings", "started_at", "completed_at", "staleness"}
+    {"review_id", "review_mode", "review_target_kind", "repair_frontier", "review_reset", "stage", "target_identity", "reviewer", "evidence", "verdict", "findings", "started_at", "completed_at", "staleness"}
 )
+LEGACY_STAGE_REVIEW_KEYS = STAGE_REVIEW_KEYS - {"review_mode", "review_target_kind", "repair_frontier", "review_reset"}
+REPAIR_FRONTIER_KEYS = frozenset(
+    {"prior_review_id", "blocking_finding_ids", "previous_reviewed_identity", "repaired_identity", "affected_boundaries", "frozen_evidence_reference"}
+)
+REVIEW_RESET_KEYS = frozenset({"prior_review_id", "reason_class", "reason"})
 REVIEWER_KEYS = frozenset(
     {"agent_id", "capability", *PARTICIPATION_FIELDS, "context_origin"}
 )
@@ -80,7 +91,7 @@ def reviewer_runtime_root(root: Path) -> Path:
 
 
 def stage_target_identity(root: Path, stage: str, path: Path, *, source_root: Path | None = None) -> dict[str, Any]:
-    identity = artifact_review_identity(path) if stage == "specification" else plan_review_identity(root, path)
+    identity = artifact_review_identity(path) if stage in {"specification", "implementation"} else plan_review_identity(root, path)
     if stage == "integrated_implementation":
         if source_root is None:
             raise ReviewContractError("review provenance requires source repository")
@@ -109,6 +120,8 @@ def stage_evidence_requirements(root: Path, stage: str, target: Path) -> tuple[d
         required["control:" + path.relative_to(root).as_posix()] = role
 
     control(target, "target")
+    if stage == "implementation":
+        return required, missing
     data, _ = _read_structured(target)
     members = [target]
     specifications = [target] if stage == "specification" else []
@@ -237,8 +250,15 @@ def stage_evidence_manifest(root: Path, source_root: Path, context: Mapping[str,
     if not locator.startswith("control:"):
         raise ReviewContractError("stage evidence target must be control-local")
     target = root / locator[8:]
-    required, missing = stage_evidence_requirements(root, str(context["stage"]), target)
-    source = source_snapshot_entries(source_root) if context["stage"] == "integrated_implementation" else []
+    if context.get("review_mode", "initial") == "repair":
+        # Repair packets carry the repaired target and a compact immutable
+        # reference to prior evidence. Full durable history remains lazy.
+        required, missing = {locator: "target"}, []
+    else:
+        required, missing = stage_evidence_requirements(root, str(context["stage"]), target)
+    source = (source_snapshot_entries(source_root)
+              if context["stage"] == "integrated_implementation" and context.get("review_mode", "initial") == "initial"
+              else [])
     for entry in source:
         required.setdefault(entry["locator"], "source_tree")
     available = {item["locator"]: item for item in artifacts}
@@ -259,7 +279,9 @@ def stage_evidence_manifest(root: Path, source_root: Path, context: Mapping[str,
         entries.append(entry)
     return {"schema": "stage-evidence-manifest-v1", "stage": context["stage"],
             "target_identity": context["target_identity"], "entries": entries,
-            "source_tree": source, "missing": sorted(set(missing))}
+            "source_tree": source, "missing": sorted(set(missing)),
+            **({"repair_frontier_reference": context["repair_frontier"]["frozen_evidence_reference"]}
+               if context.get("review_mode") == "repair" else {})}
 
 
 def validate_stage_evidence(root: Path, context: Mapping[str, Any], packet: Mapping[str, Any]) -> None:
@@ -271,9 +293,15 @@ def validate_stage_evidence(root: Path, context: Mapping[str, Any], packet: Mapp
     target = str(context["target_locator"])
     if not target.startswith("control:"):
         raise ReviewContractError("stage evidence target must be control-local")
-    required, missing = stage_evidence_requirements(root, str(context["stage"]), root / target[8:])
+    if context.get("review_mode", "initial") == "repair":
+        frontier = _repair_frontier(context.get("repair_frontier"))
+        if manifest.get("repair_frontier_reference") != frontier["frozen_evidence_reference"]:
+            raise ReviewContractError("repair stage evidence does not bind frozen evidence")
+        required, missing = {target: "target"}, []
+    else:
+        required, missing = stage_evidence_requirements(root, str(context["stage"]), root / target[8:])
     source = manifest.get("source_tree", [])
-    if context["stage"] == "integrated_implementation":
+    if context["stage"] == "integrated_implementation" and context.get("review_mode", "initial") == "initial":
         if snapshot_tree_identity(source) != context["target_identity"]["source_tree"]:
             raise ReviewContractError("stage evidence source snapshot is incomplete")
         for entry in source:
@@ -344,6 +372,18 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     result = {key: value for key, value in review.items() if key != "reviewer_run"}
     context = _mapping(receipt.get("stage_review_context", {}), "reviewer-run provenance context")
     mode = "direct_source" if review["evidence"]["mode"] == "direct" else review["evidence"]["mode"]
+    review_context = {
+        "review_mode": review.get("review_mode", "initial"),
+        "review_target_kind": review.get("review_target_kind", "stage"),
+        "repair_frontier": review.get("repair_frontier"),
+        "review_reset": review.get("review_reset"),
+    }
+    receipt_context = {
+        "review_mode": context.get("review_mode", "initial"),
+        "review_target_kind": context.get("review_target_kind", "stage"),
+        "repair_frontier": context.get("repair_frontier"),
+        "review_reset": context.get("review_reset"),
+    }
     if (receipt.get("schema") != "reviewer-process-receipt-v1" or receipt.get("run_id") != run_id
             or receipt.get("review_id") != review["review_id"] or receipt.get("status") != "passed"
             or receipt.get("exit_code") != 0 or receipt.get("review_result_sha256") != canonical(result)
@@ -352,6 +392,7 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
             or context.get("agent_id") != review["reviewer"]["agent_id"]
             or context.get("evidence_mode") != review["reviewer"]["context_origin"]
             or context.get("capability") != review["reviewer"]["capability"] or context.get("evidence_mode") != mode
+            or review_context != receipt_context
             or receipt.get("isolation") != {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
             or not context.get("execution_id")
             or receipt.get("sandbox_profile_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".profile.sb"))).hexdigest()
@@ -389,8 +430,10 @@ def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any])
     accepted = []
     matching_values = []
     review_ids: set[str] = set()
+    historical: dict[str, Mapping[str, Any]] = {}
     review_root = root / ".work-bundle/orchestration/reviews"
     try:
+        documents = []
         for path in sorted(review_root.rglob("*")):
             if path.suffix not in {".json", ".yaml", ".yml"} or not path.is_file():
                 continue
@@ -399,12 +442,33 @@ def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any])
             value = _read_document(path)
             if not isinstance(value, dict) or "review_id" not in value or "stage" not in value:
                 continue
+            if value["stage"] == stage:
+                review_key = str(value["review_id"])
+                if review_key in historical:
+                    raise ReviewContractError("stage review IDs must be globally unique")
+                historical[review_key] = value
+            documents.append(value)
+        for value in documents:
             # Old target records remain history, not current acceptance candidates.
             # In particular, a superseded legacy evidence mode must not poison a
             # valid replacement review for the actual current artifact.
             if value["stage"] != stage or value.get("target_identity") != identity:
                 continue
             record = validate_stage_review(value)
+            if record.review_mode == "repair":
+                frontier = record.repair_frontier
+                assert frontier is not None
+                prior = historical.get(str(frontier["prior_review_id"]))
+                if prior is None:
+                    raise ReviewContractError("repair review predecessor is missing")
+                record = validate_review_sequence(value, previous_review=prior)
+            elif record.review_reset is not None:
+                prior = historical.get(str(record.review_reset["prior_review_id"]))
+                if prior is None:
+                    raise ReviewContractError("initial review reset predecessor is missing")
+                record = validate_review_sequence(
+                    value, previous_review=prior, material_change=str(record.review_reset["reason_class"])
+                )
             if record.review_id in review_ids:
                 raise ReviewContractError("stage review IDs must be globally unique")
             review_ids.add(record.review_id)
@@ -490,6 +554,10 @@ class ReviewFindingV1:
 @dataclass(frozen=True)
 class StageReviewV1:
     review_id: str
+    review_mode: str
+    review_target_kind: str
+    repair_frontier: Mapping[str, Any] | None
+    review_reset: Mapping[str, Any] | None
     stage: str
     target_identity: Mapping[str, Any]
     reviewer: Mapping[str, Any]
@@ -562,6 +630,44 @@ def _target_identity(value: Any, name: str = "target_identity") -> Mapping[str, 
     if source_tree is not None and (not isinstance(source_tree, str) or not GIT_OID_RE.fullmatch(source_tree)):
         raise ReviewContractError(f"{name}.source_tree must be a Git object id or null")
     return target
+
+
+def review_evidence_identity(value: Mapping[str, Any]) -> str:
+    """Return a compact immutable identity for reusable review evidence."""
+    record = _mapping(value, "review")
+    evidence = _mapping(record.get("evidence"), "evidence")
+    payload = {"review_id": record.get("review_id"), "evidence": evidence,
+               "reviewer_run": record.get("reviewer_run")}
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+
+
+def _repair_frontier(value: Any) -> Mapping[str, Any]:
+    frontier = _mapping(value, "repair_frontier")
+    _closed(frontier, REPAIR_FRONTIER_KEYS, "repair_frontier")
+    _identifier(frontier["prior_review_id"], "repair_frontier.prior_review_id")
+    finding_ids = _string_list(frontier["blocking_finding_ids"], "repair_frontier.blocking_finding_ids")
+    if not finding_ids or len(finding_ids) != len(set(finding_ids)):
+        raise ReviewContractError("repair_frontier.blocking_finding_ids must be non-empty and unique")
+    _target_identity(frontier["previous_reviewed_identity"], "repair_frontier.previous_reviewed_identity")
+    _target_identity(frontier["repaired_identity"], "repair_frontier.repaired_identity")
+    boundaries = _string_list(frontier["affected_boundaries"], "repair_frontier.affected_boundaries")
+    if not boundaries or len(boundaries) != len(set(boundaries)):
+        raise ReviewContractError("repair_frontier.affected_boundaries must be non-empty and unique")
+    reference = frontier["frozen_evidence_reference"]
+    if not isinstance(reference, str) or not SHA256_RE.fullmatch(reference):
+        raise ReviewContractError("repair_frontier.frozen_evidence_reference must be a lowercase SHA-256")
+    return frontier
+
+
+def _review_reset(value: Any) -> Mapping[str, Any]:
+    reset = _mapping(value, "review_reset")
+    _closed(reset, REVIEW_RESET_KEYS, "review_reset")
+    _identifier(reset["prior_review_id"], "review_reset.prior_review_id")
+    _enum(reset["reason_class"], MATERIAL_CHANGE_CLASSES, "review_reset.reason_class")
+    _nonempty(reset["reason"], "review_reset.reason")
+    return reset
 
 
 def classify_first_broken_owner(finding_class: str) -> tuple[str, str, str]:
@@ -657,7 +763,10 @@ def validate_stage_review(
     value: Mapping[str, Any], *, current_target_identity: Mapping[str, Any] | None = None
 ) -> StageReviewV1:
     record = _mapping(value, "stage_review_v1")
-    _closed({key: item for key, item in record.items() if key != "reviewer_run"}, STAGE_REVIEW_KEYS, "stage_review_v1")
+    envelope = {key: item for key, item in record.items() if key != "reviewer_run"}
+    keys = set(envelope)
+    if not LEGACY_STAGE_REVIEW_KEYS.issubset(keys) or not keys.issubset(STAGE_REVIEW_KEYS):
+        _closed(envelope, STAGE_REVIEW_KEYS, "stage_review_v1")
     if "reviewer_run" in record:
         reference = _mapping(record["reviewer_run"], "reviewer_run")
         _closed(reference, frozenset({"run_id", "sha256"}), "reviewer_run")
@@ -665,8 +774,28 @@ def validate_stage_review(
         if not isinstance(reference["sha256"], str) or not SHA256_RE.fullmatch(reference["sha256"]):
             raise ReviewContractError("reviewer_run.sha256 must be a lowercase SHA-256")
     review_id = _identifier(record["review_id"], "review_id")
-    stage = _enum(record["stage"], STAGE_REVIEW_STAGES, "stage")
+    review_mode = _enum(record.get("review_mode", "initial"), REVIEW_MODES, "review_mode")
+    review_target_kind = _enum(record.get("review_target_kind", "stage"), REVIEW_TARGET_KINDS, "review_target_kind")
+    raw_frontier = record.get("repair_frontier")
+    raw_reset = record.get("review_reset")
+    if review_mode == "repair":
+        if raw_frontier is None:
+            raise ReviewContractError("repair review requires repair_frontier")
+        if raw_reset is not None:
+            raise ReviewContractError("repair review cannot carry review_reset; require a fresh initial review")
+        repair_frontier = _repair_frontier(raw_frontier)
+        review_reset = None
+    else:
+        if raw_frontier is not None:
+            raise ReviewContractError("initial review cannot carry repair_frontier")
+        repair_frontier = None
+        review_reset = _review_reset(raw_reset) if raw_reset is not None else None
+    stage = _enum(record["stage"], REVIEW_STAGES, "stage")
+    if (review_target_kind == "task") != (stage == "implementation"):
+        raise ReviewContractError("task review target kind requires implementation stage; stage kind requires a WOR-98 stage")
     target = _target_identity(record["target_identity"])
+    if repair_frontier is not None and repair_frontier["repaired_identity"] != target:
+        raise ReviewContractError("repair frontier repaired identity must equal target_identity")
     reviewer = _mapping(record["reviewer"], "reviewer")
     _closed(reviewer, REVIEWER_KEYS, "reviewer")
     _identifier(reviewer["agent_id"], "reviewer.agent_id")
@@ -746,6 +875,10 @@ def validate_stage_review(
                 raise ReviewContractError("snapshot review requires explicit reproducible_snapshot artifacts")
     return StageReviewV1(
         review_id,
+        review_mode,
+        review_target_kind,
+        repair_frontier,
+        review_reset,
         stage,
         target,
         reviewer,
@@ -758,6 +891,46 @@ def validate_stage_review(
     )
 
 
+def validate_review_sequence(
+    value: Mapping[str, Any], *, previous_review: Mapping[str, Any] | None = None,
+    material_change: str | None = None,
+) -> StageReviewV1:
+    """Bind a re-review to its exact predecessor without replaying history."""
+    current = validate_stage_review(value)
+    if previous_review is None:
+        if current.review_mode == "repair" or current.review_reset is not None:
+            raise ReviewContractError("re-review requires the exact previous review")
+        return current
+    previous = validate_stage_review(previous_review)
+    if current.review_mode == "repair":
+        if material_change is not None:
+            _enum(material_change, MATERIAL_CHANGE_CLASSES, "material_change")
+            raise ReviewContractError("material change requires a fresh initial review")
+        frontier = current.repair_frontier
+        assert frontier is not None
+        if previous.verdict != "repair" or frontier["prior_review_id"] != previous.review_id:
+            raise ReviewContractError("repair frontier must bind the exact prior repair review")
+        if frontier["previous_reviewed_identity"] != previous.target_identity:
+            raise ReviewContractError("repair frontier previous reviewed identity does not match prior review")
+        expected_findings = {item.finding_id for item in previous.findings if item.severity == "blocking"}
+        if set(frontier["blocking_finding_ids"]) != expected_findings:
+            raise ReviewContractError("repair frontier blocking finding IDs do not match prior review")
+        if frontier["frozen_evidence_reference"] != review_evidence_identity(previous_review):
+            raise ReviewContractError("repair frontier frozen evidence reference does not match prior review")
+        return current
+    if material_change is not None:
+        _enum(material_change, MATERIAL_CHANGE_CLASSES, "material_change")
+        reset = current.review_reset
+        if (reset is None or reset["prior_review_id"] != previous.review_id
+                or reset["reason_class"] != material_change):
+            raise ReviewContractError("material change requires a recorded fresh initial review reset")
+        if current.reviewer["agent_id"] == previous.reviewer["agent_id"] or current.reviewer["capability"] != "judgment":
+            raise ReviewContractError("reset requires a fresh capable independent reviewer identity")
+    elif current.review_reset is not None:
+        raise ReviewContractError("review_reset requires a classified material change")
+    return current
+
+
 def validate_stage_reviews(
     values: Sequence[Mapping[str, Any]], *,
     current_target_identities: Mapping[str, Mapping[str, Any]] | None = None,
@@ -768,8 +941,25 @@ def validate_stage_reviews(
     ids = [record.review_id for record in records]
     if len(ids) != len(set(ids)):
         raise ReviewContractError("stage review IDs must be globally unique")
+    raw_by_id = {record.review_id: value for record, value in zip(records, values)}
+    sequenced = []
+    for record, value in zip(records, values):
+        if record.review_mode == "repair":
+            assert record.repair_frontier is not None
+            prior = raw_by_id.get(str(record.repair_frontier["prior_review_id"]))
+            if prior is None:
+                raise ReviewContractError("repair review predecessor is missing")
+            record = validate_review_sequence(value, previous_review=prior)
+        elif record.review_reset is not None:
+            prior = raw_by_id.get(str(record.review_reset["prior_review_id"]))
+            if prior is None:
+                raise ReviewContractError("initial review reset predecessor is missing")
+            record = validate_review_sequence(
+                value, previous_review=prior, material_change=str(record.review_reset["reason_class"])
+            )
+        sequenced.append(record)
     countable: dict[str, StageReviewV1] = {}
-    for record in sorted(records, key=lambda item: item.completed_at):
+    for record in sorted((item for item in sequenced if item.review_target_kind == "stage"), key=lambda item: item.completed_at):
         current = _target_identity(current_target_identities[record.stage], "current_target_identity")
         if record.target_identity == current:
             countable.pop(record.stage, None)
