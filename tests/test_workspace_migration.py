@@ -28,6 +28,37 @@ from migration import (
 from workspace_resources import SCRIPT_INDEX_TEMPLATE
 
 
+def test_reviewer_fixture_preserves_work_bundle_lazy_import_resolution(isolated_reviewer_receipt_store):
+    # The global reviewer fixture is active before this lazy import chain.
+    import project
+    import bootstrap_config
+    import core
+    assert Path(core.__file__).resolve().parent == Path(migration.__file__).resolve().parent
+    assert bootstrap_config.GLOBAL_BOOTSTRAP_FILE_NAME == core.GLOBAL_BOOTSTRAP_FILE_NAME
+
+
+def test_reviewer_runtime_loading_preserves_work_bundle_import_namespace(tmp_path):
+    script = '''
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import core
+import reviewer_workspace
+original_path = list(sys.path)
+runtime = reviewer_workspace._review_runtime()
+artifact = Path(sys.argv[2])
+assert runtime.artifact_review_identity(artifact)["artifact_id"] == "spec-test"
+assert sys.path == original_path
+import project, bootstrap_config
+assert bootstrap_config.GLOBAL_BOOTSTRAP_FILE_NAME == core.GLOBAL_BOOTSTRAP_FILE_NAME
+assert "execution_context" not in sys.modules
+'''
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("---\nid: spec-test\n---\nTest\n")
+    result = subprocess.run([sys.executable, "-c", script, str(Path(migration.__file__).parent), str(artifact)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def git(root: Path, *args: str) -> str:
     return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
 

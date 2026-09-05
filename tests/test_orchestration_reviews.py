@@ -254,7 +254,7 @@ def _reviewed_plan_fixture(root, *, provenance=True):
     orch = root / ".work-bundle/orchestration"
     spec = orch / "spec/active/spec.md"
     plan = orch / "plan/active/plan.md"
-    for path, text in ((spec, "id: spec-test\nstatus: draft"),
+    for path, text in ((spec, "id: spec-test\nstatus: verified"),
                        (plan, "id: plan-test\nstatus: Planned\nsource_spec: [spec-test]")):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"---\n{text}\n---\nOriginal body\n")
@@ -268,6 +268,105 @@ def _reviewed_plan_fixture(root, *, provenance=True):
             review = bind_review_receipt(root, review)
         (reviews / f"{stage}.json").write_text(json.dumps(review))
     return spec, plan, reviews
+
+
+@pytest.mark.parametrize("stage", ["plan", "integrated_implementation"])
+def test_target_only_packet_cannot_declare_direct_source(tmp_path, stage):
+    import reviewer_workspace
+    import review_runtime
+    spec, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    spec.write_text(spec.read_text().replace("status: draft", "status: verified"))
+    protected = tmp_path / "protected"
+    protected.mkdir()
+    if stage == "integrated_implementation":
+        for args in (["init", "-q"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.com"]):
+            subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
+        (tmp_path / ".gitignore").write_text(".work-bundle/\nprotected/\n")
+        (tmp_path / "source.txt").write_text("claim-relevant source")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "baseline"], check=True)
+    locator = "control:" + plan.relative_to(tmp_path).as_posix()
+    packet = reviewer_workspace.build_direct_evidence_packet(
+        source_root=tmp_path, control_root=tmp_path, protected_roots=[protected],
+        artifacts=[locator], search_roots=[], validators=[], sentinels=[], network_state="denied",
+        stage_review_context={"stage": stage, "target_locator": locator,
+            "target_identity": review_runtime.stage_target_identity(tmp_path, stage, plan, source_root=tmp_path),
+            "agent_id": "reviewer", "capability": "judgment", "execution_id": "worker",
+            "evidence_mode": "direct_source"})
+    assert packet["stage_review_context"]["evidence_mode"] == "packet_only"
+    assert packet["stage_evidence_manifest"]["missing"]
+    packet["stage_review_context"]["evidence_mode"] = "direct_source"
+    with pytest.raises(review_runtime.ReviewContractError, match="complete reproducible snapshot"):
+        review_runtime.validate_stage_evidence(tmp_path, packet["stage_review_context"], packet)
+
+
+@pytest.mark.parametrize("removed", [None, "target", "plan_member", "verified_specification", "source_tree", "validation_evidence"])
+def test_complete_snapshot_gate_rechecks_membership_after_receipt_rehash(tmp_path, removed):
+    import hashlib
+    import review_runtime
+    _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    task = plan.parent / "task.md"
+    task.write_text("---\nid: task-test\nplan_id: plan-test\nvalidation: [{kind: process, command: test -f source.txt, expected: exit 0}]\n---\nTask\n")
+    handoff = tmp_path / ".work-bundle/orchestration/handoff/executor/active/result.yaml"
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text("related: {plan: plan-test, task: task-test}\nvalidation: {commands: [{command: test -f source.txt, result: passed}]}\n")
+    for args in (["init", "-q"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.com"]):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
+    (tmp_path / ".gitignore").write_text(".work-bundle/\n")
+    (tmp_path / "source.txt").write_text("source")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "executable").write_text("#!/bin/sh\nexit 0\n")
+    (nested / "executable").chmod(0o755)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "baseline"], check=True)
+    review = stage_review("integrated_implementation")
+    review["target_identity"] = review_runtime.stage_target_identity(tmp_path, review["stage"], plan, source_root=tmp_path)
+    review = bind_review_receipt(tmp_path, review)
+    assert review["evidence"]["mode"] == "reproducible_snapshot"
+    review_runtime._validate_reviewer_run(tmp_path, review)
+    if removed is None:
+        return
+    receipt_path = review_runtime.reviewer_runtime_root(tmp_path) / "receipts/reviewer-process" / (review["reviewer_run"]["run_id"] + ".json")
+    packet_path = receipt_path.with_suffix(".packet.json")
+    packet = json.loads(packet_path.read_text())
+    manifest = packet["stage_evidence_manifest"]
+    omitted = next(entry["locator"] for entry in manifest["entries"] if entry["role"] == removed)
+    manifest["entries"] = [entry for entry in manifest["entries"] if entry["locator"] != omitted]
+    packet["artifacts"] = [entry for entry in packet["artifacts"] if entry["locator"] != omitted]
+    # Also remove the Git entry: the complete tree identity must still reject it.
+    manifest["source_tree"] = [entry for entry in manifest["source_tree"] if entry["locator"] != omitted]
+    packet_path.chmod(0o600)
+    packet_path.write_text(json.dumps(packet))
+    packet_path.chmod(0o400)
+    receipt = json.loads(receipt_path.read_text())
+    receipt["packet_sha256"] = hashlib.sha256(json.dumps(packet, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    receipt_path.chmod(0o600)
+    receipt_path.write_text(json.dumps(receipt))
+    receipt_path.chmod(0o400)
+    review["reviewer_run"]["sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    with pytest.raises(review_runtime.ReviewContractError, match="stage evidence"):
+        review_runtime._validate_reviewer_run(tmp_path, review)
+
+
+def test_plan_snapshot_requires_verified_linked_specification(tmp_path):
+    import review_runtime
+    spec, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    spec.write_text(spec.read_text().replace("status: verified", "status: draft"))
+    _, missing = review_runtime.stage_evidence_requirements(tmp_path, "plan", plan)
+    assert any(item.startswith("verified_specification:") for item in missing)
+
+
+def test_integrated_snapshot_requires_evidence_for_each_declared_check(tmp_path):
+    import review_runtime
+    _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    task = plan.parent / "task.md"
+    task.write_text("---\nid: task-test\nplan_id: plan-test\nvalidation: [{command: check-claim}]\n---\nTask\n")
+    handoff = tmp_path / ".work-bundle/orchestration/handoff/executor/active/result.yaml"
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text("related: {plan: plan-test, task: task-test}\nvalidation: {commands: [{command: unrelated-check, result: passed}]}\n")
+    _, missing = review_runtime.stage_evidence_requirements(tmp_path, "integrated_implementation", plan)
+    assert "validation_evidence:task-test" in missing
 
 
 def test_manually_authored_accepted_review_cannot_advance_lifecycle(tmp_path):
@@ -285,6 +384,7 @@ def test_native_reviewer_receipt_advances_lifecycle_and_survives_cleanup(tmp_pat
     import argparse
     import specs
     spec, _, reviews = _reviewed_plan_fixture(tmp_path, provenance=False)
+    spec.write_text(spec.read_text().replace("status: verified", "status: draft"))
     record = json.loads((reviews / "specification.json").read_text())
     bound = bind_review_receipt(tmp_path, record, real_process=True)
     (reviews / "specification.json").write_text(json.dumps(bound))
@@ -338,7 +438,7 @@ def test_stage_receipt_integrity_failures_block_acceptance(tmp_path, change):
 def test_known_author_or_repair_execution_cannot_receive_stage_credit(tmp_path, field):
     import review_runtime
     spec, _, reviews = _reviewed_plan_fixture(tmp_path, provenance=False)
-    spec.write_text(spec.read_text().replace("status: draft", f"status: draft\n{field}: same-worker"))
+    spec.write_text(spec.read_text().replace("status: verified", f"status: draft\n{field}: same-worker"))
     record = stage_review("specification")
     record["target_identity"] = review_runtime.artifact_review_identity(spec)
     record = bind_review_receipt(tmp_path, record, execution_id="same-worker")
@@ -376,7 +476,7 @@ def test_old_packet_bytes_cannot_be_relabelled_as_current_target(tmp_path):
         reviewer_workspace.create_reviewer_workspace(runtime, "relabelled", packet)
 
 
-@pytest.mark.parametrize("change", ["review_id", "target", "capability", "failed"])
+@pytest.mark.parametrize("change", ["review_id", "target", "capability", "context_origin", "failed"])
 def test_launcher_does_not_publish_acceptance_for_unbound_worker_output(tmp_path, monkeypatch, change):
     import reviewer_workspace
     import review_runtime
@@ -388,6 +488,8 @@ def test_launcher_does_not_publish_acceptance_for_unbound_worker_output(tmp_path
         record["review_id"] = "another-review"
     elif change == "target":
         record["target_identity"]["sha256"] = ZERO_SHA
+    elif change == "context_origin":
+        record["reviewer"]["context_origin"] = "direct_source"
     elif change == "capability":
         record["reviewer"]["capability"] = "standard"
     monkeypatch.setattr(reviewer_workspace, "_run_sandboxed_process",

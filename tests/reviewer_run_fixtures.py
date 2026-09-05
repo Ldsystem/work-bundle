@@ -29,9 +29,16 @@ def bind_review_receipt(root, record, *, real_process=False, execution_id=None):
                "agent_id": review["reviewer"]["agent_id"], "capability": review["reviewer"]["capability"],
                "execution_id": execution_id or f"worker-{uuid.uuid4()}",
                "evidence_mode": "direct_source" if review["evidence"]["mode"] == "direct" else review["evidence"]["mode"]}
+    required, missing = review_runtime.stage_evidence_requirements(root, review["stage"], target)
+    assert not missing, missing
+    if review["stage"] == "integrated_implementation":
+        required.update({entry["locator"]: "source_tree" for entry in review_runtime.source_snapshot_entries(root)})
     packet = reviewer_workspace.build_direct_evidence_packet(source_root=root, control_root=root,
-        protected_roots=[protected], artifacts=[locator], search_roots=[], validators=[], sentinels=[],
+        protected_roots=[protected], artifacts=list(required), search_roots=[], validators=[], sentinels=[],
         network_state="denied", stage_review_context=context)
+    review["evidence"]["mode"] = packet["stage_review_context"]["evidence_mode"]
+    review["reviewer"]["context_origin"] = review["evidence"]["mode"]
+    review["evidence"]["artifacts"] = [{"path": item["locator"], "sha256": item["sha256"]} for item in packet["artifacts"]]
     created = reviewer_workspace.create_reviewer_workspace(review_runtime.reviewer_runtime_root(root), review["review_id"], packet)
     workspace = Path(created["workspace_path"])
     output = json.dumps(review)

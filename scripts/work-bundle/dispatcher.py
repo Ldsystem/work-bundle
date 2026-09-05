@@ -40,14 +40,7 @@ from registry_layout import cmd_migrate_registered_projects
 
 
 def _load_review_runtime():
-    module_path = Path(__file__).resolve().parents[1] / 'orchestration' / 'review_runtime.py'
-    spec = importlib.util.spec_from_file_location('_wb_review_runtime', module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f'Unable to load review runtime: {module_path}')
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return _load_reviewer_workspace()._review_runtime()
 
 
 def _load_reviewer_workspace():

@@ -110,6 +110,34 @@ the envelope cannot select an arbitrary receipt path or store.
 Before workspace creation, the controller adds `stage_review_context` to the direct
 evidence packet: `stage`, `target_identity`, `target_locator` (a copied control
 artifact), `agent_id`, `capability`, `execution_id`, and `evidence_mode`.
+The current sandbox denies live source/control access, so its packet builder derives
+`evidence_mode`; requesting `direct_source` does not grant it. A mechanically complete
+`stage-evidence-manifest-v1` yields `reproducible_snapshot`; missing evidence yields
+`packet_only`, which cannot grant acceptance, even with `unavailable_evidence: []`.
+The manifest binds stage/target identity, required locators, roles, artifact digests,
+and semantic authority identities. Its closure is derived from the current artifacts:
+
+- Specification: the complete specification, carried `source_knowledge.constraint`
+  authority, and file inputs declared by `truth_basis.as_is_evidence`. Protected
+  knowledge origins are not retrieved; an absent carried constraint blocks completeness.
+- Plan: the root, every phase/task declaring its plan ID, and every linked verified
+  specification (including member-specific links and their required authority).
+- Integrated implementation: the same authority closure, the complete clean Git source
+  tree, and executor handoffs containing evidence for each declared validation command
+  or inspection ID. The existing native completion-provenance file is included when
+  present. This is evidence availability, not a replacement validation-result verdict;
+  existing freshness, binding, authorization, and platform acceptance gates still apply.
+
+For integrated snapshots, Git file modes/blob IDs reconstruct the exact target tree;
+copied bytes are checked against those blobs before workspace creation. Symlinks,
+submodules, unresolved/protected inputs, and unsupported authority references fail
+closed. Ignored/generated dependencies are not a source-tree substitute: checks needing
+them must declare the required inputs. The manifest and packet remain in the immutable
+run receipt bundle after cleanup. Creation checks the manifest against live artifacts,
+publication checks the frozen closure, and lifecycle admission re-derives current
+stage membership and verifies the complete source-tree identity. Removing entries and
+recomputing packet/receipt hashes cannot turn partial evidence into complete evidence.
+
 `stage_target_identity` computes the target from current source artifacts, and
 workspace creation checks it again. Run the worker with `reviewer-process-run` using
 that runtime root. Its stdout must be exactly one stage-review JSON object, without

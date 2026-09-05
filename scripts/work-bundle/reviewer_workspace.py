@@ -4,6 +4,7 @@ import argparse
 import base64
 from datetime import datetime, timezone
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -24,10 +25,24 @@ TERMINAL_VERDICTS = frozenset({"accepted", "repair", "blocked"})
 
 def _review_runtime():
     orchestration = Path(__file__).resolve().parents[1] / "orchestration"
-    if str(orchestration) not in sys.path:
+    existing = sys.modules.get("review_runtime")
+    if existing is not None:
+        if Path(existing.__file__).resolve() != orchestration / "review_runtime.py":
+            raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_MODULE_COLLISION")
+        return existing
+    spec = importlib.util.spec_from_file_location("review_runtime", orchestration / "review_runtime.py")
+    module = importlib.util.module_from_spec(spec)
+    original_path = list(sys.path)
+    try:
         sys.path.insert(0, str(orchestration))
-    import review_runtime
-    return review_runtime
+        sys.modules["review_runtime"] = module
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop("review_runtime", None)
+        raise
+    finally:
+        sys.path[:] = original_path
+    return module
 
 
 def _validate_stage_context(context: object) -> dict[str, object]:
@@ -36,7 +51,7 @@ def _validate_stage_context(context: object) -> dict[str, object]:
         raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID")
     if (context["stage"] not in {"specification", "plan", "integrated_implementation"}
             or context["capability"] not in {"standard", "judgment"}
-            or context["evidence_mode"] not in {"direct_source", "reproducible_snapshot"}
+            or context["evidence_mode"] not in {"direct_source", "reproducible_snapshot", "packet_only"}
             or not all(isinstance(context[key], str) and context[key] for key in ("agent_id", "execution_id"))):
         raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID")
     _review_runtime()._target_identity(context["target_identity"])
@@ -194,9 +209,17 @@ def build_direct_evidence_packet(
         sentinel_records.append(
             {"locator": f"{scope}:{relative.as_posix()}", "sha256": _sha256_bytes(candidate.read_bytes())}
         )
+    stage_fields = {}
+    if stage_review_context is not None:
+        context = dict(_validate_stage_context(stage_review_context))
+        manifest = _review_runtime().stage_evidence_manifest(control_root, source_root, context, records)
+        # This runtime denies live source access. Only a complete frozen closure
+        # is a reproducible snapshot; a caller's direct-source label grants nothing.
+        context["evidence_mode"] = "packet_only" if manifest["missing"] else "reproducible_snapshot"
+        stage_fields = {"stage_review_context": context, "stage_evidence_manifest": manifest}
     return {
         "schema": "review-direct-evidence-packet-v1",
-        **({"stage_review_context": _validate_stage_context(stage_review_context)} if stage_review_context is not None else {}),
+        **stage_fields,
         "artifacts": records,
         "search_roots": normalized_search,
         "validators": normalized_validators,
@@ -372,6 +395,10 @@ def create_reviewer_workspace(
                                                         source_root=effective_source)
         if current != context["target_identity"]:
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_TARGET_MISMATCH")
+        manifest = _review_runtime().stage_evidence_manifest(effective_control, effective_source, context, artifacts)
+        mode = "packet_only" if manifest["missing"] else "reproducible_snapshot"
+        if packet.get("stage_evidence_manifest") != manifest or context["evidence_mode"] != mode:
+            raise ReviewerWorkspaceError("WB_REVIEW_STAGE_EVIDENCE_MISMATCH")
     try:
         workspace.mkdir(parents=True)
         scope_digests: dict[str, list[str]] = {"source": [], "control": []}
@@ -644,8 +671,14 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
         if ("reviewer_run" in review or validated.review_id != review_id
                 or validated.stage != context["stage"] or validated.target_identity != context["target_identity"]
                 or validated.reviewer["agent_id"] != context["agent_id"]
+                or validated.reviewer["context_origin"] != context["evidence_mode"]
                 or validated.reviewer["capability"] != context["capability"] or mode != context["evidence_mode"]):
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_MISMATCH")
+        if validated.verdict == "accepted":
+            try:
+                _review_runtime().validate_stage_evidence(workspace / "evidence/control", context, packet)
+            except (ValueError, OSError, SystemExit) as error:
+                raise ReviewerWorkspaceError("WB_REVIEW_STAGE_EVIDENCE_INCOMPLETE") from error
         receipt["stage_review_context"] = context
         receipt["review_result_sha256"] = _canonical_digest(review)
         receipt["isolation"] = {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}

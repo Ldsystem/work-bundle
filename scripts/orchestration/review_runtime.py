@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from artifact_inputs import _as_list, _input_path, _read_structured, _resolve_spec_paths, parse_yaml_subset
 
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
@@ -91,8 +92,208 @@ def stage_target_identity(root: Path, stage: str, path: Path, *, source_root: Pa
     return identity
 
 
+def stage_evidence_requirements(root: Path, stage: str, target: Path) -> tuple[dict[str, str], list[str]]:
+    """Derive the stage's evidence closure, not a caller-selected context projection.
+
+    Carried knowledge constraints are authority in the specification itself. Their
+    protected origin notes are deliberately not retrieved. Validation acceptance
+    remains owned by the existing lifecycle gates; here we require its evidence
+    to be available to the reviewer, including the native observation store.
+    """
+    required: dict[str, str] = {}
+    missing: list[str] = []
+
+    def control(path: Path, role: str) -> None:
+        if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+            raise ReviewContractError("stage evidence path escapes control store")
+        required["control:" + path.relative_to(root).as_posix()] = role
+
+    control(target, "target")
+    data, _ = _read_structured(target)
+    members = [target]
+    specifications = [target] if stage == "specification" else []
+    if stage != "specification":
+        for path in sorted((root / ".work-bundle/orchestration/plan").rglob("*.md")):
+            path = _input_path(path, root, root / ".work-bundle/orchestration/plan", "stage plan member")
+            item, _ = _read_structured(path)
+            if item.get("plan_id") == data.get("id"):
+                control(path, "plan_member")
+                members.append(path)
+        for member in members:
+            item, _ = _read_structured(member)
+            for spec in _resolve_spec_paths(root, item, data):
+                if spec not in specifications:
+                    specifications.append(spec)
+                control(spec, "verified_specification")
+                if _read_structured(spec)[0].get("status") != "verified":
+                    missing.append("verified_specification:" + spec.relative_to(root).as_posix())
+    for spec in specifications:
+        item, _ = _read_structured(spec)
+        for authority in _as_list(item.get("source_knowledge")):
+            if not isinstance(authority, dict) or not str(authority.get("constraint", "")).strip():
+                missing.append("carried_authority:" + spec.relative_to(root).as_posix())
+        basis = item.get("truth_basis", {})
+        if isinstance(basis, dict):
+            for reference in _as_list(basis.get("as_is_evidence")):
+                # File locators are explicit inputs, not prose or arbitrary URLs.
+                if not isinstance(reference, str):
+                    missing.append("unsupported_truth_basis_reference")
+                    continue
+                locator = reference if reference.startswith(("source:", "control:")) else "source:" + reference
+                scope, relative = locator.split(":", 1)
+                path = Path(relative)
+                if path.is_absolute() or ".." in path.parts or not relative or scope not in {"source", "control"}:
+                    missing.append("unsupported_truth_basis_reference")
+                elif scope == "control":
+                    control(root / path, "truth_basis")
+                else:
+                    required[locator] = "truth_basis"
+    if stage == "integrated_implementation":
+        for member in members:
+            item, _ = _read_structured(member)
+            if not item.get("validation"):
+                continue
+            found = False
+            for handoff in sorted((root / ".work-bundle/orchestration/handoff/executor").rglob("*")):
+                if handoff.suffix not in {".yaml", ".yml", ".json"} or not handoff.is_file():
+                    continue
+                handoff = _input_path(handoff, root, root / ".work-bundle/orchestration/handoff/executor", "stage validation evidence")
+                value = json.loads(handoff.read_text()) if handoff.suffix == ".json" else _read_structured(handoff)[0]
+                related = value.get("related", {})
+                validation = value.get("validation", {})
+                if not isinstance(related, dict) or not isinstance(validation, dict):
+                    continue
+                records = [record for record in _as_list(validation.get("commands")) if isinstance(record, dict)]
+                checks = _as_list(item["validation"])
+                def covered(check: Any) -> bool:
+                    check = {"command": check} if isinstance(check, str) else check
+                    if not isinstance(check, dict):
+                        return False
+                    command = check.get("command")
+                    check_id = check.get("id")
+                    return any((command and record.get("command") == command)
+                               or (not command and check_id and record.get("id") == check_id) for record in records)
+                if related.get("plan") == data.get("id") and related.get("task") == item.get("id") and all(covered(check) for check in checks):
+                    control(handoff, "validation_evidence")
+                    found = True
+            if not found:
+                missing.append("validation_evidence:" + str(item.get("id")))
+        # Preserve native identities/receipts; do not invent a parallel validation store.
+        path = root / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json"
+        if path.is_file():
+            control(path, "validation_observation")
+    return required, sorted(set(missing))
+
+
+def source_snapshot_entries(source_root: Path) -> list[dict[str, str]]:
+    """Exact committed regular-file tree; symlinks/submodules fail closed."""
+    result = subprocess.run(["git", "-C", str(source_root), "ls-tree", "-rz", "HEAD"], capture_output=True)
+    if result.returncode:
+        raise ReviewContractError("stage evidence source tree unavailable")
+    entries = []
+    for row in result.stdout.split(b"\0"):
+        if not row:
+            continue
+        header, raw_path = row.split(b"\t", 1)
+        mode, kind, oid = header.decode().split()
+        path = raw_path.decode("utf-8")
+        if kind != "blob" or mode not in {"100644", "100755"}:
+            raise ReviewContractError("stage evidence snapshot requires regular files (no symlinks/submodules)")
+        entries.append({"locator": "source:" + path, "git_mode": mode, "git_blob": oid})
+    return entries
+
+
+def snapshot_tree_identity(entries: list[dict[str, str]]) -> str:
+    tree: dict[str, Any] = {}
+    for entry in entries:
+        locator = entry["locator"]
+        if not locator.startswith("source:") or entry["git_mode"] not in {"100644", "100755"}:
+            raise ReviewContractError("invalid source snapshot entry")
+        parts = locator[7:].split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ReviewContractError("invalid source snapshot path")
+        node = tree
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+            if not isinstance(node, dict):
+                raise ReviewContractError("source snapshot path collision")
+        if parts[-1] in node:
+            raise ReviewContractError("source snapshot duplicate path")
+        node[parts[-1]] = (entry["git_mode"], entry["git_blob"])
+
+    def digest(node: dict[str, Any]) -> str:
+        rows = []
+        for name, value in node.items():
+            directory = isinstance(value, dict)
+            mode, oid = ("40000", digest(value)) if directory else value
+            rows.append((name.encode() + (b"/" if directory else b""), mode.encode() + b" " + name.encode() + b"\0" + bytes.fromhex(oid)))
+        content = b"".join(row for _, row in sorted(rows))
+        return hashlib.sha1(b"tree " + str(len(content)).encode() + b"\0" + content).hexdigest()
+    return digest(tree)
+
+
+def stage_evidence_manifest(root: Path, source_root: Path, context: Mapping[str, Any], artifacts: list[dict[str, Any]]) -> dict[str, Any]:
+    locator = str(context["target_locator"])
+    if not locator.startswith("control:"):
+        raise ReviewContractError("stage evidence target must be control-local")
+    target = root / locator[8:]
+    required, missing = stage_evidence_requirements(root, str(context["stage"]), target)
+    source = source_snapshot_entries(source_root) if context["stage"] == "integrated_implementation" else []
+    for entry in source:
+        required.setdefault(entry["locator"], "source_tree")
+    available = {item["locator"]: item for item in artifacts}
+    for entry in source:
+        path = source_root / entry["locator"][7:]
+        content = path.read_bytes()
+        blob = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+        if path.is_symlink() or blob != entry["git_blob"]:
+            raise ReviewContractError("stage evidence source bytes differ from committed tree")
+    entries = []
+    for key, role in sorted(required.items()):
+        if key not in available:
+            missing.append(key)
+            continue
+        entry = {"locator": key, "role": role, "sha256": available[key]["sha256"]}
+        if role in {"target", "plan_member", "verified_specification"}:
+            entry["identity"] = artifact_review_identity(root / key[8:])
+        entries.append(entry)
+    return {"schema": "stage-evidence-manifest-v1", "stage": context["stage"],
+            "target_identity": context["target_identity"], "entries": entries,
+            "source_tree": source, "missing": sorted(set(missing))}
+
+
+def validate_stage_evidence(root: Path, context: Mapping[str, Any], packet: Mapping[str, Any]) -> None:
+    manifest = packet.get("stage_evidence_manifest")
+    if (not isinstance(manifest, dict) or manifest.get("schema") != "stage-evidence-manifest-v1"
+            or manifest.get("stage") != context["stage"] or manifest.get("target_identity") != context["target_identity"]
+            or manifest.get("missing") != [] or context.get("evidence_mode") != "reproducible_snapshot"):
+        raise ReviewContractError("stage evidence requires a complete reproducible snapshot")
+    target = str(context["target_locator"])
+    if not target.startswith("control:"):
+        raise ReviewContractError("stage evidence target must be control-local")
+    required, missing = stage_evidence_requirements(root, str(context["stage"]), root / target[8:])
+    source = manifest.get("source_tree", [])
+    if context["stage"] == "integrated_implementation":
+        if snapshot_tree_identity(source) != context["target_identity"]["source_tree"]:
+            raise ReviewContractError("stage evidence source snapshot is incomplete")
+        for entry in source:
+            required.setdefault(entry["locator"], "source_tree")
+    elif source:
+        raise ReviewContractError("unexpected source snapshot")
+    entries = {entry["locator"]: entry for entry in manifest.get("entries", [])}
+    artifacts = {entry["locator"]: entry for entry in packet["artifacts"]}
+    if missing or set(entries) != set(required) or len(entries) != len(manifest["entries"]):
+        raise ReviewContractError("stage evidence closure is incomplete")
+    for locator, role in required.items():
+        entry = entries[locator]
+        if entry.get("role") != role or locator not in artifacts or entry.get("sha256") != artifacts[locator].get("sha256"):
+            raise ReviewContractError("stage evidence artifact binding mismatch")
+        if role in {"target", "plan_member", "verified_specification"}:
+            if entry.get("identity") != artifact_review_identity(root / locator[8:]):
+                raise ReviewContractError("stage evidence authority identity changed")
+
+
 def _known_execution_ids(root: Path, stage: str, identity: Mapping[str, Any]) -> set[str]:
-    from execution_context import _read_structured
     area = root / ".work-bundle/orchestration" / ("spec" if stage == "specification" else "plan")
     ids: set[str] = set()
     for path in area.rglob("*.md"):
@@ -149,6 +350,7 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
             or receipt.get("packet_sha256") != canonical(packet) or packet.get("stage_review_context") != context
             or context.get("target_identity") != review["target_identity"] or context.get("stage") != review["stage"]
             or context.get("agent_id") != review["reviewer"]["agent_id"]
+            or context.get("evidence_mode") != review["reviewer"]["context_origin"]
             or context.get("capability") != review["reviewer"]["capability"] or context.get("evidence_mode") != mode
             or receipt.get("isolation") != {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
             or not context.get("execution_id")
@@ -156,6 +358,7 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
             or receipt.get("event_log_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".events.jsonl"))).hexdigest()):
         raise ReviewContractError("reviewer-run provenance does not bind this accepted review")
     known = _known_execution_ids(root, str(review["stage"]), review["target_identity"])
+    validate_stage_evidence(root, context, packet)
     if run_id in known or context["execution_id"] in known:
         raise ReviewContractError("reviewer-run provenance overlaps author/repair execution")
 
@@ -166,7 +369,6 @@ def artifact_review_identity(path: Path, *, content: str | None = None) -> dict[
     Body, version, links, validation definitions and all other metadata remain bound.
     This permits the approved status transition without invalidating its own review.
     """
-    from execution_context import parse_yaml_subset
     text = path.read_text(encoding="utf-8") if content is None else content.rstrip() + "\n"
     if not text.startswith("---\n") or "\n---\n" not in text[4:]:
         raise SystemExit(f"stage review: missing artifact front matter: {path}")
@@ -228,7 +430,6 @@ def require_specification_review(root: Path, path: Path, *, content: str | None 
 
 
 def plan_review_identity(root: Path, plan_path: Path, *, content: str | None = None) -> dict[str, Any]:
-    from execution_context import _read_structured, _resolve_spec_paths, parse_yaml_subset
     plan_root = root / ".work-bundle/orchestration/plan"
     if not plan_path.resolve().is_relative_to(plan_root.resolve()):
         raise SystemExit("stage review: root plan escapes plan store")
@@ -253,7 +454,6 @@ def plan_review_identity(root: Path, plan_path: Path, *, content: str | None = N
 
 def require_plan_reviews(root: Path, plan_path: Path, *, source_root: Path | None = None,
                          content: str | None = None) -> None:
-    from execution_context import _read_structured, _resolve_spec_paths, parse_yaml_subset
     data = (_read_structured(plan_path)[0] if content is None
             else parse_yaml_subset(content.split("---", 2)[1]))
     for spec in _resolve_spec_paths(root, {}, data):

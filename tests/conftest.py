@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from pathlib import Path
+import sys
 
 
 @pytest.fixture(autouse=True)
@@ -13,5 +13,6 @@ def disable_invocation_observation(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def isolated_reviewer_receipt_store(tmp_path, monkeypatch):
     """Exercise native receipt lookup without using the user's runtime store."""
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts/orchestration"))
-    monkeypatch.setattr("review_runtime.reviewer_runtime_root", lambda root: tmp_path.parent / f"reviewer-runtime-{tmp_path.name}")
+    module = sys.modules.get("review_runtime")
+    if module is not None:
+        monkeypatch.setattr(module, "reviewer_runtime_root", lambda root: tmp_path.parent / f"reviewer-runtime-{tmp_path.name}")
