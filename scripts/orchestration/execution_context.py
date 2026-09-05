@@ -12,8 +12,12 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from datetime import datetime, timezone
+
 
 from core import is_relative_to, read_front_matter, resolve_workspace_root
+from artifact_inputs import (_split_top_level, _split_key_value, _parse_scalar, parse_yaml_subset,
+                             _read_structured, _as_list, _input_path, _resolve_spec_paths)
 from repository_preflight import capture_repository_evidence, task_caused_paths
 
 
@@ -97,6 +101,171 @@ SOURCE_SUFFIXES = {
     ".vue",
 }
 
+REQUIRED_EVALUATION_NEIGHBOR_FAMILIES = (
+    "production composition",
+    "identity replay",
+    "owner state",
+    "symlink containment",
+    "effect boundary",
+    "evidence provenance",
+    "evaluator context",
+)
+
+
+def required_evaluation_neighbors() -> tuple[str, ...]:
+    """Return the fixed REQ-064 risk-neighbor obligations in authority order."""
+    return REQUIRED_EVALUATION_NEIGHBOR_FAMILIES
+
+
+def _capability_index_module() -> Any:
+    name = "_work_bundle_semantic_capability_index"
+    existing = sys.modules.get(name)
+    if existing is not None:
+        return existing
+    path = Path(__file__).resolve().parents[1] / "keep-summarizing" / "capability_index.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"Unable to load semantic capability runtime: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(name, None)
+        raise
+    return module
+
+
+def _trusted_capability_node(index: Any, node: Any) -> bool:
+    authority = {
+        item.evidence_id
+        for item in index.evidence
+        if item.authority is True
+        or isinstance(item.authority, str)
+        and item.authority.casefold() in {"authoritative", "accepted", "current", "confirmed"}
+    }
+    return (
+        node.lifecycle in {"grounded", "accepted"}
+        and node.freshness == "current"
+        and bool(set(node.evidence_ids) & authority)
+    )
+
+
+def capability_authority_delta(before: Any, after: Any) -> dict[str, list[str]]:
+    """Describe authority changes without promoting candidate or stale semantic data."""
+    before_nodes = {node.node_id: node for node in before.nodes}
+    after_nodes = {node.node_id: node for node in after.nodes}
+    before_trusted = {key for key, node in before_nodes.items() if _trusted_capability_node(before, node)}
+    after_trusted = {key for key, node in after_nodes.items() if _trusted_capability_node(after, node)}
+    shared = before_trusted & after_trusted
+    changed = sorted(
+        node_id
+        for node_id in shared
+        if before_nodes[node_id].to_dict() != after_nodes[node_id].to_dict()
+    )
+    advisory_only = sorted(
+        node_id
+        for node_id in after_nodes.keys() - before_nodes.keys()
+        if not _trusted_capability_node(after, after_nodes[node_id])
+    )
+    return {
+        "added": sorted(after_trusted - before_trusted),
+        "removed": sorted(before_trusted - after_trusted),
+        "changed": changed,
+        "advisory_only": advisory_only,
+    }
+
+
+def project_capability_neighborhood(
+    index: Any,
+    query_text: str,
+    *,
+    depth: str = "standard",
+    max_nodes: int = 32,
+) -> dict[str, Any]:
+    """Project a bounded, provenance-bearing semantic neighborhood into executor context."""
+    capability = _capability_index_module()
+    if depth not in capability.TRAVERSAL_DEPTHS:
+        raise SystemExit("Capability projection depth must be light, standard, or deep")
+    if not isinstance(max_nodes, int) or isinstance(max_nodes, bool) or max_nodes < 1:
+        raise SystemExit("Capability projection max_nodes must be a positive integer")
+    ranked = capability.rank_candidates(index, query_text)
+    chosen: list[tuple[str, str, str | None]] = []
+    seen: set[str] = set()
+    gaps: list[str] = []
+    obligations: list[dict[str, Any]] = []
+    for family in required_evaluation_neighbors():
+        matches = capability.rank_candidates(index, family)
+        match = next((item for item in matches if item.trusted), None)
+        if match is None:
+            gaps.append(f"missing required evaluation neighbor: {family}")
+            obligations.append({"obligation_id": f"neighbor:{family.replace(' ', '-')}", "kind": "evaluation_neighbor", "status": "blocked", "evidence_ids": []})
+            continue
+        obligations.append({"obligation_id": f"neighbor:{family.replace(' ', '-')}", "kind": "evaluation_neighbor", "status": "satisfied", "evidence_ids": list(index.node(match.node_id).evidence_ids)})
+        if match.node_id not in seen:
+            chosen.append((match.node_id, f"required_evaluation_neighbor:{family}", None))
+            seen.add(match.node_id)
+    for item in ranked:
+        if item.trusted and item.node_id not in seen:
+            chosen.append((item.node_id, "intent_match", None))
+            seen.add(item.node_id)
+
+    from dataclasses import replace
+    trusted = {node.node_id for node in index.nodes if _trusted_capability_node(index, node)}
+    graph = replace(index, nodes=tuple(node for node in index.nodes if node.node_id in trusted),
+                    relations=tuple(edge for edge in index.relations
+                                    if edge.from_id in trusted and edge.to_id in trusted))
+    traversal = capability.traverse_capabilities(graph, list(seen), depth=depth, max_nodes=max_nodes) if seen else None
+    if traversal:
+        for entry in traversal.inclusions:
+            if entry.node_id not in seen:
+                chosen.append((entry.node_id, "typed_relation", None))
+                seen.add(entry.node_id)
+    included_candidates = chosen[:max_nodes]
+    included_ids = {item[0] for item in included_candidates}
+    frontier = sorted(({node_id for node_id, _, _ in chosen[max_nodes:]} |
+                       set(traversal.frontier if traversal else ())) - included_ids)
+    inclusions: list[dict[str, Any]] = []
+    for rank, (node_id, reason, family) in enumerate(included_candidates, start=1):
+        node = index.node(node_id)
+        inclusion: dict[str, Any] = {
+            "node_id": node_id, "reason": reason, "rank": rank,
+            "evidence_ids": list(node.evidence_ids),
+        }
+        inclusions.append(inclusion)
+    exclusions = []
+    for node in sorted(index.nodes, key=lambda item: item.node_id):
+        if _trusted_capability_node(index, node):
+            continue
+        reason = "stale" if node.freshness == "stale" else "non_authoritative"
+        exclusions.append({"node_id": node.node_id, "reason": reason})
+    query_tokens = {token.casefold() for token in re.findall(r"[A-Za-z0-9_]+", query_text)}
+    trigger_map = {
+        "permission": {"permission", "access"}, "ownership": {"owner", "ownership"},
+        "destructive_effect": {"delete", "destructive", "remove"}, "data_effect": {"data", "database"},
+        "external_effect": {"external", "remote", "network"}, "state_transition": {"state", "transition"},
+        "compatibility": {"compatibility", "legacy"}, "evidence_conflict": {"conflict", "contradiction"},
+    }
+    triggers = [name for name, tokens in trigger_map.items() if query_tokens & tokens]
+    source_payload = json.dumps(index.to_dict(), sort_keys=True, separators=(",", ":"))
+    return {
+        "query_id": f"query:{hashlib.sha256(query_text.encode('utf-8')).hexdigest()[:20]}",
+        "query_text_digest": f"sha256:{hashlib.sha256(query_text.encode('utf-8')).hexdigest()}",
+        "depth": depth,
+        "obligations": obligations,
+        "triggers": triggers,
+        "inclusions": inclusions,
+        "exclusions": exclusions,
+        "frontier": [
+            {"node_id": node_id, "information_value": 1.0, "evidence_cost": 1.0, "miss_risk": 1.0, "expand": True}
+            for node_id in frontier
+        ],
+        "gaps": gaps,
+        "stopping_reason": ("node_budget" if len(chosen) > max_nodes else
+                            traversal.stopping_reason if traversal else "frontier_exhausted"),
+        "source_index_digest": f"sha256:{hashlib.sha256(source_payload.encode('utf-8')).hexdigest()}",
+    }
+
 
 def _source_paths(values: Any) -> list[str]:
     return [
@@ -174,168 +343,18 @@ def _compile_executor_profile(task: dict[str, Any], task_path: Path) -> dict[str
     return dict(profile)
 
 
-def _split_top_level(value: str, delimiter: str = ",") -> list[str]:
-    parts: list[str] = []
-    start = 0
-    depth = 0
-    quote: str | None = None
-    escaped = False
-    for index, char in enumerate(value):
-        if escaped:
-            escaped = False
-            continue
-        if quote and char == "\\":
-            escaped = True
-            continue
-        if char in {'"', "'"}:
-            if quote == char:
-                quote = None
-            elif quote is None:
-                quote = char
-            continue
-        if quote:
-            continue
-        if char in "[{(":
-            depth += 1
-        elif char in "]})":
-            depth -= 1
-        elif char == delimiter and depth == 0:
-            parts.append(value[start:index].strip())
-            start = index + 1
-    parts.append(value[start:].strip())
-    return [part for part in parts if part]
 
 
-def _split_key_value(value: str) -> tuple[str, str]:
-    if ":" not in value:
-        raise SystemExit(f"Invalid YAML mapping entry: {value}")
-    key, raw = value.split(":", 1)
-    return key.strip().strip("'\""), raw.strip()
 
 
-def _parse_scalar(value: str) -> Any:
-    value = value.strip()
-    if not value:
-        return ""
-    if value.startswith("[") and value.endswith("]"):
-        inner = value[1:-1].strip()
-        return [] if not inner else [_parse_scalar(part) for part in _split_top_level(inner)]
-    if value.startswith("{") and value.endswith("}"):
-        inner = value[1:-1].strip()
-        result: dict[str, Any] = {}
-        for part in _split_top_level(inner):
-            key, raw = _split_key_value(part)
-            result[key] = _parse_scalar(raw)
-        return result
-    if value[:1] == value[-1:] and value[:1] in {'"', "'"}:
-        if value.startswith('"'):
-            try:
-                return json.loads(value)
-            except json.JSONDecodeError:
-                pass
-        return value[1:-1]
-    lowered = value.lower()
-    if lowered in {"true", "false"}:
-        return lowered == "true"
-    if lowered in {"null", "none", "~"}:
-        return None
-    if re.fullmatch(r"-?\d+", value):
-        return int(value)
-    return value
 
 
-def parse_yaml_subset(text: str) -> dict[str, Any]:
-    """Parse the compact YAML subset used by orchestration contracts."""
-
-    rows: list[tuple[int, str]] = []
-    for raw in text.splitlines():
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            continue
-        indent = len(raw) - len(raw.lstrip(" "))
-        rows.append((indent, raw.strip()))
-
-    def parse_block(index: int, indent: int) -> tuple[Any, int]:
-        if index >= len(rows) or rows[index][0] < indent:
-            return {}, index
-        is_list = rows[index][0] == indent and rows[index][1].startswith("- ")
-        container: Any = [] if is_list else {}
-        while index < len(rows):
-            row_indent, content = rows[index]
-            if row_indent < indent:
-                break
-            if row_indent > indent:
-                raise SystemExit(f"Invalid YAML indentation near: {content}")
-            if is_list:
-                if not content.startswith("- "):
-                    break
-                item_text = content[2:].strip()
-                if not item_text:
-                    item, index = parse_block(index + 1, indent + 2)
-                elif item_text.startswith("{"):
-                    item = _parse_scalar(item_text)
-                    index += 1
-                elif ":" in item_text and not item_text.startswith(("'", '"', "`")):
-                    key, raw_value = _split_key_value(item_text)
-                    item = {key: _parse_scalar(raw_value)}
-                    index += 1
-                    if index < len(rows) and rows[index][0] > indent:
-                        continuation, index = parse_block(index, indent + 2)
-                        if not isinstance(continuation, dict):
-                            raise SystemExit(f"Invalid YAML list mapping near: {item_text}")
-                        item.update(continuation)
-                else:
-                    item = _parse_scalar(item_text)
-                    index += 1
-                container.append(item)
-                continue
-
-            if content.startswith("- "):
-                break
-            key, raw_value = _split_key_value(content)
-            index += 1
-            if raw_value:
-                container[key] = _parse_scalar(raw_value)
-            elif index < len(rows) and rows[index][0] > indent:
-                container[key], index = parse_block(index, rows[index][0])
-            else:
-                container[key] = {}
-        return container, index
-
-    if not rows:
-        return {}
-    parsed, index = parse_block(0, rows[0][0])
-    if index != len(rows) or not isinstance(parsed, dict):
-        raise SystemExit("Expected a YAML mapping")
-    return parsed
 
 
-def _read_structured(path: Path) -> tuple[dict[str, Any], str]:
-    raw = path.read_text(encoding="utf-8")
-    if raw.startswith("---\n"):
-        end = raw.find("\n---\n", 4)
-        if end < 0:
-            raise SystemExit(f"Unterminated front matter: {path}")
-        return parse_yaml_subset(raw[4:end]), raw[end + 5 :]
-    return parse_yaml_subset(raw), ""
 
 
-def _as_list(value: Any) -> list[Any]:
-    if value is None or value == "" or value == {}:
-        return []
-    return value if isinstance(value, list) else [value]
 
 
-def _input_path(raw: str | Path, root: Path, allowed: Path, label: str) -> Path:
-    path = Path(raw).expanduser()
-    path = path.resolve() if path.is_absolute() else (root / path).resolve()
-    if not is_relative_to(path, allowed.resolve()):
-        raise SystemExit(f"{label} path escapes its allowed root: {path}")
-    relative = path.relative_to(root.resolve()).as_posix()
-    if relative.startswith(".work-bundle/knowledge/") or relative.startswith("credentials/"):
-        raise SystemExit(f"{label} path uses a forbidden protected source: {relative}")
-    if not path.is_file():
-        raise SystemExit(f"{label} file not found: {path}")
-    return path
 
 
 def _protected_project_path(raw: object, root: Path) -> bool:
@@ -401,26 +420,6 @@ def _find_plan(root: Path, plan_id: str) -> tuple[Path, dict[str, Any]]:
     return matches[0]
 
 
-def _resolve_spec_paths(root: Path, task_data: dict[str, Any], plan_data: dict[str, Any]) -> list[Path]:
-    references = _as_list(task_data.get("source_spec")) or _as_list(plan_data.get("source_spec"))
-    if not references:
-        raise SystemExit("Task/root plan does not declare source_spec")
-    spec_root = root / ".work-bundle/orchestration/spec"
-    result: list[Path] = []
-    for reference in references:
-        raw = str(reference)
-        if "/" in raw or raw.endswith(".md"):
-            result.append(_input_path(raw, root, spec_root, "source specification"))
-            continue
-        matches: list[Path] = []
-        for candidate in sorted(spec_root.glob("*/*.md")):
-            data, _ = _read_structured(candidate)
-            if str(data.get("id", "")) == raw:
-                matches.append(candidate)
-        if len(matches) != 1:
-            raise SystemExit(f"Expected one source specification for {raw}; found {len(matches)}")
-        result.append(matches[0])
-    return result
 
 
 def _strip_markup(text: str) -> str:
@@ -441,16 +440,24 @@ def _source_records(path: Path, body: str) -> dict[str, str]:
             raise SystemExit(f"Ambiguous source ID {identifier} in {path}")
         records[identifier] = value
 
-    for line in body.splitlines():
-        titled_bullet = re.match(
-            rf"^\s*[-*]\s+\*\*({SOURCE_ID_TOKEN})\s*[—-]\s*(.+?)(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
-            line,
-        )
-        if titled_bullet:
-            title = titled_bullet.group(2).strip()
-            detail = titled_bullet.group(3).strip()
-            add(titled_bullet.group(1), f"{title}: {detail}")
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        block = re.match(rf"^(\s+)({SOURCE_ID_TOKEN})\s*:\s*$", line)
+        if not block:
             continue
+        base_indent = len(block.group(1))
+        detail: list[str] = []
+        for child in lines[index + 1 :]:
+            if not child.strip():
+                continue
+            child_indent = len(child) - len(child.lstrip())
+            if child_indent <= base_indent:
+                break
+            detail.append(child.strip())
+        if detail:
+            add(block.group(2), " ".join(detail))
+
+    for line in lines:
         bullet = re.match(
             rf"^\s*[-*]\s+\*\*({SOURCE_ID_TOKEN})(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
             line,
@@ -458,8 +465,24 @@ def _source_records(path: Path, body: str) -> dict[str, str]:
         if bullet:
             add(bullet.group(1), bullet.group(2))
             continue
+        titled_bullet = re.match(
+            rf"^\s*[-*]\s+\*\*({SOURCE_ID_TOKEN})\s+[—-]\s+(.+?)(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
+            line,
+        )
+        if titled_bullet:
+            title = titled_bullet.group(2).strip()
+            detail = titled_bullet.group(3).strip()
+            add(titled_bullet.group(1), f"{title}: {detail}")
+            continue
+        bold_plain = re.match(
+            rf"^\s*\*\*({SOURCE_ID_TOKEN})(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
+            line,
+        )
+        if bold_plain:
+            add(bold_plain.group(1), bold_plain.group(2))
+            continue
         titled_plain = re.match(
-            rf"^\s*\*\*({SOURCE_ID_TOKEN})\s*[—-]\s*(.+?)(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
+            rf"^\s*\*\*({SOURCE_ID_TOKEN})\s+[—-]\s+(.+?)(?::\*\*\s*|\*\*\s*:\s*)(.+)$",
             line,
         )
         if titled_plain:
@@ -931,6 +954,7 @@ def _validated_knowledge_disposition(
 
 
 _EW_MODULE = None
+_CP_MODULE = None
 
 
 def _execution_workspace_module():
@@ -947,6 +971,15 @@ def _execution_workspace_module():
         spec.loader.exec_module(module)
         _EW_MODULE = module
     return _EW_MODULE
+
+
+def _completion_provenance_module():
+    global _CP_MODULE
+    if _CP_MODULE is None:
+        import completion_provenance
+
+        _CP_MODULE = completion_provenance
+    return _CP_MODULE
 
 
 def _binding_path(control_root: Path, plan_id: str, task_id: str) -> Path:
@@ -1060,6 +1093,8 @@ def create_or_load_task_execution_binding(
 ) -> dict[str, Any]:
     control_root = control_root.expanduser().resolve()
     runtime_root = runtime_root.expanduser().resolve()
+    from review_runtime import require_plan_reviews
+    require_plan_reviews(control_root, _find_plan(control_root, plan_id)[0])
     path = _binding_path(control_root, plan_id, task_id)
     if path.exists():
         binding = load_task_execution_binding(control_root, plan_id, task_id)
@@ -1077,6 +1112,13 @@ def create_or_load_task_execution_binding(
     loaded = _execution_workspace_module().load_state(runtime_root, workspace_id, execution_id, repository_id)
     state = loaded["execution_workspace_state"]
     identity = loaded["git_identity"]
+    target_kind = "isolated_worktree" if state.get("kind") == "worktree" else "git_backed"
+    ownership = _completion_provenance_module().execution_binding_ownership(
+        control_root / ".work-bundle/runtime/completion-provenance",
+        binding_id=f"binding:{plan_id}:{task_id}",
+        target_kind=target_kind,
+        owner=task_id,
+    )
     binding = {
         "plan_id": plan_id,
         "task_id": task_id,
@@ -1090,6 +1132,7 @@ def create_or_load_task_execution_binding(
         "git_identity": identity,
         "write_scope": list(write_scope or []),
         "forbidden_scope": list(forbidden_scope or []),
+        "ownership": ownership,
         "mutating": True,
         "baseline": None,
     }
@@ -1100,6 +1143,8 @@ def create_or_load_task_execution_binding(
 
 def load_task_execution_binding(control_root: Path, plan_id: str, task_id: str) -> dict[str, Any]:
     binding = _read_binding_file(_binding_path(control_root.expanduser().resolve(), plan_id, task_id))
+    if "ownership" not in binding:
+        raise SystemExit("Task execution binding ownership is invalid")
     required = {
         "plan_id",
         "task_id",
@@ -1110,11 +1155,21 @@ def load_task_execution_binding(control_root: Path, plan_id: str, task_id: str) 
         "execution_path",
         "state_path",
         "git_identity",
+        "ownership",
     }
     if not required.issubset(binding):
         raise SystemExit("Task execution binding provenance is invalid")
     if binding.get("plan_id") != plan_id or binding.get("task_id") != task_id:
         raise SystemExit("Task execution binding identity mismatch")
+    try:
+        ownership = _completion_provenance_module().validate_execution_binding_ownership(
+            control_root.expanduser().resolve() / ".work-bundle/runtime/completion-provenance",
+            binding["ownership"],
+        )
+    except (KeyError, TypeError, _completion_provenance_module().CompletionProvenanceError) as error:
+        raise SystemExit("Task execution binding ownership is invalid") from error
+    if ownership.get("binding_id") != f"binding:{plan_id}:{task_id}":
+        raise SystemExit("Task execution binding ownership identity mismatch")
     _verify_binding_provenance(binding)
     return binding
 
@@ -1164,7 +1219,7 @@ def _run_named_inspection(mechanism: str, execution_root: Path, task: dict[str, 
     return "passed" if actual == expected else "failed"
 
 
-def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: dict[str, Any]) -> dict[str, Any]:
+def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: dict[str, Any], receipt: dict | None = None) -> dict[str, Any]:
     command = str(item.get("command") or "").strip()
     kind = str(item.get("kind") or "").strip().lower()
     if kind not in VALIDATION_KINDS:
@@ -1185,6 +1240,7 @@ def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: d
             raise SystemExit("Inspection validation requires a named harness-owned mechanism")
         result_value = _run_named_inspection(mechanism, execution_root, task, item)
         return {"command": command, "result": result_value, "kind": "inspection", "mechanism": mechanism, "id": item.get("id"), "invariant_ids": list(_as_list(item.get("invariant_ids")))}
+    started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     completed = subprocess.run(
         command,
         shell=True,
@@ -1193,6 +1249,11 @@ def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: d
         text=True,
         check=False,
     )
+    if receipt is not None:
+        receipt.update(exit_code=completed.returncode,
+                       stdout_digest=hashlib.sha256(completed.stdout.encode()).hexdigest(),
+                       stderr_digest=hashlib.sha256(completed.stderr.encode()).hexdigest(),
+                       started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     return {
         "command": command,
         "result": "passed" if completed.returncode == 0 else "failed",
@@ -1230,7 +1291,7 @@ def _observe_completed_validation(
     handoff: dict[str, Any],
     task: dict[str, Any],
     required_items: list[dict[str, Any]],
-    reported_commands: dict[str, dict[str, Any]],
+    reported_commands: dict[str, dict[str, Any]] | None,
     *,
     workspace_id: str | None = None,
     execution_id: str | None = None,
@@ -1245,6 +1306,8 @@ def _observe_completed_validation(
     if not control_root_raw:
         raise SystemExit("Task execution binding is missing harness provenance")
     control_root = Path(str(control_root_raw))
+    from review_runtime import require_plan_reviews
+    require_plan_reviews(control_root, _find_plan(control_root, str(task["plan_id"]))[0])
     binding = load_task_execution_binding(control_root, str(task["plan_id"]), str(task["task_id"]))
     if workspace_id and str(binding.get("workspace_id") or "") != str(workspace_id):
         raise SystemExit("Task execution binding workspace_id mismatch")
@@ -1265,11 +1328,17 @@ def _observe_completed_validation(
     except RuntimeError as error:
         raise SystemExit(str(error)) from error
     observed_items: list[dict[str, Any]] = []
+    task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
+    _assert_task_caused_delta_in_write_scope(task_caused_paths(baseline, pre_batch, execution_root), task_files)
     for item in required_items:
-        observed = _observe_validation_item(item, execution_root, task)
+        observed = _completion_provenance_module().observe_validation(
+            binding, task, item, pre_batch,
+            lambda receipt: _observe_validation_item(item, execution_root, task, receipt),
+            lambda: capture_repository_evidence(execution_root),
+        )
         command = str(item.get("command")).strip()
-        reported_item = reported_commands[command]
-        if reported_item.get("result") != observed["result"]:
+        reported_item = reported_commands[command] if reported_commands is not None else None
+        if reported_item is not None and reported_item.get("result") != observed["result"]:
             raise SystemExit(
                 f"Executor result validation for {command} does not match observed {observed['result']}"
             )
@@ -1769,6 +1838,11 @@ def _compile_structured_validation_item(item: Any) -> dict[str, Any]:
             "Task validation kind must be process or inspection; untyped structured validation is legacy-untyped"
         )
     compiled["kind"] = kind
+    if "reuse_seconds" in item or "evidence_reuse" in item:
+        try:
+            compiled["evidence_reuse"] = _completion_provenance_module().validation_reuse_policy(item)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
     for key in ("id", "invariant_ids", "capability_reason", "command", "proves", "expected", "acceptable_results", "digest"):
         if key in item:
             compiled[key] = item[key]
@@ -2215,6 +2289,13 @@ def cmd_build_task_brief(args: argparse.Namespace) -> None:
 def cmd_build_review_package(args: argparse.Namespace) -> None:
     target = build_review_package(args)
     print(target.relative_to(resolve_workspace_root(args)).as_posix())
+
+
+def cmd_observe_task_validation(args: argparse.Namespace) -> None:
+    _, brief_document = _compile_task_brief(args)
+    task = brief_document["task_brief"]
+    observed = _observe_completed_validation({}, task, task["validation"], None, **_observation_kwargs(args))
+    print(json.dumps({"validation": observed}, sort_keys=True))
 
 
 def cmd_validate_executor_result(args: argparse.Namespace) -> None:

@@ -1,0 +1,16 @@
+{
+  "fixture_id": "ADV-04",
+  "input": {
+    "class": "advisory_enhancement",
+    "severity": "blocking",
+    "obligation_basis": "none",
+    "evidence": []
+  },
+  "expected_decision": "reject_blocking_and_record_nonblocking_advisory",
+  "proof_required": [
+    "validation_error_code",
+    "advisory_id",
+    "stage_state_before_sha256",
+    "stage_state_after_sha256"
+  ]
+}

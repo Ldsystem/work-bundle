@@ -1,0 +1,24 @@
+schema: wor105-native-transition-v1
+issue: WOR-105
+transition_task: task-b06r
+enforcement_transition: bootstrap_policy_to_native
+source_identity: 10aa3aceeea4c440feaccb484b897af67cd0df0b+repository-evidence-sha256:279f142fad6ea3005370b9eaa82d7c88444032e668309173e9230754b28c40ae
+review_path: .work-bundle/orchestration/reviews/WOR-105-task-b06r-kernel-review-accepted.yaml
+review_sha256: d638b8959b4db57dd33e072b01428d6ce89f65a9771c05eff26d8e40d4293ebd
+accepted_commit: 10aa3aceeea4c440feaccb484b897af67cd0df0b
+accepted_tree: 3f70163e3aef240b0f1207f43433874c9139a7fb
+integrated_validation: {id: VAL-B06R-TEST, result: passed, tests: 300}
+handoff_validation: {id: VAL-B06R-IDENTITY, result: passed, adversarial_cases: 5}
+participant_handoffs:
+  task-b01: 057ff7eddb3bbfa07e211a3e35f3046fa2ed68520863a791b1362cf8a47a1a08
+  task-b02: f7382e2751cd3d5714530d2b92516a69e29603900061258e1ed133feec3e0f4f
+  task-b03: 7fef606e4d79f375e7b85be07b8751b06f696fb5e5b0bbf481e388038f19e9f3
+  task-b03a: d51c708d5795840b1ed82876cf5853d6b80c114774484d2437100b44acf91b4a
+  task-b04: b0cd71258ba3e90da28afde93450b59a80c53879fe90e613be87e377fa399064
+  task-b05: b847cf7d36421e40f09868136a13161504a3e8e9e50e066dd3586aa72b923468
+  task-b01r: d266b6d8729d38022daf394b0d342f364409b426628278494c59523e3ba1734d
+  task-b04r: d7f0bf334c65031ceb5cf80a944e4b1a0f8de3b6b1fd558884ad3f7057931887
+  task-b05r: e9ab2afa4da77eb371da0084d4ad77ba79835967f7d64c70c0300ed235d256a7
+native_scope: subsequent WOR-105 phase-c through phase-f execution only
+excluded_work: [WOR-66, WOR-79, WOR-107, work-bundle-mcp mutation]
+accepted_at: 2026-09-05

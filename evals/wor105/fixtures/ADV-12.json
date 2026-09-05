@@ -1,0 +1,18 @@
+{
+  "fixture_id": "ADV-12",
+  "input": {
+    "placeholder_remote": "dummy://placeholder",
+    "canonical_remote": null,
+    "materialization": "deferred",
+    "apply_count": 2
+  },
+  "expected_decision": "reject_placeholder_apply_deferred_without_checkout_or_origin_and_replay_noop",
+  "proof_required": [
+    "validation_error_code",
+    "member_snapshot_sha256",
+    "checkout_absent",
+    "origin_absent",
+    "first_apply_state_sha256",
+    "replay_state_sha256"
+  ]
+}

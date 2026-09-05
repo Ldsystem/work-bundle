@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:work-bundle:orchestration:review-finding:v1",
+  "$ref": "#/$defs/reviewFinding",
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "targetIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "revision", "sha256", "source_tree"],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/id"},
+        "revision": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "source_tree": {"anyOf": [{"$ref": "#/$defs/gitOid"}, {"type": "null"}]}
+      }
+    },
+    "evidenceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "locator", "digest_or_identity", "observation"],
+      "properties": {
+        "kind": {"enum": ["authority", "source", "test", "runtime", "environment"]},
+        "locator": {"type": "string", "minLength": 1},
+        "digest_or_identity": {"type": "string", "minLength": 1},
+        "observation": {"type": "string", "minLength": 1}
+      }
+    },
+    "reviewFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "stage", "class", "severity", "first_broken_artifact", "obligation_basis", "evidence", "target_identity", "summary", "recommended_owner", "disposition"],
+      "properties": {
+        "finding_id": {"$ref": "#/$defs/id"},
+        "stage": {"enum": ["specification", "plan", "implementation", "validation", "environment"]},
+        "class": {"enum": ["specification_gap", "decomposition_gap", "allocation_gap", "implementation_defect", "validation_oracle_defect", "environment_failure", "advisory_enhancement"]},
+        "severity": {"enum": ["blocking", "non_blocking", "advisory"]},
+        "first_broken_artifact": {"enum": ["specification", "plan", "task", "implementation", "validation_oracle", "environment"]},
+        "obligation_basis": {"enum": ["accepted_requirement", "essential_safety", "evidence_integrity", "none"]},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+        "target_identity": {"$ref": "#/$defs/targetIdentity"},
+        "summary": {"type": "string", "minLength": 1},
+        "recommended_owner": {"enum": ["specification_owner", "plan_owner", "task_owner", "oracle_owner", "environment_owner", "backlog_owner"]},
+        "disposition": {"enum": ["reopen_specification", "repair_plan", "reslice_plan", "repair_task", "repair_oracle", "recover_environment", "record_advisory", "accepted", "rejected"]}
+      }
+    }
+  }
+}

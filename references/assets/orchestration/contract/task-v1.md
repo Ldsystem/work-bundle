@@ -116,6 +116,25 @@ Structured front-matter `validation` is the sole canonical terminal authority fo
 
 Body `## Validation` is optional non-authoritative presentation and must not grant or block terminal authority. Prefer omitting it on new tasks. Do not add a YAML-versus-body equality gate, renderer, or synchronization machinery.
 
+Validation evidence reuse is owned by the existing WOR-105 source/evaluation and completion-provenance models. Declare deterministic eligibility explicitly:
+
+```yaml
+evidence_reuse:
+  mode: deterministic
+  max_age_seconds: 3600
+  environment_inputs: [PYTHONHASHSEED]
+  dependency_files: [runtime.lock]
+  profile: pinned-python-validation
+  output_paths: []
+  include_head: false
+```
+
+Only `mode` is needed for deterministic checks: its default freshness is 3600 seconds. Without a declaration, or with `mode: live`, freshness defaults to 0 (execute every time). A live check may explicitly declare bounded freshness. `max_age_seconds` is an integer 0–86400. Legacy `reuse_seconds` remains a deterministic opt-in, with HEAD binding retained; conflicting freshness fields fail closed. Skipped and failed observations do not create reusable positive evidence.
+
+The identity covers conservative material repository content and index state (including dirty/untracked and declared task-created inputs), semantic validation fields, runner/oracle code, declared dependency/profile identity, OS/architecture/runtime, explicitly relevant environment variables, and the execution binding/cwd. Use `include_head: true` for exact-commit claims such as release validation. Restoring the complete deterministic identity A → B → A may reuse its original fresh result; explicit provenance revocation still invalidates it. Local observations never substitute for GitHub platform evidence through an inferred equivalence.
+
+Generated WorkBundle runtime, handoff, review, and log artifacts are packaging, not implicit source inputs. Other observation outputs require exact repository-relative `output_paths`; explicit read/dependency inputs cannot also be output-only. This affects fingerprinting only: write-scope, Git-neutrality, handoff/task/plan identity, result shape, knowledge disposition, evidence closure, and authorization are still checked on every call. If an expensive check consumes an otherwise excluded artifact, declare it in `dependency_files`. Unknown external dependencies, unsupported links/submodules, or protected source inputs must not be approximated for reuse. Pin execution profiles and declare all relevant environment/dependency inputs; use fresh execution when coverage is uncertain. No per-feature dependency inference is performed.
+
 A legacy 3-column `Command or inspection | Proves | Expected` row without YAML `kind` is `legacy-untyped`. It fails closed until ordinary artifact repair migrates it to front-matter `kind: process|inspection`. Do not default it to `process`. Never shell-execute ambiguous legacy text.
 
 ## Completion

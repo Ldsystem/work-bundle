@@ -1,4 +1,6 @@
+import hashlib
 import subprocess
+from datetime import datetime, timezone
 
 from core import *
 from core import _member_roots
@@ -11,10 +13,15 @@ from execution_context import (
     _compile_task_brief,
     _observation_kwargs,
     _parse_scalar,
+    _execution_workspace_module,
+    _persist_binding,
+    load_task_execution_binding,
 )
+from completion_provenance import ManagedProvenanceStore, release_completion_binding
 from handoffs import _read_compact_yaml_metadata
 from repository_preflight import capture_repository_evidence, task_caused_paths
 from specs import load_index, replace_front_matter_value
+from review_runtime import require_plan_reviews
 
 
 def _plan_knowledge_field(body: str, label: str) -> str | None:
@@ -505,6 +512,11 @@ def cmd_write_plan(args: argparse.Namespace) -> None:
     content = Path(args.content_file).read_text(encoding="utf-8")
     content = ensure_front_matter(content, {"id": pid, "goal": args.title, "purpose": args.purpose, "component": args.component, "version": args.version, "date_created": now_date(), "last_updated": now_date(), "owner": "agent", "status": args.status})
     target = orchestration_root(args) / "plan" / "active" / filename
+    from execution_context import parse_yaml_subset
+    effective_status = parse_yaml_subset(content.split("---", 2)[1]).get("status")
+    if effective_status in {"In progress", "Completed"} or args.status in {"In progress", "Completed"}:
+        require_plan_reviews(project_root(args), target, content=content,
+                             source_root=_resolve_final_plan_workspace(args) if "Completed" in {effective_status, args.status} else None)
     write_text_safely(target, content, args)
     index_plans(args)
     print(rel(target, args))
@@ -537,6 +549,59 @@ def _assert_completed_task_handoff(args: argparse.Namespace, task_path: Path) ->
     )
 
 
+def _release_completed_task_binding(args: argparse.Namespace, row: dict[str, object]) -> dict[str, object]:
+    """Release and persist API-006 ownership after executor-result validation succeeds."""
+
+    control_root = resolve_workspace_root(args)
+    plan_id = str(row["plan_id"])
+    task_id = str(row["id"])
+    binding = load_task_execution_binding(control_root, plan_id, task_id)
+    handoff = Path(str(getattr(args, "handoff", "")))
+    artifact_digest = hashlib.sha256(handoff.read_bytes()).hexdigest() if handoff.is_file() else None
+    event = {
+        "event_id": "event-template",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "process_id": "process-plan-status",
+        "stage": "task-completion",
+        "attempt_id": str(binding["execution_id"]),
+        "event_type": "binding_released",
+        "enforcement_mode": "native",
+        "join_ids": {
+            "specification_id": None,
+            "plan_id": plan_id,
+            "phase_id": str(row.get("phase_id") or "") or None,
+            "task_id": task_id,
+            "review_id": None,
+            "evaluation_id": None,
+        },
+        "clocks": {"wall_ms": 0, "active_ms": 0, "billed_ms": None},
+        "finding_class": None,
+        "return_reason": "validated completion",
+        "owner": task_id,
+        "identity": {"product_tree": None, "artifact_digest": artifact_digest, "mutation_epoch": 0},
+        "privacy": "operational_metadata_only",
+    }
+    store = ManagedProvenanceStore(control_root / ".work-bundle/runtime/completion-provenance")
+    released = release_completion_binding(
+        store,
+        str(binding["ownership"]["binding_id"]),
+        owner=task_id,
+        stage_event_workspace=control_root,
+        stage_event=event,
+    ).to_dict()
+    updated = {**binding, "ownership": released}
+    _persist_binding(updated, control_root)
+    if released["target_kind"] == "isolated_worktree":
+        _execution_workspace_module().retain_binding_owner(
+            Path(str(binding["runtime_root"])),
+            str(binding["workspace_id"]),
+            str(binding["execution_id"]),
+            str(binding["repository_id"]),
+            ownership=released,
+        )
+    return released
+
+
 def cmd_set_plan_status(args: argparse.Namespace) -> None:
     if args.status not in PLAN_STATUSES:
         raise SystemExit(f"Invalid plan status: {args.status}")
@@ -562,8 +627,12 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
         raise SystemExit(f"Multiple plan artifacts match {args.id}{guidance}")
     row = matches[0]
     path = artifact_path_from_row(row, args)
+    if row.get("type") == "plan" and args.status in {"In progress", "Completed"}:
+        require_plan_reviews(project_root(args), path,
+                             source_root=_resolve_final_plan_workspace(args) if args.status == "Completed" else None)
     if args.status == "Completed" and row.get("type") == "task":
         _assert_completed_task_handoff(args, path)
+        _release_completed_task_binding(args, row)
     replace_front_matter_value(path, "status", args.status)
     if args.status == "Deprecated":
         active_root = orchestration_root(args) / "plan" / "active"
@@ -585,9 +654,11 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
     moved = []
 
     root_path = artifact_path_from_row(root_match, args)
+    require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))
     validated = _validated_plan_task_handoffs(args, args.id)
     _assert_archive_knowledge_gate(args, args.id, root_path, validated)
     _assert_archive_plan_acceptance(args, args.id, root_path, validated)
+    require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))
     if is_relative_to(root_path, active_root):
         replace_front_matter_value(root_path, "status", "Completed")
         moved.append(move_to_archive(root_path, active_root, archived_root))

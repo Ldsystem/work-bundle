@@ -67,6 +67,113 @@ When isolation is required or preferred, `orch-execute-plan` selects or prepares
 
 ## Task execution and acceptance
 
+Full orchestration has three stage gates, separate from optional task review:
+specification before `verified`, plan before execution, and integrated implementation
+before plan `Completed` or archive. Native lifecycle commands read JSON/YAML
+`stage-review-v1` envelopes under `.work-bundle/orchestration/reviews/`; a shape-valid
+record or a self-declared `is_stale: false` is not sufficient. Direct writes with an
+embedded terminal status also pass the gate. Binding creation/reuse and observed
+task validation recheck current specification/plan reviews. Brief compilation alone
+remains available for drafting. Lightweight development does not create these stages.
+
+`review_runtime.artifact_review_identity(path)` binds artifact ID, version (default
+`1`), and SHA-256 of canonical parsed front matter plus the complete body. Only
+top-level `status`, `last_updated`, and `updated_at` are excluded so the approved
+mechanical status transition does not invalidate itself. All other fields, including
+review links, requirements and validation definitions, remain bound.
+`plan_review_identity(workspace_root, plan_path)` aggregates the root and every
+phase/task Markdown artifact declaring that plan ID, keyed by path under the plan
+store, plus the identities of its linked specifications. A source, plan-member,
+version, or body edit requires fresh review; old target
+records remain history. These are semantic identities, not raw file checksums.
+The final identity uses the same plan identity plus the resolved source repository's
+current Git tree. Final admission requires a clean tracked/untracked source state;
+a dirty checkout cannot claim that its HEAD tree is the reviewed candidate. Archive
+rechecks admission after downstream acceptance checks, before moving artifacts.
+Missing/ambiguous source repositories fail closed. Local tests do not substitute for
+platform-specific release evidence. `validate_stage_reviews` requires all three
+actual current target identities supplied by its lifecycle caller, not by reviews.
+
+Reviewer capability is closed to `standard | judgment`. Evidence access uses
+`direct_source | reproducible_snapshot | packet_only`; legacy `direct` maps to
+direct-source access. Legacy `constrained_direct` and `carried_summary` context are
+retained for blocked/repair evidence, never sole acceptance. Accepted review requires
+direct-source or reproducible-snapshot context and no unavailable claim-relevant
+evidence. Snapshot access additionally requires explicit snapshot artifact digests.
+The record describes evidence access; lifecycle acceptance additionally requires
+`reviewer_run: {run_id, sha256}` referencing a native `reviewer-process-receipt-v1`.
+Envelope validation alone (including historical records without that reference) is
+not lifecycle admission. The gate resolves the controller-owned store through
+`reviewer_runtime_root(workspace_root)` under `~/.work-bundle/reviewer-runtime/workspaces/`;
+the envelope cannot select an arbitrary receipt path or store.
+
+Before workspace creation, the controller adds `stage_review_context` to the direct
+evidence packet: `stage`, `target_identity`, `target_locator` (a copied control
+artifact), `agent_id`, `capability`, `execution_id`, and `evidence_mode`.
+The current sandbox denies live source/control access, so its packet builder derives
+`evidence_mode`; requesting `direct_source` does not grant it. A mechanically complete
+`stage-evidence-manifest-v1` yields `reproducible_snapshot`; missing evidence yields
+`packet_only`, which cannot grant acceptance, even with `unavailable_evidence: []`.
+The manifest binds stage/target identity, required locators, roles, artifact digests,
+and semantic authority identities. Its closure is derived from the current artifacts:
+
+- Specification: the complete specification, carried `source_knowledge.constraint`
+  authority, and file inputs declared by `truth_basis.as_is_evidence`. Protected
+  knowledge origins are not retrieved; an absent carried constraint blocks completeness.
+- Plan: the root, every phase/task declaring its plan ID, and every linked verified
+  specification (including member-specific links and their required authority).
+- Integrated implementation: the same authority closure, the complete clean Git source
+  tree, and executor handoffs containing evidence for each declared validation command
+  or inspection ID. The existing native completion-provenance file is included when
+  present. This is evidence availability, not a replacement validation-result verdict;
+  existing freshness, binding, authorization, and platform acceptance gates still apply.
+
+For integrated snapshots, Git file modes/blob IDs reconstruct the exact target tree;
+copied bytes are checked against those blobs before workspace creation. Symlinks,
+submodules, unresolved/protected inputs, and unsupported authority references fail
+closed. Ignored/generated dependencies are not a source-tree substitute: checks needing
+them must declare the required inputs. The manifest and packet remain in the immutable
+run receipt bundle after cleanup. Creation checks the manifest against live artifacts,
+publication checks the frozen closure, and lifecycle admission re-derives current
+stage membership and verifies the complete source-tree identity. Removing entries and
+recomputing packet/receipt hashes cannot turn partial evidence into complete evidence.
+
+`stage_target_identity` computes the target from current source artifacts, and
+workspace creation checks it again. Run the worker with `reviewer-process-run` using
+that runtime root. Its stdout must be exactly one stage-review JSON object, without
+`reviewer_run`; the native publisher verifies it against the frozen context and
+binds its canonical digest into the receipt. The controller then attaches the run
+ID and SHA-256 of the immutable receipt bytes to that exact result.
+
+The lifecycle gate verifies review ID, exact result/target/profile, successful
+completion, sandbox/network/write boundary, and immutable packet/profile/event
+digests. Run-scoped evidence remains available after workspace cleanup; full traces
+are never embedded into the stage envelope. Missing, altered, failed, mutable, or
+mismatched provenance cannot grant acceptance. Known execution IDs are obtained
+from artifact `execution_id`, `author_execution_id(s)`, `repair_execution_id(s)` and
+current plan execution bindings; overlap with the reviewer execution/run ID blocks
+admission. Undeclared author identities cannot be inferred.
+
+The controller/runtime store is a trusted boundary, not a cryptographic defense
+against a compromised same-OS-user host. The receipt proves the launched worker's
+process/evidence boundary and binds its controller-selected capability; it does not
+turn a mechanical fixture into semantic review. WOR-108 mandatory task ownership
+and bounded context/history projection remain separate.
+
+Deterministic observation reuse retains the existing complete evidence identity and
+freshness policy. The provenance store reserves each identity with an OS-released
+file lock, executes outside the shared store lock, then rereads and publishes under
+the shared lock. Different identities can run concurrently; identical identities
+remain single-flight. Publication rejects an intervening mutation epoch or expired
+freshness. Reservation lock files are retained to avoid splitting concurrent waiters;
+they are runtime artifacts, not source inputs or a separate cache subsystem.
+
+Capability context projects trusted intent/evaluation seeds through the existing
+typed-relation traversal (`light`: 1 hop, `standard`: 2, `deep`: 4), bounded by
+`max_nodes`. Stale/non-authoritative nodes cannot be transit nodes; frontier and
+stopping reason expose depth/node-budget limits. Required evaluation seeds retain
+their ordering priority. This does not introduce an initial-versus-repair frontier.
+
 ```text
 scheduler selects executable task
   -> compile task brief

@@ -1,0 +1,16 @@
+{
+  "fixture_id": "ADV-07",
+  "input": {
+    "review_verdict": "accepted",
+    "target_before_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "target_after_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "expected_decision": "mark_review_stale_and_remove_stage_credit",
+  "proof_required": [
+    "review_id",
+    "target_before_sha256",
+    "target_after_sha256",
+    "staleness_reason",
+    "countable_stage_reviews"
+  ]
+}

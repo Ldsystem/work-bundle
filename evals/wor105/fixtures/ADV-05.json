@@ -1,0 +1,19 @@
+{
+  "fixture_id": "ADV-05",
+  "input": {
+    "run_status": "valid",
+    "changed_component": "fixture",
+    "invalidation_present": false
+  },
+  "expected_decision": "stale_run_append_invalidation_preserve_raw_evidence",
+  "proof_required": [
+    "old_digest",
+    "new_digest",
+    "stale_run_id",
+    "invalidation_id",
+    "raw_response_before_sha256",
+    "raw_response_after_sha256",
+    "raw_trace_before_sha256",
+    "raw_trace_after_sha256"
+  ]
+}

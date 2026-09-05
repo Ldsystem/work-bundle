@@ -1,0 +1,21 @@
+{
+  "fixture_id": "ADV-08",
+  "input": {
+    "requests": 2,
+    "identity": {
+      "command_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cwd_token": "isolated_execution_root",
+      "product_tree": "1111111111111111111111111111111111111111",
+      "state_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "oracle_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "mutation_epoch": 0
+    }
+  },
+  "expected_decision": "execute_once_and_reuse_observation",
+  "proof_required": [
+    "request_ids",
+    "subprocess_invocation_count",
+    "observation_id",
+    "reuse_of"
+  ]
+}

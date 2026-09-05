@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:work-bundle:deferred-remote-member:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "member_id", "repository_id", "portable_path", "default_branch", "required",
+    "remote", "materialization", "proposal_id", "transaction_id", "replay_key", "device_binding"
+  ],
+  "properties": {
+    "member_id": {"$ref": "#/$defs/id"},
+    "repository_id": {"$ref": "#/$defs/id"},
+    "portable_path": {"$ref": "#/$defs/id"},
+    "default_branch": {"$ref": "#/$defs/id"},
+    "required": {"const": true},
+    "remote": {"type": ["string", "null"], "minLength": 1, "format": "uri-reference"},
+    "materialization": {"enum": ["deferred", "attaching", "attached", "failed"]},
+    "proposal_id": {"$ref": "#/$defs/id"},
+    "transaction_id": {"$ref": "#/$defs/id"},
+    "replay_key": {"$ref": "#/$defs/id"},
+    "device_binding": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/deviceBinding"}
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"materialization": {"const": "deferred"}}, "required": ["materialization"]},
+      "then": {"properties": {"remote": {"type": "null"}, "device_binding": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"materialization": {"const": "attached"}}, "required": ["materialization"]},
+      "then": {
+        "properties": {
+          "remote": {"type": "string", "minLength": 1},
+          "device_binding": {"$ref": "#/$defs/deviceBinding"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "deviceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_id", "checkout_path_token", "remote_fingerprint", "observed_revision", "observed_tree"],
+      "properties": {
+        "device_id": {"$ref": "#/$defs/id"},
+        "checkout_path_token": {"type": "string", "pattern": "^path-sha256:[0-9a-f]{64}$"},
+        "remote_fingerprint": {"$ref": "#/$defs/sha256"},
+        "observed_revision": {"$ref": "#/$defs/gitOid"},
+        "observed_tree": {"$ref": "#/$defs/gitOid"}
+      }
+    }
+  }
+}

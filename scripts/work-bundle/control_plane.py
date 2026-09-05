@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from typing import Iterable
 from urllib.parse import parse_qsl, urlsplit
@@ -46,6 +47,74 @@ class ControlPlaneError(RuntimeError):
         super().__init__(code)
         self.code = code
         self.details = details or {}
+
+
+def deferred_remote_task_identity(repository_root: Path) -> dict[str, str]:
+    """Compute identity from the canonical orchestration repository evidence."""
+
+    root = repository_root.expanduser().resolve()
+    orchestration_root = Path(__file__).resolve().parents[1] / "orchestration"
+    command = "\n".join(
+        [
+            "import json, sys",
+            "from pathlib import Path",
+            "sys.path.insert(0, sys.argv[1])",
+            "from repository_preflight import capture_repository_evidence",
+            "print(json.dumps(capture_repository_evidence(Path(sys.argv[2])), sort_keys=True))",
+        ]
+    )
+    captured = subprocess.run(
+        [sys.executable, "-c", command, str(orchestration_root), str(root)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    try:
+        evidence = json.loads(captured.stdout) if captured.returncode == 0 else None
+    except json.JSONDecodeError:
+        evidence = None
+    if not isinstance(evidence, dict):
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_REPOSITORY_INVALID")
+    head = str(evidence.get("head") or "")
+    tree = str(evidence.get("tree") or "")
+    if not re.fullmatch(r"[0-9a-f]{40}", head) or not re.fullmatch(r"[0-9a-f]{40}", tree):
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_REPOSITORY_INVALID")
+    if evidence.get("status") != "clean" or evidence.get("entries"):
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_TASK_TREE_DIRTY")
+    digest = hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "reviewed_head": f"{head}+repository-evidence-sha256:{digest}",
+        "reviewed_tree": tree,
+        "repository_evidence_sha256": digest,
+    }
+
+
+def validate_deferred_remote_independent_review_identity(
+    repository_root: Path, *, task_id: str
+) -> dict[str, object]:
+    """Load the selected real review and bind its acceptance to the current Git tree."""
+
+    raw_path = os.environ.get("WOR105_C02_REVIEW", "").strip()
+    if not raw_path:
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_ARTIFACT_REQUIRED")
+    review_path = Path(raw_path).expanduser().resolve()
+    if not review_path.is_file():
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_ARTIFACT_MISSING")
+    review = _load_yaml(read(review_path))
+    if not isinstance(review, dict):
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_IDENTITY_MISMATCH")
+    identity = deferred_remote_task_identity(repository_root)
+    if (
+        review.get("task_id") != task_id
+        or review.get("reviewer_independent") is not True
+        or review.get("verdict") != "accept"
+        or review.get("reviewed_head") != identity["reviewed_head"]
+        or review.get("reviewed_tree") != identity["reviewed_tree"]
+    ):
+        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_IDENTITY_MISMATCH")
+    return dict(review)
 
 
 def _yaml_scalar(text: str, key: str) -> str:
@@ -429,7 +498,10 @@ def _v4_repositories(text: str) -> list[dict[str, object]]:
     for repository in repositories:
         remote = repository.get("remote")
         if isinstance(remote, dict):
-            repository["canonical_remote"] = validated_remote(remote.get("canonical"))
+            canonical_value = remote.get("canonical")
+            repository["canonical_remote"] = validated_remote(
+                "" if str(canonical_value).lower() in {"null", "~", "none"} else canonical_value
+            )
         else:
             repository["canonical_remote"] = validated_remote(repository.get("canonical"))
         materialization = repository.get("materialization")
@@ -437,6 +509,9 @@ def _v4_repositories(text: str) -> list[dict[str, object]]:
         repository["locator_type"] = str(locator.get("type", "")) if isinstance(locator, dict) else ""
         repository["materialization_raw"] = (
             str(materialization.get("required", "")) if isinstance(materialization, dict) else ""
+        )
+        repository["materialization_state"] = (
+            str(materialization.get("state", "")) if isinstance(materialization, dict) else ""
         )
         repository["required"] = (
             _parse_bool(str(materialization.get("required", "false")))
@@ -452,6 +527,16 @@ def _v4_repositories(text: str) -> list[dict[str, object]]:
         )
         repository["workspace_binding_path"] = (
             str(workspace_binding.get("path", "")) if isinstance(workspace_binding, dict) else ""
+        )
+        deferred = repository.get("deferred_remote")
+        repository["deferred_proposal_id"] = (
+            str(deferred.get("proposal_id", "")) if isinstance(deferred, dict) else ""
+        )
+        repository["deferred_transaction_id"] = (
+            str(deferred.get("transaction_id", "")) if isinstance(deferred, dict) else ""
+        )
+        repository["deferred_replay_key"] = (
+            str(deferred.get("replay_key", "")) if isinstance(deferred, dict) else ""
         )
     return repositories
 
@@ -878,8 +963,22 @@ def _portable_failures(text: str) -> list[str]:
         elif repository_id in seen_ids:
             failures.append(f"WB_CONTROL_PLANE_REPOSITORY_ID_DUPLICATE:{repository_id}")
         seen_ids.add(repository_id)
-        if not repository.get("canonical_remote") and repository.get("locator_type") != "manual":
+        materialization_state = str(repository.get("materialization_state") or "")
+        if (
+            not repository.get("canonical_remote")
+            and repository.get("locator_type") != "manual"
+            and materialization_state != "deferred"
+        ):
             failures.append(f"WB_CONTROL_PLANE_REMOTE_REQUIRED:{repository.get('id', '')}")
+        if materialization_state and materialization_state not in {"deferred", "attaching", "attached", "failed"}:
+            failures.append(f"WB_CONTROL_PLANE_MATERIALIZATION_INVALID:{repository_id}")
+        if materialization_state == "deferred" and (
+            repository.get("canonical_remote")
+            or not repository.get("deferred_proposal_id")
+            or not repository.get("deferred_transaction_id")
+            or not repository.get("deferred_replay_key")
+        ):
+            failures.append(f"WB_CONTROL_PLANE_DEFERRED_REMOTE_INVALID:{repository_id}")
         if not repository.get("default_branch"):
             failures.append(f"WB_CONTROL_PLANE_DEFAULT_BRANCH_MISSING:{repository_id}")
         if repository.get("materialization_raw") not in {"true", "false", True, False}:
@@ -1589,12 +1688,13 @@ def _classify_workspace_member(
 
 
 def _render_member_metadata_block(member: dict[str, str], *, multi: bool = False) -> str:
-    return "\n".join(
-        [
+    state = member.get("materialization", "")
+    remote_line = f"      canonical: {_quote(member['remote'])}" if member["remote"] else "      canonical: null"
+    lines = [
             f"  - id: {_quote(member['repository_id'])}",
             "    role: source",
             "    remote:",
-            f"      canonical: {_quote(member['remote'])}",
+            remote_line,
             "      aliases: []",
             f"    default_branch: {_quote(member['default_branch'])}",
             "    workspace_binding:",
@@ -1603,9 +1703,19 @@ def _render_member_metadata_block(member: dict[str, str], *, multi: bool = False
             *([] if multi else [f"      path: {_quote(member['path'])}"]),
             "    materialization:",
             "      required: true",
-            "    operation_policy: inherit",
-        ]
-    ) + "\n"
+            *([f"      state: {state}"] if state else []),
+    ]
+    if state:
+        lines.extend(
+            [
+                "    deferred_remote:",
+                f"      proposal_id: {_quote(member['proposal_id'])}",
+                f"      transaction_id: {_quote(member['transaction_id'])}",
+                f"      replay_key: {_quote(member['replay_key'])}",
+            ]
+        )
+    lines.append("    operation_policy: inherit")
+    return "\n".join(lines) + "\n"
 
 
 def _append_member_metadata(text: str, member: dict[str, str]) -> str:
@@ -1619,6 +1729,25 @@ def _append_member_metadata(text: str, member: dict[str, str]) -> str:
     _, end = bounds
     prefix = "".join(lines[:end])
     return prefix + ("" if prefix.endswith("\n") else "\n") + block + "".join(lines[end:])
+
+
+def _replace_member_metadata(text: str, repository_id: str, member: dict[str, str]) -> str:
+    lines = text.splitlines(keepends=True)
+    bounds = _source_repository_bounds(lines)
+    if bounds is None:
+        raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
+    start, end = bounds
+    starts = [index for index in range(start + 1, end) if re.match(r"^  - id:\s*", lines[index])]
+    for position, item_start in enumerate(starts):
+        raw_id = lines[item_start].split(":", 1)[1].strip().strip('"').strip("'")
+        if raw_id != repository_id:
+            continue
+        item_end = starts[position + 1] if position + 1 < len(starts) else end
+        rendered = _render_member_metadata_block(
+            member, multi=_workspace_value(text, "mode") == "multi-repository"
+        )
+        return "".join(lines[:item_start]) + rendered + "".join(lines[item_end:])
+    raise ControlPlaneError("WB_CONTROL_PLANE_DEFERRED_REMOTE_MISSING")
 
 
 def _require_observed_branch(path: Path, expected: str, repository_id: str) -> str:
@@ -1643,6 +1772,10 @@ def _add_workspace_member_preflight(workspace_root: Path, text: str) -> dict[str
         for repo in _v4_repositories(text):
             repository_id = str(repo["id"])
             local = repositories.get(repository_id) if isinstance(repositories, dict) else None
+            if str(repo.get("materialization_state") or "") in {"deferred", "failed"}:
+                if isinstance(local, dict) and local.get("project_root"):
+                    raise ControlPlaneError(f"WB_CONTROL_PLANE_MEMBER_DEVICE_BINDING_MISMATCH:{repository_id}")
+                continue
             if not isinstance(local, dict) or not local.get("project_root"):
                 if repo.get("required"):
                     raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_CHECKOUT_MISSING:{repository_id}")
@@ -1807,6 +1940,94 @@ def _add_workspace_member_proposal(
     return {"proposal_id": "awm-" + hashlib.sha256(encoded).hexdigest()[:24], **facts}
 
 
+def _deferred_member_record(
+    workspace_root: Path, member: dict[str, str], *, device_binding: dict[str, object] | None = None
+) -> dict[str, object]:
+    return {
+        "member_id": member["name"],
+        "repository_id": member["repository_id"],
+        "portable_path": member["path"],
+        "default_branch": member["default_branch"],
+        "required": True,
+        "remote": member["remote"] or None,
+        "materialization": member["materialization"],
+        "proposal_id": member["proposal_id"],
+        "transaction_id": member["transaction_id"],
+        "replay_key": member["replay_key"],
+        "device_binding": device_binding,
+    }
+
+
+def _deferred_member_from_repository(repository: dict[str, object]) -> dict[str, str]:
+    name = str(repository.get("workspace_binding_name") or repository.get("id") or "")
+    return {
+        "repository_id": str(repository.get("id") or ""),
+        "name": name,
+        "path": _member_segment(repository, name),
+        "remote": str(repository.get("canonical_remote") or ""),
+        "default_branch": str(repository.get("default_branch") or ""),
+        "materialization": str(repository.get("materialization_state") or ""),
+        "proposal_id": str(repository.get("deferred_proposal_id") or ""),
+        "transaction_id": str(repository.get("deferred_transaction_id") or ""),
+        "replay_key": str(repository.get("deferred_replay_key") or ""),
+    }
+
+
+def _find_deferred_repository(text: str, repository_id: str) -> dict[str, object]:
+    repository = next(
+        (item for item in _v4_repositories(text) if str(item.get("id") or "") == repository_id), None
+    )
+    if repository is None or str(repository.get("materialization_state") or "") not in {"deferred", "attached"}:
+        raise ControlPlaneError("WB_CONTROL_PLANE_DEFERRED_REMOTE_MISSING")
+    return repository
+
+
+def _deferred_proposal(workspace_root: Path, text: str, member: dict[str, str]) -> dict[str, object]:
+    existing = next(
+        (item for item in _v4_repositories(text) if str(item.get("id") or "") == member["repository_id"]), None
+    )
+    if existing is not None:
+        current = _deferred_member_from_repository(existing)
+        if (
+            current["materialization"] == "deferred"
+            and current["name"] == member["name"]
+            and current["path"] == member["path"]
+            and current["default_branch"] == member["default_branch"]
+            and current["replay_key"] == member["replay_key"]
+        ):
+            return {"proposal_id": current["proposal_id"], "member": current, "replay": True}
+        raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
+    facts = {
+        "workspace_id": _workspace_id(text),
+        "metadata_digest": _metadata_digest(text),
+        "member": {key: member[key] for key in ("repository_id", "name", "path", "default_branch", "replay_key")},
+    }
+    digest = hashlib.sha256(json.dumps(facts, sort_keys=True).encode("utf-8")).hexdigest()
+    completed = {
+        **member,
+        "remote": "",
+        "materialization": "deferred",
+        "proposal_id": "drm-" + digest[:24],
+        "transaction_id": "drt-" + digest[24:48],
+    }
+    return {"proposal_id": completed["proposal_id"], "member": completed, "replay": False}
+
+
+def _attach_deferred_proposal(text: str, repository_id: str, remote: str) -> dict[str, object]:
+    repository = _find_deferred_repository(text, repository_id)
+    member = _deferred_member_from_repository(repository)
+    if member["materialization"] == "attached" and member["remote"] != remote:
+        raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
+    facts = {
+        "metadata_digest": _metadata_digest(text),
+        "repository_id": repository_id,
+        "remote": remote,
+        "transaction_id": member["transaction_id"],
+    }
+    digest = hashlib.sha256(json.dumps(facts, sort_keys=True).encode("utf-8")).hexdigest()
+    return {"proposal_id": "adr-" + digest[:24], "member": member}
+
+
 def _rollback_workspace_root_materialization(workspace_root: Path, before: set[str]) -> None:
     after = _tree_entries_without_control_plane(workspace_root)
     for relative in sorted(after - before, key=lambda item: len(Path(item).parts), reverse=True):
@@ -1960,6 +2181,16 @@ def _attach(
     try:
         for repository in repositories:
             repository_id = str(repository.get("id") or "")
+            if str(repository.get("materialization_state") or "") in {"deferred", "failed"}:
+                if repository_id in repository_paths:
+                    raise ControlPlaneError(
+                        "WB_CONTROL_PLANE_DEFERRED_REMOTE_ATTACH_REQUIRED",
+                        {"repository_id": repository_id},
+                    )
+                states.append(
+                    {"repository_id": repository_id, "required": bool(repository.get("required")), "state": "deferred"}
+                )
+                continue
             remote = str(repository.get("canonical_remote") or "")
             manual_locator = repository.get("locator_type") == "manual"
             binding_type = str(repository.get("workspace_binding_type") or "")
@@ -2191,6 +2422,10 @@ def cmd_doctor_workspace(args: list[str], *, command_name: str = "doctor-workspa
         for repo in _v4_repositories(text):
             repository_id = str(repo.get("id") or "")
             local = local_repositories.get(repository_id)
+            if str(repo.get("materialization_state") or "") in {"deferred", "failed"}:
+                if isinstance(local, dict) and local.get("project_root"):
+                    local_failures.append(f"WB_CONTROL_PLANE_MEMBER_DEVICE_BINDING_MISMATCH:{repository_id}")
+                continue
             if not isinstance(local, dict) or not local.get("project_root"):
                 if repo.get("required"):
                     missing_required.append(repository_id)
@@ -2343,6 +2578,186 @@ def _apply_add_workspace_member(
         if isinstance(exc, ControlPlaneError):
             raise
         raise ControlPlaneError("WB_CONTROL_PLANE_TRANSACTION_FAILED") from exc
+
+
+def cmd_defer_workspace_member(args: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="wb.py defer-workspace-member")
+    parser.add_argument("workspace_root")
+    parser.add_argument("--repository-id", required=True)
+    parser.add_argument("--name", required=True)
+    parser.add_argument("--path", required=True)
+    parser.add_argument("--default-branch", required=True)
+    parser.add_argument("--replay-key", required=True)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--dry-run", action="store_true")
+    action.add_argument("--apply", action="store_true")
+    parser.add_argument("--accepted-proposal-id")
+    parsed = parser.parse_args(args)
+    if parsed.apply and not parsed.accepted_proposal_id:
+        parser.error("--accepted-proposal-id is required with --apply")
+    workspace_root = Path(parsed.workspace_root).expanduser().resolve()
+    try:
+        member = {
+            "repository_id": str(parsed.repository_id or "").strip(),
+            "name": str(parsed.name or "").strip(),
+            "path": _validate_member_path(parsed.path),
+            "remote": "",
+            "default_branch": str(parsed.default_branch or "").strip(),
+            "replay_key": str(parsed.replay_key or "").strip(),
+        }
+        required_values = (member["repository_id"], member["name"], member["path"], member["default_branch"], member["replay_key"])
+        if not all(required_values) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", member["replay_key"]):
+            raise ControlPlaneError("WB_CONTROL_PLANE_DEFERRED_REMOTE_REQUEST_INVALID")
+        metadata_path = workspace_root / ".work-bundle/project.yaml"
+        text = read(metadata_path)
+        mode = _workspace_value(text, "mode")
+        if mode not in {"single-repository", "composite", "multi-repository"}:
+            raise ControlPlaneError("WB_CONTROL_PLANE_COMPOSITE_SOURCE_MODE_INVALID")
+        if mode == "multi-repository" and member["name"] != member["path"]:
+            raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_BINDING_INVALID")
+        if mode == "multi-repository" and member["path"] in {".git", "script", "credentials"}:
+            raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_PATH_INVALID")
+        if _portable_failures(text):
+            raise ControlPlaneError(_portable_failures(text)[0])
+        _add_workspace_member_preflight(workspace_root, text)
+        if _root_index_tracks(workspace_root, member["path"]):
+            raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_PATH_TRACKED")
+        if (workspace_root / member["path"]).exists() or (workspace_root / member["path"]).is_symlink():
+            raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
+        proposal = _deferred_proposal(workspace_root, text, member)
+        record = _deferred_member_record(workspace_root, proposal["member"])
+        payload = {"command": "defer-workspace-member", "proposal_id": proposal["proposal_id"], "member": record}
+        if parsed.dry_run:
+            out({**payload, "status": "passed", "dry_run": True, "changed_files": []})
+            return 0
+        live_text = read(metadata_path)
+        live = _deferred_proposal(workspace_root, live_text, member)
+        if parsed.accepted_proposal_id != live["proposal_id"]:
+            raise ControlPlaneError("WB_CONTROL_PLANE_PROPOSAL_STALE")
+        if live["replay"]:
+            out({**payload, "status": "passed", "dry_run": False, "replay": True, "changed_files": []})
+            return 0
+        rendered = _append_member_metadata(live_text, live["member"])
+        failures = _portable_failures(rendered)
+        if failures:
+            raise ControlPlaneError(failures[0])
+        changed = _atomic_publish({metadata_path: rendered})
+        out({**payload, "status": "passed", "dry_run": False, "replay": False, "changed_files": changed})
+        return 0
+    except ControlPlaneError as exc:
+        out({"command": "defer-workspace-member", "status": "issues-found", "failure_code": exc.code, "changed_files": []})
+        return 1
+
+
+def _attached_device_identity(workspace_root: Path, member: dict[str, str]) -> dict[str, object]:
+    path = (workspace_root / member["path"]).resolve()
+    remote = member["remote"]
+    return {
+        "device_id": "device-" + hashlib.sha256(str(resolve_project_registry_path()).encode("utf-8")).hexdigest()[:16],
+        "checkout_path_token": "path-sha256:" + hashlib.sha256(str(path).encode("utf-8")).hexdigest(),
+        "remote_fingerprint": hashlib.sha256(remote.encode("utf-8")).hexdigest(),
+        "observed_revision": _git(path, "rev-parse", "HEAD"),
+        "observed_tree": _git(path, "rev-parse", "HEAD^{tree}"),
+    }
+
+
+def _deferred_attachment_preflight(
+    workspace_root: Path, text: str, member: dict[str, str]
+) -> tuple[dict[str, object], Path, bool]:
+    multi = _workspace_value(text, "mode") == "multi-repository"
+    binding = _add_workspace_member_preflight(workspace_root, text)
+    if _root_index_tracks(workspace_root, member["path"]):
+        raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_PATH_TRACKED")
+    member_path = workspace_root / member["path"]
+    if member_path.exists() or member_path.is_symlink():
+        if not member_path.is_dir() or not (member_path / ".git").exists():
+            raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
+        _inspect_existing_member_checkout(member_path, member)
+        issues = _repository_execution_issues(
+            member_path, member["default_branch"], member["repository_id"]
+        )
+        if issues:
+            raise ControlPlaneError(issues[0])
+        _require_multi_member_checkout(workspace_root, member_path, member)
+    return binding, member_path, multi
+
+
+def cmd_attach_deferred_remote(args: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="wb.py attach-deferred-remote")
+    parser.add_argument("workspace_root")
+    parser.add_argument("--repository-id", required=True)
+    parser.add_argument("--remote", required=True)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--dry-run", action="store_true")
+    action.add_argument("--apply", action="store_true")
+    parser.add_argument("--accepted-proposal-id")
+    parsed = parser.parse_args(args)
+    if parsed.apply and not parsed.accepted_proposal_id:
+        parser.error("--accepted-proposal-id is required with --apply")
+    workspace_root = Path(parsed.workspace_root).expanduser().resolve()
+    owned_member = False
+    member_path: Path | None = None
+    try:
+        remote = validated_remote(parsed.remote)
+        if not remote:
+            raise ControlPlaneError("WB_CONTROL_PLANE_REMOTE_REQUIRED")
+        metadata_path = workspace_root / ".work-bundle/project.yaml"
+        text = read(metadata_path)
+        proposal = _attach_deferred_proposal(text, parsed.repository_id, remote)
+        member = {**proposal["member"], "remote": remote}
+        _deferred_attachment_preflight(workspace_root, text, member)
+        payload = {"command": "attach-deferred-remote", "proposal_id": proposal["proposal_id"]}
+        if parsed.dry_run:
+            out({**payload, "status": "passed", "dry_run": True, "changed_files": []})
+            return 0
+        live_text = read(metadata_path)
+        live = _attach_deferred_proposal(live_text, parsed.repository_id, remote)
+        if parsed.accepted_proposal_id != live["proposal_id"]:
+            raise ControlPlaneError("WB_CONTROL_PLANE_PROPOSAL_STALE")
+        member = {**live["member"], "remote": remote}
+        binding, member_path, multi = _deferred_attachment_preflight(workspace_root, live_text, member)
+        if member["materialization"] == "attached":
+            _require_add_workspace_member_replay_state(workspace_root, member, binding, multi=multi)
+            device = _attached_device_identity(workspace_root, member)
+            out({**payload, "status": "passed", "dry_run": False, "replay": True, "changed_files": [], "member": _deferred_member_record(workspace_root, member, device_binding=device)})
+            return 0
+        if not member_path.exists():
+            owned_member = True
+            _materialize_member_checkout(member_path, member)
+        if multi:
+            _require_multi_member_checkout(workspace_root, member_path, member)
+        attached_member = {**member, "materialization": "attached"}
+        rendered = _replace_member_metadata(live_text, member["repository_id"], attached_member)
+        failures = _portable_failures(rendered)
+        if failures:
+            raise ControlPlaneError(failures[0])
+        bindings = _registry_bindings()
+        existing = bindings.get(_workspace_id(live_text), {})
+        local_repositories = dict(existing.get("repositories") or {}) if isinstance(existing, dict) else {}
+        local_repositories[member["repository_id"]] = {
+            "project_root": str(member_path.resolve()),
+            "checkout_kind": "managed-worktree" if multi else "nested-member",
+            "observed_branch": _git(member_path, "branch", "--show-current"),
+            "observed_head": _git(member_path, "rev-parse", "HEAD"),
+            "observed_at": utc_now_rfc3339(),
+            "git_common_dir": _git(member_path, "rev-parse", "--path-format=absolute", "--git-common-dir"),
+        }
+        bindings[_workspace_id(live_text)] = {**existing, "repositories": local_repositories}
+        registry = resolve_project_registry_path()
+        writes = {metadata_path: rendered, registry: _bindings_document(bindings, read(registry) or "projects: []\n")}
+        if not multi:
+            exclude = workspace_root / ".git/info/exclude"
+            writes[exclude] = _exclude_text_with_source_and_members(read(exclude), _composite_members(rendered))
+        changed = _atomic_publish(writes)
+        device = _attached_device_identity(workspace_root, attached_member)
+        out({**payload, "status": "passed", "dry_run": False, "replay": False, "changed_files": sorted(set(changed)), "member": _deferred_member_record(workspace_root, attached_member, device_binding=device)})
+        return 0
+    except (ControlPlaneError, OSError) as exc:
+        if owned_member and member_path is not None and member_path.exists():
+            shutil.rmtree(member_path)
+        code = exc.code if isinstance(exc, ControlPlaneError) else "WB_CONTROL_PLANE_TRANSACTION_FAILED"
+        out({"command": "attach-deferred-remote", "status": "issues-found", "failure_code": code, "changed_files": []})
+        return 1
 
 
 def cmd_add_workspace_member(args: list[str]) -> int:
