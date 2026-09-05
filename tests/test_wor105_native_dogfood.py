@@ -13,6 +13,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTROL_ROOT = REPO_ROOT.parent / ".work-bundle"
 MCP_ROOT = REPO_ROOT.parents[2] / "work-bundle-mcp"
+TRANSITION_RECORD = REPO_ROOT / "evals/wor105/components/native-transition-record.yaml"
 
 
 NATIVE_GROUPS = (
@@ -139,9 +140,7 @@ def native_evidence_chain() -> list[dict[str, str | int]]:
 
 def native_dogfood_lifecycle() -> dict[str, object]:
     transition = yaml.safe_load(
-        (CONTROL_ROOT / "orchestration/docs/wor105/native-transition-record.yaml").read_text(
-            encoding="utf-8"
-        )
+        TRANSITION_RECORD.read_text(encoding="utf-8")
     )
     assert transition["enforcement_transition"] == "bootstrap_policy_to_native"
     assert transition["transition_task"] == "task-b06r"
@@ -167,3 +166,8 @@ def test_native_dogfood_lifecycle() -> None:
     result = native_dogfood_lifecycle()
     assert result["enforcement_mode"] == "native"
     assert result["excluded_work_preserved"] is True
+
+
+def test_native_dogfood_transition_evidence_is_repository_local() -> None:
+    assert TRANSITION_RECORD == REPO_ROOT / "evals/wor105/components/native-transition-record.yaml"
+    assert TRANSITION_RECORD.is_file()
