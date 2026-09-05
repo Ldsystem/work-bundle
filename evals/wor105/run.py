@@ -107,8 +107,6 @@ def _run_native_probe(fixture_id: str) -> NativeProbe:
     observed = {
         "command": command,
         "returncode": completed.returncode,
-        "stdout": completed.stdout,
-        "stderr": completed.stderr,
     }
     if completed.returncode != 0:
         raise EvaluationError(f"native probe failed: {fixture_id}: {_sha(observed)}")

@@ -134,3 +134,17 @@ def test_runner_rejects_a_probe_that_reports_zero_native_invocations(tmp_path: P
 
     with pytest.raises(runner.EvaluationError, match="zero native invocations"):
         runner.run_manifest(_manifest_for_current_runner(tmp_path), tmp_path / "results.jsonl")
+
+
+def test_native_probe_digest_ignores_nondeterministic_pytest_timing(monkeypatch) -> None:
+    runner = _load("wor105_runner_stable_probe", "run.py")
+    outputs = iter(["1 passed in 0.11s\n", "1 passed in 0.87s\n"])
+
+    def observed_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=next(outputs), stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", observed_run)
+    first = runner._run_native_probe("ADV-01")
+    second = runner._run_native_probe("ADV-01")
+
+    assert first.output_sha256 == second.output_sha256
