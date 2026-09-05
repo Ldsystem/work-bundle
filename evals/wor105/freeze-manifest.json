@@ -1,12 +1,12 @@
 {
   "schema": "wor105-adversarial-freeze-v1",
-  "evaluation_id": "wor105-native-adversarial-20260905-011",
-  "frozen_at": "2026-09-05T10:29:20Z",
+  "evaluation_id": "wor105-native-adversarial-20260905-012",
+  "frozen_at": "2026-09-05T12:19:01Z",
   "enforcement_mode": "native",
-  "product_tree": "944aff08d9d85269cec765cae8e81a65aaeac832",
-  "specification_sha256": "575d4aea84d8d5c88e361017fcc69b97302485bdd6c2074cd2864c9d266d43da",
-  "plan_sha256": "53cb2a17bd7334edb642cc21ca5984e7901c693a4551013f1483584fd1f61bab",
-  "task_identity": "task-f01r18@plan-20260904-001-wor105-legacy-stabilization",
+  "product_tree": "dd77419973eb31ca008dd2b04f7dd9dc99d644f3",
+  "specification_sha256": "ec701ba8f09a9e8a57bd804b9ab72602c111a50b7091c8b3f54a2d98715f080f",
+  "plan_sha256": "c6b2b633f953d62b56e2986f99e4ca87bd83c0e3e863c0cfe32c57a945ddacc8",
+  "task_identity": "task-f01r25@plan-20260904-001-wor105-legacy-stabilization",
   "fixtures": [
     {
       "fixture_id": "ADV-01",
@@ -99,8 +99,8 @@
       "sha256": "5cc2ba1160a25b767a7e02c957d6f37a14a7fa4be50c711f5b67c5c03442d66a"
     },
     "evidence_capabilities": {
-      "path": "evals/wor105/components/task-f01r18-brief.yaml",
-      "sha256": "fcf4c0924bcc2d4e977bfbb0736795f03e58ab53d465719d04b95f4146a7443d"
+      "path": "evals/wor105/components/task-f01r25-brief.yaml",
+      "sha256": "8f8d87d1f2f9183fae250519122632bcce3ee4dae5917b1e99a1384046142b76"
     }
   },
   "invalidations": [
@@ -451,6 +451,54 @@
       ],
       "reason": "Full-history CI checkout and its regression enter the exact post-F01R17 product tree.",
       "timestamp": "2026-09-05T10:29:20Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-030",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-011",
+      "changed_component": "specification",
+      "old_digest": "575d4aea84d8d5c88e361017fcc69b97302485bdd6c2074cd2864c9d266d43da",
+      "new_digest": "ec701ba8f09a9e8a57bd804b9ab72602c111a50b7091c8b3f54a2d98715f080f",
+      "affected_run_ids": [
+        "wor105-native-adversarial-20260905-011-attempt-001"
+      ],
+      "reason": "User-approved evidence reuse semantics supersede automatic mutation epochs.",
+      "timestamp": "2026-09-05T12:19:01Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-031",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-011",
+      "changed_component": "tasks",
+      "old_digest": "53cb2a17bd7334edb642cc21ca5984e7901c693a4551013f1483584fd1f61bab",
+      "new_digest": "c6b2b633f953d62b56e2986f99e4ca87bd83c0e3e863c0cfe32c57a945ddacc8",
+      "affected_run_ids": [
+        "wor105-native-adversarial-20260905-011-attempt-001"
+      ],
+      "reason": "Independently accepted F01R24/F01R25 finalization replaces the pre-consolidation plan.",
+      "timestamp": "2026-09-05T12:19:01Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-032",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-011",
+      "changed_component": "evidence_capabilities",
+      "old_digest": "fcf4c0924bcc2d4e977bfbb0736795f03e58ab53d465719d04b95f4146a7443d",
+      "new_digest": "8f8d87d1f2f9183fae250519122632bcce3ee4dae5917b1e99a1384046142b76",
+      "affected_run_ids": [
+        "wor105-native-adversarial-20260905-011-attempt-001"
+      ],
+      "reason": "The freeze carries the compiled F01R25 task and evidence-capability identity.",
+      "timestamp": "2026-09-05T12:19:01Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-033",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-011",
+      "changed_component": "product",
+      "old_digest": "414b230b126ba00820d54d9ff5d8167e4678acc47d8ec73b830d4d24f0fd6ff6",
+      "new_digest": "f922d9b5281ab3cfae71caad152d95e6df78a99bb029e94003b7befcd28154a8",
+      "affected_run_ids": [
+        "wor105-native-adversarial-20260905-011-attempt-001"
+      ],
+      "reason": "Native first-class evidence reuse and focused regressions enter the product tree at e4e1e3b.",
+      "timestamp": "2026-09-05T12:19:01Z"
     }
   ]
 }
