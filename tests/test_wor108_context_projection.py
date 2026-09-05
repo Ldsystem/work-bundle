@@ -558,6 +558,124 @@ def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
         )
 
 
+def test_accepted_dependency_repair_chain_is_ordered_contiguous_and_last_wins(
+    tmp_path: Path,
+) -> None:
+    root, _, _ = workspace(tmp_path)
+    dependency_path = "references/assets/orchestration/workflow.md"
+    dependency = root / dependency_path
+    dependency.parent.mkdir(parents=True, exist_ok=True)
+    dependency.write_text("version zero\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "chain baseline")
+    commits = [git(root, "rev-parse", "HEAD")]
+    trees = [git(root, "rev-parse", "HEAD^{tree}")]
+    for number in range(1, 4):
+        dependency.write_text(f"version {number}\n", encoding="utf-8")
+        git(root, "add", dependency_path)
+        git(root, "commit", "-qm", f"accepted dependency repair {number}")
+        commits.append(git(root, "rev-parse", "HEAD"))
+        trees.append(git(root, "rev-parse", "HEAD^{tree}"))
+    unrelated = root / "tests/task-local.txt"
+    unrelated.parent.mkdir(parents=True, exist_ok=True)
+    unrelated.write_text("dependent task change\n", encoding="utf-8")
+    git(root, "add", str(unrelated.relative_to(root)))
+    git(root, "commit", "-qm", "dependent task change")
+
+    task = {
+        "task_id": "dependent-task",
+        "plan_id": "plan-001",
+        "depends_on": ["task-dependency"],
+        "workspace": {"root": str(root)},
+    }
+    handoff_root = root / ".work-bundle/orchestration/handoff/executor/active"
+    handoff_root.mkdir(parents=True, exist_ok=True)
+
+    def identity(index: int) -> dict[str, object]:
+        return {
+            "artifact_id": "task-dependency",
+            "revision": commits[index],
+            "sha256": execution_context.semantic_digest(
+                {"commit": commits[index], "tree": trees[index]}
+            ),
+            "source_tree": trees[index],
+        }
+
+    handoffs: list[dict[str, object]] = []
+    descriptors: list[dict[str, object]] = []
+    paths: list[Path] = []
+    for index in range(1, 4):
+        handoff_id = f"handoff-chain-{index}"
+        handoff = {
+            "id": handoff_id,
+            "type": "executor-result",
+            "related": {"plan": "plan-001", "task": "task-dependency"},
+            "result": {"state": "completed"},
+            "acceptance_review": {
+                "required": True,
+                "verdict": "accept",
+                "review_mode": "repair",
+                "target_identity": identity(index),
+                "repair_frontier": {
+                    "previous_reviewed_identity": identity(index - 1),
+                    "repaired_identity": identity(index),
+                },
+            },
+        }
+        path = handoff_root / f"{handoff_id}.yaml"
+        path.write_text("\n".join(execution_context._dump_yaml(handoff)) + "\n", encoding="utf-8")
+        handoffs.append(handoff)
+        paths.append(path)
+        descriptors.append(
+            {
+                "task_id": "task-dependency",
+                "handoff_id": handoff_id,
+                "handoff_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "integrated_base": commits[index - 1],
+                "integrated_head": commits[index],
+            }
+        )
+
+    assert execution_context._accepted_dependency_paths(task, root, descriptors) == {
+        dependency_path
+    }
+
+    with pytest.raises(SystemExit, match="ordered|source.*contiguous"):
+        execution_context._accepted_dependency_paths(
+            task, root, [descriptors[1], descriptors[0], descriptors[2]]
+        )
+    with pytest.raises(SystemExit, match="source.*contiguous|incomplete"):
+        execution_context._accepted_dependency_paths(task, root, [descriptors[0], descriptors[2]])
+    nonadjacent = deepcopy(descriptors)
+    nonadjacent[1] = {**nonadjacent[1], "integrated_base": commits[0]}
+    with pytest.raises(SystemExit, match="integrated.*contiguous|non-adjacent"):
+        execution_context._accepted_dependency_paths(task, root, nonadjacent)
+    missing = deepcopy(descriptors)
+    missing[1] = {**missing[1], "handoff_id": "handoff-chain-missing"}
+    with pytest.raises(SystemExit, match="missing or ambiguous"):
+        execution_context._accepted_dependency_paths(task, root, missing)
+
+    rejected = deepcopy(handoffs[1])
+    rejected["acceptance_review"]["verdict"] = "pending"
+    paths[1].write_text(
+        "\n".join(execution_context._dump_yaml(rejected)) + "\n", encoding="utf-8"
+    )
+    unaccepted = deepcopy(descriptors)
+    unaccepted[1] = {
+        **unaccepted[1],
+        "handoff_sha256": hashlib.sha256(paths[1].read_bytes()).hexdigest(),
+    }
+    with pytest.raises(SystemExit, match="not an accepted repair"):
+        execution_context._accepted_dependency_paths(task, root, unaccepted)
+    paths[1].write_text(
+        "\n".join(execution_context._dump_yaml(handoffs[1])) + "\n", encoding="utf-8"
+    )
+
+    dependency.write_text("unaccepted later mutation\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="changed after integration"):
+        execution_context._accepted_dependency_paths(task, root, descriptors)
+
+
 def test_rf_07_brief_rebuild_retains_original_execution_binding_and_baseline(
     tmp_path: Path,
 ) -> None:

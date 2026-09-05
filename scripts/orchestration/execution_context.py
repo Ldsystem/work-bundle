@@ -1510,6 +1510,9 @@ def _accepted_dependency_paths(
     control_root = Path(str(workspace.get("root") or "")).resolve()
     handoff_root = control_root / ".work-bundle/orchestration/handoff"
     admitted: set[str] = set()
+    chain_tail_by_dependency: dict[str, dict[str, Any]] = {}
+    last_checkpoint_by_path: dict[str, tuple[str, str]] = {}
+    current_head = _resolve_commit(execution_root, "HEAD")
     required_fields = {
         "task_id", "handoff_id", "handoff_sha256", "integrated_base", "integrated_head"
     }
@@ -1550,7 +1553,6 @@ def _accepted_dependency_paths(
         source_head = str(repaired.get("revision") or "")
         integrated_base = _resolve_commit(execution_root, str(descriptor["integrated_base"]))
         integrated_head = _resolve_commit(execution_root, str(descriptor["integrated_head"]))
-        current_head = _resolve_commit(execution_root, "HEAD")
         if not source_base or not source_head:
             raise SystemExit(f"accepted dependency repair identity is incomplete: {handoff_id}")
         for commit, identity in ((source_base, previous), (source_head, repaired)):
@@ -1558,6 +1560,18 @@ def _accepted_dependency_paths(
             tree = _git(execution_root, "rev-parse", f"{resolved}^{{tree}}").strip()
             if tree != identity.get("source_tree"):
                 raise SystemExit(f"accepted dependency Git identity is mismatched: {handoff_id}")
+        prior_link = chain_tail_by_dependency.get(dependency_id)
+        if prior_link is not None:
+            if previous != prior_link["repaired_identity"]:
+                raise SystemExit(
+                    "accepted dependency source chain is not ordered and contiguous: "
+                    f"{handoff_id}"
+                )
+            if integrated_base != prior_link["integrated_head"]:
+                raise SystemExit(
+                    "accepted dependency integrated chain is non-adjacent: "
+                    f"{handoff_id}"
+                )
         if subprocess.run(
             ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", integrated_head, current_head],
             capture_output=True,
@@ -1575,11 +1589,16 @@ def _accepted_dependency_paths(
             for line in _git(execution_root, "diff", "--name-status", source_base, source_head, "--").splitlines()
             for path in _paths_from_name_status(line)
         }
-        if paths and _git(
-            execution_root, "diff", "--name-only", integrated_head, "--", *sorted(paths)
-        ).strip():
+        chain_tail_by_dependency[dependency_id] = {
+            "repaired_identity": repaired,
+            "integrated_head": integrated_head,
+        }
+        for path in paths:
+            last_checkpoint_by_path[path] = (integrated_head, handoff_id)
+    for path, (integrated_head, handoff_id) in last_checkpoint_by_path.items():
+        if _git(execution_root, "diff", "--name-only", integrated_head, "--", path).strip():
             raise SystemExit(f"accepted dependency path changed after integration: {handoff_id}")
-        admitted.update(paths)
+        admitted.add(path)
     return admitted
 
 
