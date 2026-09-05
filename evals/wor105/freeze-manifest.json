@@ -1,11 +1,11 @@
 {
   "schema": "wor105-adversarial-freeze-v1",
-  "evaluation_id": "wor105-native-adversarial-20260905-005",
-  "frozen_at": "2026-09-05T06:45:00Z",
+  "evaluation_id": "wor105-native-adversarial-20260905-006",
+  "frozen_at": "2026-09-05T07:13:59Z",
   "enforcement_mode": "native",
-  "product_tree": "a3fde15109f475acbe5c880dc765e5d69d958c0b",
+  "product_tree": "0c4d59dcba91eceb8a9437a059a6ea8bff784eb4",
   "specification_sha256": "575d4aea84d8d5c88e361017fcc69b97302485bdd6c2074cd2864c9d266d43da",
-  "plan_sha256": "ae2f0513fd7b38bb751e5f1eacc1d85ede20293c93a7fce3715c2c97e1e876da",
+  "plan_sha256": "a0f8c6b69de964b4d14c900cfd209d12bcab0daa674510ea5b7eaefa033e14a3",
   "task_identity": "task-f01r2@plan-20260904-001-wor105-legacy-stabilization",
   "fixtures": [
     {"fixture_id": "ADV-01", "path": "evals/wor105/fixtures/ADV-01.json", "sha256": "52e6a3f83058f820fe01343e5b009940842874f05bdf47aa2e99ea60a27127bb"},
@@ -29,7 +29,7 @@
     "result_schema": {"path": "evals/wor105/adversarial-result-v1.schema.json", "sha256": "ef4a96e1682e29e7225dbecf4257e3dad040bff2d549eff1b71067033db64c89"},
     "semantic_schema": {"path": "../.work-bundle/orchestration/docs/wor105/contracts-v1.schema.json", "sha256": "ab6500c1197928450da7e7a438d69d763c376332aeaa72caa23526c613eb1b67"},
     "instructions": {"path": "AGENTS.md", "sha256": "5cc2ba1160a25b767a7e02c957d6f37a14a7fa4be50c711f5b67c5c03442d66a"},
-    "evidence_capabilities": {"path": "../.work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-f01r2/task-brief.yaml", "sha256": "81bba349bff55c80de7a56de624994c3c95f4a7a82a6177131401937a3e72867"}
+    "evidence_capabilities": {"path": "../.work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-f01r2/task-brief.yaml", "sha256": "e2638e31f2d61c09e8975cc81e52b03dcd2bdbf854053eed13f327e6bb6972eb"}
   },
   "invalidations": [
     {
@@ -141,6 +141,36 @@
       "affected_run_ids": ["wor105-native-adversarial-20260905-004-attempt-001"],
       "reason": "the corrected historical transition oracle entered the post-F01R1 product tree",
       "timestamp": "2026-09-05T06:45:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-012",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-005",
+      "changed_component": "tasks",
+      "old_digest": "ae2f0513fd7b38bb751e5f1eacc1d85ede20293c93a7fce3715c2c97e1e876da",
+      "new_digest": "a0f8c6b69de964b4d14c900cfd209d12bcab0daa674510ea5b7eaefa033e14a3",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-005-attempt-001"],
+      "reason": "the accepted plan allocated the exact CI-oracle repair and downstream release gates",
+      "timestamp": "2026-09-05T07:13:59Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-013",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-005",
+      "changed_component": "evidence_capabilities",
+      "old_digest": "81bba349bff55c80de7a56de624994c3c95f4a7a82a6177131401937a3e72867",
+      "new_digest": "e2638e31f2d61c09e8975cc81e52b03dcd2bdbf854053eed13f327e6bb6972eb",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-005-attempt-001"],
+      "reason": "the release refreeze task now carries the accepted CI-oracle dependency and current validation contract",
+      "timestamp": "2026-09-05T07:13:59Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-014",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-005",
+      "changed_component": "product",
+      "old_digest": "3b962d0ce3240155c6feafd34a3a3ca2f36a835c5d6c80b2f1ffbeb5c39dbf80",
+      "new_digest": "fd596d911f964e3032aacfa60a8ad3d7fa97b8097344cad84ff1ccda52f43b70",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-005-attempt-001"],
+      "reason": "the isolated-per-file CI oracle entered the exact post-F01R4 product tree",
+      "timestamp": "2026-09-05T07:13:59Z"
     }
   ]
 }
