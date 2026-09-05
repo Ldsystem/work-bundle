@@ -19,6 +19,7 @@ for path in (WORK_BUNDLE, ORCHESTRATION):
         sys.path.insert(0, str(path))
 
 import execution_context  # noqa: E402
+import review_runtime  # noqa: E402
 from stage_events import StageEventError, validate_stage_event  # noqa: E402
 from test_orchestration_execution_context import (  # noqa: E402
     _bind_task_execution,
@@ -750,6 +751,226 @@ def test_accepted_dependency_repair_chain_is_ordered_contiguous_and_last_wins(
     dependency.write_text("unaccepted later mutation\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="changed after integration"):
         execution_context._accepted_dependency_paths(task, root, descriptors)
+
+
+def test_cumulative_accepted_result_delta_requires_complete_final_review_chain(
+    tmp_path: Path,
+) -> None:
+    root, _, _ = workspace(tmp_path)
+    dependency_path = "references/assets/orchestration/workflow.md"
+    repair_path = "scripts/orchestration/dependency_repair.py"
+    final_path = "tests/dependency_result.md"
+    dependency = root / dependency_path
+    dependency.parent.mkdir(parents=True, exist_ok=True)
+    dependency.write_text("accepted base\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "accepted base")
+    commits = [git(root, "rev-parse", "HEAD")]
+    trees = [git(root, "rev-parse", "HEAD^{tree}")]
+    for label, changed_path in (
+        ("initial repair target", dependency_path),
+        ("accepted repair", repair_path),
+        ("fresh accepted result", final_path),
+    ):
+        changed = root / changed_path
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_text(label + "\n", encoding="utf-8")
+        git(root, "add", changed_path)
+        git(root, "commit", "-qm", label)
+        commits.append(git(root, "rev-parse", "HEAD"))
+        trees.append(git(root, "rev-parse", "HEAD^{tree}"))
+    local = root / "tests/task-local.txt"
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_text("dependent task\n", encoding="utf-8")
+    git(root, "add", str(local.relative_to(root)))
+    git(root, "commit", "-qm", "dependent task")
+
+    def identity(index: int) -> dict[str, object]:
+        return {
+            "artifact_id": "task-dependency",
+            "revision": commits[index],
+            "sha256": execution_context.semantic_digest(
+                {"commit": commits[index], "tree": trees[index]}
+            ),
+            "source_tree": trees[index],
+        }
+
+    def reviewer(agent: str) -> dict[str, object]:
+        return {
+            "agent_id": agent,
+            "capability": "judgment",
+            "authorship": "none",
+            "repair_participation": "none",
+            "decision_participation": "none",
+            "deliberation_participation": "none",
+            "context_origin": "direct_source",
+        }
+
+    def review(review_id: str, index: int, verdict: str) -> dict[str, object]:
+        return {
+            "required": True,
+            "reviewer_independent": True,
+            "verdict": verdict,
+            "reviewed_head": commits[index],
+            "review_id": review_id,
+            "review_mode": "initial",
+            "review_target_kind": "task",
+            "repair_frontier": None,
+            "review_reset": None,
+            "target_identity": identity(index),
+            "reviewer": reviewer("reviewer-" + review_id),
+            "evidence": {
+                "mode": "direct",
+                "capabilities": ["source inspection"],
+                "unavailable_evidence": [],
+                "commands": [],
+                "artifacts": [],
+            },
+            "findings": [],
+            "started_at": f"2026-09-06T00:0{index}:00Z",
+            "completed_at": f"2026-09-06T00:0{index}:30Z",
+            "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+        }
+
+    base_review = review("review-base", 0, "accept")
+    initial_repair = review("review-initial-repair", 1, "repair")
+    initial_repair["review_reset"] = {
+        "prior_review_id": "review-base",
+        "reason_class": "validation_allocation",
+        "reason": "Validation authority changed.",
+    }
+    initial_repair["previous_review"] = base_review
+    initial_repair["findings"] = [{
+        "finding_id": "CHAIN-FINDING",
+        "stage": "implementation",
+        "class": "implementation_defect",
+        "severity": "blocking",
+        "first_broken_artifact": "implementation",
+        "obligation_basis": "accepted_requirement",
+        "evidence": [{
+            "kind": "test", "locator": "CHAIN", "digest_or_identity": "red",
+            "observation": "repair required",
+        }],
+        "target_identity": identity(1),
+        "summary": "Repair the chain.",
+        "recommended_owner": "task_owner",
+        "disposition": "repair_task",
+    }]
+    accepted_repair = review("review-accepted-repair", 2, "accept")
+    accepted_repair["review_mode"] = "repair"
+    accepted_repair["repair_frontier"] = {
+        "prior_review_id": "review-initial-repair",
+        "blocking_finding_ids": ["CHAIN-FINDING"],
+        "previous_reviewed_identity": identity(1),
+        "repaired_identity": identity(2),
+        "affected_boundaries": [dependency_path],
+        "frozen_evidence_reference": review_runtime.review_evidence_identity(initial_repair),
+    }
+    accepted_repair["previous_review"] = {
+        key: value for key, value in initial_repair.items() if key != "previous_review"
+    }
+    final_review = review("review-final", 3, "accept")
+    final_review["review_reset"] = {
+        "prior_review_id": "review-accepted-repair",
+        "reason_class": "validation_allocation",
+        "reason": "Cumulative result validation changed.",
+    }
+    final_review["previous_review"] = {
+        key: value for key, value in accepted_repair.items() if key != "previous_review"
+    }
+
+    handoff_root = root / ".work-bundle/orchestration/handoff/executor/active"
+    handoff_root.mkdir(parents=True, exist_ok=True)
+    records = [
+        ("handoff-base", base_review, "completed"),
+        ("handoff-initial-repair", initial_repair, "partial"),
+        ("handoff-accepted-repair", accepted_repair, "completed"),
+        ("handoff-final", final_review, "completed"),
+    ]
+    references: dict[str, dict[str, str]] = {}
+    for handoff_id, acceptance, state in records:
+        path = handoff_root / f"{handoff_id}.yaml"
+        document = {
+            "id": handoff_id,
+            "type": "executor-result",
+            "related": {"plan": "plan-001", "task": "task-dependency"},
+            "result": {"state": state},
+            "acceptance_review": acceptance,
+        }
+        rendered = "\n".join(execution_context._dump_yaml(document)) + "\n"
+        path.write_text(rendered.replace(": none\n", ': "none"\n'), encoding="utf-8")
+        references[handoff_id] = {
+            "handoff_id": handoff_id,
+            "handoff_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    descriptor = {
+        "task_id": "task-dependency",
+        "accepted_result_base": references["handoff-base"],
+        "review_chain": [
+            references["handoff-initial-repair"],
+            references["handoff-accepted-repair"],
+            references["handoff-final"],
+        ],
+        "integrated_base": commits[0],
+        "integrated_head": commits[3],
+    }
+    task = {
+        "task_id": "dependent-task",
+        "plan_id": "plan-001",
+        "depends_on": ["task-dependency"],
+        "workspace": {"root": str(root)},
+    }
+
+    assert execution_context._accepted_dependency_paths(task, root, [descriptor]) == {
+        dependency_path, repair_path, final_path
+    }
+    missing = deepcopy(descriptor)
+    missing["review_chain"] = missing["review_chain"][1:]
+    with pytest.raises(SystemExit, match="chain|prior"):
+        execution_context._accepted_dependency_paths(task, root, [missing])
+    reordered = deepcopy(descriptor)
+    reordered["review_chain"][0], reordered["review_chain"][1] = (
+        reordered["review_chain"][1], reordered["review_chain"][0]
+    )
+    with pytest.raises(SystemExit, match="chain|prior|ordered"):
+        execution_context._accepted_dependency_paths(task, root, [reordered])
+    intermediate = deepcopy(descriptor)
+    intermediate["review_chain"] = intermediate["review_chain"][:1]
+    intermediate["integrated_head"] = commits[1]
+    with pytest.raises(SystemExit, match="final|accept"):
+        execution_context._accepted_dependency_paths(task, root, [intermediate])
+    wrong_checkpoint = deepcopy(descriptor)
+    wrong_checkpoint["integrated_head"] = commits[2]
+    with pytest.raises(SystemExit, match="checkpoint|mismatched"):
+        execution_context._accepted_dependency_paths(task, root, [wrong_checkpoint])
+    stale_identity = deepcopy(descriptor)
+    stale_identity["review_chain"][-1]["handoff_sha256"] = "0" * 64
+    with pytest.raises(SystemExit, match="stale"):
+        execution_context._accepted_dependency_paths(task, root, [stale_identity])
+
+    commits.append(git(root, "rev-parse", "HEAD"))
+    trees.append(git(root, "rev-parse", "HEAD^{tree}"))
+    later_review = review("review-later", 4, "accept")
+    later_review["review_reset"] = {
+        "prior_review_id": "review-final",
+        "reason_class": "validation_allocation",
+        "reason": "A later accepted result superseded the terminal result.",
+    }
+    later_review["previous_review"] = {
+        key: value for key, value in final_review.items() if key != "previous_review"
+    }
+    later_path = handoff_root / "handoff-later.yaml"
+    later_document = {
+        "id": "handoff-later",
+        "type": "executor-result",
+        "related": {"plan": "plan-001", "task": "task-dependency"},
+        "result": {"state": "completed"},
+        "acceptance_review": later_review,
+    }
+    rendered = "\n".join(execution_context._dump_yaml(later_document)) + "\n"
+    later_path.write_text(rendered.replace(": none\n", ': "none"\n'), encoding="utf-8")
+    with pytest.raises(SystemExit, match="terminal result is stale"):
+        execution_context._accepted_dependency_paths(task, root, [descriptor])
 
 
 def test_rf_07_brief_rebuild_retains_original_execution_binding_and_baseline(

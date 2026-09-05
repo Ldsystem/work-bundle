@@ -1497,6 +1497,233 @@ def _assert_task_caused_delta_in_write_scope(
             raise SystemExit(f"Unauthorized task-caused delta outside write scope: {relative}")
 
 
+def _exact_handoff_reference(
+    handoff_root: Path,
+    reference: object,
+) -> tuple[Path, dict[str, Any]]:
+    if not isinstance(reference, Mapping) or set(reference) != {"handoff_id", "handoff_sha256"}:
+        raise SystemExit("accepted dependency handoff reference must use the closed identity shape")
+    handoff_id = str(reference["handoff_id"])
+    matches: list[tuple[Path, dict[str, Any]]] = []
+    for path in sorted(handoff_root.glob("executor/*/*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            document, _ = _read_structured(path)
+        except (OSError, SystemExit, ValueError):
+            continue
+        if document.get("id") == handoff_id:
+            matches.append((path, document))
+    if len(matches) != 1:
+        raise SystemExit(f"accepted dependency handoff identity is missing or ambiguous: {handoff_id}")
+    path, handoff = matches[0]
+    if hashlib.sha256(path.read_bytes()).hexdigest() != str(reference["handoff_sha256"]):
+        raise SystemExit(f"accepted dependency handoff identity is stale: {handoff_id}")
+    return path, handoff
+
+
+def _review_without_history(review: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in review.items() if key != "previous_review"}
+
+
+def _cumulative_accepted_dependency_paths(
+    task: dict[str, Any],
+    execution_root: Path,
+    descriptors: list[Mapping[str, object]],
+) -> set[str]:
+    required_fields = {
+        "task_id", "accepted_result_base", "review_chain", "integrated_base", "integrated_head"
+    }
+    dependencies = {str(value) for value in _as_list(task.get("depends_on"))}
+    plan_id = str(task.get("plan_id") or "")
+    workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
+    handoff_root = (
+        Path(str(workspace.get("root") or "")).resolve()
+        / ".work-bundle/orchestration/handoff"
+    )
+    current_head = _resolve_commit(execution_root, "HEAD")
+    admitted: set[str] = set()
+    seen_dependencies: set[str] = set()
+    for descriptor in descriptors:
+        if set(descriptor) != required_fields:
+            raise SystemExit(
+                "accepted_dependency_deltas cumulative entries must use the closed runtime identity shape"
+            )
+        dependency_id = str(descriptor["task_id"])
+        if dependency_id not in dependencies:
+            raise SystemExit(f"accepted_dependency_deltas names undeclared dependency: {dependency_id}")
+        if dependency_id in seen_dependencies:
+            raise SystemExit(f"accepted_dependency_deltas duplicates dependency: {dependency_id}")
+        seen_dependencies.add(dependency_id)
+        chain_references = descriptor["review_chain"]
+        if (not isinstance(chain_references, list) or not chain_references
+                or any(not isinstance(item, Mapping) for item in chain_references)):
+            raise SystemExit("accepted dependency review_chain must be non-empty and exact")
+        reference_ids = [str(item.get("handoff_id") or "") for item in chain_references]
+        if len(reference_ids) != len(set(reference_ids)):
+            raise SystemExit("accepted dependency review_chain cannot contain duplicated handoffs")
+
+        _, base_handoff = _exact_handoff_reference(
+            handoff_root, descriptor["accepted_result_base"]
+        )
+        base_related = base_handoff.get("related") if isinstance(base_handoff.get("related"), dict) else {}
+        base_result = base_handoff.get("result") if isinstance(base_handoff.get("result"), dict) else {}
+        base_review = base_handoff.get("acceptance_review") if isinstance(base_handoff.get("acceptance_review"), dict) else {}
+        if (base_related.get("plan") != plan_id or base_related.get("task") != dependency_id
+                or base_result.get("state") != "completed" or base_review.get("verdict") != "accept"):
+            raise SystemExit("accepted dependency result base is not an accepted plan/task result")
+
+        chain: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+        for reference in chain_references:
+            _, handoff = _exact_handoff_reference(handoff_root, reference)
+            related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+            result = handoff.get("result") if isinstance(handoff.get("result"), dict) else {}
+            review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
+            if related.get("plan") != plan_id or related.get("task") != dependency_id:
+                raise SystemExit("accepted dependency review_chain plan/task identity is mismatched")
+            chain.append((handoff, result, review))
+
+        try:
+            from review_runtime import (
+                ReviewContractError,
+                review_evidence_identity,
+                validate_task_review_record,
+            )
+            validate_task_review_record(base_review)
+            base_identity = base_review.get("target_identity")
+            if (not isinstance(base_identity, Mapping)
+                    or base_identity.get("artifact_id") != dependency_id
+                    or base_review.get("reviewed_head") != base_identity.get("revision")):
+                raise SystemExit("accepted dependency result base identity is mismatched")
+            previous_review = base_review
+            seen_review_ids = {str(base_review.get("review_id") or "")}
+            for _, result, review in chain:
+                validate_task_review_record(review)
+                review_id = str(review.get("review_id") or "")
+                identity = review.get("target_identity")
+                if (review_id in seen_review_ids or not isinstance(identity, Mapping)
+                        or identity.get("artifact_id") != dependency_id
+                        or review.get("reviewed_head") != identity.get("revision")):
+                    raise SystemExit("accepted dependency review_chain review identity is duplicated or mismatched")
+                seen_review_ids.add(review_id)
+                revision = _resolve_commit(execution_root, str(identity.get("revision") or ""))
+                tree = _git(execution_root, "rev-parse", f"{revision}^{{tree}}").strip()
+                if tree != identity.get("source_tree"):
+                    raise SystemExit("accepted dependency review_chain Git identity is mismatched")
+                carried = review.get("previous_review")
+                if (not isinstance(carried, Mapping) or "previous_review" in carried
+                        or _review_without_history(carried) != _review_without_history(previous_review)):
+                    raise SystemExit("accepted dependency review_chain prior review is missing or mismatched")
+                mode = review.get("review_mode")
+                if mode == "repair":
+                    frontier = review.get("repair_frontier")
+                    if not isinstance(frontier, Mapping):
+                        raise SystemExit("accepted dependency review_chain repair frontier is missing")
+                    blocking = [
+                        str(item.get("finding_id"))
+                        for item in _as_list(previous_review.get("findings"))
+                        if isinstance(item, Mapping) and item.get("severity") == "blocking"
+                    ]
+                    if (frontier.get("prior_review_id") != previous_review.get("review_id")
+                            or frontier.get("previous_reviewed_identity") != previous_review.get("target_identity")
+                            or frontier.get("repaired_identity") != review.get("target_identity")
+                            or list(frontier.get("blocking_finding_ids") or []) != blocking
+                            or frontier.get("frozen_evidence_reference") != review_evidence_identity(previous_review)):
+                        raise SystemExit("accepted dependency review_chain repair continuity is mismatched")
+                else:
+                    reset = review.get("review_reset")
+                    if not isinstance(reset, Mapping) or reset.get("prior_review_id") != previous_review.get("review_id"):
+                        raise SystemExit("accepted dependency review_chain initial reset is non-contiguous")
+                if review.get("verdict") not in {"repair", "accept"}:
+                    raise SystemExit("accepted dependency review_chain contains a blocked review")
+                if review.get("verdict") == "accept" and result.get("state") != "completed":
+                    raise SystemExit("accepted dependency review_chain accepted result is incomplete")
+                previous_review = review
+        except ReviewContractError as error:
+            raise SystemExit(f"accepted dependency review_chain is invalid: {error}") from error
+
+        _, final_result, final_review = chain[-1]
+        if final_review.get("verdict") != "accept" or final_result.get("state") != "completed":
+            raise SystemExit("accepted dependency review_chain final result is not accepted")
+        base_identity = base_review.get("target_identity")
+        final_identity = final_review.get("target_identity")
+        if not isinstance(base_identity, Mapping) or not isinstance(final_identity, Mapping):
+            raise SystemExit("accepted dependency cumulative result identity is incomplete")
+        for identity in (base_identity, final_identity):
+            revision = _resolve_commit(execution_root, str(identity.get("revision") or ""))
+            tree = _git(execution_root, "rev-parse", f"{revision}^{{tree}}").strip()
+            if tree != identity.get("source_tree"):
+                raise SystemExit("accepted dependency cumulative Git identity is mismatched")
+
+        final_review_id = str(final_review.get("review_id") or "")
+        chain_ids = set(reference_ids)
+        successor_edges: list[tuple[str, str, bool]] = []
+        for path in sorted(handoff_root.glob("executor/*/*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                candidate, _ = _read_structured(path)
+            except (OSError, SystemExit, ValueError):
+                continue
+            if str(candidate.get("id") or "") in chain_ids:
+                continue
+            related = candidate.get("related") if isinstance(candidate.get("related"), dict) else {}
+            result = candidate.get("result") if isinstance(candidate.get("result"), dict) else {}
+            review = candidate.get("acceptance_review") if isinstance(candidate.get("acceptance_review"), dict) else {}
+            frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), dict) else {}
+            reset = review.get("review_reset") if isinstance(review.get("review_reset"), dict) else {}
+            prior_id = frontier.get("prior_review_id") or reset.get("prior_review_id")
+            if (related.get("plan") == plan_id and related.get("task") == dependency_id
+                    and isinstance(prior_id, str) and prior_id):
+                successor_edges.append((
+                    prior_id,
+                    str(review.get("review_id") or ""),
+                    result.get("state") == "completed" and review.get("verdict") == "accept",
+                ))
+        reachable = {final_review_id}
+        while True:
+            additions = {current for prior, current, _ in successor_edges if prior in reachable}
+            if additions.issubset(reachable):
+                break
+            reachable.update(additions)
+        if any(accepted and prior in reachable for prior, _, accepted in successor_edges):
+            raise SystemExit("accepted dependency review_chain terminal result is stale")
+
+        source_base = _resolve_commit(execution_root, str(base_identity.get("revision") or ""))
+        source_head = _resolve_commit(execution_root, str(final_identity.get("revision") or ""))
+        if subprocess.run(
+            ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", source_base, source_head],
+            capture_output=True,
+            check=False,
+        ).returncode:
+            raise SystemExit("accepted dependency cumulative source chain is non-ancestral")
+        integrated_base = _resolve_commit(execution_root, str(descriptor["integrated_base"]))
+        integrated_head = _resolve_commit(execution_root, str(descriptor["integrated_head"]))
+        if subprocess.run(
+            ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", integrated_head, current_head],
+            capture_output=True,
+            check=False,
+        ).returncode:
+            raise SystemExit("accepted dependency cumulative integration checkpoint is not current")
+        source_diff = _git(execution_root, "diff", "--binary", source_base, source_head, "--")
+        integrated_diff = _git(
+            execution_root, "diff", "--binary", integrated_base, integrated_head, "--"
+        )
+        if source_diff != integrated_diff:
+            raise SystemExit("accepted dependency cumulative integration checkpoint is mismatched")
+        paths = {
+            path
+            for line in _git(execution_root, "diff", "--name-status", source_base, source_head, "--").splitlines()
+            for path in _paths_from_name_status(line)
+        }
+        if paths and _git(
+            execution_root, "diff", "--name-only", integrated_head, "--", *sorted(paths)
+        ).strip():
+            raise SystemExit("accepted dependency cumulative path changed after integration")
+        admitted.update(paths)
+    return admitted
+
+
 def _accepted_dependency_paths(
     task: dict[str, Any],
     execution_root: Path,
@@ -1505,6 +1732,13 @@ def _accepted_dependency_paths(
     descriptors = list(accepted_dependency_deltas or [])
     if not descriptors:
         return set()
+    cumulative_fields = {
+        "task_id", "accepted_result_base", "review_chain", "integrated_base", "integrated_head"
+    }
+    if all(isinstance(item, Mapping) and set(item) == cumulative_fields for item in descriptors):
+        return _cumulative_accepted_dependency_paths(task, execution_root, descriptors)
+    if any(isinstance(item, Mapping) and set(item) == cumulative_fields for item in descriptors):
+        raise SystemExit("accepted_dependency_deltas cannot mix cumulative and legacy identities")
     dependencies = {str(value) for value in _as_list(task.get("depends_on"))}
     plan_id = str(task.get("plan_id") or "")
     workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
