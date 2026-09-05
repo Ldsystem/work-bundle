@@ -1,12 +1,12 @@
 {
   "schema": "wor105-adversarial-freeze-v1",
-  "evaluation_id": "wor105-native-adversarial-20260905-003",
-  "frozen_at": "2026-09-04T19:45:00Z",
+  "evaluation_id": "wor105-native-adversarial-20260905-004",
+  "frozen_at": "2026-09-05T06:20:00Z",
   "enforcement_mode": "native",
-  "product_tree": "cd9ca804304a068f422c5a8b199ace7cb8febd61",
+  "product_tree": "f009205ce0d538ea944188ceddbd4f7cc04b66f0",
   "specification_sha256": "575d4aea84d8d5c88e361017fcc69b97302485bdd6c2074cd2864c9d266d43da",
-  "plan_sha256": "a87d554901ccddb5e8af364ea9e3868b267d22f2ac0f900ae62fa91a3b849745",
-  "task_identity": "task-e01r2@plan-20260904-001-wor105-legacy-stabilization",
+  "plan_sha256": "7e37be1260bc3c39c0f2516c43246f5c520444d6c584796a39afb1583ab565ca",
+  "task_identity": "task-e01r4@plan-20260904-001-wor105-legacy-stabilization",
   "fixtures": [
     {"fixture_id": "ADV-01", "path": "evals/wor105/fixtures/ADV-01.json", "sha256": "52e6a3f83058f820fe01343e5b009940842874f05bdf47aa2e99ea60a27127bb"},
     {"fixture_id": "ADV-02", "path": "evals/wor105/fixtures/ADV-02.json", "sha256": "78fe6de27c7833336f6883a73dc61aaa0b15b37735ae639e9061e071e0dfcd40"},
@@ -24,12 +24,12 @@
   "components": {
     "profile": {"path": "../.work-bundle/orchestration/docs/wor105/native-transition-record.yaml", "sha256": "aa01163346022ddc9b55481cf1698614da08a1c0f75a98d38b5ce3008b57cd56"},
     "fixtures": {"path": "evals/wor105/fixtures", "sha256": "bc4568dae581546c21f60275ad4dc60ae762df36238b98cf89b569f40edde5f2"},
-    "runner": {"path": "evals/wor105/run.py", "sha256": "6367a19b7b462c50b62e034e0ec7aa436fed21c696cf0e23d5a73be0b8eb9351"},
+    "runner": {"path": "evals/wor105/run.py", "sha256": "c4d0d310ebced9819c4f28b6fe8b5e9fbd9d8d0fdfaf3a08564e974abfce7653"},
     "verifier": {"path": "evals/wor105/verify.py", "sha256": "08503554ed5e586251a6c722361d8deb5ca03f8b7fb5c81958acd811ff9a29d4"},
     "result_schema": {"path": "evals/wor105/adversarial-result-v1.schema.json", "sha256": "ef4a96e1682e29e7225dbecf4257e3dad040bff2d549eff1b71067033db64c89"},
     "semantic_schema": {"path": "../.work-bundle/orchestration/docs/wor105/contracts-v1.schema.json", "sha256": "ab6500c1197928450da7e7a438d69d763c376332aeaa72caa23526c613eb1b67"},
     "instructions": {"path": "AGENTS.md", "sha256": "5cc2ba1160a25b767a7e02c957d6f37a14a7fa4be50c711f5b67c5c03442d66a"},
-    "evidence_capabilities": {"path": "../.work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-e01r2/task-brief.yaml", "sha256": "24e530f502f0360ac44e1ccb1870b4e98db0d5715ff8bb69e721a5dd61d85142"}
+    "evidence_capabilities": {"path": "../.work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-e01r4/task-brief.yaml", "sha256": "7f600f35963f2edc192452a3de8ca5ce018479ef9280be8167a0e79a894f0514"}
   },
   "invalidations": [
     {
@@ -71,6 +71,46 @@
       "affected_run_ids": ["wor105-native-adversarial-20260905-002-attempt-001"],
       "reason": "evaluation evidence ownership moved to the explicit plan-refreeze task",
       "timestamp": "2026-09-04T19:45:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-005",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-003",
+      "changed_component": "runner",
+      "old_digest": "6367a19b7b462c50b62e034e0ec7aa436fed21c696cf0e23d5a73be0b8eb9351",
+      "new_digest": "c4d0d310ebced9819c4f28b6fe8b5e9fbd9d8d0fdfaf3a08564e974abfce7653",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-003-attempt-001"],
+      "reason": "the prior runner authored proof claims without invoking native WorkBundle operations",
+      "timestamp": "2026-09-05T06:20:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-006",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-003",
+      "changed_component": "tasks",
+      "old_digest": "a87d554901ccddb5e8af364ea9e3868b267d22f2ac0f900ae62fa91a3b849745",
+      "new_digest": "7e37be1260bc3c39c0f2516c43246f5c520444d6c584796a39afb1583ab565ca",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-003-attempt-001"],
+      "reason": "the accepted plan was resliced to allocate native-probe repair and refreeze ownership",
+      "timestamp": "2026-09-05T06:20:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-007",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-003",
+      "changed_component": "evidence_capabilities",
+      "old_digest": "24e530f502f0360ac44e1ccb1870b4e98db0d5715ff8bb69e721a5dd61d85142",
+      "new_digest": "7f600f35963f2edc192452a3de8ca5ce018479ef9280be8167a0e79a894f0514",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-003-attempt-001"],
+      "reason": "evaluation evidence ownership moved to the native-probe refreeze task",
+      "timestamp": "2026-09-05T06:20:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-008",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-003",
+      "changed_component": "product",
+      "old_digest": "ec056c774b8aef3d680743e2ea95be8e260f3f06653c06d5bfb89be2c757fcc1",
+      "new_digest": "55a5d96c95a1783832beaf0e588c0915617cec0fa18f698afa53b8bdabeadca6",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-003-attempt-001"],
+      "reason": "the native-probe runner and zero-call regression entered the exact product tree",
+      "timestamp": "2026-09-05T06:20:00Z"
     }
   ]
 }
