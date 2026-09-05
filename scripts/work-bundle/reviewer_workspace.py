@@ -215,13 +215,24 @@ def _sb_quote(path: Path) -> str:
     return '"' + str(path).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _runtime_read_roots() -> list[Path]:
+    executable = Path(sys.executable).expanduser()
+    candidates = {
+        Path(value).expanduser().resolve()
+        for value in (sys.prefix, sys.exec_prefix, sys.base_prefix, sys.base_exec_prefix)
+        if value
+    }
+    candidates.add(executable.parent.parent.resolve())
+    candidates.add(executable.resolve().parents[1])
+    return sorted((path for path in candidates if path != Path("/")), key=str)
+
+
 def _sandbox_profile(workspace: Path, policy: dict[str, object], validators: list[object]) -> str:
     roots = [Path(str(policy["source"])), Path(str(policy["control"]))]
     roots.extend(Path(str(value)) for value in policy.get("protected", []) if isinstance(value, str))
     denied_reads = " ".join(f"(subpath {_sb_quote(path.resolve())})" for path in roots)
     runtime_reads = " ".join(
-        f"(subpath {_sb_quote(path)})"
-        for path in {Path(sys.prefix).resolve(), Path(sys.executable).resolve().parents[1]}
+        f"(subpath {_sb_quote(path)})" for path in _runtime_read_roots()
     )
     return "\n".join(
         [
@@ -514,8 +525,7 @@ def _run_sandboxed_process(workspace: Path, argv: list[str]) -> subprocess.Compl
         Path("/usr"),
         Path("/bin"),
         Path("/sbin"),
-        Path(sys.prefix).resolve(),
-        Path(sys.executable).resolve().parents[1],
+        *_runtime_read_roots(),
     ]
     if not any(_inside(root, executable) for root in allowed_runtime_roots):
         raise ReviewerWorkspaceError("WB_REVIEW_COMMAND_INVALID", {"classification": "denied"})

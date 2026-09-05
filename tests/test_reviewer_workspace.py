@@ -333,6 +333,29 @@ def test_sandbox_denial_requires_a_failed_process() -> None:
     assert reviewer_workspace._sandbox_denied(ordinary_failure) is False
 
 
+def test_sandbox_profile_allows_split_environment_and_base_runtime_roots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment_prefix = tmp_path / "uv-environment"
+    base_prefix = tmp_path / "python-framework"
+    executable = environment_prefix / "bin" / "python"
+    policy = {
+        "source": str(tmp_path / "source"),
+        "control": str(tmp_path / "control"),
+        "protected": [str(tmp_path / "control" / "credentials")],
+    }
+    monkeypatch.setattr(reviewer_workspace.sys, "prefix", str(environment_prefix))
+    monkeypatch.setattr(reviewer_workspace.sys, "exec_prefix", str(environment_prefix / "exec"))
+    monkeypatch.setattr(reviewer_workspace.sys, "base_prefix", str(base_prefix))
+    monkeypatch.setattr(reviewer_workspace.sys, "base_exec_prefix", str(base_prefix / "exec"))
+    monkeypatch.setattr(reviewer_workspace.sys, "executable", str(executable))
+
+    profile = reviewer_workspace._sandbox_profile(tmp_path / "review", policy, [])
+
+    for root in (environment_prefix, environment_prefix / "exec", base_prefix, base_prefix / "exec"):
+        assert f'(subpath "{root}")' in profile
+
+
 def test_cleanup_rejects_arbitrary_terminal_text(review_roots: tuple[Path, Path, Path]) -> None:
     source, control, runtime = review_roots
     create_reviewer_workspace(runtime, "review-terminal", packet(source, control))
