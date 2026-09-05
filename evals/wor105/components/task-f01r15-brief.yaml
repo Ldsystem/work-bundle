@@ -1,0 +1,106 @@
+task_brief:
+  task_id: task-f01r15
+  plan_id: plan-20260904-001-wor105-legacy-stabilization
+  source_ids:
+    - REQ-020
+    - REQ-021
+    - REQ-022
+    - AC-005
+    - AC-011
+  goal: "Refreeze evaluation after canonical release-gate repair"
+  truth_basis:
+    purpose: "Preserve evaluation 009 and freeze an exact accepted-plan task-capability post-F01R14 product successor"
+    as_is_evidence:
+      - "evaluation 009 immutable raw evidence"
+      - "accepted F01R14 handoff"
+      - "accepted plan root and aggregate"
+      - "compiled F01R15 brief"
+      - "post-F01R14 tree"
+    decision_authority:
+      - "AUTH-001: Every validation-bearing invariant needs a capable current correctly bounded harness observation before closure, with typed first-owner repair."
+      - "AUTH-004: Compile bounded exact-identity task and review packets without executor knowledge retrieval."
+    expected_delta:
+      - "append-only invalidations and deterministic successor"
+    conflict_status: clear
+  requirements:
+    - "REQ-020: Freeze product source, spec/task, instruction closure, fixtures, runner, verifier, semantic schema, and evidence capabilities before acceptance runs; runner cannot grade its own semantics."
+    - "REQ-021: Store separate product revision/tree, instruction/fixture/runner/verifier, invocation/raw response/raw trace/adjudication/evidence digests, and packaging revision."
+    - "REQ-022: Evaluator component drift explicitly invalidates affected runs; raw responses/traces remain immutable; packaging-only advance preserves separately bound source observation."
+    - "AC-005: Evaluator drift invalidates affected runs, raw evidence stays immutable, append-only adjudication obeys frozen schema, and packaging-only advance preserves source-bound observations."
+    - "AC-011: Final adversarial replay passes all twelve user-specified cases with frozen inputs/runner/verifier/schema and exact source identity."
+  constraints: []
+  interfaces:
+    consumes: []
+    produces: []
+  files:
+    read:
+      - evals/wor105/freeze-manifest.json
+      - evals/wor105/results.jsonl
+      - evals/wor105/run.py
+      - evals/wor105/verify.py
+      - .work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-f01r15/task-brief.yaml
+    write:
+      - evals/wor105/freeze-manifest.json
+      - evals/wor105/results.jsonl
+      - evals/wor105/components/task-f01r15-brief.yaml
+    forbidden: []
+  methodology:
+    primary: direct
+    skills:
+      - dev-systematic-debugging
+  allocated_rules:
+    - id: verification-evidence-before-claim
+      requirement: "replay evidence is claimed"
+  executor_profile:
+    capability: judgment
+    context_mode: compiled-brief
+    review_capability: judgment
+    escalation:
+      after_failed_repairs: 2
+      next_capability: judgment
+  evidence_applicability:
+    metadata:
+      required: false
+      reasons: []
+    repository:
+      required: true
+      reasons:
+        - source-inspection
+        - source-analysis
+    codegraph:
+      required: true
+      reasons:
+        - source-inspection
+        - source-analysis
+  workspace:
+    root: /Users/shenglong/Documents/Repository/work-bundle-workspace/.worktrees/wor105
+  validation:
+    - kind: process
+      id: VAL-F01R15
+      invariant_ids:
+        - INV-F01R15
+      capability_reason: "two native runs independent verification and exact digest comparison reject drift and nondeterminism"
+      command: "uvx --python 3.13 --from pyyaml==6.0.3 python evals/wor105/run.py --manifest evals/wor105/freeze-manifest.json --output evals/wor105/results.jsonl && uvx --python 3.13 --from pyyaml==6.0.3 python evals/wor105/verify.py --manifest evals/wor105/freeze-manifest.json --results evals/wor105/results.jsonl && first=$(sha256sum evals/wor105/results.jsonl | awk '{print $1}') && uvx --python 3.13 --from pyyaml==6.0.3 python evals/wor105/run.py --manifest evals/wor105/freeze-manifest.json --output evals/wor105/results.jsonl && uvx --python 3.13 --from pyyaml==6.0.3 python evals/wor105/verify.py --manifest evals/wor105/freeze-manifest.json --results evals/wor105/results.jsonl && second=$(sha256sum evals/wor105/results.jsonl | awk '{print $1}') && test \"$first\" = \"$second\""
+      proves: "exact current-plan task product deterministic evidence"
+      expected: "two accepted 12-case runs and identical digest"
+  evidence_capability:
+    result: mapped
+    reason: "Exact identities and a double-run verifier close the successor freeze."
+    invariants:
+      - id: INV-F01R15
+        source_ids:
+          - REQ-020
+          - REQ-021
+          - REQ-022
+          - AC-005
+        invariant: "Final replay is exact and deterministic"
+        boundary: integration
+        oracle: VAL-F01R15
+        capability_reason: "double-run native verifier"
+        freshness: current_task_batch
+        task_id: task-f01r15
+        evidence_ids:
+          - VAL-F01R15
+        closure_result: pending
+  handoff_contract: executor-result-v1
+  review_required: false
