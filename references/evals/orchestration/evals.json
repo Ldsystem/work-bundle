@@ -22,7 +22,7 @@
     {
       "id": 4,
       "prompt": "Execute the next task in an existing plan.",
-      "expected_output": "Selects execute-plan, requires a subagent owner before task mutation, executes through that subagent when available, and otherwise fails closed with workspace-blocked without changing task scope.",
+      "expected_output": "Selects execute-plan and invokes the production TaskOwnershipScheduler without requiring a separate user delegation request; it binds a subagent owner before task mutation and otherwise fails closed with workspace-blocked without changing task scope.",
       "files": []
     },
     {
@@ -34,7 +34,7 @@
     {
       "id": 6,
       "prompt": "Execute a phase whose next two tasks are independent and have disjoint write scopes, in an environment with sub-agents.",
-      "expected_output": "Selects execute-plan, binds the independent tasks to separate subagents and isolated execution workspaces, dispatches both before awaiting either, validates executor handoffs against task/phase/plan/spec, updates task statuses, and continues scheduling.",
+      "expected_output": "Selects execute-plan, passes planner-approved candidates to the production TaskOwnershipScheduler, binds independent tasks to separate subagents and isolated execution workspaces, dispatches both before awaiting either, validates executor handoffs against task/phase/plan/spec, updates task statuses, and continues scheduling.",
       "files": []
     },
     {
@@ -130,7 +130,7 @@
     {
       "id": 22,
       "prompt": "Execute a plan task with a delegated sub-agent, then prepare its executor-result handoff after implementation reveals a task-scoped gap.",
-      "expected_output": "Preserves preflight, accepted baseline, dependencies, write scopes, and the same subagent task owner; the subagent repairs the task-local gap, reruns fresh validation, writes a sparse handoff with neutral ownership evidence, compiles a bounded review package, and requires an accept review before completion.",
+      "expected_output": "Preserves preflight, accepted baseline, dependencies, and write scopes; routes operation repair through the production TaskOwnershipScheduler to a subagent, reruns fresh validation, writes a sparse handoff with neutral ownership evidence, compiles a bounded review package, and requires an accept review before completion.",
       "files": []
     },
     {
@@ -178,13 +178,13 @@
     {
       "id": 30,
       "prompt": "Execute a plan task when no supported subagent execution mechanism is available.",
-      "expected_output": "Fails closed with workspace-blocked before any task mutation and does not substitute controller or single-agent implementation.",
+      "expected_output": "The production TaskOwnershipScheduler checks adapter availability and fails closed with workspace-blocked before dispatch or task mutation; it does not substitute controller or single-agent implementation.",
       "files": []
     },
     {
       "id": 31,
       "prompt": "The orchestration controller directly patches a task-owned file and all task validations pass.",
-      "expected_output": "Rejects task acceptance with review-blocked because controller mutation violates mandatory subagent ownership; green validation cannot override ownership provenance.",
+      "expected_output": "TaskOwnershipScheduler.validate_acceptance rejects task acceptance with review-blocked because controller mutation violates mandatory subagent ownership; green validation cannot override ownership provenance.",
       "files": []
     },
     {

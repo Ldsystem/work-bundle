@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, Mapping, Sequence, TypeVar
+from typing import Iterable, Mapping, Protocol, Sequence
 
 
 PROVENANCE_FIELDS = frozenset({"delegated", "owner_kind", "agent_id", "run_id", "mechanism"})
@@ -39,6 +39,22 @@ class TaskCandidate:
 class DispatchWaveResult:
     dispatched: tuple[str, ...]
     results: tuple[object, ...]
+    ownership: tuple[dict[str, object], ...]
+    operation: str
+
+
+@dataclass(frozen=True)
+class SubagentDispatch:
+    handle: object
+    delegation_evidence: Mapping[str, object]
+
+
+class SubagentAdapter(Protocol):
+    def available(self) -> bool: ...
+
+    def dispatch(self, task: TaskCandidate, *, operation: str) -> SubagentDispatch: ...
+
+    def wait(self, handle: object) -> object: ...
 
 
 def _identifier(value: object, field: str) -> str:
@@ -128,22 +144,55 @@ def _ready_wave(tasks: Sequence[TaskCandidate], completed: set[str]) -> list[Tas
     return wave
 
 
-Handle = TypeVar("Handle")
+class TaskOwnershipScheduler:
+    """Production admission and scheduling entry for ``orch-execute-plan``."""
 
+    def __init__(self, adapter: SubagentAdapter) -> None:
+        self._adapter = adapter
 
-def dispatch_ready_wave(
-    tasks: Sequence[TaskCandidate],
-    *,
-    completed: set[str],
-    subagents_available: bool,
-    dispatch: Callable[[TaskCandidate], Handle],
-    wait: Callable[[Handle], object],
-) -> DispatchWaveResult:
-    """Dispatch every safe ready task before awaiting any returned handle."""
+    def run_wave(
+        self,
+        tasks: Sequence[TaskCandidate],
+        *,
+        completed: set[str],
+        operation: str = "implementation",
+    ) -> DispatchWaveResult:
+        if operation not in {"implementation", "repair"}:
+            raise ValueError("operation must be implementation or repair")
+        if not self._adapter.available():
+            raise OwnershipBlocker("workspace-blocked", "subagent execution is unavailable")
+        wave = _ready_wave(tasks, completed)
+        dispatched: list[SubagentDispatch] = []
+        ownership: list[dict[str, object]] = []
+        for task in wave:
+            receipt = self._adapter.dispatch(task, operation=operation)
+            if not isinstance(receipt, SubagentDispatch):
+                raise OwnershipBlocker("workspace-blocked", "subagent dispatch receipt is invalid")
+            ownership.append(
+                normalize_subagent_provenance(receipt.delegation_evidence, operation=operation)
+            )
+            dispatched.append(receipt)
+        results = tuple(self._adapter.wait(receipt.handle) for receipt in dispatched)
+        return DispatchWaveResult(
+            dispatched=tuple(task.task_id for task in wave),
+            results=results,
+            ownership=tuple(ownership),
+            operation=operation,
+        )
 
-    if not subagents_available:
-        raise OwnershipBlocker("workspace-blocked", "subagent execution is unavailable")
-    wave = _ready_wave(tasks, completed)
-    handles = [dispatch(task) for task in wave]
-    results = tuple(wait(handle) for handle in handles)
-    return DispatchWaveResult(tuple(task.task_id for task in wave), results)
+    def validate_acceptance(
+        self,
+        *,
+        delegation_evidence: Mapping[str, object] | None,
+        mutation_events: Iterable[Mapping[str, object]],
+        write_scope: Sequence[str],
+        validations_passed: bool,
+        operation: str = "implementation",
+    ) -> dict[str, object]:
+        return validate_task_acceptance_ownership(
+            delegation_evidence=delegation_evidence,
+            mutation_events=mutation_events,
+            write_scope=write_scope,
+            validations_passed=validations_passed,
+            operation=operation,
+        )

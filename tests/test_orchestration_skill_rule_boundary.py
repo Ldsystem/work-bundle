@@ -123,6 +123,8 @@ def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> 
         "dev-code-review",
         "The scheduler does not perform code-quality review",
         "every implementation and repair task subagent-owned",
+        "TaskOwnershipScheduler",
+        "TaskOwnershipScheduler.validate_acceptance",
         "there is no controller or single-agent fallback",
         "must not implement or repair task write scope",
         "After two failed repair rounds",
