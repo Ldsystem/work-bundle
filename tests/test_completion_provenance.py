@@ -31,6 +31,7 @@ from completion_provenance import (  # noqa: E402
 )
 import execution_context  # noqa: E402
 import plans  # noqa: E402
+import completion_provenance  # noqa: E402
 
 
 NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
@@ -50,6 +51,44 @@ def _request(**changes):
     }
     request.update(changes)
     return request
+
+
+def test_validation_policy_defaults_are_explicit_and_conservative():
+    policy = completion_provenance.validation_reuse_policy
+    assert policy({"kind": "process"})["max_age_seconds"] == 0
+    assert policy({"evidence_reuse": {"mode": "deterministic"}})["max_age_seconds"] == 3600
+    assert policy({"evidence_reuse": {"mode": "live"}})["max_age_seconds"] == 0
+    assert policy({"evidence_reuse": {"mode": "live", "max_age_seconds": 30}})["max_age_seconds"] == 30
+
+
+def test_validation_environment_binds_dependency_profile_without_temp_paths(tmp_path, monkeypatch):
+    dependency = tmp_path / "runtime.lock"
+    dependency.write_text("python=3.13;pytest=9.1.1")
+    policy = completion_provenance.validation_reuse_policy({"evidence_reuse": {
+        "mode": "deterministic", "dependency_files": ["runtime.lock"], "profile": "isolated-pytest",
+        "environment_inputs": ["CLAIM_MODE"],
+    }})
+    before = completion_provenance.validation_environment_identity(tmp_path, policy)
+    assert completion_provenance.validation_environment_identity(tmp_path, {**policy, "profile": "different-profile"}) != before
+    monkeypatch.setenv("TMPDIR", "/volatile/other-temp-root")
+    assert completion_provenance.validation_environment_identity(tmp_path, policy) == before
+    dependency.write_text("python=3.13;pytest=next")
+    assert completion_provenance.validation_environment_identity(tmp_path, policy) != before
+    dependency.write_text("python=3.13;pytest=9.1.1")
+    monkeypatch.setenv("CLAIM_MODE", "changed")
+    assert completion_provenance.validation_environment_identity(tmp_path, policy) != before
+    assert "/volatile" not in json.dumps(before)
+
+
+def test_reuse_revalidates_stored_result_shape(tmp_path):
+    store = ManagedProvenanceStore(tmp_path)
+    reuse_observation(store, _request(), lambda: _result(), now=NOW)
+    with store.locked():
+        state = store._read_unlocked()
+        del state["observations"][0]["result"]["exit_code"]
+        store._write_unlocked(state)
+    with pytest.raises(CompletionProvenanceError, match="closed and complete"):
+        reuse_observation(store, _request(observation_id="obs-002"), lambda: pytest.fail("must not execute"), now=NOW)
 
 
 def _result():

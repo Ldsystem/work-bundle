@@ -6,6 +6,8 @@ import ast
 import hashlib
 import json
 import re
+import os
+import stat
 import subprocess
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -289,6 +291,81 @@ def _product_identity(root: Path) -> Mapping[str, Any]:
             "tree": _git(resolved, "rev-parse", "HEAD^{tree}"),
         }
     )
+
+
+# Generated evidence is packaging, not product input. Other output locations
+# must be declared explicitly; never guess from a filename such as "result.json".
+OBSERVATION_ARTIFACT_ROOTS = (
+    ".work-bundle/runtime/", ".work-bundle/orchestration/handoff/",
+    ".work-bundle/orchestration/reviews/", ".work-bundle/logs/",
+)
+
+
+def validation_source_identity(
+    root: Path, *, input_paths: Sequence[str] = (), output_paths: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Content-address the conservative material source set, separately from receipts.
+
+    Compute real Git blob/tree hashes without writing objects or the user's index.
+    Include dirty/untracked content and declared ignored inputs. Index identity is
+    retained separately because commands can inspect staged state. HEAD/packaging
+    history is not a content input; callers bind it explicitly when claim-relevant.
+    """
+    root = root.resolve()
+
+    def excluded(relative: str) -> bool:
+        return relative.startswith(OBSERVATION_ARTIFACT_ROOTS) or any(
+            relative == path or relative.startswith(path.rstrip("/") + "/")
+            for path in output_paths
+        )
+
+    listed = _git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+    paths = set(filter(None, listed.split("\0")))
+    for pattern in input_paths:
+        if Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+            raise EvaluationIdentityError("validation input must be repository-relative")
+        # Task write scopes may name a directory or a narrow glob.
+        for candidate in root.glob(pattern):
+            candidates = candidate.rglob("*") if candidate.is_dir() and not candidate.is_symlink() else [candidate]
+            paths.update(p.relative_to(root).as_posix() for p in candidates if not p.is_dir() or p.is_symlink())
+    index = []
+    for record in _git(root, "ls-files", "--stage", "-z").split("\0"):
+        if "\t" in record:
+            meta, relative = record.split("\t", 1)
+            if not excluded(relative):
+                index.append((relative, meta))
+
+    def object_id(kind: bytes, payload: bytes) -> bytes:
+        return hashlib.sha1(kind + b" " + str(len(payload)).encode() + b"\0" + payload).digest()
+
+    tree: dict[str, Any] = {}
+    for relative in sorted(paths):
+        if excluded(relative):
+            continue
+        if "credentials" in Path(relative).parts or Path(relative).name == ".env":
+            raise EvaluationIdentityError("protected validation input requires a governed dependency identity")
+        target = root / relative
+        if not target.exists() and not target.is_symlink():
+            continue
+        if "credentials" in target.resolve().parts or target.resolve().name == ".env":
+            raise EvaluationIdentityError("protected validation input requires a governed dependency identity")
+        if target.is_symlink() or not target.is_file() or not target.resolve().is_relative_to(root):
+            raise EvaluationIdentityError("validation source contains an unsupported link or submodule")
+        mode = b"100755" if target.stat().st_mode & stat.S_IXUSR else b"100644"
+        node = tree
+        parts = Path(relative).parts
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = (mode, object_id(b"blob", target.read_bytes()))
+
+    def tree_id(node: dict[str, Any]) -> bytes:
+        payload = b""
+        for name, child in sorted(node.items(), key=lambda pair: os.fsencode(pair[0]) + (b"/" if isinstance(pair[1], dict) else b"")):
+            mode, oid = (b"40000", tree_id(child)) if isinstance(child, dict) else child
+            payload += mode + b" " + os.fsencode(name) + b"\0" + oid
+        return object_id(b"tree", payload)
+
+    return {"tree": tree_id(tree).hex(), "index_digest": _canonical_digest(index)}
 
 
 def _api_product(product: Mapping[str, Any]) -> Mapping[str, Any]:

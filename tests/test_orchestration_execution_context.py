@@ -28,7 +28,8 @@ def _counted_validation(tmp_path: Path, reuse_seconds: int = 3600, suffix: str =
     counter = tmp_path / "invocations.txt"
     script = f"from pathlib import Path; p=Path({str(counter)!r}); p.write_text(str(int(p.read_text())+1) if p.exists() else '1')"
     command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script + suffix)}"
-    _set_process_validation(task, command, reuse_seconds=reuse_seconds)
+    _set_process_validation(task, command, reuse_seconds=reuse_seconds,
+                            evidence_reuse={"environment_inputs": ["PYTHONHASHSEED"]})
     brief = _compiled_brief(root, task)
     _bind_task_execution(root, brief)
     handoff = _read_handoff(_handoff_for_command(root, command))
@@ -77,13 +78,18 @@ def test_handoff_validation_live_checks_do_not_reuse(tmp_path: Path) -> None:
 def test_handoff_validation_expiry_requires_new_observation(tmp_path: Path, monkeypatch) -> None:
     _, _, brief, handoff, counter = _counted_validation(tmp_path)
     _validate_observed(handoff, brief)
-    clock = execution_context.validation_observation.now_utc
-    monkeypatch.setattr(execution_context.validation_observation, "now_utc", lambda: clock() + timedelta(seconds=3601))
+    cp = execution_context._completion_provenance_module()
+    clock = cp.datetime
+    class Later(clock):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.now(tz) + timedelta(seconds=3601)
+    monkeypatch.setattr(cp, "datetime", Later)
     _validate_observed(handoff, brief)
     assert counter.read_text() == "2"
 
 
-def test_handoff_validation_seen_mutation_then_revert_invalidates(tmp_path: Path) -> None:
+def test_handoff_validation_restored_identity_reuses_original(tmp_path: Path) -> None:
     root, _, brief, handoff, counter = _counted_validation(tmp_path)
     target = root / WRITE_SCOPE_FILE
     original = target.read_text()
@@ -92,7 +98,125 @@ def test_handoff_validation_seen_mutation_then_revert_invalidates(tmp_path: Path
     _validate_observed(handoff, brief)
     target.write_text(original)
     _validate_observed(handoff, brief)
-    assert counter.read_text() == "3"
+    assert counter.read_text() == "2"
+
+
+def test_handoff_validation_ignores_undeclared_volatile_environment(tmp_path: Path, monkeypatch) -> None:
+    _, _, brief, handoff, counter = _counted_validation(tmp_path)
+    _validate_observed(handoff, brief)
+    monkeypatch.setenv("TMPDIR", "/some/other/transient/location")
+    monkeypatch.setenv("UNRELATED_REQUEST_ID", "another-invocation")
+    _validate_observed(handoff, brief)
+    assert counter.read_text() == "1"
+
+
+def test_validation_uses_existing_completion_evidence_store(tmp_path: Path) -> None:
+    root, _, brief, handoff, _ = _counted_validation(tmp_path)
+    _validate_observed(handoff, brief)
+    store = root / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json"
+    assert len(json.loads(store.read_text())["observations"]) == 1
+
+
+@pytest.mark.parametrize("field", ["task", "knowledge", "closure", "result", "scope"])
+def test_handoff_reuse_keeps_structural_checks(tmp_path: Path, field: str) -> None:
+    _, _, brief, handoff, counter = _counted_validation(tmp_path)
+    if field == "closure":
+        mapped, claims, _, _ = evidence_closure_fixture()
+        brief["evidence_capability"] = mapped["evidence_capability"]
+        brief["validation"][0].update(id="VAL-001", invariant_ids=["INV-001"])
+        handoff["validation"]["commands"][0].update(id="VAL-001", invariant_ids=["INV-001"])
+        handoff.update(claims)
+    _validate_observed(handoff, brief)
+    if field == "task":
+        handoff["related"]["task"] = "wrong-task"
+    elif field == "knowledge":
+        handoff["knowledge_disposition"]["action"] = "invented"
+    elif field == "closure":
+        handoff["evidence_closure"] = {"result": "passed", "invariants": []}
+    elif field == "result":
+        handoff["validation"]["commands"][0]["result"] = "invented"
+    else:
+        handoff["changes"] = {"files": [{"path": "unauthorized.py", "action": "modified"}]}
+    with pytest.raises(SystemExit):
+        _validate_observed(handoff, brief)
+    assert counter.read_text() == "1"
+
+
+@pytest.mark.parametrize("component", ["os", "architecture"])
+def test_handoff_reuse_keeps_platform_identities_distinct(tmp_path: Path, monkeypatch, component: str) -> None:
+    _, _, brief, handoff, counter = _counted_validation(tmp_path)
+    _validate_observed(handoff, brief)
+    cp = execution_context._completion_provenance_module()
+    monkeypatch.setattr(cp.platform, "system" if component == "os" else "machine", lambda: "different-platform")
+    _validate_observed(handoff, brief)
+    assert counter.read_text() == "2"
+
+
+@pytest.mark.parametrize("field", ["id", "expected", "acceptable_results", "invariant_ids", "command"])
+def test_handoff_reuse_covers_semantic_check_fields(tmp_path: Path, field: str) -> None:
+    _, _, brief, handoff, counter = _counted_validation(tmp_path)
+    _validate_observed(handoff, brief)
+    item = brief["validation"][0]
+    reported = handoff["validation"]["commands"][0]
+    changed = {"id": "VAL-OTHER", "expected": "pass", "acceptable_results": ["passed", "failed"],
+               "invariant_ids": ["INV-OTHER"], "command": item["command"] + "; true"}
+    item[field] = changed[field]
+    if field in {"id", "invariant_ids", "command"}:
+        reported[field] = changed[field]
+    _validate_observed(handoff, brief)
+    assert counter.read_text() == "2"
+
+
+def test_handoff_reuse_checks_binding_on_every_call(tmp_path: Path) -> None:
+    _, _, brief, handoff, counter = _counted_validation(tmp_path)
+    _validate_observed(handoff, brief)
+    with pytest.raises(SystemExit, match="execution_id mismatch"):
+        execution_context.validate_executor_result_for_task(handoff, brief, observe=True, execution_id="other-execution")
+    assert counter.read_text() == "1"
+
+
+def test_handoff_receipts_do_not_self_invalidate_validation(tmp_path: Path) -> None:
+    root, _, brief, handoff, counter = _counted_validation(tmp_path)
+    first = _validate_observed(handoff, brief)
+    receipt = root / ".work-bundle/runtime/validation-summary.json"
+    receipt.write_text('{"summary":"another observation artifact"}')
+    second = _validate_observed(handoff, brief)
+    assert counter.read_text() == "1"
+    assert second["observed_validation"][0]["reuse_of"] == first["observed_validation"][0]["observation_id"]
+
+
+def test_handoff_reuse_distinguishes_process_from_inspection(tmp_path: Path) -> None:
+    root, _, brief, handoff, counter = _counted_validation(tmp_path)
+    first = _validate_observed(handoff, brief)
+    brief["validation"][0].update(kind="inspection", mechanism="named-harness-file-digest",
+                                  digest=execution_context._write_scope_file_digest(root, brief))
+    handoff["validation"]["commands"][0]["mechanism"] = "named-harness-file-digest"
+    second = _validate_observed(handoff, brief)
+    assert second["observed_validation"][0]["observation_id"] != first["observed_validation"][0]["observation_id"]
+    assert second["observed_validation"][0]["kind"] == "inspection"
+    assert counter.read_text() == "1"
+
+
+def test_skipped_observation_is_not_reusable(tmp_path: Path) -> None:
+    _, _, brief, handoff, counter = _counted_validation(tmp_path)
+    brief["validation"][0].update(expected="skipped", acceptable_results=["skipped"])
+    handoff["validation"]["commands"][0]["result"] = "skipped"
+    for _ in range(2):
+        result = _validate_observed(handoff, brief)
+        assert "observation_id" not in result["observed_validation"][0]
+    assert not counter.exists()
+
+
+def test_failed_observation_is_reexecuted_after_source_repair(tmp_path: Path) -> None:
+    suffix = f"; raise SystemExit('broken' in Path({WRITE_SCOPE_FILE!r}).read_text())"
+    root, _, brief, handoff, counter = _counted_validation(tmp_path, suffix=suffix)
+    (root / WRITE_SCOPE_FILE).write_text("broken")
+    with pytest.raises(SystemExit, match="does not match observed failed"):
+        _validate_observed(handoff, brief)
+    (root / WRITE_SCOPE_FILE).write_text("repaired")
+    _validate_observed(handoff, brief)
+    _validate_observed(handoff, brief)
+    assert counter.read_text() == "2"
 
 
 @pytest.mark.parametrize("mutation", [False, True])

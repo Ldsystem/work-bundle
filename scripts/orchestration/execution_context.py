@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 from datetime import datetime, timezone
 
-import validation_observation
 
 from core import is_relative_to, read_front_matter, resolve_workspace_root
 from repository_preflight import capture_repository_evidence, task_caused_paths
@@ -1482,8 +1481,8 @@ def _observe_completed_validation(
     task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
     _assert_task_caused_delta_in_write_scope(task_caused_paths(baseline, pre_batch, execution_root), task_files)
     for item in required_items:
-        observed = validation_observation.observe(
-            _completion_provenance_module(), binding, task, item, pre_batch,
+        observed = _completion_provenance_module().observe_validation(
+            binding, task, item, pre_batch,
             lambda receipt: _observe_validation_item(item, execution_root, task, receipt),
             lambda: capture_repository_evidence(execution_root),
         )
@@ -1989,8 +1988,11 @@ def _compile_structured_validation_item(item: Any) -> dict[str, Any]:
             "Task validation kind must be process or inspection; untyped structured validation is legacy-untyped"
         )
     compiled["kind"] = kind
-    if "reuse_seconds" in item:
-        compiled["reuse_seconds"] = validation_observation.reuse_seconds(item)
+    if "reuse_seconds" in item or "evidence_reuse" in item:
+        try:
+            compiled["evidence_reuse"] = _completion_provenance_module().validation_reuse_policy(item)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
     for key in ("id", "invariant_ids", "capability_reason", "command", "proves", "expected", "acceptable_results", "digest"):
         if key in item:
             compiled[key] = item[key]

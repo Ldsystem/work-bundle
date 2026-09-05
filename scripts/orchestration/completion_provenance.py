@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 import re
 import sys
 import tempfile
@@ -15,7 +16,7 @@ import uuid
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -517,6 +518,9 @@ def reuse_observation(
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     _validate_observation_request(request, observed_at)
     with store.locked():
+        if now is None:
+            observed_at = datetime.now(timezone.utc)
+            _validate_observation_request(request, observed_at)
         state = store._read_unlocked()
         if request["mutation_epoch"] != state["mutation_epoch"]:
             raise CompletionProvenanceError("observation mutation epoch is stale")
@@ -524,6 +528,7 @@ def reuse_observation(
             if all(raw[field] == request[field] for field in OBSERVATION_IDENTITY_FIELDS) and (
                 _utc(raw["freshness_deadline"], "freshness_deadline") >= observed_at
             ):
+                _validate_result(raw["result"])
                 return ObservationIdentityV1(
                     **{
                         **raw,
@@ -544,6 +549,147 @@ def reuse_observation(
         state["observations"].append(observation.to_dict())
         store._write_unlocked(state)
         return observation
+
+
+def validation_reuse_policy(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Compile explicit evidence policy; legacy reuse_seconds remains an opt-in."""
+    raw = item.get("evidence_reuse", {})
+    fields = {"mode", "max_age_seconds", "environment_inputs", "dependency_files", "output_paths", "profile", "include_head"}
+    if not isinstance(raw, dict) or set(raw) - fields:
+        raise CompletionProvenanceError("evidence_reuse has unknown or invalid fields")
+    legacy = item.get("reuse_seconds", 0)
+    if type(legacy) is not int or not 0 <= legacy <= 86400:
+        raise CompletionProvenanceError("validation reuse_seconds must be an integer from 0 to 86400")
+    mode = raw.get("mode", "deterministic" if legacy else "live")
+    if not isinstance(mode, str) or mode not in {"deterministic", "live"}:
+        raise CompletionProvenanceError("evidence_reuse.mode must be deterministic or live")
+    seconds = raw.get("max_age_seconds", legacy if "reuse_seconds" in item else (3600 if mode == "deterministic" else 0))
+    if type(seconds) is not int or not 0 <= seconds <= 86400:
+        raise CompletionProvenanceError("evidence_reuse.max_age_seconds must be an integer from 0 to 86400")
+    if "reuse_seconds" in item and "max_age_seconds" in raw and legacy != seconds:
+        raise CompletionProvenanceError("conflicting evidence freshness policies")
+    policy = {"mode": mode, "max_age_seconds": seconds}
+    for key in ("environment_inputs", "dependency_files", "output_paths"):
+        values = raw.get(key, [])
+        if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() for v in values):
+            raise CompletionProvenanceError(f"evidence_reuse.{key} must be a string list")
+        if key == "environment_inputs":
+            if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v) for v in values):
+                raise CompletionProvenanceError("environment_inputs must name explicit variables")
+        elif any(Path(v).is_absolute() or ".." in Path(v).parts or v in {".", "./"} or any(c in v for c in "*?[") for v in values):
+            raise CompletionProvenanceError(f"evidence_reuse.{key} must contain exact repository-relative paths")
+        policy[key] = sorted(set(values))
+    policy["profile"] = raw.get("profile", "")
+    policy["include_head"] = raw.get("include_head", "reuse_seconds" in item)
+    if not isinstance(policy["profile"], str) or type(policy["include_head"]) is not bool:
+        raise CompletionProvenanceError("evidence_reuse profile/include_head has invalid type")
+    return policy
+
+
+def validation_environment_identity(root: Path, policy: Mapping[str, Any]) -> dict[str, Any]:
+    """Semantic platform/runtime and declared inputs; never persist environment values."""
+    dependencies = {}
+    for relative in policy["dependency_files"]:
+        path = root / relative
+        if "credentials" in path.resolve().parts or path.resolve().name == ".env" or path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+            raise CompletionProvenanceError("protected or escaping dependency identity")
+        if not path.is_file():
+            raise CompletionProvenanceError(f"dependency identity unavailable: {relative}")
+        dependencies[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return {
+        "os": platform.system(), "architecture": platform.machine(),
+        "runtime": {"implementation": platform.python_implementation(), "version": platform.python_version(),
+                    "executable_digest": hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()},
+        "dependencies": dependencies, "profile": policy["profile"],
+        "environment_digest": _canonical_digest({name: os.environ.get(name) for name in policy["environment_inputs"]}),
+    }
+
+
+class _UnrecordedValidation(Exception):
+    """A failed or skipped result must not become reusable positive evidence."""
+
+
+def observe_validation(
+    binding: Mapping[str, Any], task: Mapping[str, Any], item: Mapping[str, Any],
+    evidence: Mapping[str, Any], execute: Callable[[dict[str, Any]], dict[str, Any]],
+    capture: Callable[[], Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Project validation onto the existing source/evidence and observation identities."""
+    from evaluation_identity import EvaluationIdentityError, validation_source_identity
+
+    policy = validation_reuse_policy(item)
+    if not policy["max_age_seconds"] or str(item.get("expected", "")).lower() in {"skip", "skipped"}:
+        return execute({})
+    root = Path(binding["execution_path"]).resolve()
+    files = task.get("files", {})
+    input_paths = [*files.get("read", []), *files.get("write", []), *policy["dependency_files"]]
+    # An explicit read/dependency cannot simultaneously be declared output-only.
+    for source in [*files.get("read", []), *policy["dependency_files"]]:
+        if any(source == output or source.startswith(output.rstrip("/") + "/") for output in policy["output_paths"]):
+            raise CompletionProvenanceError("validation input overlaps observation output")
+
+    def source_identity():
+        return validation_source_identity(root, input_paths=input_paths, output_paths=policy["output_paths"])
+
+    try:
+        source = source_identity()
+    except EvaluationIdentityError:
+        # Unsupported links/protected inputs are observed afresh, not approximated.
+        return execute({})
+    environment = validation_environment_identity(root, policy)
+    # This is the same managed store already owning execution bindings and epochs.
+    store = ManagedProvenanceStore(Path(binding["control_root"]) / ".work-bundle/runtime/completion-provenance")
+    bound = {key: binding[key] for key in ("workspace_id", "execution_id", "repository_id", "plan_id", "task_id", "execution_path")}
+    definition = {key: item.get(key) for key in ("id", "kind", "command", "mechanism", "expected", "acceptable_results", "invariant_ids", "digest", "proves")}
+    helper_dir = Path(__file__).parent
+    runners = {name: hashlib.sha256((helper_dir / name).read_bytes()).hexdigest() for name in (
+        "completion_provenance.py", "execution_context.py", "evaluation_identity.py", "repository_preflight.py",
+    )}
+    authority = {key: task.get(key) for key in ("source_ids", "requirements", "constraints", "interfaces", "truth_basis", "files", "evidence_capability")}
+    current = datetime.now(timezone.utc)
+    request = {
+        "observation_id": f"observation-{uuid.uuid4()}", "invocation_id": f"invocation-{uuid.uuid4()}",
+        "command_digest": _canonical_digest(definition), "cwd_token": "bound_project_root",
+        "product_tree": source["tree"],
+        "state_digest": _canonical_digest({"source": source, "environment": environment, "binding": bound,
+                                           "head": evidence["head"] if policy["include_head"] else None}),
+        "oracle_digest": _canonical_digest({"authority": authority, "check": definition, "runner": runners, "freshness_policy": policy}),
+        "freshness_deadline": (current + timedelta(seconds=policy["max_age_seconds"])).isoformat().replace("+00:00", "Z"),
+        # Only explicit provenance revocation advances the epoch. Content drift
+        # changes the source identity; restoring it can reuse the prior result.
+        "mutation_epoch": store.mutation_epoch,
+    }
+    observed = None
+
+    def run():
+        nonlocal observed
+        if capture() != evidence or source_identity() != source:
+            raise SystemExit("validation-blocked: inputs changed before observation")
+        receipt: dict[str, Any] = {}
+        started = _now_text()
+        observed = execute(receipt)
+        if capture() != evidence or source_identity() != source or validation_environment_identity(root, policy) != environment:
+            raise SystemExit("validation-blocked: authoritative validation batch mutated inputs or Git-observable state")
+        if observed["result"] != "passed":
+            raise _UnrecordedValidation()
+        if not receipt:  # Named harness inspections use the same closed result shape.
+            receipt.update(exit_code=0, stdout_digest=_canonical_digest(observed),
+                           stderr_digest=hashlib.sha256(b"").hexdigest(), started_at=started, completed_at=_now_text())
+        return receipt
+
+    try:
+        record = reuse_observation(store, request, run)
+    except _UnrecordedValidation:
+        assert observed is not None
+        return observed
+    if source_identity() != source or validation_environment_identity(root, policy) != environment:
+        raise SystemExit("validation-blocked: inputs changed while obtaining evidence")
+    if observed is None:
+        observed = {key: item.get(key) for key in ("command", "kind", "id", "invariant_ids")}
+        if item.get("kind") == "inspection":
+            observed["mechanism"] = item["mechanism"]
+        observed["result"] = "passed"
+    return {**observed, "observation_id": record.observation_id, "reuse_of": record.reuse_of}
 
 
 def claim_observation_identity(

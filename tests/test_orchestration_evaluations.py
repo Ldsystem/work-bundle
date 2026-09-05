@@ -12,6 +12,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATION = REPO_ROOT / "scripts" / "orchestration"
 sys.path.insert(0, str(ORCHESTRATION))
+import evaluation_identity  # noqa: E402
 
 from evaluation_identity import (  # noqa: E402
     EvaluationIdentityError,
@@ -24,6 +25,50 @@ from evaluation_identity import (  # noqa: E402
 
 def git(root: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(root), *args], text=True, capture_output=True, check=True).stdout.strip()
+
+
+def test_validation_source_identity_excludes_observation_artifacts(evaluator):
+    root = evaluator["root"]
+    before = evaluation_identity.validation_source_identity(root)
+    assert before["tree"] == git(root, "rev-parse", "HEAD^{tree}")
+    receipt = root / ".work-bundle/runtime/observations/result.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text('{"passed":true}')
+    commit_all(evaluator, "record observation artifact")
+    assert evaluation_identity.validation_source_identity(root) == before
+    receipt.write_text('{"passed":true,"summary":"reworded"}')
+    assert evaluation_identity.validation_source_identity(root) == before
+
+
+def test_validation_source_identity_covers_dirty_untracked_and_declared_ignored_inputs(evaluator):
+    root = evaluator["root"]
+    before = evaluation_identity.validation_source_identity(root)
+    evaluator["runner"].write_text("changed source")
+    dirty = evaluation_identity.validation_source_identity(root)
+    assert dirty != before
+    extra = root / "new-helper.py"
+    extra.write_text("new task-created helper")
+    assert evaluation_identity.validation_source_identity(root) != dirty
+    git(root, "config", "core.excludesFile", str(root.parent / "ignore-patterns"))
+    (root.parent / "ignore-patterns").write_text("ignored-input.txt\n")
+    ignored = root / "ignored-input.txt"
+    ignored.write_text("v1")
+    first = evaluation_identity.validation_source_identity(root, input_paths=["ignored-input.txt"])
+    ignored.write_text("v2")
+    assert evaluation_identity.validation_source_identity(root, input_paths=["ignored-input.txt"]) != first
+
+
+def test_validation_source_identity_preserves_every_index_stage(evaluator):
+    root = evaluator["root"]
+    first = git(root, "rev-parse", "HEAD:runner.py")
+    other = git(root, "rev-parse", "HEAD:verifier.py")
+    def unmerged(ours):
+        entries = f"0 {'0' * 40}\trunner.py\n100644 {first} 1\trunner.py\n100644 {ours} 2\trunner.py\n100644 {other} 3\trunner.py\n"
+        subprocess.run(["git", "-C", str(root), "update-index", "--index-info"], input=entries, text=True, check=True)
+    unmerged(first)
+    before = evaluation_identity.validation_source_identity(root)
+    unmerged(other)
+    assert evaluation_identity.validation_source_identity(root) != before
 
 
 def commit_all(evaluator: dict[str, Path], message: str) -> None:
