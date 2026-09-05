@@ -1,11 +1,11 @@
 {
   "schema": "wor105-adversarial-freeze-v1",
-  "evaluation_id": "wor105-native-adversarial-20260905-006",
-  "frozen_at": "2026-09-05T07:13:59Z",
+  "evaluation_id": "wor105-native-adversarial-20260905-007",
+  "frozen_at": "2026-09-05T07:48:00Z",
   "enforcement_mode": "native",
-  "product_tree": "0c4d59dcba91eceb8a9437a059a6ea8bff784eb4",
+  "product_tree": "302b8f0da424191be545456fb0ed0f3299690a0c",
   "specification_sha256": "575d4aea84d8d5c88e361017fcc69b97302485bdd6c2074cd2864c9d266d43da",
-  "plan_sha256": "a0f8c6b69de964b4d14c900cfd209d12bcab0daa674510ea5b7eaefa033e14a3",
+  "plan_sha256": "2d05fdd476d17e5ed5cc624219cc358dcbe52e67eaf40c8902d7f8946f5754f5",
   "task_identity": "task-f01r2@plan-20260904-001-wor105-legacy-stabilization",
   "fixtures": [
     {"fixture_id": "ADV-01", "path": "evals/wor105/fixtures/ADV-01.json", "sha256": "52e6a3f83058f820fe01343e5b009940842874f05bdf47aa2e99ea60a27127bb"},
@@ -171,6 +171,36 @@
       "affected_run_ids": ["wor105-native-adversarial-20260905-005-attempt-001"],
       "reason": "the isolated-per-file CI oracle entered the exact post-F01R4 product tree",
       "timestamp": "2026-09-05T07:13:59Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-015",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-006",
+      "changed_component": "tasks",
+      "old_digest": "a0f8c6b69de964b4d14c900cfd209d12bcab0daa674510ea5b7eaefa033e14a3",
+      "new_digest": "2d05fdd476d17e5ed5cc624219cc358dcbe52e67eaf40c8902d7f8946f5754f5",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-006-attempt-001"],
+      "reason": "the accepted plan allocated clean-checkout evaluator and sandbox status repairs before release",
+      "timestamp": "2026-09-05T07:48:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-016",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-006",
+      "changed_component": "evidence_capabilities",
+      "old_digest": "e2638e31f2d61c09e8975cc81e52b03dcd2bdbf854053eed13f327e6bb6972eb",
+      "new_digest": "f3799b5e1c37bebfdca33be98231b0b026f1cd8d35f481769cebc6a45c285605",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-006-attempt-001"],
+      "reason": "the release refreeze task now carries both exact-head CI first-owner repairs",
+      "timestamp": "2026-09-05T07:48:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-017",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-006",
+      "changed_component": "product",
+      "old_digest": "fd596d911f964e3032aacfa60a8ad3d7fa97b8097344cad84ff1ccda52f43b70",
+      "new_digest": "82bdab648220c6b18574a45cbee6dacdf76764988da9f858fde1bfe329b9cf31",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-006-attempt-001"],
+      "reason": "portable evaluator components and return-code-aware sandbox classification entered the exact post-F01R6 product tree",
+      "timestamp": "2026-09-05T07:48:00Z"
     }
   ]
 }
