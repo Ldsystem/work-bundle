@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -175,3 +176,122 @@ def test_rf_08_repair_packet_is_bounded_for_task_and_stage_targets(tmp_path: Pat
     task_current = {key: value for key, value in current.items() if key != "stage"}
     task_current.update(required=True, reviewer_independent=True, verdict="accept", review_target_kind="task", previous_review=task_prior)
     assert review_runtime.validate_task_acceptance_review(task_current).target_identity == current["target_identity"]
+
+
+def test_rf_01_h1_repairs_recorded_a_without_reacquiring_unrecorded_latent_b(tmp_path: Path) -> None:
+    target = tmp_path / "repair-a.md"
+    latent = tmp_path / "latent-b.md"
+    old_content = "---\nid: artifact-rf01\nversion: 1\n---\nA is broken\n"
+    new_content = old_content.replace("broken", "repaired")
+    target.write_text(new_content)
+    latent.write_text("B is latent and outside H1's recorded surface.\n")
+    old_identity = review_runtime.artifact_review_identity(target, content=old_content)
+    new_identity = review_runtime.artifact_review_identity(target)
+
+    initial_h1 = review(target=old_identity, agent="reviewer-h1")
+    initial_h1.update(review_id="review-h1", verdict="repair", findings=[finding(old_identity, "RF-A")])
+    repair_a = review(target=new_identity, mode="repair", agent="reviewer-repair-a")
+    repair_a["repair_frontier"] = {
+        "prior_review_id": "review-h1", "blocking_finding_ids": ["RF-A"],
+        "previous_reviewed_identity": old_identity, "repaired_identity": new_identity,
+        "affected_boundaries": ["control:repair-a.md"],
+        "frozen_evidence_reference": review_runtime.review_evidence_identity(initial_h1),
+    }
+    assert review_runtime.validate_review_sequence(repair_a, previous_review=initial_h1).verdict == "accepted"
+
+    context = {
+        "stage": "plan", "target_identity": new_identity, "target_locator": "control:repair-a.md",
+        "agent_id": "reviewer-repair-a", "capability": "judgment", "execution_id": "exec-rf01",
+        "evidence_mode": "reproducible_snapshot", "review_mode": "repair", "review_target_kind": "stage",
+        "repair_frontier": repair_a["repair_frontier"], "review_reset": None,
+    }
+    manifest = review_runtime.stage_evidence_manifest(
+        tmp_path, tmp_path, context,
+        [{"locator": "control:repair-a.md", "sha256": hashlib.sha256(target.read_bytes()).hexdigest()}],
+    )
+    assert manifest["missing"] == []
+    assert [entry["locator"] for entry in manifest["entries"]] == ["control:repair-a.md"]
+    assert "latent-b.md" not in json.dumps(manifest)
+
+
+@pytest.mark.parametrize(
+    ("invariant", "finding_class", "obligation", "first_broken"),
+    [
+        ("security", "implementation_defect", "essential_safety", "implementation"),
+        ("ownership", "implementation_defect", "accepted_requirement", "implementation"),
+        ("destructive-safety", "implementation_defect", "essential_safety", "implementation"),
+        ("evidence-integrity", "validation_oracle_defect", "evidence_integrity", "validation_oracle"),
+    ],
+)
+def test_rf_03_capable_untouched_invariant_stays_blocking_during_narrow_repair(
+    invariant: str, finding_class: str, obligation: str, first_broken: str
+) -> None:
+    prior, narrow = repair_pair()
+    safety = finding(narrow["target_identity"], f"RF-SAFETY-{invariant}")
+    safety.update(
+        **{
+            "class": finding_class,
+            "obligation_basis": obligation,
+            "first_broken_artifact": first_broken,
+            "recommended_owner": review_runtime.classify_first_broken_owner(finding_class)[1],
+            "disposition": review_runtime.classify_first_broken_owner(finding_class)[2],
+        }
+    )
+    safety["evidence"] = [{
+        "kind": "test", "locator": f"accepted:{invariant}",
+        "digest_or_identity": f"RF-03-{invariant}", "observation": "capable evidence still fails",
+    }]
+    narrow.update(verdict="repair", findings=[safety])
+    assert review_runtime.validate_review_sequence(narrow, previous_review=prior).verdict == "repair"
+    routed = review_runtime.route_review_verdict(safety)
+    assert routed["first_broken_artifact"] == first_broken
+    assert routed["preserve_valid_work_and_evidence"] is True
+
+
+def test_rf_06_final_broad_integrated_review_rediscovers_and_classifies_latent_b(tmp_path: Path) -> None:
+    for args in (("init", "-q"), ("config", "user.name", "Test"), ("config", "user.email", "test@example.com")):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
+    (tmp_path / ".gitignore").write_text(".work-bundle/\n")
+    (tmp_path / "direct-a.py").write_text("A = 'repaired'\n")
+    (tmp_path / "latent-b.py").write_text("B = 'deferred-non-load-bearing'\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "integrated"], check=True)
+    spec = tmp_path / ".work-bundle/orchestration/spec/active/spec-rf06.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("---\nid: spec-rf06\nversion: 1\nstatus: verified\n---\nAccepted scope.\n")
+    plan = tmp_path / ".work-bundle/orchestration/plan/active/plan-rf06.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("---\nid: plan-rf06\nversion: 1\nstatus: In progress\nsource_spec: [.work-bundle/orchestration/spec/active/spec-rf06.md]\n---\nFinal broad review.\n")
+    target_identity = review_runtime.stage_target_identity(
+        tmp_path, "integrated_implementation", plan, source_root=tmp_path
+    )
+    artifacts = [
+        {"locator": "control:.work-bundle/orchestration/plan/active/plan-rf06.md", "sha256": hashlib.sha256(plan.read_bytes()).hexdigest()},
+        {"locator": "control:.work-bundle/orchestration/spec/active/spec-rf06.md", "sha256": hashlib.sha256(spec.read_bytes()).hexdigest()},
+    ]
+    for entry in review_runtime.source_snapshot_entries(tmp_path):
+        path = tmp_path / entry["locator"].removeprefix("source:")
+        artifacts.append({"locator": entry["locator"], "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    context = {
+        "stage": "integrated_implementation", "target_identity": target_identity,
+        "target_locator": "control:.work-bundle/orchestration/plan/active/plan-rf06.md",
+        "agent_id": "reviewer-final", "capability": "judgment", "execution_id": "exec-rf06",
+        "evidence_mode": "reproducible_snapshot", "review_mode": "initial", "review_target_kind": "stage",
+        "repair_frontier": None, "review_reset": None,
+    }
+    manifest = review_runtime.stage_evidence_manifest(tmp_path, tmp_path, context, artifacts)
+    assert manifest["missing"] == []
+    assert "source:latent-b.py" in {entry["locator"] for entry in manifest["source_tree"]}
+    assert next(entry for entry in manifest["entries"] if entry["locator"] == "source:latent-b.py")["role"] == "source_tree"
+
+    latent_finding = finding(target_identity, "RF-LATENT-B")
+    latent_finding.update(
+        **{"class": "advisory_enhancement", "severity": "advisory", "obligation_basis": "none",
+           "first_broken_artifact": "implementation", "recommended_owner": "backlog_owner", "disposition": "record_advisory"}
+    )
+    latent_finding["evidence"] = [{
+        "kind": "source", "locator": "source:latent-b.py", "digest_or_identity": "RF-06-B",
+        "observation": "Final broad review rediscovered deferred non-load-bearing B.",
+    }]
+    assert review_runtime.validate_review_finding(latent_finding).finding_id == "RF-LATENT-B"
+    assert review_runtime.route_review_verdict(latent_finding)["return_to"] == "backlog_owner"
