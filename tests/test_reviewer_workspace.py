@@ -317,6 +317,22 @@ def test_every_denied_request_appends_unique_privacy_safe_event(review_roots: tu
     assert "source:x" not in serialized
 
 
+def test_sandbox_denial_requires_a_failed_process() -> None:
+    incidental = subprocess.CompletedProcess(
+        ["reviewer"], 0, stdout="", stderr="sandbox violation: harmless probe denied"
+    )
+    denied = subprocess.CompletedProcess(
+        ["reviewer"], 1, stdout="", stderr="sandbox violation: operation not permitted"
+    )
+    ordinary_failure = subprocess.CompletedProcess(
+        ["reviewer"], 1, stdout="", stderr="reviewer assertion failed"
+    )
+
+    assert reviewer_workspace._sandbox_denied(incidental) is False
+    assert reviewer_workspace._sandbox_denied(denied) is True
+    assert reviewer_workspace._sandbox_denied(ordinary_failure) is False
+
+
 def test_cleanup_rejects_arbitrary_terminal_text(review_roots: tuple[Path, Path, Path]) -> None:
     source, control, runtime = review_roots
     create_reviewer_workspace(runtime, "review-terminal", packet(source, control))

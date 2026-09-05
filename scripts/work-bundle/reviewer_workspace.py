@@ -488,6 +488,8 @@ def _seal_event_log(runtime_root: Path, review_id: str) -> dict[str, object]:
 
 
 def _sandbox_denied(completed: subprocess.CompletedProcess[str]) -> bool:
+    if completed.returncode == 0:
+        return False
     detail = f"{completed.stdout}\n{completed.stderr}".lower()
     return (
         completed.returncode < 0
