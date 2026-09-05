@@ -1,12 +1,12 @@
 {
   "schema": "wor105-adversarial-freeze-v1",
-  "evaluation_id": "wor105-native-adversarial-20260905-008",
-  "frozen_at": "2026-09-05T08:27:17Z",
+  "evaluation_id": "wor105-native-adversarial-20260905-009",
+  "frozen_at": "2026-09-05T08:59:23Z",
   "enforcement_mode": "native",
-  "product_tree": "348120cd4daf85b7ef9eda6c585cb0c1b7277594",
+  "product_tree": "5b0a230c5c6741ffa1f535810dae633468e47da0",
   "specification_sha256": "575d4aea84d8d5c88e361017fcc69b97302485bdd6c2074cd2864c9d266d43da",
-  "plan_sha256": "14236d308c0797c1398358f87f758e34b96c66e9680ed66582c35e81d25f8df9",
-  "task_identity": "task-f01r9@plan-20260904-001-wor105-legacy-stabilization",
+  "plan_sha256": "ae7947f7ab9490b5331e90d14d0f64f01fa82d8de06f370d84aad30d3129c669",
+  "task_identity": "task-f01r12@plan-20260904-001-wor105-legacy-stabilization",
   "fixtures": [
     {"fixture_id": "ADV-01", "path": "evals/wor105/fixtures/ADV-01.json", "sha256": "52e6a3f83058f820fe01343e5b009940842874f05bdf47aa2e99ea60a27127bb"},
     {"fixture_id": "ADV-02", "path": "evals/wor105/fixtures/ADV-02.json", "sha256": "78fe6de27c7833336f6883a73dc61aaa0b15b37735ae639e9061e071e0dfcd40"},
@@ -29,7 +29,7 @@
     "result_schema": {"path": "evals/wor105/adversarial-result-v1.schema.json", "sha256": "ef4a96e1682e29e7225dbecf4257e3dad040bff2d549eff1b71067033db64c89"},
     "semantic_schema": {"path": "evals/wor105/components/contracts-v1.schema.json", "sha256": "ab6500c1197928450da7e7a438d69d763c376332aeaa72caa23526c613eb1b67"},
     "instructions": {"path": "AGENTS.md", "sha256": "5cc2ba1160a25b767a7e02c957d6f37a14a7fa4be50c711f5b67c5c03442d66a"},
-    "evidence_capabilities": {"path": "evals/wor105/components/task-f01r9-brief.yaml", "sha256": "0bb85f3806f0cbdebebd8516e8a0ed8e7fc154a76cb369075de44a84022c6823"}
+    "evidence_capabilities": {"path": "evals/wor105/components/task-f01r12-brief.yaml", "sha256": "6d0562b79c675334882f128692ac3af03cc46f67a011f1a7b902b41aef7b45fc"}
   },
   "invalidations": [
     {
@@ -231,6 +231,36 @@
       "affected_run_ids": ["wor105-native-adversarial-20260905-007-attempt-001"],
       "reason": "repository-local dogfood transition evidence and split interpreter runtime roots entered the post-F01R8 product tree",
       "timestamp": "2026-09-05T08:27:17Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-021",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-008",
+      "changed_component": "tasks",
+      "old_digest": "14236d308c0797c1398358f87f758e34b96c66e9680ed66582c35e81d25f8df9",
+      "new_digest": "ae7947f7ab9490b5331e90d14d0f64f01fa82d8de06f370d84aad30d3129c669",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-008-attempt-001"],
+      "reason": "the independently accepted plan allocated final clean-checkout transition and Darwin system-shell oracle repair before release",
+      "timestamp": "2026-09-05T08:59:23Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-022",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-008",
+      "changed_component": "evidence_capabilities",
+      "old_digest": "0bb85f3806f0cbdebebd8516e8a0ed8e7fc154a76cb369075de44a84022c6823",
+      "new_digest": "6d0562b79c675334882f128692ac3af03cc46f67a011f1a7b902b41aef7b45fc",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-008-attempt-001"],
+      "reason": "the final refreeze now carries the exact accepted F01R12 task capability and deterministic double-run oracle",
+      "timestamp": "2026-09-05T08:59:23Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-023",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-008",
+      "changed_component": "product",
+      "old_digest": "779e205f1cb4fecdc9595f3a3599befed2b97956971ee57560b055bf4830811c",
+      "new_digest": "55175dec2e03dfc91f78aeb362a957fa682bd92ebe5cfcba5c9af89cf3dc6fa2",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-008-attempt-001"],
+      "reason": "repository-frozen transition validation and self-contained Darwin shell probes entered the exact post-F01R11 product tree",
+      "timestamp": "2026-09-05T08:59:23Z"
     }
   ]
 }
