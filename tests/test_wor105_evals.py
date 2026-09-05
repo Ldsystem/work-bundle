@@ -120,7 +120,7 @@ def test_runner_invokes_one_native_probe_for_every_fixture(tmp_path: Path, monke
     results = runner.run_manifest(_manifest_for_current_runner(tmp_path), tmp_path / "results.jsonl")
 
     assert len(calls) == 12
-    assert all(command[:3] == [runner.sys.executable, "-m", "pytest"] for command in calls)
+    assert all(command[:4] == ["uvx", "--python", "3.13", "--from"] for command in calls)
     assert all(item["passed"] for item in results)
 
 

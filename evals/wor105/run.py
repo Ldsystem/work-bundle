@@ -8,7 +8,6 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
-import sys
 from typing import Any, NamedTuple
 
 
@@ -86,7 +85,18 @@ def _run_native_probe(fixture_id: str) -> NativeProbe:
     target = NATIVE_PROBE_TARGETS.get(fixture_id)
     if target is None:
         raise EvaluationError(f"native probe unavailable: {fixture_id}")
-    command = [sys.executable, "-m", "pytest", "-q", target]
+    command = [
+        "uvx",
+        "--python",
+        "3.13",
+        "--from",
+        "pytest==9.1.1",
+        "--with",
+        "pyyaml==6.0.3",
+        "pytest",
+        "-q",
+        target,
+    ]
     completed = subprocess.run(
         command,
         cwd=REPO_ROOT,
