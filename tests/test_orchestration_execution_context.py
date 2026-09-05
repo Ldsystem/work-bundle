@@ -714,6 +714,12 @@ def evidence_blocks(root: Path, *, codegraph: str = "no-index") -> str:
         "codegraph:\n"
         f"  - root: {root.resolve()}\n"
         f"{codegraph_block}"
+        "delegation_evidence:\n"
+        "  delegated: true\n"
+        "  owner_kind: subagent\n"
+        "  agent_id: execution-context-fixture-agent\n"
+        "  run_id: execution-context-fixture-run\n"
+        "  mechanism: host-native\n"
     )
 
 
@@ -2398,6 +2404,13 @@ def _repair_completion_fixture() -> tuple[dict, dict]:
         "result": {"state": "completed"},
         "task_fit_check": {"task": "task-rf", "result": "repaired"},
         "acceptance_review": {"required": True, "verdict": "accept"},
+        "delegation_evidence": {
+            "delegated": True,
+            "owner_kind": "subagent",
+            "agent_id": "repair-fixture-agent",
+            "run_id": "repair-fixture-run",
+            "mechanism": "host-native",
+        },
         "knowledge_disposition": {"action": "none", "reason": "No authority change.", "affected_authority": []},
     }
     return brief, handoff

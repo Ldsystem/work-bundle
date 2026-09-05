@@ -90,6 +90,13 @@ def _completed_executor_result(
         "related": related,
         "result": {"state": "completed"},
         "task_fit_check": {"task": task, "result": "clean"},
+        "delegation_evidence": {
+            "delegated": True,
+            "owner_kind": "subagent",
+            "agent_id": "workflow-contract-fixture-agent",
+            "run_id": "workflow-contract-fixture-run",
+            "mechanism": "host-native",
+        },
         "knowledge_disposition": {
             "action": "none",
             "reason": "No stable authority changed.",

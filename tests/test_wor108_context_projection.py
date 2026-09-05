@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import sys
 from copy import deepcopy
@@ -32,6 +33,31 @@ from test_stage_events import event  # noqa: E402
 
 def _document(root: Path, task: Path) -> dict:
     return execution_context._read_structured(build_task_brief(args(root, task)))[0]
+
+
+def _delegation_evidence() -> dict[str, object]:
+    return {
+        "delegated": True,
+        "owner_kind": "subagent",
+        "agent_id": "ctx-fixture-agent",
+        "run_id": "ctx-fixture-run",
+        "mechanism": "host-native",
+    }
+
+
+def _without_terminal_evidence(brief: dict[str, object], reason: str) -> dict[str, object]:
+    projected = deepcopy(brief)
+    projected["validation"] = []
+    projected["evidence_capability"] = {
+        "result": "no_validation_bearing_obligation",
+        "reason": reason,
+        "invariants": [],
+    }
+    projected["evidence_applicability"] = {
+        kind: {"required": False, "reasons": []}
+        for kind in ("metadata", "repository", "codegraph")
+    }
+    return projected
 
 
 def test_ctx_01_unrelated_runtime_history_does_not_inflate_unchanged_task_brief(
@@ -192,6 +218,7 @@ def test_ctx_05_failed_evidence_expands_only_with_allowed_reason() -> None:
 
 def test_ctx_06_no_retrieval_escape_hatch_and_context_metrics_use_existing_telemetry(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root, _, task = workspace(tmp_path)
     document = _document(root, task)
@@ -207,6 +234,54 @@ def test_ctx_06_no_retrieval_escape_hatch_and_context_metrics_use_existing_telem
     assert metrics["expansion_reason"] is None
     assert "hard_limit" not in json.dumps(document)
 
+    compiled_packet = _without_terminal_evidence(
+        brief, "CTX-06 executes only from its already-compiled packet."
+    )
+    handoff = {
+        "type": "executor-result",
+        "related": {"plan": brief["plan_id"], "task": brief["task_id"]},
+        "result": {"state": "completed"},
+        "task_fit_check": {"task": brief["task_id"], "result": "clean"},
+        "delegation_evidence": _delegation_evidence(),
+        "knowledge_disposition": {
+            "action": "none",
+            "reason": "No stable authority changed.",
+            "affected_authority": [],
+        },
+    }
+    original_open = builtins.open
+    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
+
+    def retrieval_is_denied(file: object) -> bool:
+        candidate = str(file)
+        return (
+            ".work-bundle/knowledge" in candidate
+            or ".work-bundle/orchestration" in candidate
+        )
+
+    def deny_runtime_retrieval(file: object, *args: object, **kwargs: object):
+        if retrieval_is_denied(file):
+            raise AssertionError(f"executor retrieval attempted: {file}")
+        return original_open(file, *args, **kwargs)
+
+    def deny_path_text(file: Path, *args: object, **kwargs: object) -> str:
+        if retrieval_is_denied(file):
+            raise AssertionError(f"executor retrieval attempted: {file}")
+        return original_read_text(file, *args, **kwargs)
+
+    def deny_path_bytes(file: Path) -> bytes:
+        if retrieval_is_denied(file):
+            raise AssertionError(f"executor retrieval attempted: {file}")
+        return original_read_bytes(file)
+
+    monkeypatch.setattr(builtins, "open", deny_runtime_retrieval)
+    monkeypatch.setattr(Path, "read_text", deny_path_text)
+    monkeypatch.setattr(Path, "read_bytes", deny_path_bytes)
+    accepted = execution_context.validate_executor_result_for_task(handoff, compiled_packet)
+    assert accepted["result_state"] == "completed"
+    assert accepted["task_ownership"]["agent_id"] == "ctx-fixture-agent"
+
     payload = event()
     payload["compiled_context_metrics"] = metrics
     assert validate_stage_event(payload).compiled_context_metrics == metrics
@@ -214,6 +289,55 @@ def test_ctx_06_no_retrieval_escape_hatch_and_context_metrics_use_existing_telem
     invalid["compiled_context_metrics"]["expansion_reason"] = "whole_history"
     with pytest.raises(StageEventError, match="WB_STAGE_EVENT_CONTEXT_METRICS_INVALID"):
         validate_stage_event(invalid)
+
+
+def test_completed_task_acceptance_requires_subagent_delegation_evidence(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    brief = _without_terminal_evidence(
+        _document(root, task)["task_brief"], "Ownership-only acceptance fixture."
+    )
+    handoff = {
+        "type": "executor-result",
+        "related": {"plan": brief["plan_id"], "task": brief["task_id"]},
+        "result": {"state": "completed"},
+        "task_fit_check": {"task": brief["task_id"], "result": "clean"},
+        "knowledge_disposition": {
+            "action": "none",
+            "reason": "No stable authority changed.",
+            "affected_authority": [],
+        },
+    }
+
+    with pytest.raises(SystemExit, match="workspace-blocked.*subagent ownership"):
+        execution_context.validate_executor_result_for_task(handoff, brief)
+
+
+def test_completed_task_acceptance_rejects_controller_task_scope_mutation(
+    tmp_path: Path,
+) -> None:
+    root, _, task = workspace(tmp_path)
+    brief = _without_terminal_evidence(
+        _document(root, task)["task_brief"], "Ownership-only acceptance fixture."
+    )
+    handoff = {
+        "type": "executor-result",
+        "related": {"plan": brief["plan_id"], "task": brief["task_id"]},
+        "result": {"state": "completed"},
+        "task_fit_check": {"task": brief["task_id"], "result": "clean"},
+        "delegation_evidence": _delegation_evidence(),
+        "mutation_events": [{
+            "actor_kind": "controller",
+            "paths": [brief["files"]["write"][0]],
+        }],
+        "knowledge_disposition": {
+            "action": "none",
+            "reason": "No stable authority changed.",
+            "affected_authority": [],
+        },
+    }
+
+    with pytest.raises(SystemExit, match="review-blocked.*controller mutated"):
+        execution_context.validate_executor_result_for_task(handoff, brief)
 
 
 def test_rf_07_brief_rebuild_retains_original_execution_binding_and_baseline(

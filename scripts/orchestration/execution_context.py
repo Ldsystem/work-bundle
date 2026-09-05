@@ -19,6 +19,7 @@ from core import is_relative_to, read_front_matter, resolve_workspace_root
 from artifact_inputs import (_split_top_level, _split_key_value, _parse_scalar, parse_yaml_subset,
                              _read_structured, _as_list, _input_path, _resolve_spec_paths)
 from repository_preflight import capture_repository_evidence, task_caused_paths
+from task_ownership import OwnershipBlocker, validate_task_acceptance_ownership
 
 
 SOURCE_ID_TOKEN = r"[A-Z][A-Z0-9_-]*-\d+[A-Z]?"
@@ -1884,12 +1885,36 @@ def validate_executor_result_for_task(
             raise SystemExit(
                 "evidence-closure-blocked: completed mapped invariants require produced harness observations and passed evidence closure"
             )
+    task_ownership = None
+    if state == "completed":
+        mutation_events = handoff.get("mutation_events", [])
+        if not isinstance(mutation_events, list) or any(
+            not isinstance(event, dict) for event in mutation_events
+        ):
+            raise SystemExit("Executor result mutation_events must be a list of mappings")
+        fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
+        operation = "repair" if fit.get("result") == "repaired" else "implementation"
+        try:
+            task_ownership = validate_task_acceptance_ownership(
+                delegation_evidence=(
+                    handoff.get("delegation_evidence")
+                    if isinstance(handoff.get("delegation_evidence"), dict)
+                    else None
+                ),
+                mutation_events=mutation_events,
+                write_scope=_as_list(task_files.get("write")),
+                validations_passed=True,
+                operation=operation,
+            )
+        except OwnershipBlocker as error:
+            raise SystemExit(str(error)) from error
     return {
         "knowledge_disposition": knowledge_disposition,
         "unresolved": unresolved,
         "result_state": state,
         "evidence_applicability": evidence_applicability,
         "evidence_closure": evidence_closure,
+        **({"task_ownership": task_ownership} if task_ownership is not None else {}),
         **({"observed_validation": observed_validation} if observed_validation is not None else {}),
     }
 
