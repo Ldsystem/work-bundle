@@ -58,6 +58,27 @@ EVIDENCE_REPAIR_OWNERS = {
     "missing": "plan",
     "unexecuted": "task",
 }
+CONTEXT_EXPANSION_REASONS = {
+    None,
+    "failed_validation",
+    "ambiguity",
+    "reviewer_request",
+    "authority_gap",
+}
+
+
+class _SemanticReference(str):
+    """Legacy in-memory semantic view that serializes as its stable ID."""
+
+    def __new__(cls, semantic: str, reference_id: str):
+        value = super().__new__(cls, semantic)
+        value.reference_id = reference_id
+        return value
+
+    def __reduce__(self):
+        return self.__class__, (str(self), self.reference_id)
+
+
 KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE = re.compile(
     r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-[a-z0-9-]+\b)",
     re.IGNORECASE,
@@ -723,9 +744,186 @@ def _compile_truth_basis(
         "purpose": purpose.strip(),
         "as_is_evidence": _resolve_reference(list_fields["as_is_evidence"], records, source_paths),
         "decision_authority": compiled_authority,
-        "expected_delta": _resolve_reference(list_fields["expected_delta"], records, source_paths),
+        # Source meanings are projected once elsewhere; the Truth Basis carries
+        # their stable IDs rather than duplicating accepted prose.
+        "expected_delta": _retain_source_references(list_fields["expected_delta"], records),
         "conflict_status": conflict_status,
     }
+
+
+def _retain_source_references(value: Any, records: dict[str, str]) -> Any:
+    if isinstance(value, str) and value in records:
+        return value
+    if isinstance(value, list):
+        return [_retain_source_references(item, records) for item in value]
+    if isinstance(value, dict):
+        return {key: _retain_source_references(item, records) for key, item in value.items()}
+    return value
+
+
+def _compile_validation_references(value: Any, records: dict[str, str]) -> Any:
+    if isinstance(value, str) and value in records:
+        return _SemanticReference(f"{value}: {records[value]}", value)
+    if isinstance(value, list):
+        return [_compile_validation_references(item, records) for item in value]
+    if isinstance(value, dict):
+        return {key: _compile_validation_references(item, records) for key, item in value.items()}
+    return value
+
+
+def semantic_digest(value: Any) -> str:
+    """Return a stable digest for projected semantic or evidence identity."""
+
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _compile_semantic_authority(
+    source_ids: list[str],
+    records: dict[str, str],
+    truth_basis: dict[str, Any],
+) -> dict[str, Any]:
+    """Index each accepted meaning at its single canonical packet location."""
+
+    index: dict[str, dict[str, str]] = {}
+    interface_semantics: dict[str, str] = {}
+    validation_semantics: dict[str, str] = {}
+    for source_id in source_ids:
+        if source_id.startswith("CON-"):
+            field = "constraints"
+        elif source_id.startswith(("API-", "IFACE-")):
+            field = "interface_semantics"
+            interface_semantics[source_id] = f"{source_id}: {records[source_id]}"
+        elif source_id.startswith("TEST-"):
+            field = "validation_semantics"
+            validation_semantics[source_id] = f"{source_id}: {records[source_id]}"
+        else:
+            field = "requirements"
+        index[source_id] = {
+            "canonical_field": field,
+            "digest": semantic_digest(records[source_id]),
+        }
+    for authority in _as_list(truth_basis.get("decision_authority")):
+        alias = str(authority).split(":", 1)[0].strip()
+        if AUTH_ALIAS_RE.fullmatch(alias):
+            index[alias] = {
+                "canonical_field": "truth_basis.decision_authority",
+                "digest": semantic_digest(authority),
+            }
+    return {
+        "records": index,
+        "interface_semantics": interface_semantics,
+        "validation_semantics": validation_semantics,
+    }
+
+
+def _compile_capability_projection(
+    executor_profile: dict[str, Any], rules: list[dict[str, Any]], skill_names: list[Any]
+) -> dict[str, Any]:
+    return {
+        "executor": {
+            "capability": executor_profile["capability"],
+            "reason": "task executor_profile allocation",
+        },
+        "rules": [
+            {"id": str(item["id"]), "reason": str(item["requirement"])}
+            for item in rules
+        ],
+        "skills": [
+            {"id": str(name), "reason": "task methodology allocation"}
+            for name in skill_names
+        ],
+        "traversal": "runtime_only",
+    }
+
+
+def _encoded_bytes(value: Any) -> int:
+    return len(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+
+
+def compiled_context_metrics(
+    task_brief: dict[str, Any],
+    *,
+    review_package: str | None = None,
+    evidence_projection: list[dict[str, Any]] | None = None,
+    omitted_by_reference_bytes: int = 0,
+    expansion_reason: str | None = None,
+) -> dict[str, Any]:
+    """Measure a compiled packet without imposing a global size policy."""
+
+    if expansion_reason not in CONTEXT_EXPANSION_REASONS:
+        raise SystemExit("compiled context expansion_reason is invalid")
+    semantic_projection = {
+        "semantic_authority": task_brief.get("semantic_authority", {}),
+        "requirements": task_brief.get("requirements", []),
+        "constraints": task_brief.get("constraints", []),
+        "decision_authority": (task_brief.get("truth_basis") or {}).get("decision_authority", []),
+    }
+    return {
+        "task_brief_bytes": len(("\n".join(_dump_yaml({"task_brief": task_brief})) + "\n").encode("utf-8")),
+        "semantic_authority_bytes": _encoded_bytes(semantic_projection),
+        "allocated_rule_bytes": _encoded_bytes(task_brief.get("allocated_rules", [])),
+        "allocated_skill_bytes": _encoded_bytes((task_brief.get("methodology") or {}).get("skills", [])),
+        "capability_projection_bytes": _encoded_bytes(task_brief.get("capability_projection", {})),
+        "evidence_projection_bytes": _encoded_bytes(
+            evidence_projection if evidence_projection is not None else task_brief.get("evidence_capability", {})
+        ),
+        "review_package_bytes": len(review_package.encode("utf-8")) if review_package is not None else 0,
+        "omitted_by_reference_bytes": max(0, int(omitted_by_reference_bytes)),
+        "expansion_reason": expansion_reason,
+    }
+
+
+def project_validation_evidence(
+    items: list[dict[str, Any]],
+    *,
+    evidence_capability: dict[str, Any],
+    observed: list[dict[str, Any]] | None = None,
+    expansion_reason: str | None = None,
+) -> list[dict[str, Any]]:
+    """Project successes as compact receipts and expand only explicit failures."""
+
+    if expansion_reason not in CONTEXT_EXPANSION_REASONS:
+        raise SystemExit("evidence projection expansion_reason is invalid")
+    observed_by_id = {
+        str(item.get("id")): item for item in (observed or []) if isinstance(item, dict) and item.get("id")
+    }
+    invariant_by_evidence: dict[str, dict[str, Any]] = {}
+    for invariant in _as_list(evidence_capability.get("invariants")):
+        if not isinstance(invariant, dict):
+            continue
+        for evidence_id in _as_list(invariant.get("evidence_ids")):
+            invariant_by_evidence.setdefault(str(evidence_id), invariant)
+    projected: list[dict[str, Any]] = []
+    for position, item in enumerate(items, start=1):
+        evidence_id = str(item.get("id") or f"validation-{position:03d}")
+        result = str(item.get("result") or "ambiguous")
+        if result not in {"passed", "skipped"}:
+            reason = expansion_reason or ("failed_validation" if result == "failed" else "ambiguity")
+            if reason not in CONTEXT_EXPANSION_REASONS - {None}:
+                raise SystemExit("evidence projection expansion_reason is invalid")
+            projected.append({
+                "id": evidence_id,
+                "digest": semantic_digest({"command": item.get("command"), "result": result}),
+                "result": result,
+                "expansion_reason": reason,
+                "details": dict(item),
+            })
+            continue
+        invariant = invariant_by_evidence.get(evidence_id, {})
+        observation = observed_by_id.get(evidence_id, {})
+        projected.append({
+            "id": evidence_id,
+            "digest": semantic_digest({"command": item.get("command"), "result": result}),
+            "result": result,
+            "boundary": invariant.get("boundary", "component"),
+            "freshness": invariant.get("freshness", "current_task_batch"),
+            "invalidation_receipt": observation.get("observation_id") or semantic_digest(
+                {"evidence_id": evidence_id, "result": result}
+            ),
+            "expansion_reason": None,
+        })
+    return projected
 
 
 def _compile_evidence_capability(
@@ -1778,6 +1976,8 @@ def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str,
 
 
 def _yaml_scalar(value: Any) -> str:
+    if isinstance(value, _SemanticReference):
+        return value.reference_id
     if value is True:
         return "true"
     if value is False:
@@ -1992,7 +2192,12 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
     truth_basis = _compile_truth_basis(task, records, source_paths)
     validation = [
         {
-            key: value if key in {"id", "invariant_ids"} else _resolve_reference(value, records, source_paths)
+            key: (
+                _compile_validation_references(value, records)
+                if key == "proves"
+                else value if key in {"id", "invariant_ids"}
+                else _resolve_reference(value, records, source_paths)
+            )
             for key, value in item.items()
         }
         for item in validation_value
@@ -2007,30 +2212,48 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         review_required = acceptance_review.get("required", False)
         if not isinstance(review_required, bool):
             raise SystemExit(f"Task acceptance_review.required must be boolean: {task_path}")
-    brief = {
-        "task_brief": {
+    semantic_authority = _compile_semantic_authority(source_ids, records, truth_basis)
+    capability_projection = _compile_capability_projection(executor_profile, rules, skill_names)
+    task_brief = {
             "task_id": task_id,
             "plan_id": plan_id,
             "source_ids": source_ids,
             "goal": resolved_goal,
             "truth_basis": truth_basis,
+            "semantic_authority": semantic_authority,
             "requirements": source_by_kind["requirements"],
             "constraints": source_by_kind["constraints"],
             "interfaces": {
-                "consumes": _resolve_reference(_as_list(interfaces.get("consumes")), records, source_paths),
-                "produces": _resolve_reference(_as_list(interfaces.get("produces")), records, source_paths),
+                "consumes": _retain_source_references(_as_list(interfaces.get("consumes")), records),
+                "produces": _retain_source_references(_as_list(interfaces.get("produces")), records),
             },
             "files": {"read": read_files, "write": write_files, "forbidden": forbidden_files},
             "methodology": {"primary": methodology.get("primary", "direct"), "skills": skill_names},
             "allocated_rules": rules,
+            "capability_projection": capability_projection,
             "executor_profile": executor_profile,
             "evidence_applicability": evidence_applicability,
             "workspace": {"root": str(root)},
+            "runtime_context": {
+                "authority": "compiled",
+                "histories": "runtime_lazy",
+                "executor_retrieval": "forbidden",
+            },
             "validation": validation,
             "evidence_capability": evidence_capability,
             "handoff_contract": "executor-result-v1",
             "review_required": review_required,
-        }
+    }
+    omitted = 0
+    serialized_task = json.dumps(task, sort_keys=True, ensure_ascii=False)
+    for identifier in source_ids:
+        duplicate_references = max(0, serialized_task.count(identifier) - 1)
+        omitted += duplicate_references * max(0, len(records[identifier].encode("utf-8")) - len(identifier.encode("utf-8")))
+    brief = {
+        "task_brief": task_brief,
+        "compiled_context_metrics": compiled_context_metrics(
+            task_brief, omitted_by_reference_bytes=omitted
+        ),
     }
     for identifier in source_ids:
         if not _contains_resolved_source_record(brief, records[identifier]):
@@ -2194,6 +2417,19 @@ def build_review_package(args: argparse.Namespace) -> Path:
     handoff, _ = _read_structured(handoff_path)
     validated = validate_executor_result_for_task(handoff, task, observe=True, **_observation_kwargs(args))
     knowledge_disposition = validated["knowledge_disposition"]
+    review_request = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
+    review_mode = str(review_request.get("review_mode") or "initial")
+    if review_mode not in {"initial", "repair"}:
+        raise SystemExit("review-blocked: review_mode must be initial or repair")
+    repair_frontier: dict[str, Any] | None = None
+    if review_mode == "repair":
+        try:
+            from review_runtime import ReviewContractError, _repair_frontier
+            repair_frontier = dict(_repair_frontier(review_request.get("repair_frontier")))
+        except (ReviewContractError, TypeError, ValueError) as error:
+            raise SystemExit(f"review-blocked: invalid repair frontier: {error}") from error
+    elif review_request.get("repair_frontier") not in (None, {}):
+        raise SystemExit("review-blocked: initial review cannot carry repair_frontier")
     binding = load_task_execution_binding(root, plan_id, task_id)
     execution_root = Path(str(binding["execution_path"])).resolve()
 
@@ -2202,6 +2438,15 @@ def build_review_package(args: argparse.Namespace) -> Path:
     head, diff, name_status, out_of_scope = _review_diff(
         execution_root, base, str(args.head), write_paths
     )
+    if repair_frontier is not None:
+        base_tree = _git(execution_root, "rev-parse", f"{base}^{{tree}}").strip()
+        if head.startswith("worktree:"):
+            raise SystemExit("review-blocked: repair review requires a committed repaired identity")
+        head_tree = _git(execution_root, "rev-parse", f"{head}^{{tree}}").strip()
+        if repair_frontier["previous_reviewed_identity"]["source_tree"] != base_tree:
+            raise SystemExit("review-blocked: repair base does not match previous reviewed identity")
+        if repair_frontier["repaired_identity"]["source_tree"] != head_tree:
+            raise SystemExit("review-blocked: repair head does not match repaired identity")
     if len(diff.encode("utf-8")) > MAX_DIFF_BYTES or diff.count("\n") > MAX_DIFF_LINES:
         oversized = ", ".join(
             sorted({path for line in name_status for path in _paths_from_name_status(line)})
@@ -2220,11 +2465,26 @@ def build_review_package(args: argparse.Namespace) -> Path:
     )
     validation = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
     validation_commands = [item for item in _as_list(validation.get("commands")) if isinstance(item, dict)]
+    compiled_validation = {
+        str(item.get("command") or ""): item
+        for item in _as_list(task.get("validation"))
+        if isinstance(item, dict)
+    }
+    normalized_validation = []
+    for position, item in enumerate(validation_commands, start=1):
+        compiled = compiled_validation.get(str(item.get("command") or ""), {})
+        normalized_validation.append({**item, "id": item.get("id") or compiled.get("id") or f"validation-{position:03d}"})
+    evidence_projection = project_validation_evidence(
+        normalized_validation,
+        evidence_capability=task.get("evidence_capability") if isinstance(task.get("evidence_capability"), dict) else {},
+        observed=validated.get("observed_validation"),
+        expansion_reason=("failed_validation" if any(item.get("result") == "failed" for item in normalized_validation) else None),
+    )
     unresolved = _as_list(handoff.get("unresolved"))
     evidence = {
         "changed_files": name_status,
         "changed_symbols": symbols,
-        "validation": validation_commands,
+        "validation": evidence_projection,
         "unresolved": unresolved,
         "knowledge_disposition": knowledge_disposition,
     }
@@ -2246,12 +2506,16 @@ def build_review_package(args: argparse.Namespace) -> Path:
         f"Task: {task_id}",
         f"Base: {base}",
         f"Head: {head}",
+        f"Review mode: {review_mode}",
         "",
         "## Required behavior",
         *_markdown_items(required),
         "",
         "## Accepted Truth Basis",
         *_markdown_items([task.get("truth_basis", {})]),
+        "",
+        "## Semantic authority",
+        *_markdown_items([task.get("semantic_authority", {})]),
         "",
         "## Evidence capability",
         *_markdown_items([task.get("evidence_capability", {})]),
@@ -2266,7 +2530,7 @@ def build_review_package(args: argparse.Namespace) -> Path:
         *_markdown_items(symbols),
         "",
         "## Validation reported",
-        *_markdown_items(validation_commands),
+        *_markdown_items(evidence_projection),
         "",
         "## Knowledge disposition",
         *_markdown_items([knowledge_disposition]),
@@ -2282,6 +2546,23 @@ def build_review_package(args: argparse.Namespace) -> Path:
         diff.rstrip(),
         "```",
     ]
+    if repair_frontier is not None:
+        lines.extend(
+            [
+                "",
+                "## Repair frontier",
+                *_markdown_items(
+                    [{
+                        "prior_review_id": repair_frontier["prior_review_id"],
+                        "blocking_finding_ids": repair_frontier["blocking_finding_ids"],
+                        "previous_reviewed_identity": repair_frontier["previous_reviewed_identity"],
+                        "repaired_identity": repair_frontier["repaired_identity"],
+                        "affected_boundaries": repair_frontier["affected_boundaries"],
+                        "frozen_evidence_reference": repair_frontier["frozen_evidence_reference"],
+                    }]
+                ),
+            ]
+        )
     if out_of_scope:
         lines.extend(
             [
@@ -2310,6 +2591,19 @@ def build_review_package(args: argparse.Namespace) -> Path:
     review_target = target.with_name("review-package.md")
     review_target.parent.mkdir(parents=True, exist_ok=True)
     review_target.write_text(package, encoding="utf-8")
+    metrics = compiled_context_metrics(
+        task,
+        review_package=package,
+        evidence_projection=evidence_projection,
+        expansion_reason=next(
+            (item.get("expansion_reason") for item in evidence_projection if item.get("expansion_reason")),
+            None,
+        ),
+    )
+    review_target.with_name("review-package-metrics.json").write_text(
+        json.dumps({"compiled_context_metrics": metrics}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return review_target
 
 
