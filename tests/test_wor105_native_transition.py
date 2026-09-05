@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import json
+import re
+import subprocess
 import sys
 from argparse import Namespace
 from copy import deepcopy
@@ -17,7 +18,6 @@ ORCHESTRATION = WORKSPACE_ROOT / ".work-bundle" / "orchestration"
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "orchestration"))
 
 from execution_context import _compile_task_brief, validate_executor_result_for_task  # noqa: E402
-from repository_preflight import capture_repository_evidence  # noqa: E402
 
 
 PARTICIPANT_HANDOFFS = {
@@ -44,14 +44,6 @@ def _yaml(path: Path) -> dict[str, object]:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(value, dict)
     return value
-
-
-def _source_identity() -> str:
-    evidence = capture_repository_evidence(REPO_ROOT)
-    digest = hashlib.sha256(
-        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    return f"{evidence['head']}+repository-evidence-sha256:{digest}"
 
 
 def _validate_participant_handoff(task_id: str, task_filename: str, handoff: dict[str, object]) -> None:
@@ -115,22 +107,34 @@ def test_bar_kernel_handoff_validation_rejects_incomplete_or_injected_records(mu
         _validate_participant_handoff("task-b01r", task_filename, handoff)
 
 
-def test_native_transition_binds_current_source_and_independent_review() -> None:
+def test_native_transition_binds_accepted_kernel_source_and_independent_review() -> None:
     review_path = ORCHESTRATION / "reviews" / "WOR-105-task-b06r-kernel-review-accepted.yaml"
     transition_path = ORCHESTRATION / "docs" / "wor105" / "native-transition-record.yaml"
     review_bytes = review_path.read_bytes()
     review = yaml.safe_load(review_bytes)
     transition = _yaml(transition_path)
-    identity = _source_identity()
+    accepted_commit = transition["accepted_commit"]
+    accepted_tree = subprocess.run(
+        ["git", "rev-parse", f"{accepted_commit}^{{tree}}"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
     assert review["schema"] == "task-review-v1"
     assert review["task"] == "task-b06r"
     assert review["verdict"] == "accept"
     assert review["reviewer_independent"] is True
-    assert review["reviewed_identity"] == identity
+    assert review["reviewed_identity"] == transition["source_identity"]
+    assert review["accepted_commit"] == accepted_commit
+    assert review["accepted_tree"] == transition["accepted_tree"] == accepted_tree
+    assert re.fullmatch(
+        rf"{accepted_commit}\+repository-evidence-sha256:[0-9a-f]{{64}}",
+        transition["source_identity"],
+    )
     assert review["findings"] == []
     assert transition["schema"] == "wor105-native-transition-v1"
-    assert transition["source_identity"] == identity
     assert transition["review_sha256"] == hashlib.sha256(review_bytes).hexdigest()
     assert transition["enforcement_transition"] == "bootstrap_policy_to_native"
     assert transition["transition_task"] == "task-b06r"
