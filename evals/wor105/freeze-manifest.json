@@ -1,12 +1,12 @@
 {
   "schema": "wor105-adversarial-freeze-v1",
-  "evaluation_id": "wor105-native-adversarial-20260905-004",
-  "frozen_at": "2026-09-05T06:20:00Z",
+  "evaluation_id": "wor105-native-adversarial-20260905-005",
+  "frozen_at": "2026-09-05T06:45:00Z",
   "enforcement_mode": "native",
-  "product_tree": "f009205ce0d538ea944188ceddbd4f7cc04b66f0",
+  "product_tree": "a3fde15109f475acbe5c880dc765e5d69d958c0b",
   "specification_sha256": "575d4aea84d8d5c88e361017fcc69b97302485bdd6c2074cd2864c9d266d43da",
-  "plan_sha256": "7e37be1260bc3c39c0f2516c43246f5c520444d6c584796a39afb1583ab565ca",
-  "task_identity": "task-e01r4@plan-20260904-001-wor105-legacy-stabilization",
+  "plan_sha256": "ae2f0513fd7b38bb751e5f1eacc1d85ede20293c93a7fce3715c2c97e1e876da",
+  "task_identity": "task-f01r2@plan-20260904-001-wor105-legacy-stabilization",
   "fixtures": [
     {"fixture_id": "ADV-01", "path": "evals/wor105/fixtures/ADV-01.json", "sha256": "52e6a3f83058f820fe01343e5b009940842874f05bdf47aa2e99ea60a27127bb"},
     {"fixture_id": "ADV-02", "path": "evals/wor105/fixtures/ADV-02.json", "sha256": "78fe6de27c7833336f6883a73dc61aaa0b15b37735ae639e9061e071e0dfcd40"},
@@ -29,7 +29,7 @@
     "result_schema": {"path": "evals/wor105/adversarial-result-v1.schema.json", "sha256": "ef4a96e1682e29e7225dbecf4257e3dad040bff2d549eff1b71067033db64c89"},
     "semantic_schema": {"path": "../.work-bundle/orchestration/docs/wor105/contracts-v1.schema.json", "sha256": "ab6500c1197928450da7e7a438d69d763c376332aeaa72caa23526c613eb1b67"},
     "instructions": {"path": "AGENTS.md", "sha256": "5cc2ba1160a25b767a7e02c957d6f37a14a7fa4be50c711f5b67c5c03442d66a"},
-    "evidence_capabilities": {"path": "../.work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-e01r4/task-brief.yaml", "sha256": "7f600f35963f2edc192452a3de8ca5ce018479ef9280be8167a0e79a894f0514"}
+    "evidence_capabilities": {"path": "../.work-bundle/runtime/execution/plan-20260904-001-wor105-legacy-stabilization/task-f01r2/task-brief.yaml", "sha256": "81bba349bff55c80de7a56de624994c3c95f4a7a82a6177131401937a3e72867"}
   },
   "invalidations": [
     {
@@ -111,6 +111,36 @@
       "affected_run_ids": ["wor105-native-adversarial-20260905-003-attempt-001"],
       "reason": "the native-probe runner and zero-call regression entered the exact product tree",
       "timestamp": "2026-09-05T06:20:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-009",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-004",
+      "changed_component": "tasks",
+      "old_digest": "7e37be1260bc3c39c0f2516c43246f5c520444d6c584796a39afb1583ab565ca",
+      "new_digest": "ae2f0513fd7b38bb751e5f1eacc1d85ede20293c93a7fce3715c2c97e1e876da",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-004-attempt-001"],
+      "reason": "the accepted plan allocated historical transition-oracle repair and its downstream refreeze and dogfood gates",
+      "timestamp": "2026-09-05T06:45:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-010",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-004",
+      "changed_component": "evidence_capabilities",
+      "old_digest": "7f600f35963f2edc192452a3de8ca5ce018479ef9280be8167a0e79a894f0514",
+      "new_digest": "81bba349bff55c80de7a56de624994c3c95f4a7a82a6177131401937a3e72867",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-004-attempt-001"],
+      "reason": "evaluation evidence ownership moved to the release refreeze task",
+      "timestamp": "2026-09-05T06:45:00Z"
+    },
+    {
+      "invalidation_id": "wor105-eval-invalidation-011",
+      "previous_evaluation_id": "wor105-native-adversarial-20260905-004",
+      "changed_component": "product",
+      "old_digest": "55a5d96c95a1783832beaf0e588c0915617cec0fa18f698afa53b8bdabeadca6",
+      "new_digest": "3b962d0ce3240155c6feafd34a3a3ca2f36a835c5d6c80b2f1ffbeb5c39dbf80",
+      "affected_run_ids": ["wor105-native-adversarial-20260905-004-attempt-001"],
+      "reason": "the corrected historical transition oracle entered the post-F01R1 product tree",
+      "timestamp": "2026-09-05T06:45:00Z"
     }
   ]
 }
