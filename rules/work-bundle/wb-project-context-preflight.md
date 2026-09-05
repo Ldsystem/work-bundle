@@ -50,7 +50,7 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 - Do not apply the metadata-v3 project-local authority model to metadata v4.
 - Do not write project registry state under `work_bundle_root` or `project_root`.
 - Do not load durable knowledge files solely to satisfy project-structure awareness.
-- Do not let `prefer_subagent` bypass project context preflight, branch baseline checks, dependency checks, write-scope checks, validation, handoff, or single-agent fallback rules.
+- Do not let legacy scheduling-preference metadata affect mandatory subagent ownership, project context preflight, branch baseline checks, dependency checks, write-scope checks, validation, or handoff rules.
 - Do not run destructive Git operations such as cleanup, reset, stash, or force push to satisfy preflight.
 - Do not initialize CodeGraph for a repository root that lacks `.codegraph/`.
 - Do not infer lifecycle Git stage or commit authority from initialization, doctor, repair, migration, or validation authority.

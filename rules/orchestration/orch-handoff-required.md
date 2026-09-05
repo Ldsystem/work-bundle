@@ -28,7 +28,7 @@ Require compact executor-result handoffs before reporting execution complete or 
 - For executor-result handoffs, preserve execution safety evidence where applicable: repository preflight or accepted-baseline evidence, validation evidence, drift/gap verification, unresolved blockers, and changed-path evidence.
 - For executor-result handoffs, include compact CodeGraph evidence when source-code inspection or edits were in scope. The evidence must be no larger than `root`, `applicable`, `up_to_date`, and required fallback or blocker facts unless a failure needs more detail.
 - For executor-result handoffs, explicitly record no-index fallback when a target repository lacks `.codegraph/`; do not omit CodeGraph evidence silently when source-code work was in scope.
-- Use `delegation_evidence` only as proof of task ownership delegation when applicable. It records delegated flag, visible surface, `visible_reference` when available, `internal_spawn_used_for_task_delegation: false`, internal helper-worker usage if any, and fallback or blocker reason when visible delegation was unavailable or unsafe.
+- Use `delegation_evidence` as neutral proof of mandatory task ownership. It records only delegated state, `owner_kind: subagent`, minimum agent/run identity, and provider-neutral `host-native|execution-flow` mechanism.
 - For contract-decoupled task handoffs, include compact `contract_decoupling` evidence: common contract group, common contracts checked, validation scope, `peer_implementation_validation_used: false`, and forbidden peer validation result.
 - For barrier participants, include compact `barrier` evidence with barrier id, participant role, readiness `reached|blocked`, and whether convergence remains pending.
 - For convergence owners, include compact `barrier` and `convergence` evidence showing every participant completed or blocked with executor-result handoffs before joint validation began.
@@ -49,10 +49,10 @@ Require compact executor-result handoffs before reporting execution complete or 
 - Omit changed files, validation evidence, unresolved blockers, or `task_fit_check` when they are applicable to the completed or partial result.
 - Claim a clean result without recording the compiled brief and assigned task checked, repairs made, and recheck outcome.
 - Omit applicable compact CodeGraph fallback, up-to-date, or blocker evidence from executor-result handoffs for source-code work.
-- Omit visible `delegation_evidence` from executor-result handoffs when plan, phase, or task ownership was delegated, or record contradictory delegation evidence such as `internal_spawn_used_for_task_delegation: true`.
+- Omit neutral `delegation_evidence` from a task executor-result handoff, record a non-subagent owner, or add UI, visibility, fallback, or internal-worker fields to ownership provenance.
 - Omit contract-only validation evidence from a contract-decoupled task handoff, or report peer implementation validation as used before barrier release.
 - Omit barrier readiness evidence from a barrier participant handoff, or schedule convergence without participant completed/blocked handoffs.
-- Skip handoff creation because sub-agents, fallback mode, or partial completion made the outcome informal.
+- Skip handoff creation because subagent execution blocked or partial completion made the outcome informal.
 - Create new active `handoff-orch-*` artifacts as continuation output.
 
 ## Validation
@@ -63,7 +63,7 @@ Require compact executor-result handoffs before reporting execution complete or 
 - Confirm executor-result handoffs created during execution did not invoke knowledge retrieval.
 - Confirm executor-result handoffs identify the compiled brief and assigned task checked; include findings, repairs, and final recheck evidence; and escalate to full source artifacts when compiled context is inconsistent.
 - Confirm executor-result handoffs include applicable compact CodeGraph evidence for every source-code target: root, applicability, `up_to_date`, and no-index, sync-failed, stale, or blocker facts when used.
-- Confirm executor-result handoffs include `delegation_evidence` when delegation was used, including `visible_reference` when available and `internal_spawn_used_for_task_delegation: false`.
+- Confirm task executor-result handoffs include closed neutral `delegation_evidence` with delegated state, subagent owner kind, agent/run identity, and provider-neutral mechanism.
 - Confirm contract-decoupled task handoffs include common-contract validation scope and `peer_implementation_validation_used: false`.
 - Confirm barrier participant and convergence-owner handoffs include readiness or release evidence by applicability.
 - Confirm the handoff index entry reflects the new or updated handoff.

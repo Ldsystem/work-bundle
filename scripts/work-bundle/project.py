@@ -1135,7 +1135,6 @@ def inspect_project(project_root: Path) -> dict:
         'global_bootstrap_path': runtime.get('global_bootstrap_path'),
         'global_bootstrap_exists': runtime.get('global_bootstrap_exists'),
         'resolved_work_bundle_root': runtime.get('resolved_work_bundle_root'),
-        'prefer_subagent': resolve_effective_prefer_subagent(project_root),
     }
 
 
@@ -1366,17 +1365,6 @@ def _set_yaml_scalar(path: Path, key: str, value: str) -> bool:
     if changed or not path.exists():
         write(path, '\n'.join(rendered).rstrip() + '\n')
     return changed
-
-
-def set_prefer_subagent(project_root: Path, scope: str, enabled: bool) -> tuple[Path, bool]:
-    value = 'true' if enabled else 'false'
-    if scope == 'global':
-        path = work_bundle_config_root() / GLOBAL_BOOTSTRAP_FILE_NAME
-    elif scope == 'project':
-        path = project_metadata_path(project_root)
-    else:
-        raise ValueError(f'unsupported prefer_subagent scope: {scope}')
-    return path, _set_yaml_scalar(path, 'prefer_subagent', value)
 
 
 def _ensure_registry_schema_version(text: str, version: str = REGISTRY_SCHEMA_VERSION) -> str:
@@ -2572,29 +2560,6 @@ def cmd_migrate_to_multi_repository(args: list[str]) -> int:
         out(payload)
         return 1
     out({'command':'migrate-to-multi-repository','status':'passed','result':result})
-    return 0
-
-
-def cmd_set_prefer_subagent(args: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="wb.py set-prefer-subagent")
-    parser.add_argument("value", choices=["true", "false", "enable", "disable", "enabled", "disabled", "on", "off"])
-    parser.add_argument("--scope", choices=["global", "project"], required=True)
-    parser.add_argument("--project-root", default=".")
-    parsed = parser.parse_args(args)
-    enabled = parsed.value in {"true", "enable", "enabled", "on"}
-    project_root = Path(parsed.project_root).expanduser().resolve()
-    target_path, changed = set_prefer_subagent(project_root, parsed.scope, enabled)
-    effective = resolve_effective_prefer_subagent(project_root)
-    out({
-        "command": "set-prefer-subagent",
-        "status": "updated" if changed else "skipped",
-        "scope": parsed.scope,
-        "prefer_subagent": enabled,
-        "target_path": str(target_path),
-        "project_root": str(project_root),
-        "effective_prefer_subagent": effective,
-        "changed_files": [str(target_path)] if changed else [],
-    })
     return 0
 
 

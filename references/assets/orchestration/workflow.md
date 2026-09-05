@@ -178,7 +178,9 @@ their ordering priority. This does not introduce an initial-versus-repair fronti
 scheduler selects executable task
   -> compile task brief
   -> choose provider-neutral capability
-  -> implement with declared methodology
+  -> bind mandatory subagent owner or fail closed before mutation
+  -> dispatch every planner-approved disjoint ready task before waiting
+  -> subagent implements with declared methodology
   -> run fresh task-local validation
   -> write executor-result handoff
   -> validate-executor-result
@@ -189,11 +191,11 @@ scheduler selects executable task
   -> Completed
 ```
 
-Executors own implementation, task-local verification, and executor-result evidence, including a task-local knowledge disposition of `none`, `update`, `supersede`, or `reclassify`. They never invoke persistence or read knowledge. Reviewers own acceptance judgment for the accepted Truth Basis, requirement fit, correctness, edge cases, test oracle, disposition, unnecessary complexity, allocated obligations, and validation sufficiency. Schedulers own dependencies, barriers, context compilation, delegation, and evidence shape; they do not perform code-quality review.
+Subagent executors own every implementation and repair mutation, task-local verification, and executor-result evidence, including a task-local knowledge disposition of `none`, `update`, `supersede`, or `reclassify`. They never invoke persistence or read knowledge. Reviewers own acceptance judgment for the accepted Truth Basis, requirement fit, correctness, edge cases, test oracle, disposition, unnecessary complexity, allocated obligations, and validation sufficiency. Schedulers own dependencies, barriers, context compilation, neutral subagent binding, validation routing, and evidence shape; they do not perform code-quality review or mutate task write scope.
 
-Visible multi-agent subagents are preferred only when user/environment policy allows and write scopes are disjoint. Invisible helper workers may support bounded analysis but never own delegated task implementation. When independent subagents are unavailable, record `reviewer_independent: false` and perform an explicit reduced-independence second pass.
+Selecting `orch-execute-plan` requires a subagent owner for every task without a separate user opt-in. Host-native and Execution-Flow-routed subagents are equivalent; evidence records only the minimum agent/run identity and mechanism. If none is available, execution fails closed before task mutation. Independent disjoint tasks in distinct execution workspaces dispatch before any wait; dependent, overlapping, or same-workspace tasks serialize.
 
-On `repair`, return blocking findings with the same brief and current diff, make the smallest repair, rerun claim-relevant validation, regenerate the package from the original base, and review again. After two failed low-cost repair rounds, escalate the capability tier; if evidence indicates a plan or specification defect, stop the retry loop and route the typed blocker.
+On `repair`, return blocking findings with the same brief and current diff to the task-owning subagent. It makes the smallest repair, reruns claim-relevant validation, regenerates the package from the original base, and reviews again. If no subagent is available, fail closed before repair mutation. After two failed low-cost repair rounds, escalate the capability tier; if evidence indicates a plan or specification defect, stop the retry loop and route the typed blocker.
 
 A task becomes `Completed` only when implementation criteria, fresh validation, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan status derive from accepted children plus declared dependency and barrier gates.
 

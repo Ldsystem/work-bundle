@@ -22,7 +22,7 @@
     {
       "id": 4,
       "prompt": "Execute the next task in an existing plan.",
-      "expected_output": "Selects execute-plan, checks sub-agent support, uses the single-agent fallback when sub-agents are unavailable, executes one task, updates task and phase task status, reports concise execution result, and requires an executor handoff.",
+      "expected_output": "Selects execute-plan, requires a subagent owner before task mutation, executes through that subagent when available, and otherwise fails closed with workspace-blocked without changing task scope.",
       "files": []
     },
     {
@@ -34,7 +34,7 @@
     {
       "id": 6,
       "prompt": "Execute a phase whose next two tasks are independent and have disjoint write scopes, in an environment with sub-agents.",
-      "expected_output": "Selects execute-plan, uses the sub-agent scheduler path, delegates the independent tasks to multiple sub-agents, waits for completion, validates executor handoffs against task/phase/plan/spec, updates task statuses, and continues scheduling.",
+      "expected_output": "Selects execute-plan, binds the independent tasks to separate subagents and isolated execution workspaces, dispatches both before awaiting either, validates executor handoffs against task/phase/plan/spec, updates task statuses, and continues scheduling.",
       "files": []
     },
     {
@@ -64,7 +64,7 @@
     {
       "id": 11,
       "prompt": "Doctor the orchestrator skill for installation health, malformed orch skills, and workflow bias.",
-      "expected_output": "Selects orch-doctor, uses dev-rules-doctor first, runs the develop-rules doctor command, audits orch skill files, workflow, evals, helper commands, and cross-skill v3 gateway wiring read-only, checks that orch-execute-plan preserves both sub-agent scheduler and single-agent fallback paths, verifies archival belongs to orch-review-plan, and reports concrete repairs without changing files.",
+      "expected_output": "Selects orch-doctor, uses dev-rules-doctor first, runs the develop-rules doctor command, audits orch skill files, workflow, evals, helper commands, and cross-skill v3 gateway wiring read-only, checks mandatory subagent ownership and fail-closed behavior, verifies archival belongs to orch-review-plan, and reports concrete repairs without changing files.",
       "files": []
     },
     {
@@ -130,13 +130,13 @@
     {
       "id": 22,
       "prompt": "Execute a plan task with a delegated sub-agent, then prepare its executor-result handoff after implementation reveals a task-scoped gap.",
-      "expected_output": "Preserves preflight, accepted baseline, dependencies, and write scopes; compiles a self-contained task brief; repairs the task-local gap, reruns fresh validation, writes a sparse handoff, compiles a bounded review package, and requires an accept review before completion.",
+      "expected_output": "Preserves preflight, accepted baseline, dependencies, write scopes, and the same subagent task owner; the subagent repairs the task-local gap, reruns fresh validation, writes a sparse handoff with neutral ownership evidence, compiles a bounded review package, and requires an accept review before completion.",
       "files": []
     },
     {
       "id": 23,
-      "prompt": "Execute a source-inspection task when the target repository has no .codegraph directory and effective prefer_subagent resolves to false.",
-      "expected_output": "Selects execute-plan, records that CodeGraph is skipped because the repository is not indexed, preserves text-search fallback, uses the single-agent fallback for exactly one task, keeps execution no-retrieval, does not require any additional runtime preference file, and does not bypass repository preflight, dependency checks, write-scope checks, or executor-result handoff requirements.",
+      "prompt": "Execute a source-inspection task when the target repository has no .codegraph directory and legacy metadata contains prefer_subagent: false.",
+      "expected_output": "Selects execute-plan, records that CodeGraph is skipped because the repository is not indexed, preserves text-search fallback, ignores the legacy preference field, requires subagent ownership, keeps execution no-retrieval, and does not bypass repository preflight, dependency checks, write-scope checks, or executor-result handoff requirements.",
       "files": []
     },
     {
@@ -171,20 +171,20 @@
     },
     {
       "id": 29,
-      "prompt": "Execute a scheduler wave with visible multi-agent subagents available and safe disjoint task scopes.",
-      "expected_output": "Delegates task ownership only to visible multi-agent subagents, records compact delegation_evidence with each visible_reference when provided, sets internal_spawn_used_for_task_delegation to false, validates sparse executor-result handoffs, rejects cross-conversation delegation as a task ownership vehicle, and preserves preflight and scope gates.",
+      "prompt": "Execute a scheduler wave with host-native and Execution-Flow-routed subagents available and safe disjoint task scopes.",
+      "expected_output": "Treats both subagent mechanisms equivalently, records only delegated state, subagent owner kind, agent/run identity, and mechanism in compact delegation_evidence, dispatches disjoint tasks before waiting, and preserves preflight and scope gates.",
       "files": []
     },
     {
       "id": 30,
-      "prompt": "Execute a plan task when only invisible internal spawn workers are available for delegation.",
-      "expected_output": "Rejects invisible internal spawn workers as the task delegation vehicle, uses single-agent fallback for one task when valid or reports a delegation-visibility blocker, and does not mark delegated execution complete without compact visible delegation_evidence.",
+      "prompt": "Execute a plan task when no supported subagent execution mechanism is available.",
+      "expected_output": "Fails closed with workspace-blocked before any task mutation and does not substitute controller or single-agent implementation.",
       "files": []
     },
     {
       "id": 31,
-      "prompt": "Execute a delegated task while an internal helper worker is used only for bounded snippet comparison.",
-      "expected_output": "Allows the helper-worker support because visible multi-agent subagent ownership remains intact, records internal helper usage in compact delegation_evidence, keeps internal_spawn_used_for_task_delegation false, and requires the visible executor handoff to own validation and task_fit_check evidence.",
+      "prompt": "The orchestration controller directly patches a task-owned file and all task validations pass.",
+      "expected_output": "Rejects task acceptance with review-blocked because controller mutation violates mandatory subagent ownership; green validation cannot override ownership provenance.",
       "files": []
     },
     {

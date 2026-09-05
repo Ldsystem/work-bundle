@@ -122,7 +122,9 @@ def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> 
         "build-review-package",
         "dev-code-review",
         "The scheduler does not perform code-quality review",
-        "reviewer_independent: false",
+        "every implementation and repair task subagent-owned",
+        "there is no controller or single-agent fallback",
+        "must not implement or repair task write scope",
         "After two failed repair rounds",
         "acceptance_review.required: true",
         "review_required: true",
@@ -142,6 +144,19 @@ def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> 
         "review owns",
     ]:
         assert token in text
+
+
+def test_task_ownership_contract_is_provider_neutral_and_not_visibility_specific() -> None:
+    for relative in [
+        "skills/orch-create-handoff/SKILL.md",
+        "rules/orchestration/orch-handoff-required.md",
+        "references/assets/orchestration/contract/handoff-executor-result-v1.md",
+    ]:
+        text = read(relative)
+        for token in ["delegation_evidence", "owner_kind", "agent", "run", "mechanism"]:
+            assert token in text, f"{relative}: {token}"
+        for retired in ["visible_reference", "internal_spawn_used_for_task_delegation", "single-agent-fallback"]:
+            assert retired not in text, f"{relative}: {retired}"
 
 
 def test_final_review_is_workflow_audit_not_code_review() -> None:

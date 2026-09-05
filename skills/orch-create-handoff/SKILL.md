@@ -54,7 +54,7 @@ Always include identity, related artifacts, result state, and concise summary. I
 - `task_fit_check` for completed or partial task results, covering the compiled task brief and assigned task. Escalate to full source artifacts only for inconsistent compiled context or a reviewer-reported source-contract problem.
 - `repository` when repository preflight, accepted baseline, changed paths, or blocker state matters.
 - `codegraph` when source-code inspection or edits were in scope; keep it to `root`, `applicable`, `up_to_date`, and fallback/blocker facts unless more detail is needed.
-- `delegation_evidence` when task, phase, or plan ownership was delegated or fallback proof is required; record `internal_spawn_used_for_task_delegation: false`.
+- `delegation_evidence` for task ownership; record only delegated state, `owner_kind: subagent`, minimum agent/run identity, and provider-neutral mechanism.
 
 ## Hard Rules
 
@@ -66,7 +66,7 @@ Always include identity, related artifacts, result state, and concise summary. I
 - Do not include durable-knowledge recommendations, orchestration review recommendations, executor advice fields, or strategy advice in executor-result handoffs.
 - Stop if source artifact paths or current state are unknown.
 - Executor-result handoffs must list changed files or inspected artifacts, validation, unresolved blockers when present, and compact `task_fit_check` when applicable.
-- Executor-result handoffs must not omit applicable `codegraph:` or `delegation_evidence:` and must not record contradictory delegation evidence such as `internal_spawn_used_for_task_delegation: true`.
+- Executor-result handoffs must not omit applicable `codegraph:` or task `delegation_evidence:` and must not include UI, visibility, fallback, or controller-ownership fields.
 
 ## Status and Index
 
@@ -87,7 +87,7 @@ Load only when creating or validating:
 
 ## Validation
 
-Confirm required sparse YAML metadata exists, referenced specs/plans/phases/tasks/files are listed when applicable, unresolved blockers are explicit when present, executor-result fields are complete by applicability rather than fixed section presence, forbidden executor advice fields are absent, applicable `codegraph:` evidence includes compact up-to-date or fallback/blocker facts, delegated executor-result handoffs include `delegation_evidence:`, `visible_reference` when available, and `internal_spawn_used_for_task_delegation: false`, raw chat is excluded, no handoff is written under `.work-bundle/knowledge/`, no active orchestration handoff is created, and execution-completion handoffs did not invoke retrieval.
+Confirm required sparse YAML metadata exists, referenced specs/plans/phases/tasks/files are listed when applicable, unresolved blockers are explicit when present, executor-result fields are complete by applicability rather than fixed section presence, forbidden executor advice fields are absent, applicable `codegraph:` evidence includes compact up-to-date or fallback/blocker facts, task executor-result handoffs include neutral `delegation_evidence` with agent/run identity and mechanism, raw chat is excluded, no handoff is written under `.work-bundle/knowledge/`, no active orchestration handoff is created, and execution-completion handoffs did not invoke retrieval.
 
 ## Runtime Rules
 

@@ -869,7 +869,9 @@ def test_workflow_assigns_review_ownership_and_repair_loop() -> None:
         "Reviewers own acceptance judgment",
         "Schedulers own dependencies",
         "they do not perform code-quality review",
-        "reviewer_independent: false",
+        "requires a subagent owner for every task",
+        "fails closed before task mutation",
+        "dispatch before any wait",
         "After two failed low-cost repair rounds",
         "A task becomes `Completed` only when",
         "`Completed` does not require `verdict: accept` unless review was required",
@@ -1785,9 +1787,11 @@ def test_overlapping_writes_are_not_parallelizable() -> None:
     create = read("skills/orch-create-implementation-plan/SKILL.md")
     workflow = read("references/assets/orchestration/workflow.md")
     plan = read("references/assets/orchestration/contract/plan-v1.md")
-    assert "Partition only independent tasks with disjoint write scopes" in execute
+    assert "planner-proven dependencies, write scopes" in execute
+    assert "Dispatch every ready independent task with disjoint write scope" in execute
+    assert "Serialize dependent, overlapping, or same-workspace mutation" in execute
     assert "disjoint write scopes" in create
-    assert "write scopes are disjoint" in workflow
+    assert "Independent disjoint tasks in distinct execution workspaces dispatch before any wait" in workflow
     assert "disjoint write scopes" in workflow
     assert "assign parallel tasks only when dependencies are satisfied and write scopes are disjoint" in plan
     assert "unsafe parallelization is explicitly blocked by dependency or scope evidence" in plan

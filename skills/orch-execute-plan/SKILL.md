@@ -1,6 +1,6 @@
 ---
 name: orch-execute-plan
-description: 'Execute a WorkBundle task, phase, or plan through compiled task briefs, task-local methodology, optional independent acceptance review, and dependency-aware scheduling.'
+description: 'Execute a WorkBundle task, phase, or plan through mandatory subagent task ownership, compiled task briefs, task-local methodology, optional independent acceptance review, and dependency-aware scheduling.'
 ---
 
 # orch-execute-plan
@@ -23,9 +23,9 @@ python3 scripts/orch.py build-task-brief --task <task-path>
 ```
 
 Missing source IDs; decision authority other than `none-relevant` or an `AUTH-NNN` alias whose carried constraint was reconciled in the verified specification; `conflict_status: escalate`; inconsistent scope; or unsafe workspace state fails closed with the existing typed blocker. Truth Basis conflict uses `decision-blocked`. The compiled brief includes `AUTH-NNN: <carried constraint>`, not the alias alone.
-7. Choose the provider-neutral capability from the task profile. Partition only independent tasks with disjoint write scopes. Contract-decoupled participants validate against the common contract, accepted prior handoffs, and task-local files; they reach the named barrier before convergence work.
-8. When user/environment policy permits delegation, use visible multi-agent subagents for task ownership. Invisible helper workers may support bounded analysis only. If independent subagents are unavailable, use single-agent execution and mark later review `reviewer_independent: false`.
-9. Always validate the executor-result with the shared helper. For a mapped capability task, report each validation under its compiled evidence ID and invariant IDs, and add `evidence_closure` using the allocated boundary, freshness, and evidence IDs. The helper observes required process/inspection items in the bound worktree as one Git-state-neutral batch, reuses the compiled identities, and rejects missing, incapable, contradictory, stale, wrong-boundary, failed, or unexecuted evidence before authorizing from post-execution task-caused delta. Executor closure claims are corroboration, not harness proof. Compile `build-review-package` and assign `dev-code-review` only when `acceptance_review.required: true` or compiled `review_required: true`. The scheduler does not perform code-quality review.
+7. Choose the provider-neutral capability from the task profile. Consume planner-proven dependencies, write scopes, common-contract groups, barriers, convergence ownership, and isolation requirements. Dispatch every ready independent task with disjoint write scope to a separate execution workspace before awaiting any result. Serialize dependent, overlapping, or same-workspace mutation. Contract-decoupled participants validate against the common contract, accepted prior handoffs, and task-local files; they reach the named barrier before convergence work.
+8. Selecting `orch-execute-plan` makes every implementation and repair task subagent-owned. Before any task mutation, confirm a host-native or Execution-Flow-routed subagent is available and bind the task to its neutral agent/run identity. If no subagent is available, fail closed with `workspace-blocked`; there is no controller or single-agent fallback. Do not substitute `reviewer_independent: false` for a missing task owner. The orchestration thread may schedule, compile briefs, coordinate barriers, validate results, route reviews, and manage lifecycle, but it must not implement or repair task write scope.
+9. Always validate neutral `delegation_evidence` and reject acceptance when mutation provenance shows the controller changed task-owned write scope, even if validation is green. Then validate the executor-result with the shared helper. For a mapped capability task, report each validation under its compiled evidence ID and invariant IDs, and add `evidence_closure` using the allocated boundary, freshness, and evidence IDs. The helper observes required process/inspection items in the bound worktree as one Git-state-neutral batch, reuses the compiled identities, and rejects missing, incapable, contradictory, stale, wrong-boundary, failed, or unexecuted evidence before authorizing from post-execution task-caused delta. Executor closure claims are corroboration, not harness proof. Compile `build-review-package` and assign `dev-code-review` only when `acceptance_review.required: true` or compiled `review_required: true`. The scheduler does not perform code-quality review.
 
 ```bash
 python3 scripts/orch.py validate-executor-result --task <task-path> --handoff <handoff-path>
@@ -34,6 +34,7 @@ python3 scripts/orch.py validate-executor-result --task <task-path> --handoff <h
 ## Executor-Owned Constraints
 
 - Follow the compiled brief and its exact read/write/forbidden scope.
+- Own implementation and repair task mutation as the bound subagent; return neutral `agent_id`, `run_id`, and `mechanism` provenance without UI or visibility fields.
 - Load or acknowledge allocated rules and methodology before the operation they govern.
 - Create or load the harness-owned task execution binding before material edits; capture the pre-task baseline once; run process commands and named inspections only in the bound execution repository.
 - Apply `systematic-debugging` before proposing a root-cause fix for unexpected behavior.
@@ -57,11 +58,11 @@ Use `--head worktree` for pre-commit review; the compiler includes tracked, stag
 
 The reviewer uses only the bounded package and `dev-code-review`. It compares the accepted Truth Basis, implementation, test oracle, and knowledge disposition, then returns `accept`, `repair`, or `blocked` with the reviewed tree identity and compact evidence-backed findings.
 
-On `repair`, return blocking findings with the same brief and current diff, make the smallest repair, rerun fresh task validation, regenerate the package from the original task base, and re-review. After two failed repair rounds, raise capability one tier when available. Repeated evidence of a decomposition or requirement defect stops retries and routes to plan or specification repair.
+On `repair`, return blocking findings to the task-owning subagent with the same brief and current diff. That subagent makes the smallest repair, reruns fresh task validation, regenerates the package from the original task base, and re-reviews. If subagent execution becomes unavailable, fail closed before repair mutation. After two failed repair rounds, raise capability one tier when available. Repeated evidence of a decomposition or requirement defect stops retries and routes to plan or specification repair.
 
 ## Completion semantics
 
-A task becomes `Completed` only when implementation criteria, fresh validation, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan completion derive from accepted children and declared dependency, barrier, and convergence gates.
+A task becomes `Completed` only when implementation criteria, fresh validation, neutral subagent ownership provenance, no controller mutation of task write scope, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan completion derive from accepted children and declared dependency, barrier, and convergence gates.
 
 Use typed blockers:
 

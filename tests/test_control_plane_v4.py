@@ -13,7 +13,12 @@ import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "scripts/work-bundle"))
+WORK_BUNDLE_SCRIPTS = REPO_ROOT / "scripts/work-bundle"
+loaded_core = sys.modules.get("core")
+loaded_core_path = Path(getattr(loaded_core, "__file__", "")) if loaded_core is not None else None
+if loaded_core_path is not None and WORK_BUNDLE_SCRIPTS not in loaded_core_path.parents:
+    sys.modules.pop("core", None)
+sys.path.insert(0, str(WORK_BUNDLE_SCRIPTS))
 from workspace_resources import CREDENTIAL_TEMPLATE, SCRIPT_INDEX_TEMPLATE
 from control_plane import (
     ControlPlaneError,
@@ -66,7 +71,6 @@ def config_root(tmp_path: Path) -> Path:
                 f"work_bundle_root: {REPO_ROOT}",
                 'project_registry: "$work_bundle_config_root/registry/projects.yaml"',
                 'skill_registry: "$work_bundle_config_root/registry/skill-registry.yaml"',
-                "prefer_subagent: false",
                 "",
             ]
         ),
@@ -269,7 +273,7 @@ def test_v3_to_v4_migration_is_deterministic_and_splits_local_state(tmp_path: Pa
     assert "workspace:\n  id: wb-" in metadata
     assert f"canonical: {remote}" in metadata
     assert "custom_portable:" in metadata
-    for forbidden in ("workspace_root:", "project_root:", "observed_head:", "observation_time:", "git_control_root:"):
+    for forbidden in ("workspace_root:", "project_root:", "observed_head:", "observation_time:", "git_control_root:", "prefer_subagent:"):
         assert forbidden not in metadata
     registry = (config / "registry/projects.yaml").read_text(encoding="utf-8")
     assert str(workspace) in registry
@@ -1383,8 +1387,8 @@ def test_v4_schema_rejects_duplicate_repository_ids_and_invalid_mode(tmp_path: P
     assert run_wb(config, "init-workspace", str(workspace), "--slug", "demo", "--repository", f"source-main={remote}", "--apply").returncode == 0
     metadata = workspace / ".work-bundle/project.yaml"
     text = metadata.read_text(encoding="utf-8")
-    duplicate = text[text.index("  - id: source-main"):text.index("prefer_subagent:")]
-    metadata.write_text(text.replace("  mode: multi-repository", "  mode: invalid").replace("prefer_subagent:", duplicate + "prefer_subagent:"), encoding="utf-8")
+    duplicate = text[text.index("  - id: source-main"):text.index("agents_sync:")]
+    metadata.write_text(text.replace("  mode: multi-repository", "  mode: invalid").replace("agents_sync:", duplicate + "agents_sync:", 1), encoding="utf-8")
     doctor = run_wb(config, "doctor-workspace", str(workspace))
     failures = json.loads(doctor.stdout)["portable"]["failures"]
     assert "WB_CONTROL_PLANE_WORKSPACE_MODE_INVALID" in failures
@@ -1765,7 +1769,7 @@ def write_composite_metadata(workspace: Path, *, include_root: bool = True, memb
             "",
         ]
     )
-    text = text.replace("prefer_subagent:", member + "prefer_subagent:")
+    text = text.replace("agents_sync:", member + "agents_sync:", 1)
     metadata.write_text(text, encoding="utf-8")
 
 
@@ -1933,7 +1937,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
             ]
         )
         metadata.write_text(
-            metadata.read_text(encoding="utf-8").replace("prefer_subagent:", extra + "prefer_subagent:"),
+            metadata.read_text(encoding="utf-8").replace("agents_sync:", extra + "agents_sync:", 1),
             encoding="utf-8",
         )
         doctor = run_wb(config, "doctor-workspace", str(workspace))
@@ -1945,7 +1949,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         metadata = workspace / ".work-bundle/project.yaml"
         text = metadata.read_text(encoding="utf-8")
         metadata.write_text(
-            text.replace("prefer_subagent:", "\n".join([
+            text.replace("agents_sync:", "\n".join([
                 "  - id: extra-member",
                 "    role: source",
                 "    remote:",
@@ -1958,8 +1962,8 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
                 "    materialization:",
                 "      required: true",
                 "    operation_policy: inherit",
-                "prefer_subagent:",
-            ])),
+                "agents_sync:",
+            ]), 1),
             encoding="utf-8",
         )
         doctor = run_wb(config, "doctor-workspace", str(workspace))
