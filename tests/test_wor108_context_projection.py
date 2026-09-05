@@ -580,6 +580,23 @@ def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
     assert cli.returncode == 0, cli.stderr
     assert "review-package.md" in cli.stdout
 
+    accepted_bytes = accepted_path.read_bytes()
+    wrong_plan_handoff = deepcopy(dependency_handoff)
+    wrong_plan_handoff["related"]["plan"] = "plan-WRONG"
+    accepted_path.write_text(
+        "\n".join(execution_context._dump_yaml(wrong_plan_handoff)) + "\n",
+        encoding="utf-8",
+    )
+    wrong_plan = {
+        **descriptor,
+        "handoff_sha256": hashlib.sha256(accepted_path.read_bytes()).hexdigest(),
+    }
+    with pytest.raises(SystemExit, match="plan"):
+        execution_context.validate_executor_result_for_task(
+            handoff, current, observe=True, accepted_dependency_deltas=[wrong_plan]
+        )
+    accepted_path.write_bytes(accepted_bytes)
+
     stale = {**descriptor, "handoff_sha256": "0" * 64}
     with pytest.raises(SystemExit, match="handoff identity is stale"):
         execution_context.validate_executor_result_for_task(
@@ -590,7 +607,6 @@ def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
         execution_context.validate_executor_result_for_task(
             handoff, current, observe=True, accepted_dependency_deltas=[mismatched]
         )
-    accepted_bytes = accepted_path.read_bytes()
     unaccepted_handoff = deepcopy(dependency_handoff)
     unaccepted_handoff["acceptance_review"]["verdict"] = "pending"
     accepted_path.write_text(

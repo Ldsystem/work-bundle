@@ -1506,6 +1506,7 @@ def _accepted_dependency_paths(
     if not descriptors:
         return set()
     dependencies = {str(value) for value in _as_list(task.get("depends_on"))}
+    plan_id = str(task.get("plan_id") or "")
     workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
     control_root = Path(str(workspace.get("root") or "")).resolve()
     handoff_root = control_root / ".work-bundle/orchestration/handoff"
@@ -1546,8 +1547,12 @@ def _accepted_dependency_paths(
         frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), dict) else {}
         previous = frontier.get("previous_reviewed_identity") if isinstance(frontier.get("previous_reviewed_identity"), dict) else {}
         repaired = frontier.get("repaired_identity") if isinstance(frontier.get("repaired_identity"), dict) else {}
-        if (related.get("task") != dependency_id or result.get("state") != "completed"
-                or review.get("verdict") != "accept" or review.get("review_mode") != "repair"
+        if related.get("plan") != plan_id or related.get("task") != dependency_id:
+            raise SystemExit(
+                f"accepted dependency handoff plan/task identity is mismatched: {handoff_id}"
+            )
+        if (result.get("state") != "completed" or review.get("verdict") != "accept"
+                or review.get("review_mode") != "repair"
                 or repaired != review.get("target_identity")):
             raise SystemExit(f"dependency handoff is not an accepted repair result: {handoff_id}")
         source_base = str(previous.get("revision") or "")
@@ -1622,7 +1627,8 @@ def _accepted_dependency_paths(
             frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), dict) else {}
             previous = frontier.get("previous_reviewed_identity") if isinstance(frontier.get("previous_reviewed_identity"), dict) else {}
             repaired = frontier.get("repaired_identity") if isinstance(frontier.get("repaired_identity"), dict) else {}
-            if (related.get("task") != dependency_id or result.get("state") != "completed"
+            if (related.get("plan") != plan_id or related.get("task") != dependency_id
+                    or result.get("state") != "completed"
                     or review.get("verdict") != "accept" or review.get("review_mode") != "repair"
                     or repaired != review.get("target_identity") or not previous or not repaired):
                 continue
