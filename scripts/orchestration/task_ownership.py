@@ -25,6 +25,11 @@ class TaskCandidate:
     dependencies: tuple[str, ...]
     write_scope: tuple[str, ...]
     execution_workspace: str
+    common_contract: str | None = None
+    barrier: str | None = None
+    convergence_owner: str | None = None
+    barrier_participants: tuple[str, ...] = ()
+    binding_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.task_id.strip():
@@ -36,11 +41,32 @@ class TaskCandidate:
 
 
 @dataclass(frozen=True)
+class RepairContinuity:
+    """Harness-owned identities a repair must carry without reacquisition."""
+
+    binding_id: str
+    baseline_identity: str
+    evidence_identity: str
+    previous_review_identity: str
+
+    def __post_init__(self) -> None:
+        for field in (
+            "binding_id",
+            "baseline_identity",
+            "evidence_identity",
+            "previous_review_identity",
+        ):
+            if not str(getattr(self, field)).strip():
+                raise ValueError(f"{field} must be non-empty")
+
+
+@dataclass(frozen=True)
 class DispatchWaveResult:
     dispatched: tuple[str, ...]
     results: tuple[object, ...]
     ownership: tuple[dict[str, object], ...]
     operation: str
+    repair_continuity: tuple[RepairContinuity, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -128,11 +154,38 @@ def validate_task_acceptance_ownership(
     return provenance
 
 
-def _ready_wave(tasks: Sequence[TaskCandidate], completed: set[str]) -> list[TaskCandidate]:
+def _validate_topology(task: TaskCandidate) -> None:
+    participant_fields = (task.common_contract, task.barrier, task.convergence_owner)
+    if any(participant_fields) and not all(participant_fields) and not task.barrier_participants:
+        raise OwnershipBlocker(
+            "workspace-blocked",
+            f"{task.task_id} has incomplete common-contract/barrier topology",
+        )
+    if task.barrier_participants:
+        if not task.common_contract or not task.barrier:
+            raise OwnershipBlocker(
+                "workspace-blocked",
+                f"{task.task_id} convergence admission lacks common contract or barrier",
+            )
+        if not set(task.barrier_participants).issubset(task.dependencies):
+            raise OwnershipBlocker(
+                "workspace-blocked",
+                f"{task.task_id} convergence dependencies omit barrier participants",
+            )
+
+
+def _ready_wave(
+    tasks: Sequence[TaskCandidate],
+    completed: set[str],
+    accepted_handoffs: set[str],
+) -> list[TaskCandidate]:
+    for task in tasks:
+        _validate_topology(task)
     ready = [
         task
         for task in tasks
         if task.task_id not in completed and set(task.dependencies).issubset(completed)
+        and set(task.barrier_participants).issubset(accepted_handoffs)
     ]
     wave: list[TaskCandidate] = []
     for task in ready:
@@ -156,21 +209,49 @@ class TaskOwnershipScheduler:
         *,
         completed: set[str],
         operation: str = "implementation",
+        accepted_handoffs: set[str] | None = None,
+        prior_ownership: Mapping[str, Mapping[str, object]] | None = None,
+        repair_continuity: Mapping[str, RepairContinuity] | None = None,
+        authorized_replacements: set[str] | None = None,
     ) -> DispatchWaveResult:
         if operation not in {"implementation", "repair"}:
             raise ValueError("operation must be implementation or repair")
         if not self._adapter.available():
             raise OwnershipBlocker("workspace-blocked", "subagent execution is unavailable")
-        wave = _ready_wave(tasks, completed)
+        wave = _ready_wave(tasks, completed, accepted_handoffs or set())
+        if operation == "repair":
+            for task in wave:
+                if (prior_ownership or {}).get(task.task_id) is None:
+                    raise OwnershipBlocker(
+                        "review-blocked", f"{task.task_id} repair lacks prior owner"
+                    )
+                if (repair_continuity or {}).get(task.task_id) is None:
+                    raise OwnershipBlocker(
+                        "review-blocked", f"{task.task_id} repair lacks continuity identities"
+                    )
         dispatched: list[SubagentDispatch] = []
         ownership: list[dict[str, object]] = []
+        retained: list[RepairContinuity] = []
         for task in wave:
             receipt = self._adapter.dispatch(task, operation=operation)
             if not isinstance(receipt, SubagentDispatch):
                 raise OwnershipBlocker("workspace-blocked", "subagent dispatch receipt is invalid")
-            ownership.append(
-                normalize_subagent_provenance(receipt.delegation_evidence, operation=operation)
+            current_owner = normalize_subagent_provenance(
+                receipt.delegation_evidence, operation=operation
             )
+            if operation == "repair":
+                previous = (prior_ownership or {}).get(task.task_id)
+                continuity = (repair_continuity or {}).get(task.task_id)
+                assert previous is not None and continuity is not None
+                previous_owner = normalize_subagent_provenance(previous)
+                replaced = current_owner["agent_id"] != previous_owner["agent_id"]
+                if replaced and task.task_id not in (authorized_replacements or set()):
+                    raise OwnershipBlocker(
+                        "review-blocked",
+                        f"{task.task_id} repair owner replacement is not authorized",
+                    )
+                retained.append(continuity)
+            ownership.append(current_owner)
             dispatched.append(receipt)
         results = tuple(self._adapter.wait(receipt.handle) for receipt in dispatched)
         return DispatchWaveResult(
@@ -178,6 +259,7 @@ class TaskOwnershipScheduler:
             results=results,
             ownership=tuple(ownership),
             operation=operation,
+            repair_continuity=tuple(retained),
         )
 
     def validate_acceptance(
