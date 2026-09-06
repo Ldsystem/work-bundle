@@ -160,7 +160,7 @@ def validate_task_acceptance_ownership(
                     or normalized in {".", "./"} or "\\" in normalized
                     or any(character in normalized for character in "*?[]")):
                 raise OwnershipBlocker("review-blocked", "mutation event path is unsafe")
-            changed.append(normalized)
+            changed.append(parsed.as_posix())
         if actor_kind != "controller":
             continue
         if _scopes_overlap(changed, write_scope):

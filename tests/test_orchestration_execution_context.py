@@ -2740,6 +2740,36 @@ def test_completed_task_accepts_complete_subagent_mutation_evidence(tmp_path: Pa
     assert accepted["result_state"] == "completed"
 
 
+def test_completed_task_rejects_controller_mutation_with_dot_segment() -> None:
+    brief, handoff = _repair_completion_fixture()
+    brief["review_required"] = False
+    brief["files"]["write"] = ["src/a.py"]
+    handoff["task_fit_check"]["result"] = "clean"
+    handoff["acceptance_review"] = {"required": False}
+
+    with pytest.raises(SystemExit, match="controller mutated task-owned implementation scope"):
+        execution_context.validate_executor_result_for_task(
+            handoff,
+            brief,
+            mutation_events=[{"actor_kind": "controller", "paths": ["src/./a.py"]}],
+        )
+
+
+def test_completed_task_rejects_controller_mutation_with_repeated_separator() -> None:
+    brief, handoff = _repair_completion_fixture()
+    brief["review_required"] = False
+    brief["files"]["write"] = ["src/a.py"]
+    handoff["task_fit_check"]["result"] = "clean"
+    handoff["acceptance_review"] = {"required": False}
+
+    with pytest.raises(SystemExit, match="controller mutated task-owned implementation scope"):
+        execution_context.validate_executor_result_for_task(
+            handoff,
+            brief,
+            mutation_events=[{"actor_kind": "controller", "paths": ["src//a.py"]}],
+        )
+
+
 def test_rf_task_repair_completion_rejects_stale_repair_frontier(tmp_path: Path) -> None:
     brief, handoff = _repair_completion_fixture()
     git(tmp_path, "init", "-q")
