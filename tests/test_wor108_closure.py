@@ -21,7 +21,7 @@ def test_wor108_closure_registry_has_exact_public_fixture_identities() -> None:
     assert result == {
         "evaluation_id": "wor108-legacy-closure-v1",
         "fixtures": 22,
-        "changed_surfaces": 39,
+        "changed_surfaces": 40,
         "verdict": "accepted",
     }
 
@@ -70,4 +70,17 @@ def test_wor108_migration_impact_rejects_final_git_identity(tmp_path: Path) -> N
     tampered.write_text(json.dumps(tampered_manifest), encoding="utf-8")
 
     with pytest.raises(wor108_verify.VerificationError, match="closed shape"):
+        wor108_verify.verify(migration_path=tampered)
+
+
+def test_wor108_migration_impact_rejects_incomplete_baseline_delta(
+    tmp_path: Path,
+) -> None:
+    manifest = json.loads((EVAL_ROOT / "migration-impact.json").read_text(encoding="utf-8"))
+    operations = manifest["changed_surfaces"]["operations"]
+    operations.remove("scripts/orchestration/execution_context.py")
+    tampered = tmp_path / "migration-impact.json"
+    tampered.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(wor108_verify.VerificationError, match="changed surface completeness"):
         wor108_verify.verify(migration_path=tampered)

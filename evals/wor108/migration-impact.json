@@ -25,6 +25,7 @@
       "skills/wb-initialize-project/SKILL.md"
     ],
     "operations": [
+      "scripts/orchestration/dispatcher.py",
       "scripts/orchestration/execution_context.py",
       "scripts/orchestration/review_runtime.py",
       "scripts/orchestration/task_ownership.py",

@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import subprocess
 from typing import Any
 
 
@@ -115,6 +116,17 @@ def _verify_migration(path: Path, fixture_ids: tuple[str, ...]) -> int:
     flattened = [surface for group in surfaces.values() for surface in group]
     if len(flattened) != len(set(flattened)) or any(not (REPO_ROOT / surface).is_file() for surface in flattened):
         raise VerificationError("changed surfaces must be unique existing files")
+    baseline = manifest["accepted_legacy_baseline"]["commit"]
+    changed = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "diff", "--name-only", baseline, "HEAD", "--"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if changed.returncode != 0:
+        raise VerificationError("accepted baseline delta is unavailable")
+    if set(flattened) != set(changed.stdout.splitlines()):
+        raise VerificationError("changed surface completeness mismatch")
     if tuple(manifest["evaluation_identities"]) != fixture_ids:
         raise VerificationError("migration evaluation identities mismatch")
     if manifest["handoff_constraints"] != {
