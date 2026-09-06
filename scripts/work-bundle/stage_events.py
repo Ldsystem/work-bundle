@@ -61,6 +61,18 @@ COMPILED_CONTEXT_METRIC_FIELDS = frozenset(
         "expansion_reason",
     }
 )
+PLANNING_ECONOMICS_FIELDS = frozenset(
+    {
+        "initial_cardinality",
+        "plan_revisions",
+        "plan_reviews",
+        "scope_allocation_repairs",
+        "task_review_repairs",
+        "validation_reruns",
+        "first_green_to_final_accept_ms",
+    }
+)
+INITIAL_CARDINALITY_FIELDS = frozenset({"phases", "tasks"})
 CONTEXT_EXPANSION_REASONS = frozenset(
     {None, "failed_validation", "ambiguity", "reviewer_request", "authority_gap"}
 )
@@ -82,7 +94,8 @@ LEGACY_EVENT_FIELDS = frozenset(
         "privacy",
     }
 )
-EVENT_FIELDS = LEGACY_EVENT_FIELDS | {"compiled_context_metrics"}
+OPTIONAL_EVENT_FIELDS = frozenset({"compiled_context_metrics", "planning_economics"})
+EVENT_FIELDS = LEGACY_EVENT_FIELDS | OPTIONAL_EVENT_FIELDS
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _OID_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -121,11 +134,14 @@ class StageEventV1:
     identity: dict[str, str | int | None]
     privacy: str
     compiled_context_metrics: dict[str, int | str | None] | None = None
+    planning_economics: dict[str, int | dict[str, int] | None] | None = None
 
     def to_dict(self) -> dict[str, object]:
         result = asdict(self)
         if self.compiled_context_metrics is None:
             result.pop("compiled_context_metrics")
+        if self.planning_economics is None:
+            result.pop("planning_economics")
         return result
 
 
@@ -178,10 +194,12 @@ def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
     """Validate one closed API-004 event without retaining caller-owned containers."""
 
     _scan_for_sensitive_content(payload)
-    if set(payload) == LEGACY_EVENT_FIELDS:
-        value = payload
-    else:
-        value = _validate_exact_fields(payload, EVENT_FIELDS, "WB_STAGE_EVENT_FIELDS_INVALID")
+    if not isinstance(payload, Mapping):
+        _fail("WB_STAGE_EVENT_FIELDS_INVALID")
+    fields = set(payload)
+    if not LEGACY_EVENT_FIELDS.issubset(fields) or not fields.issubset(EVENT_FIELDS):
+        _fail("WB_STAGE_EVENT_FIELDS_INVALID")
+    value = payload
     for field in ("event_id", "process_id", "attempt_id"):
         if not _is_id(value[field]):
             _fail("WB_STAGE_EVENT_ID_INVALID")
@@ -245,6 +263,36 @@ def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
             _fail("WB_STAGE_EVENT_CONTEXT_METRICS_INVALID")
         metrics = {field: checked[field] for field in sorted(COMPILED_CONTEXT_METRIC_FIELDS)}
 
+    economics_value = value.get("planning_economics")
+    economics: dict[str, int | dict[str, int] | None] | None = None
+    if economics_value is not None:
+        checked = _validate_exact_fields(
+            economics_value,
+            PLANNING_ECONOMICS_FIELDS,
+            "WB_STAGE_EVENT_ECONOMICS_INVALID",
+        )
+        cardinality = _validate_exact_fields(
+            checked["initial_cardinality"],
+            INITIAL_CARDINALITY_FIELDS,
+            "WB_STAGE_EVENT_ECONOMICS_INVALID",
+        )
+        if any(not _is_nonnegative_int(cardinality[field]) for field in INITIAL_CARDINALITY_FIELDS):
+            _fail("WB_STAGE_EVENT_ECONOMICS_INVALID")
+        count_fields = PLANNING_ECONOMICS_FIELDS - {
+            "initial_cardinality",
+            "first_green_to_final_accept_ms",
+        }
+        if any(not _is_nonnegative_int(checked[field]) for field in count_fields):
+            _fail("WB_STAGE_EVENT_ECONOMICS_INVALID")
+        latency = checked["first_green_to_final_accept_ms"]
+        if latency is not None and not _is_nonnegative_int(latency):
+            _fail("WB_STAGE_EVENT_ECONOMICS_INVALID")
+        economics = {
+            "initial_cardinality": {field: cardinality[field] for field in sorted(INITIAL_CARDINALITY_FIELDS)},
+            **{field: checked[field] for field in sorted(count_fields)},
+            "first_green_to_final_accept_ms": latency,
+        }
+
     return StageEventV1(
         event_id=str(value["event_id"]),
         timestamp=str(value["timestamp"]),
@@ -261,6 +309,7 @@ def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
         identity={field: identity[field] for field in sorted(IDENTITY_FIELDS)},
         privacy="operational_metadata_only",
         compiled_context_metrics=metrics,
+        planning_economics=economics,
     )
 
 

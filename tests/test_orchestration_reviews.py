@@ -179,6 +179,17 @@ def test_api_001_reslice_pauses_repeated_expansion_and_preserves_evidence() -> N
         "return_to": "plan_owner",
         "action": "reslice_plan",
         "execution_state": "paused_for_reslice",
+        "affected_region": ["task-b01"],
+        "returned_authority_identity": {
+            "artifact_id": "task-b01",
+            "revision": "1",
+            "sha256": ZERO_SHA,
+            "source_tree": ZERO_TREE,
+        },
+        "preserved_evidence_identities": [],
+        "resume_requires": "accepted_repaired_plan_authority",
+        "preserve_original_binding": True,
+        "preserve_original_baseline": True,
         "preserve_valid_work_and_evidence": True,
         "silent_expansion_allowed": False,
     }
