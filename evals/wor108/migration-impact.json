@@ -38,6 +38,9 @@
       "scripts/work-bundle/stage_events.py"
     ],
     "fixtures_and_evaluations": [
+      "evals/wor105/components/native-transition-record.yaml",
+      "evals/wor105/freeze-manifest.json",
+      "evals/wor105/results.jsonl",
       "evals/wor108/contracts-v1.schema.json",
       "evals/wor108/fixtures.json",
       "evals/wor108/migration-impact.json",
