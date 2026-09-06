@@ -10,8 +10,6 @@ from documents import cmd_git_status, cmd_next_action_candidates, cmd_related, c
 from execution_context import (
     cmd_build_review_package,
     cmd_build_task_brief,
-    cmd_adopt_existing_recovered_result,
-    cmd_create_accepted_base_absence_receipt,
     cmd_observe_task_validation,
     cmd_validate_executor_result,
 )
@@ -24,8 +22,7 @@ from specs import cmd_index_specs, cmd_list_specs, cmd_set_spec_status, cmd_writ
 RECOGNIZED_COMMANDS = frozenset({
     "init", "doctor", "state", "next-action-candidates", "git-status",
     "repository-preflight", "build-task-brief", "build-review-package",
-    "validate-executor-result", "observe-task-validation", "create-accepted-base-absence-receipt",
-    "adopt-existing-recovered-result",
+    "validate-executor-result", "observe-task-validation",
     "related", "write-doc", "write-spec",
     "list-specs", "set-spec-status", "index-specs", "write-plan", "list-plans",
     "set-plan-status", "archive-plan", "index-plans", "write-phase", "write-task",
@@ -92,33 +89,6 @@ def build_parser() -> argparse.ArgumentParser:
     observe_validation = sub.add_parser("observe-task-validation", parents=[parent])
     observe_validation.add_argument("--task", required=True)
     observe_validation.set_defaults(func=cmd_observe_task_validation)
-    create_recovery_receipt = sub.add_parser(
-        "create-accepted-base-absence-receipt", parents=[parent]
-    )
-    create_recovery_receipt.add_argument("--plan-id", required=True)
-    create_recovery_receipt.add_argument("--task-id", required=True)
-    create_recovery_receipt.add_argument("--expected-head", required=True)
-    create_recovery_receipt.add_argument("--expected-tree", required=True)
-    create_recovery_receipt.add_argument("--proposed-handoff-id", required=True)
-    create_recovery_receipt.add_argument("--proposed-review-id", required=True)
-    create_recovery_receipt.add_argument("--final-head", required=True)
-    create_recovery_receipt.add_argument("--final-tree", required=True)
-    create_recovery_receipt.set_defaults(func=cmd_create_accepted_base_absence_receipt)
-    adopt_recovered_result = sub.add_parser(
-        "adopt-existing-recovered-result", parents=[parent]
-    )
-    adopt_recovered_result.add_argument("--plan-id", required=True)
-    adopt_recovered_result.add_argument("--task-id", required=True)
-    adopt_recovered_result.add_argument("--expected-head", required=True)
-    adopt_recovered_result.add_argument("--expected-tree", required=True)
-    adopt_recovered_result.add_argument("--handoff-id", required=True)
-    adopt_recovered_result.add_argument("--handoff-sha256", required=True)
-    adopt_recovered_result.add_argument("--review-id", required=True)
-    adopt_recovered_result.add_argument("--final-head", required=True)
-    adopt_recovered_result.add_argument("--final-tree", required=True)
-    adopt_recovered_result.add_argument("--prior-receipt-id", required=True)
-    adopt_recovered_result.add_argument("--prior-receipt-sha256", required=True)
-    adopt_recovered_result.set_defaults(func=cmd_adopt_existing_recovered_result)
     related = sub.add_parser("related", parents=[parent])
     related.add_argument("--id", required=True)
     related.set_defaults(func=cmd_related)

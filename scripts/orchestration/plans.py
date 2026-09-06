@@ -1,4 +1,3 @@
-import hashlib
 import subprocess
 from datetime import datetime, timezone
 
@@ -16,7 +15,10 @@ from execution_context import (
     _parse_scalar,
     _execution_workspace_module,
     _persist_binding,
+    has_persisted_accepted_task_result,
     load_task_execution_binding,
+    load_current_accepted_task_result,
+    semantic_digest,
 )
 from completion_provenance import ManagedProvenanceStore, release_completion_binding
 from handoffs import _read_compact_yaml_metadata
@@ -535,7 +537,117 @@ def cmd_list_plans(args: argparse.Namespace) -> None:
         print(json.dumps(row, ensure_ascii=False))
 
 
-def _assert_completed_task_handoff(args: argparse.Namespace, task_path: Path) -> None:
+def _load_current_task_acceptance(
+    args: argparse.Namespace, task_path: Path
+) -> tuple[dict[str, object], dict[str, object]]:
+    compile_args = argparse.Namespace(
+        project_root=getattr(args, "project_root", None),
+        workspace_root=getattr(args, "workspace_root", None),
+        task=str(task_path),
+        handoff=None,
+        base=None,
+        head=None,
+        **_observation_kwargs(args),
+    )
+    _, brief_document = _compile_task_brief(compile_args)
+    return load_current_accepted_task_result(
+        resolve_workspace_root(args), brief_document["task_brief"]
+    )
+
+
+def _task_brief_at(args: argparse.Namespace, task_path: Path) -> dict[str, object]:
+    compile_args = argparse.Namespace(
+        project_root=getattr(args, "project_root", None),
+        workspace_root=getattr(args, "workspace_root", None),
+        task=str(task_path),
+        handoff=None,
+        base=None,
+        head=None,
+        **_observation_kwargs(args),
+    )
+    _, brief_document = _compile_task_brief(compile_args)
+    return brief_document["task_brief"]
+
+
+def _assert_task_dependencies_current(args: argparse.Namespace, task_path: Path) -> None:
+    front_matter, _body = read_front_matter(task_path)
+    if not front_matter.get("depends_on"):
+        return
+    brief = _task_brief_at(args, task_path)
+    rows = index_plans(args)
+    for dependency_id in brief.get("depends_on", []):
+        matches = [
+            row for row in rows
+            if row.get("type") == "task"
+            and row.get("plan_id") == brief.get("plan_id")
+            and row.get("id") == dependency_id
+        ]
+        if len(matches) != 1 or matches[0].get("status") != "Completed":
+            raise SystemExit(f"dependency-blocked: {dependency_id} is not completed")
+        _load_current_task_acceptance(args, artifact_path_from_row(matches[0], args))
+
+
+def _accepted_plan_task_results(
+    args: argparse.Namespace, plan_id: str
+) -> list[tuple[dict[str, object], dict[str, object]]]:
+    accepted: list[tuple[dict[str, object], dict[str, object]]] = []
+    for row in index_plans(args):
+        if row.get("type") != "task" or row.get("plan_id") != plan_id:
+            continue
+        if row.get("status") != "Completed":
+            raise SystemExit(f"acceptance-blocked: task {row.get('id')} is not completed")
+        path = artifact_path_from_row(row, args)
+        _binding, result = _load_current_task_acceptance(args, path)
+        accepted.append((result, _task_brief_at(args, path)))
+    return accepted
+
+
+def _plan_uses_accepted_result_authority(args: argparse.Namespace, plan_id: str) -> bool:
+    control_root = resolve_workspace_root(args)
+    for row in index_plans(args):
+        if row.get("type") != "task" or row.get("plan_id") != plan_id:
+            continue
+        if has_persisted_accepted_task_result(
+            control_root, plan_id, str(row.get("id") or "")
+        ):
+            return True
+    return False
+
+
+def _assert_phase_tasks_accepted(args: argparse.Namespace, phase_id: str, plan_id: str) -> None:
+    rows = [
+        row for row in index_plans(args)
+        if row.get("type") == "task"
+        and row.get("plan_id") == plan_id
+        and row.get("phase_id") == phase_id
+    ]
+    for row in rows:
+        if row.get("status") != "Completed":
+            raise SystemExit(f"acceptance-blocked: task {row.get('id')} is not completed")
+        _load_current_task_acceptance(args, artifact_path_from_row(row, args))
+
+
+def _assert_completed_task_authority(
+    args: argparse.Namespace, task_path: Path
+) -> dict[str, object]:
+    try:
+        _binding, accepted = _load_current_task_acceptance(args, task_path)
+        return accepted
+    except SystemExit as error:
+        missing_initial_binding = str(error) == "Task execution binding is missing harness provenance"
+        if missing_initial_binding:
+            front_matter, _body = read_front_matter(task_path)
+            published = has_persisted_accepted_task_result(
+                resolve_workspace_root(args),
+                str(front_matter.get("plan_id") or ""),
+                str(front_matter.get("id") or ""),
+            )
+        else:
+            published = False
+        if str(error) != "accepted task result is missing" and not (
+            missing_initial_binding and not published
+        ):
+            raise
     handoff = getattr(args, "handoff", None)
     if not handoff:
         raise SystemExit("set-plan-status Completed for a task requires --handoff")
@@ -550,6 +662,8 @@ def _assert_completed_task_handoff(args: argparse.Namespace, task_path: Path) ->
             **_observation_kwargs(args),
         )
     )
+    _binding, accepted = _load_current_task_acceptance(args, task_path)
+    return accepted
 
 
 def _release_completed_task_binding(args: argparse.Namespace, row: dict[str, object]) -> dict[str, object]:
@@ -559,8 +673,8 @@ def _release_completed_task_binding(args: argparse.Namespace, row: dict[str, obj
     plan_id = str(row["plan_id"])
     task_id = str(row["id"])
     binding = load_task_execution_binding(control_root, plan_id, task_id)
-    handoff = Path(str(getattr(args, "handoff", "")))
-    artifact_digest = hashlib.sha256(handoff.read_bytes()).hexdigest() if handoff.is_file() else None
+    accepted = binding.get("accepted_result") if isinstance(binding.get("accepted_result"), dict) else {}
+    artifact_digest = semantic_digest(accepted) if accepted else None
     event = {
         "event_id": "event-template",
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -581,7 +695,11 @@ def _release_completed_task_binding(args: argparse.Namespace, row: dict[str, obj
         "finding_class": None,
         "return_reason": "validated completion",
         "owner": task_id,
-        "identity": {"product_tree": None, "artifact_digest": artifact_digest, "mutation_epoch": 0},
+        "identity": {
+            "product_tree": (accepted.get("accepted_source") or {}).get("tree"),
+            "artifact_digest": artifact_digest,
+            "mutation_epoch": 0,
+        },
         "privacy": "operational_metadata_only",
     }
     store = ManagedProvenanceStore(control_root / ".work-bundle/runtime/completion-provenance")
@@ -630,11 +748,17 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
         raise SystemExit(f"Multiple plan artifacts match {args.id}{guidance}")
     row = matches[0]
     path = artifact_path_from_row(row, args)
+    if row.get("type") == "task" and args.status in {"In progress", "Completed"}:
+        _assert_task_dependencies_current(args, path)
+    if row.get("type") == "phase" and args.status == "Completed":
+        _assert_phase_tasks_accepted(args, str(row["id"]), str(row["plan_id"]))
     if row.get("type") == "plan" and args.status in {"In progress", "Completed"}:
         require_plan_reviews(project_root(args), path,
                              source_root=_resolve_final_plan_workspace(args) if args.status == "Completed" else None)
+        if args.status == "Completed":
+            _accepted_plan_task_results(args, str(row["id"]))
     if args.status == "Completed" and row.get("type") == "task":
-        _assert_completed_task_handoff(args, path)
+        _assert_completed_task_authority(args, path)
         _release_completed_task_binding(args, row)
     replace_front_matter_value(path, "status", args.status)
     if args.status == "Deprecated":
@@ -658,7 +782,13 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
 
     root_path = artifact_path_from_row(root_match, args)
     require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))
-    validated = _validated_plan_task_handoffs(args, args.id)
+    if _plan_uses_accepted_result_authority(args, args.id):
+        _accepted_plan_task_results(args, args.id)
+        validated: list[tuple[dict[str, object], dict[str, object]]] = []
+    else:
+        # Pre-accepted-result plans retain a bounded migration path. New plans
+        # switch irreversibly once any task publishes durable accepted authority.
+        validated = _validated_plan_task_handoffs(args, args.id)
     _assert_archive_knowledge_gate(args, args.id, root_path, validated)
     _assert_archive_plan_acceptance(args, args.id, root_path, validated)
     require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))

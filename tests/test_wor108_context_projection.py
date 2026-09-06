@@ -534,7 +534,7 @@ def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
         },
     }
 
-    with pytest.raises(SystemExit, match="workflow.md"):
+    with pytest.raises(SystemExit, match="accepted dependency task authority"):
         execution_context.validate_executor_result_for_task(
             handoff, current, observe=True, mutation_events=[]
         )
@@ -1129,35 +1129,17 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
     recovered_path = handoff_dir / "handoff-recovered-dependency.yaml"
     index = root / ".work-bundle/orchestration/handoff/index.jsonl"
     index.write_text("", encoding="utf-8")
-    create_receipt = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/orch.py"),
-            "create-accepted-base-absence-receipt",
-            "--project-root",
-            str(root),
-            "--plan-id",
-            "plan-001",
-            "--task-id",
-            "task-dependency",
-            "--expected-head",
-            expected_base_head,
-            "--expected-tree",
-            expected_base_tree,
-            "--proposed-handoff-id",
-            recovered_handoff["id"],
-            "--proposed-review-id",
-            recovered_review["review_id"],
-            "--final-head",
-            recovered_head,
-            "--final-tree",
-            recovered_tree,
-        ],
-        capture_output=True,
-        text=True,
+    receipt_reference = execution_context.create_accepted_base_absence_receipt(
+        root,
+        "plan-001",
+        "task-dependency",
+        expected_base_head,
+        expected_base_tree,
+        recovered_handoff["id"],
+        recovered_review["review_id"],
+        recovered_head,
+        recovered_tree,
     )
-    assert create_receipt.returncode == 0, create_receipt.stderr
-    receipt_reference = json.loads(create_receipt.stdout)
     recovered_path.write_text(
         ("\n".join(execution_context._dump_yaml(recovered_handoff)) + "\n").replace(
             ": none\n", ': "none"\n'
@@ -1300,41 +1282,6 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
         dependent, root, [adopted_descriptor]
     ) == {dependency_path}
 
-    adopt_cli = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/orch.py"),
-            "adopt-existing-recovered-result",
-            "--project-root",
-            str(root),
-            "--plan-id",
-            "plan-001",
-            "--task-id",
-            "task-dependency",
-            "--expected-head",
-            expected_base_head,
-            "--expected-tree",
-            expected_base_tree,
-            "--handoff-id",
-            recovered_handoff["id"],
-            "--handoff-sha256",
-            recovered_reference["handoff_sha256"],
-            "--review-id",
-            recovered_review["review_id"],
-            "--final-head",
-            recovered_head,
-            "--final-tree",
-            recovered_tree,
-            "--prior-receipt-id",
-            legacy_reference["receipt_id"],
-            "--prior-receipt-sha256",
-            legacy_reference["receipt_sha256"],
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert adopt_cli.returncode == 0, adopt_cli.stderr
-    assert set(json.loads(adopt_cli.stdout)) == {"receipt_id", "receipt_sha256"}
     assert recovered_path.read_bytes() == handoff_bytes
     assert index.read_bytes() == index_bytes
 

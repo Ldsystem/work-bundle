@@ -1712,6 +1712,34 @@ def materialize_accepted_task_result(
     return accepted
 
 
+def load_current_accepted_task_result(
+    control_root: Path, task: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load compact post-acceptance authority without replaying its evidence history."""
+
+    root = control_root.expanduser().resolve()
+    binding = load_task_execution_binding(
+        root, str(task.get("plan_id") or ""), str(task.get("task_id") or "")
+    )
+    accepted = binding.get("accepted_result")
+    if not isinstance(accepted, Mapping):
+        raise SystemExit("accepted task result is missing")
+    assert_accepted_task_result_current(task, binding, accepted)
+    return binding, dict(accepted)
+
+
+def has_persisted_accepted_task_result(
+    control_root: Path, plan_id: str, task_id: str
+) -> bool:
+    """Detect the irreversible accepted-result lifecycle without validating history."""
+
+    path = _binding_path(control_root.expanduser().resolve(), plan_id, task_id)
+    if not path.exists():
+        return False
+    binding = _read_binding_file(path)
+    return isinstance(binding.get("accepted_result"), Mapping)
+
+
 def capture_task_baseline_once(binding: dict[str, Any], control_root: Path | None = None) -> dict[str, Any]:
     existing = binding.get("baseline")
     if isinstance(existing, dict) and existing.get("head"):
@@ -2977,6 +3005,49 @@ def _accepted_dependency_paths(
 ) -> set[str]:
     descriptors = list(accepted_dependency_deltas or [])
     if not descriptors:
+        dependencies = {str(value) for value in _as_list(task.get("depends_on"))}
+        if not dependencies:
+            return set()
+        workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
+        control_root = Path(str(workspace.get("root") or "")).resolve()
+        plan_id = str(task.get("plan_id") or "")
+        for dependency_id in sorted(dependencies):
+            matches: list[Path] = []
+            plan_root = control_root / ".work-bundle/orchestration/plan"
+            for status in ("active", "archived"):
+                for path in sorted((plan_root / status).glob("**/*.md")):
+                    try:
+                        document, _ = _read_structured(path)
+                    except (OSError, SystemExit, ValueError):
+                        continue
+                    if (
+                        str(document.get("id") or "") == dependency_id
+                        and str(document.get("plan_id") or "") == plan_id
+                    ):
+                        matches.append(path)
+            if len(matches) != 1:
+                raise SystemExit(
+                    f"accepted dependency task authority is missing or ambiguous: {dependency_id}"
+                )
+            compile_args = argparse.Namespace(
+                project_root=str(control_root),
+                workspace_root=str(control_root),
+                task=str(matches[0]),
+                handoff=None,
+                base=None,
+                head=None,
+                workspace_id=None,
+                execution_id=None,
+                repository_id=None,
+                execution_runtime_root=None,
+                mutation_events=None,
+                accepted_dependency_deltas=None,
+                prior_ownership=None,
+                repair_continuity=None,
+                authorized_replacements=None,
+            )
+            _, brief_document = _compile_task_brief(compile_args)
+            load_current_accepted_task_result(control_root, brief_document["task_brief"])
         return set()
     cumulative_fields = {
         "task_id", "accepted_result_base", "review_chain", "integrated_base", "integrated_head"

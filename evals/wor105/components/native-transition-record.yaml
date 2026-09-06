@@ -7,6 +7,9 @@ review_path: .work-bundle/orchestration/reviews/WOR-105-task-b06r-kernel-review-
 review_sha256: d638b8959b4db57dd33e072b01428d6ce89f65a9771c05eff26d8e40d4293ebd
 accepted_commit: 9dce5df221485174d6179f713e8b179bbc20567a
 accepted_tree: 5a1f38355eae8068bab528923e807ce54e6f6fe5
+release_anchor:
+  commit: cfa089f0d2ed211b98d049eb37bfcdccb8091516
+  tree: 12e4a696c3caf991654f0b9ac9ef40594699c8d4
 integrated_validation: {id: VAL-B06R-TEST, result: passed, tests: 300}
 handoff_validation: {id: VAL-B06R-IDENTITY, result: passed, adversarial_cases: 5}
 participant_handoffs:
