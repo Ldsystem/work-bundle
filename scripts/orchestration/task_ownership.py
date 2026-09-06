@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Iterable, Mapping, Protocol, Sequence
 
 
 PROVENANCE_FIELDS = frozenset({"delegated", "owner_kind", "agent_id", "run_id", "mechanism"})
 SUBAGENT_MECHANISMS = frozenset({"host-native", "execution-flow"})
+MUTATION_EVENT_FIELDS = frozenset({"actor_kind", "paths"})
+MUTATION_ACTOR_KINDS = frozenset({"controller", "subagent"})
 
 
 class OwnershipBlocker(RuntimeError):
@@ -139,11 +142,27 @@ def validate_task_acceptance_ownership(
 
     provenance = normalize_subagent_provenance(delegation_evidence, operation=operation)
     for event in mutation_events:
-        actor_kind = str(event.get("actor_kind") or "").strip()
+        if set(event) != MUTATION_EVENT_FIELDS:
+            raise OwnershipBlocker("review-blocked", "mutation event fields are not closed and complete")
+        actor_kind = event.get("actor_kind")
+        if not isinstance(actor_kind, str) or actor_kind not in MUTATION_ACTOR_KINDS:
+            raise OwnershipBlocker("review-blocked", "mutation event actor_kind is invalid")
         paths = event.get("paths")
-        if actor_kind != "controller" or not isinstance(paths, Sequence) or isinstance(paths, (str, bytes)):
+        if not isinstance(paths, list) or not paths:
+            raise OwnershipBlocker("review-blocked", "mutation event paths must be a non-empty list")
+        changed: list[str] = []
+        for path in paths:
+            if not isinstance(path, str):
+                raise OwnershipBlocker("review-blocked", "mutation event paths must contain strings")
+            normalized = path.strip().removeprefix("./")
+            parsed = PurePosixPath(normalized)
+            if (not normalized or parsed.is_absolute() or ".." in parsed.parts
+                    or normalized in {".", "./"} or "\\" in normalized
+                    or any(character in normalized for character in "*?[]")):
+                raise OwnershipBlocker("review-blocked", "mutation event path is unsafe")
+            changed.append(normalized)
+        if actor_kind != "controller":
             continue
-        changed = [str(path) for path in paths]
         if _scopes_overlap(changed, write_scope):
             raise OwnershipBlocker(
                 "review-blocked",

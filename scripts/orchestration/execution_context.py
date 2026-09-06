@@ -3138,7 +3138,7 @@ def validate_executor_result_for_task(
     if state in {"completed", "partial"}:
         _assert_task_fit_check(handoff, task_id, state)
         _assert_changed_paths_in_write_scope(handoff, task_files)
-    _assert_handoff_review_matches_task(handoff, task, state)
+    acceptance_review_sequence = _assert_handoff_review_matches_task(handoff, task, state)
     required_items = [
         item
         for item in _as_list(task.get("validation"))
@@ -3248,7 +3248,7 @@ def validate_executor_result_for_task(
                 validations_passed=True,
                 operation=operation,
             )
-            if operation == "repair":
+            if operation == "repair" and acceptance_review_sequence != "initial-reset":
                 _validate_repair_acceptance_continuity(
                     task=task,
                     handoff=handoff,
@@ -3381,7 +3381,9 @@ def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: di
             raise SystemExit(f"Executor result changed path is outside task write scope: {path}")
 
 
-def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str, Any], state: str) -> None:
+def _assert_handoff_review_matches_task(
+    handoff: dict[str, Any], task: dict[str, Any], state: str
+) -> str | None:
     compiled_required = task.get("review_required") is True
     review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
     handoff_required = review.get("required") is True
@@ -3390,7 +3392,7 @@ def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str,
     if compiled_required and state == "completed" and review.get("verdict") != "accept":
         raise SystemExit("Review-required task cannot complete without acceptance_review.verdict: accept")
     if not compiled_required or state != "completed":
-        return
+        return None
     fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
     repaired = fit.get("result") == "repaired"
     mode = review.get("review_mode")
@@ -3422,6 +3424,10 @@ def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str,
             if (review.get("reviewed_head") != head.stdout.strip()
                     or validated.target_identity["source_tree"] != tree.stdout.strip()):
                 raise SystemExit("Task repair review does not match the observed Git head/tree identity")
+        if validated.review_mode == "initial" and validated.review_reset is not None:
+            return "initial-reset"
+        return validated.review_mode
+    return None
 
 
 def _yaml_scalar(value: Any) -> str:

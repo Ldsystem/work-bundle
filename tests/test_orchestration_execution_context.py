@@ -2678,7 +2678,12 @@ def test_rf_repaired_task_completion_accepts_native_fresh_initial_review_reset()
     brief, handoff = _repair_completion_fixture()
     handoff["acceptance_review"] = _material_reset_task_review()
 
-    execution_context._assert_handoff_review_matches_task(handoff, brief, "completed")
+    accepted = execution_context.validate_executor_result_for_task(
+        handoff, brief, mutation_events=[]
+    )
+
+    assert accepted["result_state"] == "completed"
+    assert accepted["task_ownership"]["agent_id"] == "repair-fixture-agent"
 
 
 def test_rf_repaired_task_completion_rejects_unclassified_initial_review_reset() -> None:
@@ -2687,7 +2692,52 @@ def test_rf_repaired_task_completion_rejects_unclassified_initial_review_reset()
     handoff["acceptance_review"]["review_reset"]["reason_class"] = "fixture_recovery"
 
     with pytest.raises(SystemExit, match="review_reset|material_change"):
-        execution_context._assert_handoff_review_matches_task(handoff, brief, "completed")
+        execution_context.validate_executor_result_for_task(
+            handoff, brief, mutation_events=[]
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation_events",
+    [
+        [{}],
+        [{"paths": ["src/a.py"]}],
+        [{"actor_kind": "controller"}],
+        [{"actor_kind": 42, "paths": ["src/a.py"]}],
+        [{"actor_kind": "unknown", "paths": ["src/a.py"]}],
+        [{"actor_kind": "subagent", "paths": "src/a.py"}],
+        [{"actor_kind": "subagent", "paths": []}],
+        [{"actor_kind": "subagent", "paths": [42]}],
+        [{"actor_kind": "subagent", "paths": ["../src/a.py"]}],
+        [{"actor_kind": "subagent", "paths": ["/tmp/src/a.py"]}],
+        [{"actor_kind": "subagent", "paths": ["src/a.py"], "extra": True}],
+    ],
+)
+def test_completed_task_rejects_malformed_mutation_evidence(
+    tmp_path: Path, mutation_events: object
+) -> None:
+    _, _, brief, handoff, _ = _counted_validation(tmp_path)
+
+    with pytest.raises(SystemExit, match="mutation_events|mutation event"):
+        execution_context.validate_executor_result_for_task(
+            handoff,
+            brief,
+            observe=True,
+            mutation_events=mutation_events,
+        )
+
+
+def test_completed_task_accepts_complete_subagent_mutation_evidence(tmp_path: Path) -> None:
+    _, _, brief, handoff, _ = _counted_validation(tmp_path)
+
+    accepted = execution_context.validate_executor_result_for_task(
+        handoff,
+        brief,
+        observe=True,
+        mutation_events=[{"actor_kind": "subagent", "paths": [WRITE_SCOPE_FILE]}],
+    )
+
+    assert accepted["result_state"] == "completed"
 
 
 def test_rf_task_repair_completion_rejects_stale_repair_frontier(tmp_path: Path) -> None:
