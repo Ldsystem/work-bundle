@@ -62,6 +62,8 @@ Use exactly this structure:
 
 `Files.Read` and `Files.Test` are initial evidence anchors; `Files.Modify` is the mutation envelope. Additional bounded reads and tests are allowed. Writes outside `Files.Modify` remain unauthorized without an explicit plan amendment or escalation.
 
+Before the first write, one explicit plan amendment may add exactly one additional path to `Files.Modify` when it has the same implementation owner and purpose, decision authority, expected delta, impact radius, ownership, validation boundary, and completion claim remain materially unchanged. Record the exact path and supporting evidence in the existing disposable plan. The amendment must not be repeated or made after mutation begins. If new evidence makes the task materially under-decomposed—a new production or lifecycle owner, independent validation boundary, wide impact, API or workflow decision, second repository, or barrier or convergence topology—stop and escalate to full orchestration.
+
 Capability is a floor. Stronger models, extra tools, or extra investigation are allowed. Weaker capability than the floor is not.
 
 Completion evidence must record: the exact claim, the command or observation used, the observed result, comparison to the pre-edit baseline for the claimed delta, remaining blockers, and knowledge disposition. Intended checks without observed results are not completion evidence.
