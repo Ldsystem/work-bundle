@@ -182,6 +182,17 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
         "ownership_digest",
     }
     assert set(first["accepted_source"]) == {"head", "tree", "state_digest"}
+    assert first["baseline_identity"] == {"head": OID_A, "tree": OID_B}
+    assert first["accepted_source"]["state_digest"] == execution_context.semantic_digest(
+        {
+            "plan_id": first["plan_id"],
+            "task_id": first["task_id"],
+            "binding_id": first["binding_id"],
+            "baseline_identity": {"head": OID_A, "tree": OID_B},
+            "accepted_source": {"head": OID_A, "tree": OID_B},
+            "authority_projection": first["authority_projection"],
+        }
+    )
     assert first["validation_evidence_ids"] == ["obs-001"]
     assert "mutation_events" not in repr(first)
     assert "validation" not in first["executor_result_digest"]
@@ -211,6 +222,49 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
     invalidated["invalidation"] = {"reason": "accepted source changed"}
     with pytest.raises(SystemExit, match="explicitly invalidated"):
         execution_context.assert_accepted_task_result_current(task, binding, invalidated)
+
+
+def test_actual_accepted_repair_review_mode_and_frontier_are_digest_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_context,
+        "capture_repository_evidence",
+        lambda _root: {"head": OID_A, "tree": OID_B, "entries": {}, "status": "dirty"},
+    )
+    task = _task(tmp_path)
+    binding = _binding(tmp_path)
+    initial = execution_context.build_accepted_task_result(
+        task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
+    )
+    repaired_handoff = deepcopy(_handoff())
+    repaired_handoff["acceptance_review"].update(
+        {
+            "review_mode": "repair",
+            "repair_frontier": {
+                "prior_review_id": "review-prior",
+                "frozen_evidence_reference": "evidence-001",
+            },
+        }
+    )
+    repaired = execution_context.build_accepted_task_result(
+        task, binding, repaired_handoff, _validated(), accepted_at="2026-09-06T10:00:00Z"
+    )
+
+    assert (
+        initial["authority_projection"]["required_review_digest"]
+        != repaired["authority_projection"]["required_review_digest"]
+    )
+    assert repaired["authority_projection"]["required_review_digest"] == execution_context.semantic_digest(
+        {
+            "required": True,
+            "review_id": "review-001",
+            "verdict": "accepted",
+            "review_mode": "repair",
+            "repair_frontier": repaired_handoff["acceptance_review"]["repair_frontier"],
+        }
+    )
+    execution_context.assert_accepted_task_result_current(task, binding, repaired)
 
 
 def test_unrelated_repository_advance_does_not_stale_accepted_task_result(

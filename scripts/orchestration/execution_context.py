@@ -1464,22 +1464,28 @@ def _accepted_binding_projection(binding: Mapping[str, Any]) -> dict[str, Any]:
         "execution_path": str(Path(str(binding.get("execution_path") or "")).resolve()),
         "git_identity": dict(binding.get("git_identity", {})) if isinstance(binding.get("git_identity"), Mapping) else {},
         "binding_id": str(ownership.get("binding_id") or ""),
-        "baseline_identity": semantic_digest(
-            dict(binding.get("baseline", {})) if isinstance(binding.get("baseline"), Mapping) else {}
-        ),
+        "baseline_identity": _accepted_baseline_identity(binding),
     }
 
 
-def _accepted_review_projection(task: Mapping[str, Any], review_id: str) -> dict[str, Any]:
-    return {
-        "required": task.get("review_required") is True,
-        "review_mode": task.get("review_mode", "initial"),
-        "repair_frontier": task.get("repair_frontier"),
-        "accepted_verdict_identity": {
-            "review_id": review_id,
-            "verdict": "accepted",
-        },
+def _accepted_baseline_identity(binding: Mapping[str, Any]) -> dict[str, str]:
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    identity = {"head": str(baseline.get("head") or ""), "tree": str(baseline.get("tree") or "")}
+    if any(not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value) for value in identity.values()):
+        raise SystemExit("accepted task result baseline identity is invalid")
+    return identity
+
+
+def _accepted_review_projection(review: Mapping[str, Any]) -> dict[str, Any]:
+    projection: dict[str, Any] = {
+        "required": review.get("required") is True,
+        "review_id": str(review.get("review_id")) if review.get("review_id") else None,
+        "verdict": "accepted" if review.get("verdict") in {"accept", "accepted"} else review.get("verdict"),
     }
+    for key in ("review_mode", "repair_frontier", "target_identity"):
+        if key in review and review.get(key) is not None:
+            projection[key] = review[key]
+    return projection
 
 
 def _accepted_ownership_projection(
@@ -1498,7 +1504,7 @@ def _accepted_authority_projection(
     task: Mapping[str, Any],
     binding: Mapping[str, Any],
     *,
-    review_id: str,
+    accepted_review: Mapping[str, Any],
     owner_identity: Mapping[str, Any],
 ) -> dict[str, str]:
     return {
@@ -1506,7 +1512,7 @@ def _accepted_authority_projection(
         "binding_digest": semantic_digest(_accepted_binding_projection(binding)),
         "scope_digest": semantic_digest(_canonical_task_scopes(task)),
         "validation_obligations_digest": semantic_digest(_accepted_validation_projection(task)),
-        "required_review_digest": semantic_digest(_accepted_review_projection(task, review_id)),
+        "required_review_digest": semantic_digest(_accepted_review_projection(accepted_review)),
         "ownership_digest": semantic_digest(
             _accepted_ownership_projection(task, binding, owner_identity)
         ),
@@ -1518,7 +1524,7 @@ def _accepted_source_state_digest(
     plan_id: str,
     task_id: str,
     binding_id: str,
-    baseline_identity: str,
+    baseline_identity: Mapping[str, str],
     head: object,
     tree: object,
     authority_projection: Mapping[str, Any],
@@ -1527,7 +1533,7 @@ def _accepted_source_state_digest(
         "plan_id": plan_id,
         "task_id": task_id,
         "binding_id": binding_id,
-        "baseline_identity": baseline_identity,
+        "baseline_identity": dict(baseline_identity),
         "accepted_source": {"head": head, "tree": tree},
         "authority_projection": dict(authority_projection),
     })
@@ -1572,7 +1578,7 @@ def build_accepted_task_result(
     )
     if _as_list(task.get("validation")) and not validation_ids:
         raise SystemExit("accepted task result requires observed validation evidence")
-    review_id = str(review.get("review_id") or "")
+    review_id = str(review.get("review_id")) if review.get("review_id") else None
     if task.get("review_required") is True and not review_id:
         raise SystemExit("accepted task result requires an accepted review identity")
     result = handoff.get("result") if isinstance(handoff.get("result"), Mapping) else {}
@@ -1582,12 +1588,11 @@ def build_accepted_task_result(
     task_id = str(task.get("task_id") or "")
     binding_ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
     binding_id = str(binding_ownership.get("binding_id") or "")
-    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
-    baseline_identity = semantic_digest(dict(baseline))
+    baseline_identity = _accepted_baseline_identity(binding)
     authority_projection = _accepted_authority_projection(
         task,
         binding,
-        review_id=review_id,
+        accepted_review=review,
         owner_identity=accepted_ownership,
     )
     evidence = capture_repository_evidence(Path(str(binding.get("execution_path") or "")).resolve())
@@ -1643,14 +1648,17 @@ def assert_accepted_task_result_current(
         raise SystemExit("accepted task result authority projection is not closed")
     if not isinstance(owner_identity, Mapping):
         raise SystemExit("accepted task result owner identity is invalid")
-    current_projection = _accepted_authority_projection(
-        task,
-        binding,
-        review_id=str(accepted.get("review_id") or ""),
-        owner_identity=owner_identity,
-    )
+    current_projection = {
+        "task_digest": semantic_digest(_accepted_task_projection(task)),
+        "binding_digest": semantic_digest(_accepted_binding_projection(binding)),
+        "scope_digest": semantic_digest(_canonical_task_scopes(task)),
+        "validation_obligations_digest": semantic_digest(_accepted_validation_projection(task)),
+        "ownership_digest": semantic_digest(
+            _accepted_ownership_projection(task, binding, owner_identity)
+        ),
+    }
     binding_ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
-    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    baseline_identity = _accepted_baseline_identity(binding)
     checks = {
         "plan": str(task.get("plan_id") or "") == accepted.get("plan_id"),
         "task": (
@@ -1659,18 +1667,22 @@ def assert_accepted_task_result_current(
         ),
         "binding": (
             str(binding_ownership.get("binding_id") or "") == accepted.get("binding_id")
-            and semantic_digest(dict(baseline)) == accepted.get("baseline_identity")
+            and baseline_identity == accepted.get("baseline_identity")
             and current_projection["binding_digest"] == authority_projection.get("binding_digest")
         ),
         "scope": current_projection["scope_digest"] == authority_projection.get("scope_digest"),
         "validation": current_projection["validation_obligations_digest"] == authority_projection.get("validation_obligations_digest"),
-        "review": current_projection["required_review_digest"] == authority_projection.get("required_review_digest"),
+        "review": (task.get("review_required") is True) == bool(accepted.get("review_id")),
         "ownership": current_projection["ownership_digest"] == authority_projection.get("ownership_digest"),
         "source": accepted_source.get("state_digest") == _accepted_source_state_digest(
             plan_id=str(accepted.get("plan_id") or ""),
             task_id=str(accepted.get("task_id") or ""),
             binding_id=str(accepted.get("binding_id") or ""),
-            baseline_identity=str(accepted.get("baseline_identity") or ""),
+            baseline_identity=(
+                accepted.get("baseline_identity")
+                if isinstance(accepted.get("baseline_identity"), Mapping)
+                else {}
+            ),
             head=accepted_source.get("head"),
             tree=accepted_source.get("tree"),
             authority_projection=authority_projection,
