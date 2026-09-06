@@ -327,25 +327,37 @@ def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
 
 def derive_planning_economics(
     records: Sequence[StageEventV1],
+    *,
+    process_id: str,
+    plan_id: str | None,
 ) -> dict[str, int | dict[str, int] | None]:
-    """Derive neutral planning-cost observations from the typed event prefix."""
+    """Derive neutral observations from one process and its bound plan prefix."""
+
+    if not _is_id(process_id) or (plan_id is not None and not _is_id(plan_id)):
+        _fail("WB_STAGE_EVENT_ECONOMICS_SCOPE_INVALID")
+    scoped = [
+        item
+        for item in records
+        if item.process_id == process_id
+        and (plan_id is None or item.join_ids["plan_id"] == plan_id)
+    ]
 
     revision_events = [
         item
-        for item in records
+        for item in scoped
         if item.event_type in {"reslice_recorded", "control_plane_repaired"}
         and item.owner == "plan_owner"
     ]
     first_revision_index = next(
         (
             index
-            for index, item in enumerate(records)
+            for index, item in enumerate(scoped)
             if item.event_type in {"reslice_recorded", "control_plane_repaired"}
             and item.owner == "plan_owner"
         ),
-        len(records),
+        len(scoped),
     )
-    initial = records[:first_revision_index]
+    initial = scoped[:first_revision_index]
     initial_phases = {
         item.join_ids["phase_id"] for item in initial if item.join_ids["phase_id"] is not None
     }
@@ -354,27 +366,27 @@ def derive_planning_economics(
     }
     plan_reviews = {
         item.join_ids["review_id"]
-        for item in records
+        for item in scoped
         if item.stage == "plan"
         and item.event_type == "stage_completed"
         and item.join_ids["review_id"] is not None
     }
     scope_repairs = {
         (item.process_id, item.attempt_id)
-        for item in records
+        for item in scoped
         if item.event_type in {"work_returned", "reslice_recorded", "control_plane_repaired"}
         and item.finding_class in {"decomposition_gap", "allocation_gap"}
     }
     task_review_repairs = {
         (item.process_id, item.attempt_id)
-        for item in records
+        for item in scoped
         if item.event_type == "work_returned"
         and item.finding_class == "implementation_defect"
         and item.join_ids["task_id"] is not None
         and item.join_ids["review_id"] is not None
     }
     suite_starts: dict[tuple[str, ...], int] = {}
-    for item in records:
+    for item in scoped:
         if item.event_type != "suite_started":
             continue
         evaluation_id = item.join_ids["evaluation_id"]
@@ -395,7 +407,7 @@ def derive_planning_economics(
     first_green = min(
         (
             _parse_timestamp(item.timestamp)
-            for item in records
+            for item in scoped
             if item.event_type == "suite_completed"
             and item.finding_class is None
             and item.return_reason is None
@@ -405,7 +417,7 @@ def derive_planning_economics(
     final_accept = max(
         (
             _parse_timestamp(item.timestamp)
-            for item in records
+            for item in scoped
             if item.event_type == "stage_completed"
             and item.stage == "integrated_implementation"
             and item.join_ids["review_id"] is not None
@@ -511,7 +523,11 @@ def append_stage_event(workspace_root: Path, payload: Mapping[str, object]) -> S
                 _fail("WB_STAGE_EVENT_WALL_CLOCK_ORDER_INVALID")
         if record.event_type == "stage_completed" and record.stage == "integrated_implementation":
             derived = record.to_dict()
-            derived["planning_economics"] = derive_planning_economics([*existing, record])
+            derived["planning_economics"] = derive_planning_economics(
+                [*existing, record],
+                process_id=record.process_id,
+                plan_id=record.join_ids["plan_id"],
+            )
             record = _validate_stage_event(derived, allow_derived_economics=True)
         encoded = (json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
         handle.seek(0, os.SEEK_END)
