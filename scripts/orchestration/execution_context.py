@@ -1526,6 +1526,382 @@ def _review_without_history(review: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in review.items() if key != "previous_review"}
 
 
+RECOVERY_RECEIPT_SCHEMA = "accepted-result-recovery-receipt-v1"
+RECOVERY_RECEIPT_KEYS = {
+    "receipt_id",
+    "schema",
+    "plan_id",
+    "task_id",
+    "binding_id",
+    "binding_sha256",
+    "baseline_head",
+    "baseline_tree",
+    "queried_historical_revision",
+    "handoff_stores",
+    "handoff_index",
+    "absence_result",
+    "observed_at",
+    "freshness",
+}
+
+
+def _recovery_receipt_path(
+    control_root: Path, plan_id: str, task_id: str, receipt_id: str
+) -> Path:
+    if not all(SAFE_ID_RE.fullmatch(value) for value in (plan_id, task_id, receipt_id)):
+        raise SystemExit("accepted-result recovery receipt identity is unsafe")
+    return (
+        control_root.expanduser().resolve()
+        / ".work-bundle/runtime/execution"
+        / plan_id
+        / task_id
+        / "accepted-result-recovery"
+        / f"{receipt_id}.json"
+    )
+
+
+def _is_recoverable_accepted_base(
+    handoff: Mapping[str, Any], plan_id: str, task_id: str
+) -> bool:
+    related = handoff.get("related") if isinstance(handoff.get("related"), Mapping) else {}
+    result = handoff.get("result") if isinstance(handoff.get("result"), Mapping) else {}
+    review = (
+        handoff.get("acceptance_review")
+        if isinstance(handoff.get("acceptance_review"), Mapping)
+        else {}
+    )
+    reset = review.get("review_reset") if isinstance(review.get("review_reset"), Mapping) else {}
+    if reset.get("reason_class") == "authority":
+        # This is the newly reconstructed whole-task result, never the missing
+        # historical accepted base whose absence authorizes reconstruction.
+        return False
+    if (
+        handoff.get("type") != "executor-result"
+        or related.get("plan") != plan_id
+        or related.get("task") != task_id
+        or result.get("state") != "completed"
+        or review.get("verdict") != "accept"
+    ):
+        return False
+    try:
+        from review_runtime import ReviewContractError, validate_task_acceptance_review
+
+        validate_task_acceptance_review(review)
+    except (ReviewContractError, KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _accepted_base_query_snapshot(
+    control_root: Path, plan_id: str, task_id: str
+) -> dict[str, Any]:
+    handoff_root = control_root / ".work-bundle/orchestration/handoff"
+    stores: dict[str, dict[str, Any]] = {}
+    recoverable_ids: list[str] = []
+    for status in ("active", "archived"):
+        records: list[dict[str, str]] = []
+        for path in sorted((handoff_root / "executor" / status).glob("*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                handoff, _ = _read_structured(path)
+            except (OSError, SystemExit, ValueError):
+                continue
+            related = handoff.get("related") if isinstance(handoff.get("related"), Mapping) else {}
+            if related.get("plan") != plan_id or related.get("task") != task_id:
+                continue
+            handoff_id = str(handoff.get("id") or "")
+            record = {
+                "handoff_id": handoff_id,
+                "path": path.relative_to(control_root).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+            records.append(record)
+            if _is_recoverable_accepted_base(handoff, plan_id, task_id):
+                recoverable_ids.append(handoff_id)
+        stores[status] = {
+            "store_id": f"executor/{status}",
+            "records": records,
+            "sha256": semantic_digest(records),
+        }
+
+    index_path = handoff_root / "index.jsonl"
+    if not index_path.is_file() or index_path.is_symlink():
+        raise SystemExit("accepted-result recovery requires the native handoff index")
+    index_entries: list[dict[str, Any]] = []
+    for number, line in enumerate(index_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise SystemExit(f"accepted-result recovery handoff index is invalid at line {number}") from error
+        if not isinstance(entry, dict):
+            raise SystemExit(f"accepted-result recovery handoff index is invalid at line {number}")
+        if entry.get("related_plan") == plan_id and entry.get("related_task") == task_id:
+            index_entries.append(entry)
+    index_identity = {
+        "index_id": "handoff/index.jsonl",
+        "path": index_path.relative_to(control_root).as_posix(),
+        "sha256": hashlib.sha256(index_path.read_bytes()).hexdigest(),
+        "projected_entries_sha256": semantic_digest(index_entries),
+    }
+    historical_revision = semantic_digest(
+        {"handoff_stores": stores, "handoff_index": index_identity}
+    )
+    return {
+        "queried_historical_revision": historical_revision,
+        "handoff_stores": stores,
+        "handoff_index": index_identity,
+        "recoverable_base_handoff_ids": sorted(recoverable_ids),
+    }
+
+
+def create_accepted_base_absence_receipt(
+    control_root: Path, plan_id: str, task_id: str
+) -> dict[str, str]:
+    """Persist helper-observed proof that no native accepted-result base survives."""
+
+    control_root = control_root.expanduser().resolve()
+    binding_path = _binding_path(control_root, plan_id, task_id)
+    binding = load_task_execution_binding(control_root, plan_id, task_id)
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    baseline_head = str(baseline.get("head") or "")
+    baseline_tree = str(baseline.get("tree") or "")
+    if not baseline_head or not baseline_tree:
+        raise SystemExit("accepted-result recovery requires the original one-time task baseline")
+    snapshot = _accepted_base_query_snapshot(control_root, plan_id, task_id)
+    if snapshot["recoverable_base_handoff_ids"]:
+        raise SystemExit("accepted-result recovery rejected: recoverable accepted base handoff exists")
+    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    receipt_id = (
+        f"accepted-result-recovery-{task_id}-"
+        f"{snapshot['queried_historical_revision'][:12]}-"
+        f"{hashlib.sha256(observed_at.encode()).hexdigest()[:12]}"
+    )
+    receipt = {
+        "receipt_id": receipt_id,
+        "schema": RECOVERY_RECEIPT_SCHEMA,
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "binding_id": str((binding.get("ownership") or {}).get("binding_id") or ""),
+        "binding_sha256": hashlib.sha256(binding_path.read_bytes()).hexdigest(),
+        "baseline_head": baseline_head,
+        "baseline_tree": baseline_tree,
+        "queried_historical_revision": snapshot["queried_historical_revision"],
+        "handoff_stores": snapshot["handoff_stores"],
+        "handoff_index": snapshot["handoff_index"],
+        "absence_result": "accepted_base_absent",
+        "observed_at": observed_at,
+        "freshness": "current_validation_attempt",
+    }
+    path = _recovery_receipt_path(control_root, plan_id, task_id, receipt_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "receipt_id": receipt_id,
+        "receipt_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def validate_accepted_base_absence_receipt(
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    reference: object,
+) -> dict[str, Any]:
+    if not isinstance(reference, Mapping) or set(reference) != {"receipt_id", "receipt_sha256"}:
+        raise SystemExit("accepted-result recovery receipt reference must use the closed identity shape")
+    receipt_id = str(reference["receipt_id"])
+    path = _recovery_receipt_path(control_root, plan_id, task_id, receipt_id)
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit("accepted-result recovery receipt is missing")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != str(reference["receipt_sha256"]):
+        raise SystemExit("accepted-result recovery receipt is stale")
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit("accepted-result recovery receipt is invalid") from error
+    if not isinstance(receipt, dict) or set(receipt) != RECOVERY_RECEIPT_KEYS:
+        raise SystemExit("accepted-result recovery receipt must use the closed schema")
+    if (
+        receipt.get("receipt_id") != receipt_id
+        or receipt.get("schema") != RECOVERY_RECEIPT_SCHEMA
+        or receipt.get("plan_id") != plan_id
+        or receipt.get("task_id") != task_id
+        or receipt.get("absence_result") != "accepted_base_absent"
+        or receipt.get("freshness") != "current_validation_attempt"
+    ):
+        raise SystemExit("accepted-result recovery receipt identity is mismatched")
+    binding_path = _binding_path(control_root, plan_id, task_id)
+    binding = load_task_execution_binding(control_root, plan_id, task_id)
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    if (
+        receipt.get("binding_id") != (binding.get("ownership") or {}).get("binding_id")
+        or receipt.get("binding_sha256") != hashlib.sha256(binding_path.read_bytes()).hexdigest()
+        or receipt.get("baseline_head") != baseline.get("head")
+        or receipt.get("baseline_tree") != baseline.get("tree")
+    ):
+        raise SystemExit("accepted-result recovery receipt binding or baseline is stale")
+    snapshot = _accepted_base_query_snapshot(control_root, plan_id, task_id)
+    if snapshot["recoverable_base_handoff_ids"]:
+        raise SystemExit("accepted-result recovery rejected: recoverable accepted base handoff exists")
+    for field in ("queried_historical_revision", "handoff_stores", "handoff_index"):
+        if receipt.get(field) != snapshot[field]:
+            raise SystemExit("accepted-result recovery receipt is stale")
+    return receipt
+
+
+def _recovered_accepted_dependency_paths(
+    task: dict[str, Any],
+    execution_root: Path,
+    descriptors: list[Mapping[str, object]],
+) -> set[str]:
+    required_fields = {
+        "task_id",
+        "execution_baseline_recovery",
+        "recovered_result",
+        "integrated_base",
+        "integrated_head",
+    }
+    recovery_fields = {
+        "binding_id",
+        "binding_sha256",
+        "baseline_head",
+        "baseline_tree",
+        "recovery_receipt",
+    }
+    dependencies = {str(value) for value in _as_list(task.get("depends_on"))}
+    plan_id = str(task.get("plan_id") or "")
+    workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
+    control_root = Path(str(workspace.get("root") or "")).resolve()
+    handoff_root = control_root / ".work-bundle/orchestration/handoff"
+    current_head = _resolve_commit(execution_root, "HEAD")
+    admitted: set[str] = set()
+    seen_dependencies: set[str] = set()
+    for descriptor in descriptors:
+        if set(descriptor) != required_fields:
+            raise SystemExit(
+                "accepted_dependency_deltas recovery entries must use the closed runtime identity shape"
+            )
+        dependency_id = str(descriptor["task_id"])
+        if dependency_id not in dependencies:
+            raise SystemExit(f"accepted_dependency_deltas names undeclared dependency: {dependency_id}")
+        if dependency_id in seen_dependencies:
+            raise SystemExit(f"accepted_dependency_deltas duplicates dependency: {dependency_id}")
+        seen_dependencies.add(dependency_id)
+        recovery = descriptor["execution_baseline_recovery"]
+        if not isinstance(recovery, Mapping) or set(recovery) != recovery_fields:
+            raise SystemExit("execution_baseline_recovery must use the closed runtime identity shape")
+
+        binding_path = _binding_path(control_root, plan_id, dependency_id)
+        binding = load_task_execution_binding(control_root, plan_id, dependency_id)
+        baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+        binding_id = str((binding.get("ownership") or {}).get("binding_id") or "")
+        binding_digest = hashlib.sha256(binding_path.read_bytes()).hexdigest()
+        if (
+            recovery.get("binding_id") != binding_id
+            or recovery.get("binding_sha256") != binding_digest
+            or recovery.get("baseline_head") != baseline.get("head")
+            or recovery.get("baseline_tree") != baseline.get("tree")
+        ):
+            raise SystemExit("execution_baseline_recovery binding or original baseline is mismatched")
+        validate_accepted_base_absence_receipt(
+            control_root,
+            plan_id,
+            dependency_id,
+            recovery.get("recovery_receipt"),
+        )
+
+        _, recovered = _exact_handoff_reference(handoff_root, descriptor["recovered_result"])
+        related = recovered.get("related") if isinstance(recovered.get("related"), Mapping) else {}
+        result = recovered.get("result") if isinstance(recovered.get("result"), Mapping) else {}
+        review = (
+            recovered.get("acceptance_review")
+            if isinstance(recovered.get("acceptance_review"), Mapping)
+            else {}
+        )
+        reset = review.get("review_reset") if isinstance(review.get("review_reset"), Mapping) else {}
+        evidence = review.get("evidence") if isinstance(review.get("evidence"), Mapping) else {}
+        reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), Mapping) else {}
+        identity = review.get("target_identity") if isinstance(review.get("target_identity"), Mapping) else {}
+        if (
+            related.get("plan") != plan_id
+            or related.get("task") != dependency_id
+            or result.get("state") != "completed"
+            or review.get("verdict") != "accept"
+            or review.get("review_mode") != "initial"
+            or review.get("review_target_kind") != "task"
+            or review.get("reviewer_independent") is not True
+            or review.get("repair_frontier") is not None
+            or reset.get("reason_class") != "authority"
+            or evidence.get("unavailable_evidence") != []
+            or reviewer.get("capability") != "judgment"
+            or identity.get("artifact_id") != dependency_id
+            or review.get("reviewed_head") != identity.get("revision")
+        ):
+            raise SystemExit(
+                "recovered result requires a fresh complete independent whole-task initial authority review with empty unavailable_evidence"
+            )
+        try:
+            from review_runtime import ReviewContractError, validate_task_acceptance_review
+
+            validate_task_acceptance_review(review)
+        except ReviewContractError as error:
+            raise SystemExit(f"recovered result task review is invalid: {error}") from error
+        try:
+            owner = normalize_subagent_provenance(
+                recovered.get("delegation_evidence")
+                if isinstance(recovered.get("delegation_evidence"), Mapping)
+                else None
+            )
+        except OwnershipBlocker as error:
+            raise SystemExit(f"recovered result ownership is invalid: {error}") from error
+        if reviewer.get("agent_id") == owner.get("agent_id"):
+            raise SystemExit("recovered result reviewer is not independent from the task owner")
+
+        source_base = _resolve_commit(execution_root, str(baseline.get("head") or ""))
+        source_head = _resolve_commit(execution_root, str(identity.get("revision") or ""))
+        source_tree = _git(execution_root, "rev-parse", f"{source_head}^{{tree}}").strip()
+        if baseline.get("tree") != _git(execution_root, "rev-parse", f"{source_base}^{{tree}}").strip():
+            raise SystemExit("execution_baseline_recovery baseline Git identity is mismatched")
+        if identity.get("source_tree") != source_tree:
+            raise SystemExit("recovered result Git identity is mismatched")
+        if subprocess.run(
+            ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", source_base, source_head],
+            capture_output=True,
+            check=False,
+        ).returncode:
+            raise SystemExit("recovered result source chain is non-ancestral")
+        integrated_base = _resolve_commit(execution_root, str(descriptor["integrated_base"]))
+        integrated_head = _resolve_commit(execution_root, str(descriptor["integrated_head"]))
+        if subprocess.run(
+            ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", integrated_head, current_head],
+            capture_output=True,
+            check=False,
+        ).returncode:
+            raise SystemExit("recovered result integration checkpoint is not current")
+        source_diff = _git(execution_root, "diff", "--binary", source_base, source_head, "--")
+        integrated_diff = _git(
+            execution_root, "diff", "--binary", integrated_base, integrated_head, "--"
+        )
+        if source_diff != integrated_diff:
+            raise SystemExit("recovered result integration checkpoint is mismatched")
+        paths = {
+            path
+            for line in _git(
+                execution_root, "diff", "--name-status", source_base, source_head, "--"
+            ).splitlines()
+            for path in _paths_from_name_status(line)
+        }
+        if paths and _git(
+            execution_root, "diff", "--name-only", integrated_head, "--", *sorted(paths)
+        ).strip():
+            raise SystemExit("recovered dependency path changed after integration")
+        admitted.update(paths)
+    return admitted
+
+
 def _cumulative_accepted_dependency_paths(
     task: dict[str, Any],
     execution_root: Path,
@@ -1733,10 +2109,25 @@ def _accepted_dependency_paths(
     cumulative_fields = {
         "task_id", "accepted_result_base", "review_chain", "integrated_base", "integrated_head"
     }
-    if all(isinstance(item, Mapping) and set(item) == cumulative_fields for item in descriptors):
-        return _cumulative_accepted_dependency_paths(task, execution_root, descriptors)
-    if any(isinstance(item, Mapping) and set(item) == cumulative_fields for item in descriptors):
-        raise SystemExit("accepted_dependency_deltas cannot mix cumulative and legacy identities")
+    recovery_fields = {
+        "task_id", "execution_baseline_recovery", "recovered_result", "integrated_base", "integrated_head"
+    }
+    cumulative = [
+        item for item in descriptors if isinstance(item, Mapping) and set(item) == cumulative_fields
+    ]
+    recovered = [
+        item for item in descriptors if isinstance(item, Mapping) and set(item) == recovery_fields
+    ]
+    if cumulative or recovered:
+        if len(cumulative) + len(recovered) != len(descriptors):
+            raise SystemExit("accepted_dependency_deltas cannot mix closed and legacy identities")
+        dependency_ids = [str(item["task_id"]) for item in [*cumulative, *recovered]]
+        if len(dependency_ids) != len(set(dependency_ids)):
+            raise SystemExit("accepted_dependency_deltas duplicates dependency")
+        return (
+            _cumulative_accepted_dependency_paths(task, execution_root, cumulative)
+            | _recovered_accepted_dependency_paths(task, execution_root, recovered)
+        )
     dependencies = {str(value) for value in _as_list(task.get("depends_on"))}
     plan_id = str(task.get("plan_id") or "")
     workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
@@ -3176,6 +3567,14 @@ def cmd_validate_executor_result(args: argparse.Namespace) -> None:
     handoff, _ = _read_structured(handoff_path)
     validate_executor_result_for_task(handoff, task, observe=True, **_observation_kwargs(args))
     print(handoff_path.relative_to(root).as_posix())
+
+
+def cmd_create_accepted_base_absence_receipt(args: argparse.Namespace) -> None:
+    root = resolve_workspace_root(args)
+    reference = create_accepted_base_absence_receipt(
+        root, str(args.plan_id), str(args.task_id)
+    )
+    print(json.dumps(reference, sort_keys=True))
 
 
 def _observation_kwargs(args: argparse.Namespace) -> dict[str, Any]:

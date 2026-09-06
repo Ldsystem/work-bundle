@@ -994,6 +994,308 @@ def test_cumulative_accepted_result_delta_requires_complete_final_review_chain(
         execution_context._accepted_dependency_paths(task, root, [descriptor])
 
 
+def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
+    tmp_path: Path,
+) -> None:
+    root, _, task_path = workspace(tmp_path)
+    dependency_path = "references/assets/orchestration/workflow.md"
+    dependency = root / dependency_path
+    dependency.parent.mkdir(parents=True, exist_ok=True)
+    dependency.write_text("original accepted baseline\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "original dependency baseline")
+    baseline = git(root, "rev-parse", "HEAD")
+    baseline_tree = git(root, "rev-parse", "HEAD^{tree}")
+
+    dependent = _compiled_brief(root, task_path)
+    dependency_brief = deepcopy(dependent)
+    dependency_brief["task_id"] = "task-dependency"
+    binding = _bind_task_execution(
+        root,
+        dependency_brief,
+        execution_id="dependency-exec",
+        write_scope=[dependency_path],
+    )
+    binding_path = (
+        root
+        / ".work-bundle/runtime/execution/plan-001/task-dependency/execution-binding.json"
+    )
+    binding_digest = hashlib.sha256(binding_path.read_bytes()).hexdigest()
+
+    dependency.write_text("fresh whole-task accepted result\n", encoding="utf-8")
+    git(root, "add", dependency_path)
+    git(root, "commit", "-qm", "fresh recovered dependency result")
+    recovered_head = git(root, "rev-parse", "HEAD")
+    recovered_tree = git(root, "rev-parse", "HEAD^{tree}")
+
+    def identity(commit: str, tree: str) -> dict[str, object]:
+        return {
+            "artifact_id": "task-dependency",
+            "revision": commit,
+            "sha256": execution_context.semantic_digest({"commit": commit, "tree": tree}),
+            "source_tree": tree,
+        }
+
+    def reviewer(agent_id: str) -> dict[str, object]:
+        return {
+            "agent_id": agent_id,
+            "capability": "judgment",
+            "authorship": "none",
+            "repair_participation": "none",
+            "decision_participation": "none",
+            "deliberation_participation": "none",
+            "context_origin": "direct_source",
+        }
+
+    previous = {
+        "required": True,
+        "reviewer_independent": True,
+        "verdict": "accept",
+        "reviewed_head": baseline,
+        "review_id": "review-dependency-accepted-historical",
+        "review_mode": "initial",
+        "review_target_kind": "task",
+        "repair_frontier": None,
+        "review_reset": None,
+        "target_identity": identity(baseline, baseline_tree),
+        "reviewer": reviewer("historical-reviewer"),
+        "evidence": {
+            "mode": "direct",
+            "capabilities": ["whole-task source review"],
+            "unavailable_evidence": [],
+            "commands": [],
+            "artifacts": [],
+        },
+        "findings": [],
+        "started_at": "2026-09-06T01:00:00Z",
+        "completed_at": "2026-09-06T01:01:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    recovered_review = {
+        **deepcopy(previous),
+        "review_id": "review-dependency-authority-recovery",
+        "reviewed_head": recovered_head,
+        "target_identity": identity(recovered_head, recovered_tree),
+        "reviewer": reviewer("fresh-recovery-reviewer"),
+        "review_reset": {
+            "prior_review_id": previous["review_id"],
+            "reason_class": "authority",
+            "reason": "The accepted-result handoff bytes are unavailable.",
+        },
+        "previous_review": previous,
+        "started_at": "2026-09-06T01:02:00Z",
+        "completed_at": "2026-09-06T01:03:00Z",
+    }
+    recovered_handoff = {
+        "id": "handoff-recovered-dependency",
+        "type": "executor-result",
+        "status": "active",
+        "project": "fixture",
+        "created_at": "2026-09-06",
+        "updated_at": "2026-09-06",
+        "related": {"plan": "plan-001", "task": "task-dependency"},
+        "result": {"state": "completed"},
+        "delegation_evidence": {
+            "delegated": True,
+            "owner_kind": "subagent",
+            "agent_id": "dependency-owner",
+            "run_id": "dependency-run",
+            "mechanism": "host-native",
+        },
+        "acceptance_review": recovered_review,
+    }
+    handoff_dir = root / ".work-bundle/orchestration/handoff/executor/active"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    recovered_path = handoff_dir / "handoff-recovered-dependency.yaml"
+    recovered_path.write_text(
+        ("\n".join(execution_context._dump_yaml(recovered_handoff)) + "\n").replace(
+            ": none\n", ': "none"\n'
+        ),
+        encoding="utf-8",
+    )
+    index = root / ".work-bundle/orchestration/handoff/index.jsonl"
+    index.write_text(
+        json.dumps({
+            "id": recovered_handoff["id"],
+            "type": "executor-result",
+            "status": "active",
+            "path": str(recovered_path.relative_to(root)),
+            "related_plan": "plan-001",
+            "related_task": "task-dependency",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    create_receipt = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/orch.py"),
+            "create-accepted-base-absence-receipt",
+            "--project-root",
+            str(root),
+            "--plan-id",
+            "plan-001",
+            "--task-id",
+            "task-dependency",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert create_receipt.returncode == 0, create_receipt.stderr
+    receipt_reference = json.loads(create_receipt.stdout)
+    assert set(receipt_reference) == {"receipt_id", "receipt_sha256"}
+    receipt_path = execution_context._recovery_receipt_path(
+        root, "plan-001", "task-dependency", receipt_reference["receipt_id"]
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["schema"] == "accepted-result-recovery-receipt-v1"
+    assert receipt["binding_id"] == binding["ownership"]["binding_id"]
+    assert receipt["binding_sha256"] == binding_digest
+    assert receipt["baseline_head"] == baseline
+    assert receipt["baseline_tree"] == baseline_tree
+    assert receipt["absence_result"] == "accepted_base_absent"
+    assert receipt["freshness"] == "current_validation_attempt"
+    assert set(receipt["handoff_stores"]) == {"active", "archived"}
+
+    recovered_reference = {
+        "handoff_id": recovered_handoff["id"],
+        "handoff_sha256": hashlib.sha256(recovered_path.read_bytes()).hexdigest(),
+    }
+    descriptor = {
+        "task_id": "task-dependency",
+        "execution_baseline_recovery": {
+            "binding_id": binding["ownership"]["binding_id"],
+            "binding_sha256": binding_digest,
+            "baseline_head": baseline,
+            "baseline_tree": baseline_tree,
+            "recovery_receipt": receipt_reference,
+        },
+        "recovered_result": recovered_reference,
+        "integrated_base": baseline,
+        "integrated_head": recovered_head,
+    }
+    dependent["depends_on"] = ["task-dependency"]
+    assert execution_context._accepted_dependency_paths(dependent, root, [descriptor]) == {
+        dependency_path
+    }
+
+    caller_assertion = deepcopy(descriptor)
+    caller_assertion["execution_baseline_recovery"]["accepted_base_absent"] = True
+    with pytest.raises(SystemExit, match="closed|shape"):
+        execution_context._accepted_dependency_paths(dependent, root, [caller_assertion])
+
+    recovered_review_with_gap = deepcopy(recovered_review)
+    recovered_review_with_gap["evidence"]["unavailable_evidence"] = ["historical handoff"]
+    recovered_handoff_with_gap = deepcopy(recovered_handoff)
+    recovered_handoff_with_gap["acceptance_review"] = recovered_review_with_gap
+    recovered_path.write_text(
+        ("\n".join(execution_context._dump_yaml(recovered_handoff_with_gap)) + "\n").replace(
+            ": none\n", ': "none"\n'
+        ),
+        encoding="utf-8",
+    )
+    gap_receipt = execution_context.create_accepted_base_absence_receipt(
+        root, "plan-001", "task-dependency"
+    )
+    with pytest.raises(SystemExit, match="unavailable_evidence|complete"):
+        execution_context._accepted_dependency_paths(dependent, root, [{
+            **descriptor,
+            "execution_baseline_recovery": {
+                **descriptor["execution_baseline_recovery"],
+                "recovery_receipt": gap_receipt,
+            },
+            "recovered_result": {
+                **recovered_reference,
+                "handoff_sha256": hashlib.sha256(recovered_path.read_bytes()).hexdigest(),
+            },
+        }])
+    recovered_path.write_text(
+        ("\n".join(execution_context._dump_yaml(recovered_handoff)) + "\n").replace(
+            ": none\n", ': "none"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    extra = handoff_dir / "unrelated-target-record.yaml"
+    extra.write_text(
+        "id: unrelated-target-record\ntype: executor-result\n"
+        "related: {plan: plan-001, task: task-dependency}\nresult: {state: partial}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="stale"):
+        execution_context._accepted_dependency_paths(dependent, root, [descriptor])
+
+
+def test_authority_recovery_receipt_rejects_recoverable_accepted_base(tmp_path: Path) -> None:
+    root, _, task_path = workspace(tmp_path)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "baseline")
+    brief = _compiled_brief(root, task_path)
+    brief["task_id"] = "task-dependency"
+    _bind_task_execution(root, brief, execution_id="dependency-exec")
+    handoff_dir = root / ".work-bundle/orchestration/handoff/executor/archived"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    commit = git(root, "rev-parse", "HEAD")
+    tree = git(root, "rev-parse", "HEAD^{tree}")
+    accepted = {
+        "id": "handoff-historical-accepted-base",
+        "type": "executor-result",
+        "related": {"plan": "plan-001", "task": "task-dependency"},
+        "result": {"state": "completed"},
+        "acceptance_review": {
+            "required": True,
+            "reviewer_independent": True,
+            "verdict": "accept",
+            "reviewed_head": commit,
+            "review_id": "review-historical-accepted-base",
+            "review_mode": "initial",
+            "review_target_kind": "task",
+            "repair_frontier": None,
+            "review_reset": None,
+            "target_identity": {
+                "artifact_id": "task-dependency",
+                "revision": commit,
+                "sha256": execution_context.semantic_digest({"commit": commit, "tree": tree}),
+                "source_tree": tree,
+            },
+            "reviewer": {
+                "agent_id": "historical-reviewer",
+                "capability": "judgment",
+                "authorship": "none",
+                "repair_participation": "none",
+                "decision_participation": "none",
+                "deliberation_participation": "none",
+                "context_origin": "direct_source",
+            },
+            "evidence": {
+                "mode": "direct",
+                "capabilities": ["whole-task source review"],
+                "unavailable_evidence": [],
+                "commands": [],
+                "artifacts": [],
+            },
+            "findings": [],
+            "started_at": "2026-09-06T01:00:00Z",
+            "completed_at": "2026-09-06T01:01:00Z",
+            "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+        },
+    }
+    accepted_path = handoff_dir / "handoff-historical-accepted-base.yaml"
+    accepted_path.write_text(
+        ("\n".join(execution_context._dump_yaml(accepted)) + "\n").replace(
+            ": none\n", ': "none"\n'
+        ),
+        encoding="utf-8",
+    )
+    index = root / ".work-bundle/orchestration/handoff/index.jsonl"
+    index.write_text("", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="recoverable accepted base"):
+        execution_context.create_accepted_base_absence_receipt(
+            root, "plan-001", "task-dependency"
+        )
+
+
 def test_rf_07_brief_rebuild_retains_original_execution_binding_and_baseline(
     tmp_path: Path,
 ) -> None:
