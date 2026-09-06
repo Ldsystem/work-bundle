@@ -921,6 +921,24 @@ def test_cumulative_accepted_result_delta_requires_complete_final_review_chain(
         "workspace": {"root": str(root)},
     }
 
+    final_handoff_path = handoff_root / "handoff-final.yaml"
+    original_final_bytes = final_handoff_path.read_bytes()
+    same_reviewer_document = deepcopy(document)
+    same_reviewer_document["acceptance_review"]["reviewer"] = deepcopy(
+        accepted_repair["reviewer"]
+    )
+    rendered = "\n".join(execution_context._dump_yaml(same_reviewer_document)) + "\n"
+    final_handoff_path.write_text(
+        rendered.replace(": none\n", ': "none"\n'), encoding="utf-8"
+    )
+    same_reviewer = deepcopy(descriptor)
+    same_reviewer["review_chain"][-1]["handoff_sha256"] = hashlib.sha256(
+        final_handoff_path.read_bytes()
+    ).hexdigest()
+    with pytest.raises(SystemExit, match="fresh|reviewer|independent"):
+        execution_context._accepted_dependency_paths(task, root, [same_reviewer])
+    final_handoff_path.write_bytes(original_final_bytes)
+
     assert execution_context._accepted_dependency_paths(task, root, [descriptor]) == {
         dependency_path, repair_path, final_path
     }
@@ -950,7 +968,7 @@ def test_cumulative_accepted_result_delta_requires_complete_final_review_chain(
 
     commits.append(git(root, "rev-parse", "HEAD"))
     trees.append(git(root, "rev-parse", "HEAD^{tree}"))
-    later_review = review("review-later", 4, "accept")
+    later_review = review("review-later", 4, "repair")
     later_review["review_reset"] = {
         "prior_review_id": "review-final",
         "reason_class": "validation_allocation",
@@ -959,12 +977,15 @@ def test_cumulative_accepted_result_delta_requires_complete_final_review_chain(
     later_review["previous_review"] = {
         key: value for key, value in final_review.items() if key != "previous_review"
     }
+    later_review["findings"] = [deepcopy(initial_repair["findings"][0])]
+    later_review["findings"][0]["finding_id"] = "LATER-FINDING"
+    later_review["findings"][0]["target_identity"] = identity(4)
     later_path = handoff_root / "handoff-later.yaml"
     later_document = {
         "id": "handoff-later",
         "type": "executor-result",
         "related": {"plan": "plan-001", "task": "task-dependency"},
-        "result": {"state": "completed"},
+        "result": {"state": "partial"},
         "acceptance_review": later_review,
     }
     rendered = "\n".join(execution_context._dump_yaml(later_document)) + "\n"

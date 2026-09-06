@@ -1587,9 +1587,9 @@ def _cumulative_accepted_dependency_paths(
             from review_runtime import (
                 ReviewContractError,
                 review_evidence_identity,
-                validate_task_review_record,
+                validate_task_acceptance_review,
             )
-            validate_task_review_record(base_review)
+            validate_task_acceptance_review(base_review)
             base_identity = base_review.get("target_identity")
             if (not isinstance(base_identity, Mapping)
                     or base_identity.get("artifact_id") != dependency_id
@@ -1598,7 +1598,10 @@ def _cumulative_accepted_dependency_paths(
             previous_review = base_review
             seen_review_ids = {str(base_review.get("review_id") or "")}
             for _, result, review in chain:
-                validate_task_review_record(review)
+                # The bounded previous_review embedded in each chain link lets the
+                # native sequence validator enforce repair continuity and material-
+                # change reset isolation without reacquiring older history.
+                validate_task_acceptance_review(review)
                 review_id = str(review.get("review_id") or "")
                 identity = review.get("target_identity")
                 if (review_id in seen_review_ids or not isinstance(identity, Mapping)
@@ -1657,7 +1660,7 @@ def _cumulative_accepted_dependency_paths(
 
         final_review_id = str(final_review.get("review_id") or "")
         chain_ids = set(reference_ids)
-        successor_edges: list[tuple[str, str, bool]] = []
+        successor_edges: list[tuple[str, str]] = []
         for path in sorted(handoff_root.glob("executor/*/*")):
             if not path.is_file() or path.is_symlink():
                 continue
@@ -1668,25 +1671,20 @@ def _cumulative_accepted_dependency_paths(
             if str(candidate.get("id") or "") in chain_ids:
                 continue
             related = candidate.get("related") if isinstance(candidate.get("related"), dict) else {}
-            result = candidate.get("result") if isinstance(candidate.get("result"), dict) else {}
             review = candidate.get("acceptance_review") if isinstance(candidate.get("acceptance_review"), dict) else {}
             frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), dict) else {}
             reset = review.get("review_reset") if isinstance(review.get("review_reset"), dict) else {}
             prior_id = frontier.get("prior_review_id") or reset.get("prior_review_id")
             if (related.get("plan") == plan_id and related.get("task") == dependency_id
                     and isinstance(prior_id, str) and prior_id):
-                successor_edges.append((
-                    prior_id,
-                    str(review.get("review_id") or ""),
-                    result.get("state") == "completed" and review.get("verdict") == "accept",
-                ))
+                successor_edges.append((prior_id, str(review.get("review_id") or "")))
         reachable = {final_review_id}
         while True:
-            additions = {current for prior, current, _ in successor_edges if prior in reachable}
+            additions = {current for prior, current in successor_edges if prior in reachable}
             if additions.issubset(reachable):
                 break
             reachable.update(additions)
-        if any(accepted and prior in reachable for prior, _, accepted in successor_edges):
+        if any(prior in reachable for prior, _ in successor_edges):
             raise SystemExit("accepted dependency review_chain terminal result is stale")
 
         source_base = _resolve_commit(execution_root, str(base_identity.get("revision") or ""))
