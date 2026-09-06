@@ -1022,6 +1022,12 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
     )
     binding_digest = hashlib.sha256(binding_path.read_bytes()).hexdigest()
 
+    dependency.write_text("missing accepted result base\n", encoding="utf-8")
+    git(root, "add", dependency_path)
+    git(root, "commit", "-qm", "missing accepted result base")
+    expected_base_head = git(root, "rev-parse", "HEAD")
+    expected_base_tree = git(root, "rev-parse", "HEAD^{tree}")
+
     dependency.write_text("fresh whole-task accepted result\n", encoding="utf-8")
     git(root, "add", dependency_path)
     git(root, "commit", "-qm", "fresh recovered dependency result")
@@ -1051,13 +1057,13 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
         "required": True,
         "reviewer_independent": True,
         "verdict": "accept",
-        "reviewed_head": baseline,
+        "reviewed_head": expected_base_head,
         "review_id": "review-dependency-accepted-historical",
         "review_mode": "initial",
         "review_target_kind": "task",
         "repair_frontier": None,
         "review_reset": None,
-        "target_identity": identity(baseline, baseline_tree),
+        "target_identity": identity(expected_base_head, expected_base_tree),
         "reviewer": reviewer("historical-reviewer"),
         "evidence": {
             "mode": "direct",
@@ -1107,25 +1113,8 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
     handoff_dir = root / ".work-bundle/orchestration/handoff/executor/active"
     handoff_dir.mkdir(parents=True, exist_ok=True)
     recovered_path = handoff_dir / "handoff-recovered-dependency.yaml"
-    recovered_path.write_text(
-        ("\n".join(execution_context._dump_yaml(recovered_handoff)) + "\n").replace(
-            ": none\n", ': "none"\n'
-        ),
-        encoding="utf-8",
-    )
     index = root / ".work-bundle/orchestration/handoff/index.jsonl"
-    index.write_text(
-        json.dumps({
-            "id": recovered_handoff["id"],
-            "type": "executor-result",
-            "status": "active",
-            "path": str(recovered_path.relative_to(root)),
-            "related_plan": "plan-001",
-            "related_task": "task-dependency",
-        }) + "\n",
-        encoding="utf-8",
-    )
-
+    index.write_text("", encoding="utf-8")
     create_receipt = subprocess.run(
         [
             sys.executable,
@@ -1138,15 +1127,41 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
             "--task-id",
             "task-dependency",
             "--expected-head",
-            baseline,
+            expected_base_head,
             "--expected-tree",
-            baseline_tree,
+            expected_base_tree,
+            "--proposed-handoff-id",
+            recovered_handoff["id"],
+            "--proposed-review-id",
+            recovered_review["review_id"],
+            "--final-head",
+            recovered_head,
+            "--final-tree",
+            recovered_tree,
         ],
         capture_output=True,
         text=True,
     )
     assert create_receipt.returncode == 0, create_receipt.stderr
     receipt_reference = json.loads(create_receipt.stdout)
+    recovered_path.write_text(
+        ("\n".join(execution_context._dump_yaml(recovered_handoff)) + "\n").replace(
+            ": none\n", ': "none"\n'
+        ),
+        encoding="utf-8",
+    )
+    index.write_text(
+        json.dumps({
+            "id": recovered_handoff["id"],
+            "type": "executor-result",
+            "status": "active",
+            "path": str(recovered_path.relative_to(root)),
+            "related_plan": "plan-001",
+            "related_task": "task-dependency",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
     assert set(receipt_reference) == {"receipt_id", "receipt_sha256"}
     receipt_path = execution_context._recovery_receipt_path(
         root, "plan-001", "task-dependency", receipt_reference["receipt_id"]
@@ -1157,9 +1172,14 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
     assert receipt["binding_sha256"] == binding_digest
     assert receipt["baseline_head"] == baseline
     assert receipt["baseline_tree"] == baseline_tree
-    assert receipt["absence_result"] == "accepted_base_absent"
+    assert receipt["expected_base_query"]["result"] == "absent"
     assert receipt["freshness"] == "current_validation_attempt"
-    assert set(receipt["handoff_stores"]) == {"active", "archived"}
+    assert receipt["proposed_recovered_result"] == {
+        "handoff_id": recovered_handoff["id"],
+        "review_id": recovered_review["review_id"],
+        "final_head": recovered_head,
+        "final_tree": recovered_tree,
+    }
 
     recovered_reference = {
         "handoff_id": recovered_handoff["id"],
@@ -1175,13 +1195,26 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
             "recovery_receipt": receipt_reference,
         },
         "recovered_result": recovered_reference,
-        "integrated_base": baseline,
+        "accepted_result_delta": {
+            "expected_base_head": expected_base_head,
+            "expected_base_tree": expected_base_tree,
+            "final_head": recovered_head,
+            "final_tree": recovered_tree,
+        },
+        "integrated_base": expected_base_head,
         "integrated_head": recovered_head,
     }
     dependent["depends_on"] = ["task-dependency"]
     assert execution_context._accepted_dependency_paths(dependent, root, [descriptor]) == {
         dependency_path
     }
+
+    wrong_delta_base = deepcopy(descriptor)
+    wrong_delta_base["accepted_result_delta"]["expected_base_head"] = baseline
+    wrong_delta_base["accepted_result_delta"]["expected_base_tree"] = baseline_tree
+    wrong_delta_base["integrated_base"] = baseline
+    with pytest.raises(SystemExit, match="accepted_result_delta.*mismatch"):
+        execution_context._accepted_dependency_paths(dependent, root, [wrong_delta_base])
 
     caller_assertion = deepcopy(descriptor)
     caller_assertion["execution_baseline_recovery"]["accepted_base_absent"] = True
@@ -1198,16 +1231,9 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
         ),
         encoding="utf-8",
     )
-    gap_receipt = execution_context.create_accepted_base_absence_receipt(
-        root, "plan-001", "task-dependency", baseline, baseline_tree
-    )
     with pytest.raises(SystemExit, match="unavailable_evidence|complete"):
         execution_context._accepted_dependency_paths(dependent, root, [{
             **descriptor,
-            "execution_baseline_recovery": {
-                **descriptor["execution_baseline_recovery"],
-                "recovery_receipt": gap_receipt,
-            },
             "recovered_result": {
                 **recovered_reference,
                 "handoff_sha256": hashlib.sha256(recovered_path.read_bytes()).hexdigest(),
@@ -1220,14 +1246,60 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
         encoding="utf-8",
     )
 
-    extra = handoff_dir / "unrelated-target-record.yaml"
+    extra = handoff_dir / "unrelated-record.yaml"
     extra.write_text(
-        "id: unrelated-target-record\ntype: executor-result\n"
-        "related: {plan: plan-001, task: task-dependency}\nresult: {state: partial}\n",
+        "id: unrelated-record\ntype: executor-result\n"
+        "related: {plan: plan-other, task: task-other}\nresult: {state: partial}\n",
         encoding="utf-8",
     )
-    with pytest.raises(SystemExit, match="stale"):
+    index.write_text(
+        index.read_text(encoding="utf-8")
+        + json.dumps({"id": "unrelated-record", "related_plan": "plan-other", "related_task": "task-other"})
+        + "\n",
+        encoding="utf-8",
+    )
+    assert execution_context._accepted_dependency_paths(dependent, root, [descriptor]) == {
+        dependency_path
+    }
+
+    archived_dir = root / ".work-bundle/orchestration/handoff/executor/archived"
+    archived_dir.mkdir(parents=True, exist_ok=True)
+    expected_base_handoff = deepcopy(recovered_handoff)
+    expected_base_handoff["id"] = "handoff-restored-accepted-base"
+    expected_base_handoff["acceptance_review"] = previous
+    expected_base_path = archived_dir / "handoff-restored-accepted-base.yaml"
+    expected_base_path.write_text(
+        ("\n".join(execution_context._dump_yaml(expected_base_handoff)) + "\n").replace(
+            ": none\n", ': "none"\n'
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="recoverable accepted base"):
         execution_context._accepted_dependency_paths(dependent, root, [descriptor])
+    expected_base_path.unlink()
+
+    duplicate_path = archived_dir / "handoff-recovered-dependency-duplicate.yaml"
+    duplicate_path.write_bytes(recovered_path.read_bytes())
+    with pytest.raises(SystemExit, match="ambiguous"):
+        execution_context._accepted_dependency_paths(dependent, root, [descriptor])
+    duplicate_path.unlink()
+
+    mismatched = deepcopy(recovered_handoff)
+    mismatched["acceptance_review"]["review_id"] = "different-proposed-review"
+    recovered_path.write_text(
+        ("\n".join(execution_context._dump_yaml(mismatched)) + "\n").replace(
+            ": none\n", ': "none"\n'
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="proposal|proposed|mismatch"):
+        execution_context._accepted_dependency_paths(dependent, root, [{
+            **descriptor,
+            "recovered_result": {
+                **recovered_reference,
+                "handoff_sha256": hashlib.sha256(recovered_path.read_bytes()).hexdigest(),
+            },
+        }])
 
 
 def test_authority_recovery_receipt_rejects_recoverable_accepted_base(tmp_path: Path) -> None:
@@ -1296,7 +1368,15 @@ def test_authority_recovery_receipt_rejects_recoverable_accepted_base(tmp_path: 
 
     with pytest.raises(SystemExit, match="recoverable accepted base"):
         execution_context.create_accepted_base_absence_receipt(
-            root, "plan-001", "task-dependency", commit, tree
+            root,
+            "plan-001",
+            "task-dependency",
+            commit,
+            tree,
+            "handoff-proposed-recovery",
+            "review-proposed-recovery",
+            commit,
+            tree,
         )
 
     distinct = root / "tests/distinct-expected-base.txt"
@@ -1307,7 +1387,15 @@ def test_authority_recovery_receipt_rejects_recoverable_accepted_base(tmp_path: 
     distinct_head = git(root, "rev-parse", "HEAD")
     distinct_tree = git(root, "rev-parse", "HEAD^{tree}")
     reference = execution_context.create_accepted_base_absence_receipt(
-        root, "plan-001", "task-dependency", distinct_head, distinct_tree
+        root,
+        "plan-001",
+        "task-dependency",
+        distinct_head,
+        distinct_tree,
+        "handoff-proposed-recovery",
+        "review-proposed-recovery",
+        distinct_head,
+        distinct_tree,
     )
     receipt_path = execution_context._recovery_receipt_path(
         root, "plan-001", "task-dependency", reference["receipt_id"]
