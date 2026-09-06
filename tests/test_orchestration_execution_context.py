@@ -1994,7 +1994,7 @@ def test_review_package_keeps_sibling_and_rename_paths_as_out_of_scope_diagnosti
     assert "No out-of-scope change is present" not in package
 
 
-def test_review_package_overflow_fails_closed_on_write_scope_diff_only(
+def test_review_package_projects_committed_oversized_diff_by_exact_source_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, _, task = workspace(tmp_path)
@@ -2010,14 +2010,27 @@ def test_review_package_overflow_fails_closed_on_write_scope_diff_only(
     base = git(root, "rev-parse", "HEAD")
     scoped.write_text("def compile_task():\n    return 'IN-SCOPE-OVERFLOW-PAYLOAD'\n", encoding="utf-8")
     outsider.write_text("OUTSIDE = '" + ("Y" * 400) + "'\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "oversized committed task result")
+    head = git(root, "rev-parse", "HEAD")
+    head_tree = git(root, "rev-parse", "HEAD^{tree}")
     handoff = _bind_passing_observation(root, task)
 
-    with pytest.raises(SystemExit, match="review-blocked|bounded package limit") as error:
-        build_review_package(args(root, task, handoff=str(handoff), base=base, head="worktree"))
+    target = build_review_package(
+        args(root, task, handoff=str(handoff), base=base, head=head)
+    )
+    package = target.read_text(encoding="utf-8")
+    metrics = json.loads(
+        target.with_name("review-package-metrics.json").read_text(encoding="utf-8")
+    )["compiled_context_metrics"]
 
-    message = str(error.value)
-    assert WRITE_SCOPE_FILE in message
-    assert "implementation task" not in message.lower() or "not a reason to add implementation" in message
+    assert "Exact source diff reference" in package
+    assert f"Base commit: {base}" in package
+    assert f"Head commit: {head}" in package
+    assert f"Head tree: {head_tree}" in package
+    assert WRITE_SCOPE_FILE in package
+    assert "IN-SCOPE-OVERFLOW-PAYLOAD" not in package
+    assert metrics["omitted_by_reference_bytes"] > 0
 
 
 def test_review_package_does_not_overflow_on_out_of_scope_payload(

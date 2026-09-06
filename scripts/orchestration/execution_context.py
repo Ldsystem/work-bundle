@@ -3892,16 +3892,38 @@ def build_review_package(args: argparse.Namespace) -> Path:
             raise SystemExit("review-blocked: repair base does not match previous reviewed identity")
         if repair_frontier["repaired_identity"]["source_tree"] != head_tree:
             raise SystemExit("review-blocked: repair head does not match repaired identity")
+    omitted_diff_bytes = 0
     if len(diff.encode("utf-8")) > MAX_DIFF_BYTES or diff.count("\n") > MAX_DIFF_LINES:
         oversized = ", ".join(
             sorted({path for line in name_status for path in _paths_from_name_status(line)})
         ) or "unknown"
-        raise SystemExit(
-            "review-blocked: task-local review diff exceeds the bounded package limit "
-            f"(oversized paths: {oversized}). This is a compiler-or-plan defect, "
-            "not a reason to add implementation tasks."
+        if head.startswith("worktree:"):
+            raise SystemExit(
+                "review-blocked: oversized uncommitted task-local diff has no immutable "
+                f"source identity (oversized paths: {oversized})"
+            )
+        omitted_diff_bytes = len(diff.encode("utf-8"))
+        base_tree = _git(execution_root, "rev-parse", f"{base}^{{tree}}").strip()
+        head_tree = _git(execution_root, "rev-parse", f"{head}^{{tree}}").strip()
+        diff_digest = hashlib.sha256(diff.encode("utf-8")).hexdigest()
+        changed_paths = sorted(
+            {path for line in name_status for path in _paths_from_name_status(line)}
         )
-    diff = _redact_diff(diff)
+        diff = "\n".join(
+            [
+                "Exact source diff reference (content omitted from this bounded packet).",
+                f"Base commit: {base}",
+                f"Base tree: {base_tree}",
+                f"Head commit: {head}",
+                f"Head tree: {head_tree}",
+                f"Task-local diff SHA-256: {diff_digest}",
+                "Changed paths:",
+                *[f"- {path}" for path in changed_paths],
+                "Review the exact Git diff between these commits, restricted to the changed paths above.",
+            ]
+        )
+    else:
+        diff = _redact_diff(diff)
 
     changes = handoff.get("changes") if isinstance(handoff.get("changes"), dict) else {}
     handoff_files = [item for item in _as_list(changes.get("files")) if isinstance(item, dict)]
@@ -4040,6 +4062,7 @@ def build_review_package(args: argparse.Namespace) -> Path:
         task,
         review_package=package,
         evidence_projection=evidence_projection,
+        omitted_by_reference_bytes=omitted_diff_bytes,
         expansion_reason=next(
             (item.get("expansion_reason") for item in evidence_projection if item.get("expansion_reason")),
             None,
