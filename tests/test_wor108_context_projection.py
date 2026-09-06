@@ -281,7 +281,9 @@ def test_ctx_06_no_retrieval_escape_hatch_and_context_metrics_use_existing_telem
     monkeypatch.setattr(builtins, "open", deny_runtime_retrieval)
     monkeypatch.setattr(Path, "read_text", deny_path_text)
     monkeypatch.setattr(Path, "read_bytes", deny_path_bytes)
-    accepted = execution_context.validate_executor_result_for_task(handoff, compiled_packet)
+    accepted = execution_context.validate_executor_result_for_task(
+        handoff, compiled_packet, mutation_events=[]
+    )
     assert accepted["result_state"] == "completed"
     assert accepted["task_ownership"]["agent_id"] == "ctx-fixture-agent"
 
@@ -312,7 +314,9 @@ def test_completed_task_acceptance_requires_subagent_delegation_evidence(tmp_pat
     }
 
     with pytest.raises(SystemExit, match="workspace-blocked.*subagent ownership"):
-        execution_context.validate_executor_result_for_task(handoff, brief)
+        execution_context.validate_executor_result_for_task(
+            handoff, brief, mutation_events=[]
+        )
 
 
 def test_completed_task_acceptance_rejects_controller_task_scope_mutation(
@@ -392,6 +396,7 @@ def test_repair_acceptance_requires_exact_runtime_owner_and_continuity(
     accepted = execution_context.validate_executor_result_for_task(
         handoff,
         brief,
+        mutation_events=[],
         prior_ownership=prior,
         repair_continuity=continuity,
     )
@@ -407,12 +412,14 @@ def test_repair_acceptance_requires_exact_runtime_owner_and_continuity(
         execution_context.validate_executor_result_for_task(
             replacement,
             brief,
+            mutation_events=[],
             prior_ownership=prior,
             repair_continuity=continuity,
         )
     execution_context.validate_executor_result_for_task(
         replacement,
         brief,
+        mutation_events=[],
         prior_ownership=prior,
         repair_continuity=continuity,
         authorized_replacements={brief["task_id"]},
@@ -424,6 +431,7 @@ def test_repair_acceptance_requires_exact_runtime_owner_and_continuity(
         execution_context.validate_executor_result_for_task(
             handoff,
             brief,
+            mutation_events=[],
             prior_ownership=prior,
             repair_continuity=stale,
         )
@@ -527,9 +535,15 @@ def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
     }
 
     with pytest.raises(SystemExit, match="workflow.md"):
-        execution_context.validate_executor_result_for_task(handoff, current, observe=True)
+        execution_context.validate_executor_result_for_task(
+            handoff, current, observe=True, mutation_events=[]
+        )
     accepted = execution_context.validate_executor_result_for_task(
-        handoff, current, observe=True, accepted_dependency_deltas=[descriptor]
+        handoff,
+        current,
+        observe=True,
+        mutation_events=[],
+        accepted_dependency_deltas=[descriptor],
     )
     assert accepted["result_state"] == "completed"
 

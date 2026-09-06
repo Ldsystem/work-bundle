@@ -3227,7 +3227,11 @@ def validate_executor_result_for_task(
             )
     task_ownership = None
     if state == "completed":
-        runtime_mutation_events = list(mutation_events or [])
+        if mutation_events is None:
+            raise SystemExit(
+                "review-blocked: completed task requires harness-owned mutation_events evidence"
+            )
+        runtime_mutation_events = list(mutation_events)
         if any(not isinstance(event, Mapping) for event in runtime_mutation_events):
             raise SystemExit("Runtime mutation_events must contain mappings")
         fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
@@ -3390,7 +3394,8 @@ def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str,
     fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
     repaired = fit.get("result") == "repaired"
     mode = review.get("review_mode")
-    if repaired and mode != "repair":
+    reset_initial = mode == "initial" and review.get("review_reset") is not None
+    if repaired and mode != "repair" and not reset_initial:
         raise SystemExit("Repaired task completion requires a sequenced repair acceptance_review")
     if mode is not None:
         try:
@@ -4167,7 +4172,7 @@ def _observation_kwargs(args: argparse.Namespace) -> dict[str, Any]:
         "accepted_dependency_deltas": (
             getattr(args, "accepted_dependency_deltas", None) or None
         ),
-        "mutation_events": getattr(args, "mutation_events", None) or None,
+        "mutation_events": getattr(args, "mutation_events", None),
         "prior_ownership": getattr(args, "prior_ownership", None) or None,
         "repair_continuity": getattr(args, "repair_continuity", None) or None,
         "authorized_replacements": getattr(args, "authorized_replacements", None) or None,
