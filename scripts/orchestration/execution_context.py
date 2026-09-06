@@ -1397,9 +1397,14 @@ def load_task_execution_binding(control_root: Path, plan_id: str, task_id: str) 
 
 ACCEPTED_TASK_RESULT_SCHEMA = "accepted-task-result-v1"
 ACCEPTED_TASK_RESULT_FIELDS = {
-    "schema", "plan_id", "task_id", "accepted_at", "source_identity", "scope",
-    "binding", "repository", "ownership", "validation_evidence_ids", "review",
-    "acceptance_contract_identity", "executor_result_digest", "claim_identity",
+    "schema", "plan_id", "task_id", "binding_id", "baseline_identity",
+    "accepted_source", "authority_projection", "executor_result_digest",
+    "validation_evidence_ids", "review_id", "owner_identity", "accepted_at",
+    "invalidation",
+}
+ACCEPTED_AUTHORITY_PROJECTION_FIELDS = {
+    "task_digest", "binding_digest", "scope_digest", "validation_obligations_digest",
+    "required_review_digest", "ownership_digest",
 }
 
 
@@ -1418,39 +1423,40 @@ def _canonical_task_scopes(task: Mapping[str, Any]) -> dict[str, list[str]]:
         raise SystemExit(f"accepted task result scope is unsafe: {error.reason}") from error
 
 
-def _accepted_source_identity(task: Mapping[str, Any]) -> str:
+def _accepted_task_projection(task: Mapping[str, Any]) -> dict[str, Any]:
     authority = task.get("semantic_authority") if isinstance(task.get("semantic_authority"), Mapping) else {}
-    return semantic_digest({
+    topology_fields = (
+        "phase_id", "parallel_group", "common_contract", "barrier",
+        "barrier_participants", "convergence_owner", "integration_owner",
+    )
+    return {
+        "plan_id": str(task.get("plan_id") or ""),
+        "task_id": str(task.get("task_id") or ""),
+        "depends_on": sorted(str(value) for value in _as_list(task.get("depends_on"))),
+        "topology": {key: task.get(key) for key in topology_fields if key in task},
         "source_ids": sorted(str(value) for value in _as_list(task.get("source_ids"))),
-        "records": authority.get("records", {}),
-        "interface_semantics": authority.get("interface_semantics", {}),
-        "validation_semantics": authority.get("validation_semantics", {}),
-    })
+        "semantic_authority": {
+            "records": authority.get("records", {}),
+            "interface_semantics": authority.get("interface_semantics", {}),
+            "validation_semantics": authority.get("validation_semantics", {}),
+        },
+    }
 
 
-def _accepted_contract_identity(task: Mapping[str, Any]) -> str:
-    validations = [
+def _accepted_validation_projection(task: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [
         {
             key: item.get(key)
-            for key in (
-                "id", "kind", "command", "expected", "acceptable_results",
-                "invariant_ids", "mechanism", "digest",
-            )
+            for key in ("id", "command", "boundary", "freshness")
             if key in item
         }
         for item in _as_list(task.get("validation"))
         if isinstance(item, Mapping)
     ]
-    return semantic_digest({
-        "review_required": task.get("review_required") is True,
-        "validation": validations,
-        "evidence_capability": task.get("evidence_capability", {}),
-    })
 
 
-def _accepted_binding_identity(binding: Mapping[str, Any]) -> dict[str, Any]:
+def _accepted_binding_projection(binding: Mapping[str, Any]) -> dict[str, Any]:
     ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
-    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
     return {
         "workspace_id": str(binding.get("workspace_id") or ""),
         "execution_id": str(binding.get("execution_id") or ""),
@@ -1458,22 +1464,73 @@ def _accepted_binding_identity(binding: Mapping[str, Any]) -> dict[str, Any]:
         "execution_path": str(Path(str(binding.get("execution_path") or "")).resolve()),
         "git_identity": dict(binding.get("git_identity", {})) if isinstance(binding.get("git_identity"), Mapping) else {},
         "binding_id": str(ownership.get("binding_id") or ""),
-        "owner": str(ownership.get("current_owner") or ""),
-        "baseline": {"head": baseline.get("head"), "tree": baseline.get("tree")},
-    }
-
-
-def _accepted_repository_identity(
-    task: Mapping[str, Any], binding: Mapping[str, Any]
-) -> dict[str, Any]:
-    evidence = capture_repository_evidence(Path(str(binding.get("execution_path") or "")).resolve())
-    return {
-        "head": evidence.get("head"),
-        "tree": evidence.get("tree"),
-        "write_scope_digest": _write_scope_file_digest(
-            Path(str(binding.get("execution_path") or "")).resolve(), dict(task)
+        "baseline_identity": semantic_digest(
+            dict(binding.get("baseline", {})) if isinstance(binding.get("baseline"), Mapping) else {}
         ),
     }
+
+
+def _accepted_review_projection(task: Mapping[str, Any], review_id: str) -> dict[str, Any]:
+    return {
+        "required": task.get("review_required") is True,
+        "review_mode": task.get("review_mode", "initial"),
+        "repair_frontier": task.get("repair_frontier"),
+        "accepted_verdict_identity": {
+            "review_id": review_id,
+            "verdict": "accepted",
+        },
+    }
+
+
+def _accepted_ownership_projection(
+    task: Mapping[str, Any], binding: Mapping[str, Any], owner_identity: Mapping[str, Any]
+) -> dict[str, Any]:
+    ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
+    return {
+        "required_executor_profile": task.get("executor_profile", {}),
+        "binding_id": str(ownership.get("binding_id") or ""),
+        "original_owner": str(ownership.get("original_owner") or task.get("task_id") or ""),
+        "owner_identity": dict(owner_identity),
+    }
+
+
+def _accepted_authority_projection(
+    task: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    *,
+    review_id: str,
+    owner_identity: Mapping[str, Any],
+) -> dict[str, str]:
+    return {
+        "task_digest": semantic_digest(_accepted_task_projection(task)),
+        "binding_digest": semantic_digest(_accepted_binding_projection(binding)),
+        "scope_digest": semantic_digest(_canonical_task_scopes(task)),
+        "validation_obligations_digest": semantic_digest(_accepted_validation_projection(task)),
+        "required_review_digest": semantic_digest(_accepted_review_projection(task, review_id)),
+        "ownership_digest": semantic_digest(
+            _accepted_ownership_projection(task, binding, owner_identity)
+        ),
+    }
+
+
+def _accepted_source_state_digest(
+    *,
+    plan_id: str,
+    task_id: str,
+    binding_id: str,
+    baseline_identity: str,
+    head: object,
+    tree: object,
+    authority_projection: Mapping[str, Any],
+) -> str:
+    return semantic_digest({
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "binding_id": binding_id,
+        "baseline_identity": baseline_identity,
+        "accepted_source": {"head": head, "tree": tree},
+        "authority_projection": dict(authority_projection),
+    })
 
 
 def build_accepted_task_result(
@@ -1515,35 +1572,55 @@ def build_accepted_task_result(
     )
     if _as_list(task.get("validation")) and not validation_ids:
         raise SystemExit("accepted task result requires observed validation evidence")
+    review_id = str(review.get("review_id") or "")
+    if task.get("review_required") is True and not review_id:
+        raise SystemExit("accepted task result requires an accepted review identity")
     result = handoff.get("result") if isinstance(handoff.get("result"), Mapping) else {}
     changes = handoff.get("changes") if isinstance(handoff.get("changes"), Mapping) else {}
     fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), Mapping) else {}
-    accepted = {
+    plan_id = str(task.get("plan_id") or "")
+    task_id = str(task.get("task_id") or "")
+    binding_ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
+    binding_id = str(binding_ownership.get("binding_id") or "")
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    baseline_identity = semantic_digest(dict(baseline))
+    authority_projection = _accepted_authority_projection(
+        task,
+        binding,
+        review_id=review_id,
+        owner_identity=accepted_ownership,
+    )
+    evidence = capture_repository_evidence(Path(str(binding.get("execution_path") or "")).resolve())
+    accepted_source = {"head": evidence.get("head"), "tree": evidence.get("tree")}
+    accepted_source["state_digest"] = _accepted_source_state_digest(
+        plan_id=plan_id,
+        task_id=task_id,
+        binding_id=binding_id,
+        baseline_identity=baseline_identity,
+        head=accepted_source["head"],
+        tree=accepted_source["tree"],
+        authority_projection=authority_projection,
+    )
+    return {
         "schema": ACCEPTED_TASK_RESULT_SCHEMA,
-        "plan_id": str(task.get("plan_id") or ""),
-        "task_id": str(task.get("task_id") or ""),
-        "accepted_at": accepted_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "source_identity": _accepted_source_identity(task),
-        "acceptance_contract_identity": _accepted_contract_identity(task),
-        "scope": _canonical_task_scopes(task),
-        "binding": _accepted_binding_identity(binding),
-        "repository": _accepted_repository_identity(task, binding),
-        "ownership": accepted_ownership,
-        "validation_evidence_ids": validation_ids,
-        "review": {
-            key: review[key]
-            for key in ("required", "verdict", "review_id", "review_mode", "target_identity")
-            if key in review
-        },
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "binding_id": binding_id,
+        "baseline_identity": baseline_identity,
+        "accepted_source": accepted_source,
+        "authority_projection": authority_projection,
         "executor_result_digest": semantic_digest({
             "state": result.get("state"),
             "summary": result.get("summary"),
             "changes": changes.get("files", []),
             "task_fit": {"task": fit.get("task"), "result": fit.get("result")},
         }),
+        "validation_evidence_ids": validation_ids,
+        "review_id": review_id,
+        "owner_identity": accepted_ownership,
+        "accepted_at": accepted_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "invalidation": None,
     }
-    accepted["claim_identity"] = semantic_digest({key: value for key, value in accepted.items() if key != "accepted_at"})
-    return accepted
 
 
 def assert_accepted_task_result_current(
@@ -1555,23 +1632,49 @@ def assert_accepted_task_result_current(
         raise SystemExit("accepted task result schema is invalid")
     if set(accepted) != ACCEPTED_TASK_RESULT_FIELDS:
         raise SystemExit("accepted task result shape is not closed")
-    expected_claim = semantic_digest({
-        key: value
-        for key, value in accepted.items()
-        if key not in {"accepted_at", "claim_identity"}
-    })
-    if accepted.get("claim_identity") != expected_claim:
-        raise SystemExit("accepted task result claim identity is stale or tampered")
+    if accepted.get("invalidation") is not None:
+        raise SystemExit("accepted task result was explicitly invalidated")
+    accepted_source = accepted.get("accepted_source")
+    authority_projection = accepted.get("authority_projection")
+    owner_identity = accepted.get("owner_identity")
+    if not isinstance(accepted_source, Mapping) or set(accepted_source) != {"head", "tree", "state_digest"}:
+        raise SystemExit("accepted task result source shape is not closed")
+    if not isinstance(authority_projection, Mapping) or set(authority_projection) != ACCEPTED_AUTHORITY_PROJECTION_FIELDS:
+        raise SystemExit("accepted task result authority projection is not closed")
+    if not isinstance(owner_identity, Mapping):
+        raise SystemExit("accepted task result owner identity is invalid")
+    current_projection = _accepted_authority_projection(
+        task,
+        binding,
+        review_id=str(accepted.get("review_id") or ""),
+        owner_identity=owner_identity,
+    )
+    binding_ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
     checks = {
         "plan": str(task.get("plan_id") or "") == accepted.get("plan_id"),
-        "task": str(task.get("task_id") or "") == accepted.get("task_id"),
-        "source": _accepted_source_identity(task) == accepted.get("source_identity"),
-        "validation/review": (
-            _accepted_contract_identity(task) == accepted.get("acceptance_contract_identity")
+        "task": (
+            str(task.get("task_id") or "") == accepted.get("task_id")
+            and current_projection["task_digest"] == authority_projection.get("task_digest")
         ),
-        "scope": _canonical_task_scopes(task) == accepted.get("scope"),
-        "binding": _accepted_binding_identity(binding) == accepted.get("binding"),
-        "repository": _accepted_repository_identity(task, binding) == accepted.get("repository"),
+        "binding": (
+            str(binding_ownership.get("binding_id") or "") == accepted.get("binding_id")
+            and semantic_digest(dict(baseline)) == accepted.get("baseline_identity")
+            and current_projection["binding_digest"] == authority_projection.get("binding_digest")
+        ),
+        "scope": current_projection["scope_digest"] == authority_projection.get("scope_digest"),
+        "validation": current_projection["validation_obligations_digest"] == authority_projection.get("validation_obligations_digest"),
+        "review": current_projection["required_review_digest"] == authority_projection.get("required_review_digest"),
+        "ownership": current_projection["ownership_digest"] == authority_projection.get("ownership_digest"),
+        "source": accepted_source.get("state_digest") == _accepted_source_state_digest(
+            plan_id=str(accepted.get("plan_id") or ""),
+            task_id=str(accepted.get("task_id") or ""),
+            binding_id=str(accepted.get("binding_id") or ""),
+            baseline_identity=str(accepted.get("baseline_identity") or ""),
+            head=accepted_source.get("head"),
+            tree=accepted_source.get("tree"),
+            authority_projection=authority_projection,
+        ),
     }
     for label, current in checks.items():
         if not current:

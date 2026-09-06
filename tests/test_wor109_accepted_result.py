@@ -21,6 +21,24 @@ from task_ownership import (  # noqa: E402
 
 OID_A = "a" * 40
 OID_B = "b" * 40
+OID_C = "c" * 40
+OID_D = "d" * 40
+
+ACCEPTED_RESULT_FIELDS = {
+    "schema",
+    "plan_id",
+    "task_id",
+    "binding_id",
+    "baseline_identity",
+    "accepted_source",
+    "authority_projection",
+    "executor_result_digest",
+    "validation_evidence_ids",
+    "review_id",
+    "owner_identity",
+    "accepted_at",
+    "invalidation",
+}
 
 
 def _task(root: Path) -> dict[str, object]:
@@ -153,7 +171,17 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
     )
 
     assert first == second
+    assert set(first) == ACCEPTED_RESULT_FIELDS
     assert first["schema"] == "accepted-task-result-v1"
+    assert set(first["authority_projection"]) == {
+        "task_digest",
+        "binding_digest",
+        "scope_digest",
+        "validation_obligations_digest",
+        "required_review_digest",
+        "ownership_digest",
+    }
+    assert set(first["accepted_source"]) == {"head", "tree", "state_digest"}
     assert first["validation_evidence_ids"] == ["obs-001"]
     assert "mutation_events" not in repr(first)
     assert "validation" not in first["executor_result_digest"]
@@ -166,7 +194,7 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
 
     changed_source = deepcopy(task)
     changed_source["source_ids"] = ["REQ-002"]
-    with pytest.raises(SystemExit, match="accepted task result.*source"):
+    with pytest.raises(SystemExit, match="accepted task result.*task"):
         execution_context.assert_accepted_task_result_current(changed_source, appended, first)
 
     changed_binding = deepcopy(binding)
@@ -174,20 +202,50 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
     with pytest.raises(SystemExit, match="accepted task result.*binding"):
         execution_context.assert_accepted_task_result_current(task, changed_binding, first)
 
-    tampered = deepcopy(first)
-    tampered["ownership"]["agent_id"] = "other-agent"
-    with pytest.raises(SystemExit, match="tampered"):
-        execution_context.assert_accepted_task_result_current(task, binding, tampered)
-
     changed_review = deepcopy(task)
     changed_review["review_required"] = False
-    with pytest.raises(SystemExit, match="validation/review"):
+    with pytest.raises(SystemExit, match="review"):
         execution_context.assert_accepted_task_result_current(changed_review, binding, first)
 
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src/a.py").write_text("changed after acceptance\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="repository"):
-        execution_context.assert_accepted_task_result_current(task, binding, first)
+    invalidated = deepcopy(first)
+    invalidated["invalidation"] = {"reason": "accepted source changed"}
+    with pytest.raises(SystemExit, match="explicitly invalidated"):
+        execution_context.assert_accepted_task_result_current(task, binding, invalidated)
+
+
+def test_unrelated_repository_advance_does_not_stale_accepted_task_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = {"head": OID_A, "tree": OID_B, "entries": {}, "status": "dirty"}
+    monkeypatch.setattr(execution_context, "capture_repository_evidence", lambda _root: repository)
+    task = _task(tmp_path)
+    binding = _binding(tmp_path)
+    accepted = execution_context.build_accepted_task_result(
+        task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
+    )
+
+    repository = {"head": OID_C, "tree": OID_D, "entries": {}, "status": "clean"}
+    execution_context.assert_accepted_task_result_current(task, binding, accepted)
+
+
+def test_dependency_topology_change_invalidates_accepted_task_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_context,
+        "capture_repository_evidence",
+        lambda _root: {"head": OID_A, "tree": OID_B, "entries": {}, "status": "dirty"},
+    )
+    task = _task(tmp_path)
+    binding = _binding(tmp_path)
+    accepted = execution_context.build_accepted_task_result(
+        task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
+    )
+
+    changed = deepcopy(task)
+    changed["depends_on"] = ["task-other"]
+    with pytest.raises(SystemExit, match="task"):
+        execution_context.assert_accepted_task_result_current(changed, binding, accepted)
 
 
 def test_materialize_persists_one_result_in_existing_binding(
