@@ -95,6 +95,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create_recovery_receipt.add_argument("--plan-id", required=True)
     create_recovery_receipt.add_argument("--task-id", required=True)
+    create_recovery_receipt.add_argument("--expected-head", required=True)
+    create_recovery_receipt.add_argument("--expected-tree", required=True)
     create_recovery_receipt.set_defaults(func=cmd_create_accepted_base_absence_receipt)
     related = sub.add_parser("related", parents=[parent])
     related.add_argument("--id", required=True)

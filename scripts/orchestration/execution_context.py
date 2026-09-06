@@ -1536,6 +1536,8 @@ RECOVERY_RECEIPT_KEYS = {
     "binding_sha256",
     "baseline_head",
     "baseline_tree",
+    "expected_base_head",
+    "expected_base_tree",
     "queried_historical_revision",
     "handoff_stores",
     "handoff_index",
@@ -1561,7 +1563,11 @@ def _recovery_receipt_path(
 
 
 def _is_recoverable_accepted_base(
-    handoff: Mapping[str, Any], plan_id: str, task_id: str
+    handoff: Mapping[str, Any],
+    plan_id: str,
+    task_id: str,
+    expected_base_head: str,
+    expected_base_tree: str,
 ) -> bool:
     related = handoff.get("related") if isinstance(handoff.get("related"), Mapping) else {}
     result = handoff.get("result") if isinstance(handoff.get("result"), Mapping) else {}
@@ -1583,6 +1589,14 @@ def _is_recoverable_accepted_base(
         or review.get("verdict") != "accept"
     ):
         return False
+    identity = review.get("target_identity") if isinstance(review.get("target_identity"), Mapping) else {}
+    if (
+        identity.get("artifact_id") != task_id
+        or identity.get("revision") != expected_base_head
+        or identity.get("source_tree") != expected_base_tree
+        or review.get("reviewed_head") != expected_base_head
+    ):
+        return False
     try:
         from review_runtime import ReviewContractError, validate_task_acceptance_review
 
@@ -1593,7 +1607,11 @@ def _is_recoverable_accepted_base(
 
 
 def _accepted_base_query_snapshot(
-    control_root: Path, plan_id: str, task_id: str
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    expected_base_head: str,
+    expected_base_tree: str,
 ) -> dict[str, Any]:
     handoff_root = control_root / ".work-bundle/orchestration/handoff"
     stores: dict[str, dict[str, Any]] = {}
@@ -1617,7 +1635,13 @@ def _accepted_base_query_snapshot(
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             }
             records.append(record)
-            if _is_recoverable_accepted_base(handoff, plan_id, task_id):
+            if _is_recoverable_accepted_base(
+                handoff,
+                plan_id,
+                task_id,
+                expected_base_head,
+                expected_base_tree,
+            ):
                 recoverable_ids.append(handoff_id)
         stores[status] = {
             "store_id": f"executor/{status}",
@@ -1647,7 +1671,12 @@ def _accepted_base_query_snapshot(
         "projected_entries_sha256": semantic_digest(index_entries),
     }
     historical_revision = semantic_digest(
-        {"handoff_stores": stores, "handoff_index": index_identity}
+        {
+            "expected_base_head": expected_base_head,
+            "expected_base_tree": expected_base_tree,
+            "handoff_stores": stores,
+            "handoff_index": index_identity,
+        }
     )
     return {
         "queried_historical_revision": historical_revision,
@@ -1658,7 +1687,11 @@ def _accepted_base_query_snapshot(
 
 
 def create_accepted_base_absence_receipt(
-    control_root: Path, plan_id: str, task_id: str
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    expected_base_head: str,
+    expected_base_tree: str,
 ) -> dict[str, str]:
     """Persist helper-observed proof that no native accepted-result base survives."""
 
@@ -1670,7 +1703,20 @@ def create_accepted_base_absence_receipt(
     baseline_tree = str(baseline.get("tree") or "")
     if not baseline_head or not baseline_tree:
         raise SystemExit("accepted-result recovery requires the original one-time task baseline")
-    snapshot = _accepted_base_query_snapshot(control_root, plan_id, task_id)
+    execution_root = Path(str(binding.get("execution_path") or "")).resolve()
+    resolved_expected_head = _resolve_commit(execution_root, expected_base_head)
+    resolved_expected_tree = _git(
+        execution_root, "rev-parse", f"{resolved_expected_head}^{{tree}}"
+    ).strip()
+    if resolved_expected_tree != expected_base_tree:
+        raise SystemExit("accepted-result recovery expected base Git identity is mismatched")
+    snapshot = _accepted_base_query_snapshot(
+        control_root,
+        plan_id,
+        task_id,
+        resolved_expected_head,
+        resolved_expected_tree,
+    )
     if snapshot["recoverable_base_handoff_ids"]:
         raise SystemExit("accepted-result recovery rejected: recoverable accepted base handoff exists")
     observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -1688,6 +1734,8 @@ def create_accepted_base_absence_receipt(
         "binding_sha256": hashlib.sha256(binding_path.read_bytes()).hexdigest(),
         "baseline_head": baseline_head,
         "baseline_tree": baseline_tree,
+        "expected_base_head": resolved_expected_head,
+        "expected_base_tree": resolved_expected_tree,
         "queried_historical_revision": snapshot["queried_historical_revision"],
         "handoff_stores": snapshot["handoff_stores"],
         "handoff_index": snapshot["handoff_index"],
@@ -1743,7 +1791,18 @@ def validate_accepted_base_absence_receipt(
         or receipt.get("baseline_tree") != baseline.get("tree")
     ):
         raise SystemExit("accepted-result recovery receipt binding or baseline is stale")
-    snapshot = _accepted_base_query_snapshot(control_root, plan_id, task_id)
+    execution_root = Path(str(binding.get("execution_path") or "")).resolve()
+    expected_head = _resolve_commit(execution_root, str(receipt.get("expected_base_head") or ""))
+    expected_tree = _git(execution_root, "rev-parse", f"{expected_head}^{{tree}}").strip()
+    if receipt.get("expected_base_tree") != expected_tree:
+        raise SystemExit("accepted-result recovery receipt expected base identity is stale")
+    snapshot = _accepted_base_query_snapshot(
+        control_root,
+        plan_id,
+        task_id,
+        expected_head,
+        expected_tree,
+    )
     if snapshot["recoverable_base_handoff_ids"]:
         raise SystemExit("accepted-result recovery rejected: recoverable accepted base handoff exists")
     for field in ("queried_historical_revision", "handoff_stores", "handoff_index"):
@@ -3572,7 +3631,11 @@ def cmd_validate_executor_result(args: argparse.Namespace) -> None:
 def cmd_create_accepted_base_absence_receipt(args: argparse.Namespace) -> None:
     root = resolve_workspace_root(args)
     reference = create_accepted_base_absence_receipt(
-        root, str(args.plan_id), str(args.task_id)
+        root,
+        str(args.plan_id),
+        str(args.task_id),
+        str(args.expected_head),
+        str(args.expected_tree),
     )
     print(json.dumps(reference, sort_keys=True))
 

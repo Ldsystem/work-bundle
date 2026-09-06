@@ -1137,6 +1137,10 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
             "plan-001",
             "--task-id",
             "task-dependency",
+            "--expected-head",
+            baseline,
+            "--expected-tree",
+            baseline_tree,
         ],
         capture_output=True,
         text=True,
@@ -1195,7 +1199,7 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
         encoding="utf-8",
     )
     gap_receipt = execution_context.create_accepted_base_absence_receipt(
-        root, "plan-001", "task-dependency"
+        root, "plan-001", "task-dependency", baseline, baseline_tree
     )
     with pytest.raises(SystemExit, match="unavailable_evidence|complete"):
         execution_context._accepted_dependency_paths(dependent, root, [{
@@ -1292,8 +1296,25 @@ def test_authority_recovery_receipt_rejects_recoverable_accepted_base(tmp_path: 
 
     with pytest.raises(SystemExit, match="recoverable accepted base"):
         execution_context.create_accepted_base_absence_receipt(
-            root, "plan-001", "task-dependency"
+            root, "plan-001", "task-dependency", commit, tree
         )
+
+    distinct = root / "tests/distinct-expected-base.txt"
+    distinct.parent.mkdir(parents=True, exist_ok=True)
+    distinct.write_text("distinct expected identity\n", encoding="utf-8")
+    git(root, "add", str(distinct.relative_to(root)))
+    git(root, "commit", "-qm", "distinct expected base identity")
+    distinct_head = git(root, "rev-parse", "HEAD")
+    distinct_tree = git(root, "rev-parse", "HEAD^{tree}")
+    reference = execution_context.create_accepted_base_absence_receipt(
+        root, "plan-001", "task-dependency", distinct_head, distinct_tree
+    )
+    receipt_path = execution_context._recovery_receipt_path(
+        root, "plan-001", "task-dependency", reference["receipt_id"]
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["expected_base_head"] == distinct_head
+    assert receipt["expected_base_tree"] == distinct_tree
 
 
 def test_rf_07_brief_rebuild_retains_original_execution_binding_and_baseline(
