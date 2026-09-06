@@ -21,7 +21,7 @@ def test_wor108_closure_registry_has_exact_public_fixture_identities() -> None:
     assert result == {
         "evaluation_id": "wor108-legacy-closure-v1",
         "fixtures": 22,
-        "changed_surfaces": 43,
+        "changed_surfaces": 44,
         "verdict": "accepted",
     }
 

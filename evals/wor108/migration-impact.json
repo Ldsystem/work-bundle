@@ -27,6 +27,7 @@
     "operations": [
       "scripts/orchestration/dispatcher.py",
       "scripts/orchestration/execution_context.py",
+      "scripts/orchestration/plans.py",
       "scripts/orchestration/review_runtime.py",
       "scripts/orchestration/task_ownership.py",
       "scripts/work-bundle/control_plane.py",
