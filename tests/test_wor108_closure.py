@@ -26,6 +26,28 @@ def test_wor108_closure_registry_has_exact_public_fixture_identities() -> None:
     }
 
 
+def test_wor108_closure_registry_binds_linear_exact_production_oracles() -> None:
+    package = json.loads((EVAL_ROOT / "fixtures.json").read_text(encoding="utf-8"))
+    nodes_by_id = {
+        fixture["fixture_id"]: fixture["pytest_nodes"]
+        for fixture in package["fixtures"]
+    }
+    assert nodes_by_id | {
+        "RF-01": [
+            "tests/test_wor108_review_frontier.py::test_rf_01_h1_repairs_recorded_a_without_reacquiring_unrecorded_latent_b"
+        ],
+        "RF-03": [
+            "tests/test_wor108_review_frontier.py::test_rf_03_capable_untouched_invariant_stays_blocking_during_narrow_repair"
+        ],
+        "RF-06": [
+            "tests/test_wor108_review_frontier.py::test_rf_06_final_broad_integrated_review_rediscovers_and_classifies_latent_b"
+        ],
+        "SG-04": [
+            "tests/test_wor108_context_projection.py::test_completed_task_acceptance_rejects_controller_task_scope_mutation"
+        ],
+    } == nodes_by_id
+
+
 def test_wor108_fixture_registry_rejects_missing_identity(tmp_path: Path) -> None:
     fixtures = json.loads((EVAL_ROOT / "fixtures.json").read_text(encoding="utf-8"))
     fixtures["fixtures"] = fixtures["fixtures"][:-1]
