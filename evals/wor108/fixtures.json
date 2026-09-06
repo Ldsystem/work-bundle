@@ -106,7 +106,7 @@
       "area": "subagent_ownership",
       "title": "Independent disjoint tasks fan out before any wait",
       "oracle": "pytest",
-      "pytest_nodes": ["tests/test_wor108_subagent_ownership.py::test_sg05_independent_disjoint_tasks_dispatch_before_wait"],
+      "pytest_nodes": ["tests/test_wor108_subagent_ownership.py::test_sg05_independent_disjoint_tasks_dispatch_before_wait_and_convergence"],
       "expected": "passed"
     },
     {
@@ -126,7 +126,10 @@
       "area": "subagent_ownership",
       "title": "Repair mutation remains subagent-owned",
       "oracle": "pytest",
-      "pytest_nodes": ["tests/test_wor108_subagent_ownership.py::test_sg07_repair_remains_subagent_owned"],
+      "pytest_nodes": [
+        "tests/test_wor108_subagent_ownership.py::test_sg07_repair_retains_owner_binding_baseline_evidence_and_frontier",
+        "tests/test_wor108_subagent_ownership.py::test_sg07_repair_allows_only_an_authorized_replacement_owner"
+      ],
       "expected": "passed"
     },
     {
@@ -135,7 +138,7 @@
       "title": "Ownership provenance is provider-neutral and rejects visibility-specific fields",
       "oracle": "pytest",
       "pytest_nodes": [
-        "tests/test_wor108_subagent_ownership.py::test_sg08_ownership_is_mechanism_neutral",
+        "tests/test_wor108_subagent_ownership.py::test_sg08_native_mechanisms_preserve_task_binding_handoff_and_validation_semantics",
         "tests/test_wor108_subagent_ownership.py::test_visibility_specific_provenance_is_rejected"
       ],
       "expected": "passed"
