@@ -258,7 +258,7 @@ def test_pd_07_rejects_unbounded_or_ambiguous_affected_regions(region) -> None:
         )
 
 
-def test_pd_08_stage_event_path_isolates_mixed_process_planning_economics(
+def test_pd_08_stage_event_path_isolates_same_process_different_plan_economics(
     tmp_path: Path,
 ) -> None:
     from stage_events import append_stage_event, query_stage_events
@@ -279,7 +279,6 @@ def test_pd_08_stage_event_path_isolates_mixed_process_planning_economics(
         ),
         event(
             "noise-task",
-            process_id="process-noise",
             stage="implementation",
             event_type="stage_started",
             join_ids={
@@ -292,7 +291,6 @@ def test_pd_08_stage_event_path_isolates_mixed_process_planning_economics(
         ),
         event(
             "noise-plan-review",
-            process_id="process-noise",
             stage="plan",
             event_type="stage_completed",
             join_ids={
@@ -304,7 +302,6 @@ def test_pd_08_stage_event_path_isolates_mixed_process_planning_economics(
         event("plan-review", stage="plan", event_type="stage_completed"),
         event(
             "noise-scope-repair",
-            process_id="process-noise",
             event_type="reslice_recorded",
             finding_class="allocation_gap",
             attempt_id="noise-scope",
@@ -325,7 +322,6 @@ def test_pd_08_stage_event_path_isolates_mixed_process_planning_economics(
         ),
         event(
             "noise-task-repair",
-            process_id="process-noise",
             event_type="work_returned",
             finding_class="implementation_defect",
             attempt_id="noise-task-repair",
@@ -350,7 +346,6 @@ def test_pd_08_stage_event_path_isolates_mixed_process_planning_economics(
         ),
         event(
             "noise-suite-first",
-            process_id="process-noise",
             event_type="suite_started",
             attempt_id="noise-validation",
             join_ids={
@@ -361,7 +356,6 @@ def test_pd_08_stage_event_path_isolates_mixed_process_planning_economics(
         ),
         event(
             "noise-suite-rerun",
-            process_id="process-noise",
             event_type="suite_started",
             attempt_id="noise-validation-2",
             join_ids={
@@ -372,7 +366,6 @@ def test_pd_08_stage_event_path_isolates_mixed_process_planning_economics(
         ),
         event(
             "noise-green",
-            process_id="process-noise",
             timestamp="2026-09-07T00:00:00.100Z",
             event_type="suite_completed",
             attempt_id="noise-validation-2",
@@ -420,6 +413,18 @@ def test_pd_08_stage_event_path_isolates_mixed_process_planning_economics(
         "$ref": "#/$defs/planningEconomics"
     }
     assert schema["$defs"]["planningEconomics"]["additionalProperties"] is False
+
+
+def test_pd_08_rejects_unbound_integrated_economics_emission(tmp_path: Path) -> None:
+    from stage_events import append_stage_event
+
+    unbound = event(
+        "unbound-final",
+        join_ids={**event()["join_ids"], "plan_id": None},
+    )
+
+    with pytest.raises(StageEventError, match="WB_STAGE_EVENT_ECONOMICS_SCOPE_INVALID"):
+        append_stage_event(tmp_path, unbound)
 
 
 def test_pd_08_rejects_caller_injected_economics(tmp_path: Path) -> None:

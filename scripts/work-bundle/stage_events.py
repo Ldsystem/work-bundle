@@ -329,17 +329,17 @@ def derive_planning_economics(
     records: Sequence[StageEventV1],
     *,
     process_id: str,
-    plan_id: str | None,
+    plan_id: str,
 ) -> dict[str, int | dict[str, int] | None]:
     """Derive neutral observations from one process and its bound plan prefix."""
 
-    if not _is_id(process_id) or (plan_id is not None and not _is_id(plan_id)):
+    if not _is_id(process_id) or not _is_id(plan_id):
         _fail("WB_STAGE_EVENT_ECONOMICS_SCOPE_INVALID")
     scoped = [
         item
         for item in records
         if item.process_id == process_id
-        and (plan_id is None or item.join_ids["plan_id"] == plan_id)
+        and item.join_ids["plan_id"] == plan_id
     ]
 
     revision_events = [
