@@ -1209,6 +1209,183 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
         dependency_path
     }
 
+    empty_records: list[dict[str, str]] = []
+    legacy_stores = {
+        status: {
+            "store_id": f"executor/{status}",
+            "records": empty_records,
+            "sha256": execution_context.semantic_digest(empty_records),
+        }
+        for status in ("active", "archived")
+    }
+    legacy_index = {
+        "index_id": "handoff/index.jsonl",
+        "path": ".work-bundle/orchestration/handoff/index.jsonl",
+        "sha256": hashlib.sha256(b"").hexdigest(),
+        "projected_entries_sha256": execution_context.semantic_digest([]),
+    }
+    legacy_revision = execution_context.semantic_digest({
+        "expected_base_head": expected_base_head,
+        "expected_base_tree": expected_base_tree,
+        "handoff_stores": legacy_stores,
+        "handoff_index": legacy_index,
+    })
+    legacy_observed_at = "2026-09-06T01:01:00Z"
+    legacy_receipt_id = (
+        f"accepted-result-recovery-task-dependency-{legacy_revision[:12]}-"
+        f"{hashlib.sha256(legacy_observed_at.encode()).hexdigest()[:12]}"
+    )
+    legacy_receipt = {
+        "receipt_id": legacy_receipt_id,
+        "schema": "accepted-result-recovery-receipt-v1",
+        "plan_id": "plan-001",
+        "task_id": "task-dependency",
+        "binding_id": binding["ownership"]["binding_id"],
+        "binding_sha256": binding_digest,
+        "baseline_head": baseline,
+        "baseline_tree": baseline_tree,
+        "expected_base_head": expected_base_head,
+        "expected_base_tree": expected_base_tree,
+        "queried_historical_revision": legacy_revision,
+        "handoff_stores": legacy_stores,
+        "handoff_index": legacy_index,
+        "absence_result": "accepted_base_absent",
+        "observed_at": legacy_observed_at,
+        "freshness": "current_validation_attempt",
+    }
+    legacy_receipt_path = execution_context._recovery_receipt_path(
+        root, "plan-001", "task-dependency", legacy_receipt_id
+    )
+    legacy_receipt_path.write_text(
+        json.dumps(legacy_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    legacy_reference = {
+        "receipt_id": legacy_receipt_id,
+        "receipt_sha256": hashlib.sha256(legacy_receipt_path.read_bytes()).hexdigest(),
+    }
+    handoff_bytes = recovered_path.read_bytes()
+    index_bytes = index.read_bytes()
+    adopted_reference = execution_context.adopt_existing_recovered_result(
+        root,
+        "plan-001",
+        "task-dependency",
+        expected_base_head,
+        expected_base_tree,
+        recovered_handoff["id"],
+        recovered_reference["handoff_sha256"],
+        recovered_review["review_id"],
+        recovered_head,
+        recovered_tree,
+        legacy_reference,
+    )
+    assert recovered_path.read_bytes() == handoff_bytes
+    assert index.read_bytes() == index_bytes
+    adopted_descriptor = deepcopy(descriptor)
+    adopted_descriptor["execution_baseline_recovery"]["recovery_receipt"] = adopted_reference
+    assert execution_context._accepted_dependency_paths(
+        dependent, root, [adopted_descriptor]
+    ) == {dependency_path}
+
+    adopt_cli = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/orch.py"),
+            "adopt-existing-recovered-result",
+            "--project-root",
+            str(root),
+            "--plan-id",
+            "plan-001",
+            "--task-id",
+            "task-dependency",
+            "--expected-head",
+            expected_base_head,
+            "--expected-tree",
+            expected_base_tree,
+            "--handoff-id",
+            recovered_handoff["id"],
+            "--handoff-sha256",
+            recovered_reference["handoff_sha256"],
+            "--review-id",
+            recovered_review["review_id"],
+            "--final-head",
+            recovered_head,
+            "--final-tree",
+            recovered_tree,
+            "--prior-receipt-id",
+            legacy_reference["receipt_id"],
+            "--prior-receipt-sha256",
+            legacy_reference["receipt_sha256"],
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert adopt_cli.returncode == 0, adopt_cli.stderr
+    assert set(json.loads(adopt_cli.stdout)) == {"receipt_id", "receipt_sha256"}
+    assert recovered_path.read_bytes() == handoff_bytes
+    assert index.read_bytes() == index_bytes
+
+    with pytest.raises(SystemExit, match="prior receipt.*missing"):
+        execution_context.adopt_existing_recovered_result(
+            root,
+            "plan-001",
+            "task-dependency",
+            expected_base_head,
+            expected_base_tree,
+            recovered_handoff["id"],
+            recovered_reference["handoff_sha256"],
+            recovered_review["review_id"],
+            recovered_head,
+            recovered_tree,
+            {"receipt_id": "missing-prior-receipt", "receipt_sha256": "0" * 64},
+        )
+    with pytest.raises(SystemExit, match="stale"):
+        execution_context.adopt_existing_recovered_result(
+            root,
+            "plan-001",
+            "task-dependency",
+            expected_base_head,
+            expected_base_tree,
+            recovered_handoff["id"],
+            "0" * 64,
+            recovered_review["review_id"],
+            recovered_head,
+            recovered_tree,
+            legacy_reference,
+        )
+
+    invalid_legacy = deepcopy(legacy_receipt)
+    invalid_legacy["baseline_head"] = expected_base_head
+    invalid_observed_at = "2026-09-06T01:01:01Z"
+    invalid_legacy["observed_at"] = invalid_observed_at
+    invalid_legacy_id = (
+        f"accepted-result-recovery-task-dependency-{legacy_revision[:12]}-"
+        f"{hashlib.sha256(invalid_observed_at.encode()).hexdigest()[:12]}"
+    )
+    invalid_legacy["receipt_id"] = invalid_legacy_id
+    invalid_legacy_path = execution_context._recovery_receipt_path(
+        root, "plan-001", "task-dependency", invalid_legacy_id
+    )
+    invalid_legacy_path.write_text(
+        json.dumps(invalid_legacy, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(SystemExit, match="prior receipt|baseline|non-global"):
+        execution_context.adopt_existing_recovered_result(
+            root,
+            "plan-001",
+            "task-dependency",
+            expected_base_head,
+            expected_base_tree,
+            recovered_handoff["id"],
+            recovered_reference["handoff_sha256"],
+            recovered_review["review_id"],
+            recovered_head,
+            recovered_tree,
+            {
+                "receipt_id": invalid_legacy_id,
+                "receipt_sha256": hashlib.sha256(invalid_legacy_path.read_bytes()).hexdigest(),
+            },
+        )
+
     wrong_delta_base = deepcopy(descriptor)
     wrong_delta_base["accepted_result_delta"]["expected_base_head"] = baseline
     wrong_delta_base["accepted_result_delta"]["expected_base_tree"] = baseline_tree
@@ -1262,6 +1439,47 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
         dependency_path
     }
 
+    competitor = deepcopy(recovered_handoff)
+    competitor["id"] = "handoff-competing-recovered-dependency"
+    competitor["acceptance_review"]["review_id"] = "review-competing-recovery"
+    competitor_path = handoff_dir / "handoff-competing-recovered-dependency.yaml"
+    competitor_path.write_text(
+        ("\n".join(execution_context._dump_yaml(competitor)) + "\n").replace(
+            ": none\n", ': "none"\n'
+        ),
+        encoding="utf-8",
+    )
+    before_competitor_index = index.read_bytes()
+    index.write_text(
+        index.read_text(encoding="utf-8")
+        + json.dumps({
+            "id": competitor["id"],
+            "type": "executor-result",
+            "status": "active",
+            "path": str(competitor_path.relative_to(root)),
+            "related_plan": "plan-001",
+            "related_task": "task-dependency",
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="competing recovered result"):
+        execution_context.adopt_existing_recovered_result(
+            root,
+            "plan-001",
+            "task-dependency",
+            expected_base_head,
+            expected_base_tree,
+            recovered_handoff["id"],
+            recovered_reference["handoff_sha256"],
+            recovered_review["review_id"],
+            recovered_head,
+            recovered_tree,
+            legacy_reference,
+        )
+    competitor_path.unlink()
+    index.write_bytes(before_competitor_index)
+
     archived_dir = root / ".work-bundle/orchestration/handoff/executor/archived"
     archived_dir.mkdir(parents=True, exist_ok=True)
     expected_base_handoff = deepcopy(recovered_handoff)
@@ -1276,12 +1494,40 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
     )
     with pytest.raises(SystemExit, match="recoverable accepted base"):
         execution_context._accepted_dependency_paths(dependent, root, [descriptor])
+    with pytest.raises(SystemExit, match="recoverable accepted base"):
+        execution_context.adopt_existing_recovered_result(
+            root,
+            "plan-001",
+            "task-dependency",
+            expected_base_head,
+            expected_base_tree,
+            recovered_handoff["id"],
+            recovered_reference["handoff_sha256"],
+            recovered_review["review_id"],
+            recovered_head,
+            recovered_tree,
+            legacy_reference,
+        )
     expected_base_path.unlink()
 
     duplicate_path = archived_dir / "handoff-recovered-dependency-duplicate.yaml"
     duplicate_path.write_bytes(recovered_path.read_bytes())
     with pytest.raises(SystemExit, match="ambiguous"):
         execution_context._accepted_dependency_paths(dependent, root, [descriptor])
+    with pytest.raises(SystemExit, match="ambiguous"):
+        execution_context.adopt_existing_recovered_result(
+            root,
+            "plan-001",
+            "task-dependency",
+            expected_base_head,
+            expected_base_tree,
+            recovered_handoff["id"],
+            recovered_reference["handoff_sha256"],
+            recovered_review["review_id"],
+            recovered_head,
+            recovered_tree,
+            legacy_reference,
+        )
     duplicate_path.unlink()
 
     mismatched = deepcopy(recovered_handoff)

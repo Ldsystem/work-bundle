@@ -1543,6 +1543,24 @@ RECOVERY_RECEIPT_KEYS = {
     "observed_at",
     "freshness",
 }
+LEGACY_RECOVERY_RECEIPT_KEYS = {
+    "receipt_id",
+    "schema",
+    "plan_id",
+    "task_id",
+    "binding_id",
+    "binding_sha256",
+    "baseline_head",
+    "baseline_tree",
+    "expected_base_head",
+    "expected_base_tree",
+    "queried_historical_revision",
+    "handoff_stores",
+    "handoff_index",
+    "absence_result",
+    "observed_at",
+    "freshness",
+}
 
 
 def _recovery_receipt_path(
@@ -1721,6 +1739,176 @@ def _accepted_base_query_snapshot(
     }
 
 
+def _legacy_recovery_global_snapshot(
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    expected_base_head: str,
+    expected_base_tree: str,
+) -> dict[str, Any]:
+    """Reconstruct the obsolete revision-11 global-digest snapshot."""
+
+    handoff_root = control_root / ".work-bundle/orchestration/handoff"
+    stores: dict[str, dict[str, Any]] = {}
+    for status in ("active", "archived"):
+        records: list[dict[str, str]] = []
+        for path in sorted((handoff_root / "executor" / status).glob("*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                handoff, _ = _read_structured(path)
+            except (OSError, SystemExit, ValueError):
+                continue
+            related = handoff.get("related") if isinstance(handoff.get("related"), Mapping) else {}
+            if related.get("plan") != plan_id or related.get("task") != task_id:
+                continue
+            records.append(
+                {
+                    "handoff_id": str(handoff.get("id") or ""),
+                    "path": path.relative_to(control_root).as_posix(),
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            )
+        stores[status] = {
+            "store_id": f"executor/{status}",
+            "records": records,
+            "sha256": semantic_digest(records),
+        }
+
+    index_path = handoff_root / "index.jsonl"
+    if not index_path.is_file() or index_path.is_symlink():
+        raise SystemExit("accepted-result recovery requires the native handoff index")
+    index_entries: list[dict[str, Any]] = []
+    for number, line in enumerate(index_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise SystemExit(
+                f"accepted-result recovery handoff index is invalid at line {number}"
+            ) from error
+        if not isinstance(entry, dict):
+            raise SystemExit(f"accepted-result recovery handoff index is invalid at line {number}")
+        if entry.get("related_plan") == plan_id and entry.get("related_task") == task_id:
+            index_entries.append(entry)
+    index_identity = {
+        "index_id": "handoff/index.jsonl",
+        "path": index_path.relative_to(control_root).as_posix(),
+        "sha256": hashlib.sha256(index_path.read_bytes()).hexdigest(),
+        "projected_entries_sha256": semantic_digest(index_entries),
+    }
+    historical_revision = semantic_digest(
+        {
+            "expected_base_head": expected_base_head,
+            "expected_base_tree": expected_base_tree,
+            "handoff_stores": stores,
+            "handoff_index": index_identity,
+        }
+    )
+    return {
+        "queried_historical_revision": historical_revision,
+        "handoff_stores": stores,
+        "handoff_index": index_identity,
+    }
+
+
+def _valid_recovered_result(
+    handoff: Mapping[str, Any], plan_id: str, task_id: str
+) -> bool:
+    related = handoff.get("related") if isinstance(handoff.get("related"), Mapping) else {}
+    result = handoff.get("result") if isinstance(handoff.get("result"), Mapping) else {}
+    review = (
+        handoff.get("acceptance_review")
+        if isinstance(handoff.get("acceptance_review"), Mapping)
+        else {}
+    )
+    reset = review.get("review_reset") if isinstance(review.get("review_reset"), Mapping) else {}
+    evidence = review.get("evidence") if isinstance(review.get("evidence"), Mapping) else {}
+    reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), Mapping) else {}
+    identity = review.get("target_identity") if isinstance(review.get("target_identity"), Mapping) else {}
+    if (
+        handoff.get("type") != "executor-result"
+        or related.get("plan") != plan_id
+        or related.get("task") != task_id
+        or result.get("state") != "completed"
+        or review.get("verdict") != "accept"
+        or review.get("review_mode") != "initial"
+        or review.get("review_target_kind") != "task"
+        or review.get("reviewer_independent") is not True
+        or review.get("repair_frontier") is not None
+        or reset.get("reason_class") != "authority"
+        or evidence.get("unavailable_evidence") != []
+        or reviewer.get("capability") != "judgment"
+        or identity.get("artifact_id") != task_id
+        or review.get("reviewed_head") != identity.get("revision")
+    ):
+        return False
+    try:
+        from review_runtime import ReviewContractError, validate_task_acceptance_review
+
+        validate_task_acceptance_review(review)
+        owner = normalize_subagent_provenance(
+            handoff.get("delegation_evidence")
+            if isinstance(handoff.get("delegation_evidence"), Mapping)
+            else None
+        )
+    except (ReviewContractError, OwnershipBlocker, KeyError, TypeError, ValueError):
+        return False
+    return reviewer.get("agent_id") != owner.get("agent_id")
+
+
+def _write_query_scoped_recovery_receipt(
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    binding: Mapping[str, Any],
+    binding_path: Path,
+    expected_base_head: str,
+    expected_base_tree: str,
+    proposed_handoff_id: str,
+    proposed_review_id: str,
+    final_head: str,
+    final_tree: str,
+    expected_base_query: Mapping[str, Any],
+) -> dict[str, str]:
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    receipt_id = (
+        f"accepted-result-recovery-{task_id}-"
+        f"{str(expected_base_query['sha256'])[:12]}-"
+        f"{hashlib.sha256(observed_at.encode()).hexdigest()[:12]}"
+    )
+    receipt = {
+        "receipt_id": receipt_id,
+        "schema": RECOVERY_RECEIPT_SCHEMA,
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "binding_id": str((binding.get("ownership") or {}).get("binding_id") or ""),
+        "binding_sha256": hashlib.sha256(binding_path.read_bytes()).hexdigest(),
+        "baseline_head": str(baseline.get("head") or ""),
+        "baseline_tree": str(baseline.get("tree") or ""),
+        "expected_base_head": expected_base_head,
+        "expected_base_tree": expected_base_tree,
+        "expected_base_query": dict(expected_base_query),
+        "proposed_recovered_result": {
+            "handoff_id": proposed_handoff_id,
+            "review_id": proposed_review_id,
+            "final_head": final_head,
+            "final_tree": final_tree,
+        },
+        "observed_at": observed_at,
+        "freshness": "current_validation_attempt",
+    }
+    path = _recovery_receipt_path(control_root, plan_id, task_id, receipt_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "receipt_id": receipt_id,
+        "receipt_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
 def create_accepted_base_absence_receipt(
     control_root: Path,
     plan_id: str,
@@ -1770,40 +1958,225 @@ def create_accepted_base_absence_receipt(
         raise SystemExit("accepted-result recovery rejected: recoverable accepted base handoff exists")
     if snapshot["proposal_state"] != "absent":
         raise SystemExit("accepted-result recovery rejected: proposed result already exists or is ambiguous")
-    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    receipt_id = (
-        f"accepted-result-recovery-{task_id}-"
-        f"{snapshot['expected_base_query']['sha256'][:12]}-"
-        f"{hashlib.sha256(observed_at.encode()).hexdigest()[:12]}"
+    return _write_query_scoped_recovery_receipt(
+        control_root,
+        plan_id,
+        task_id,
+        binding,
+        binding_path,
+        resolved_expected_head,
+        resolved_expected_tree,
+        proposed_handoff_id,
+        proposed_review_id,
+        resolved_final_head,
+        resolved_final_tree,
+        snapshot["expected_base_query"],
     )
-    receipt = {
-        "receipt_id": receipt_id,
-        "schema": RECOVERY_RECEIPT_SCHEMA,
-        "plan_id": plan_id,
-        "task_id": task_id,
-        "binding_id": str((binding.get("ownership") or {}).get("binding_id") or ""),
-        "binding_sha256": hashlib.sha256(binding_path.read_bytes()).hexdigest(),
-        "baseline_head": baseline_head,
-        "baseline_tree": baseline_tree,
-        "expected_base_head": resolved_expected_head,
-        "expected_base_tree": resolved_expected_tree,
-        "expected_base_query": snapshot["expected_base_query"],
-        "proposed_recovered_result": {
-            "handoff_id": proposed_handoff_id,
-            "review_id": proposed_review_id,
-            "final_head": resolved_final_head,
-            "final_tree": resolved_final_tree,
-        },
-        "observed_at": observed_at,
-        "freshness": "current_validation_attempt",
-    }
-    path = _recovery_receipt_path(control_root, plan_id, task_id, receipt_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return {
-        "receipt_id": receipt_id,
-        "receipt_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-    }
+
+
+def adopt_existing_recovered_result(
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    expected_base_head: str,
+    expected_base_tree: str,
+    handoff_id: str,
+    handoff_sha256: str,
+    review_id: str,
+    final_head: str,
+    final_tree: str,
+    prior_receipt_reference: object,
+) -> dict[str, str]:
+    """Adopt one already-published result whose rev11 receipt only globally staled."""
+
+    control_root = control_root.expanduser().resolve()
+    if not isinstance(prior_receipt_reference, Mapping) or set(prior_receipt_reference) != {
+        "receipt_id", "receipt_sha256"
+    }:
+        raise SystemExit("post-publication adoption prior receipt reference is invalid")
+    if not SAFE_ID_RE.fullmatch(handoff_id) or not SAFE_ID_RE.fullmatch(review_id):
+        raise SystemExit("post-publication adoption proposed identity is unsafe")
+
+    binding_path = _binding_path(control_root, plan_id, task_id)
+    binding = load_task_execution_binding(control_root, plan_id, task_id)
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    binding_id = str((binding.get("ownership") or {}).get("binding_id") or "")
+    binding_sha256 = hashlib.sha256(binding_path.read_bytes()).hexdigest()
+    execution_root = Path(str(binding.get("execution_path") or "")).resolve()
+    resolved_expected_head = _resolve_commit(execution_root, expected_base_head)
+    resolved_expected_tree = _git(
+        execution_root, "rev-parse", f"{resolved_expected_head}^{{tree}}"
+    ).strip()
+    if resolved_expected_tree != expected_base_tree:
+        raise SystemExit("post-publication adoption expected base Git identity is mismatched")
+    resolved_final_head = _resolve_commit(execution_root, final_head)
+    resolved_final_tree = _git(
+        execution_root, "rev-parse", f"{resolved_final_head}^{{tree}}"
+    ).strip()
+    if resolved_final_tree != final_tree:
+        raise SystemExit("post-publication adoption final Git identity is mismatched")
+
+    prior_receipt_id = str(prior_receipt_reference["receipt_id"])
+    prior_path = _recovery_receipt_path(control_root, plan_id, task_id, prior_receipt_id)
+    if not prior_path.is_file() or prior_path.is_symlink():
+        raise SystemExit("post-publication adoption prior receipt is missing")
+    if hashlib.sha256(prior_path.read_bytes()).hexdigest() != str(
+        prior_receipt_reference["receipt_sha256"]
+    ):
+        raise SystemExit("post-publication adoption prior receipt digest is stale")
+    try:
+        prior = json.loads(prior_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit("post-publication adoption prior receipt is invalid") from error
+    if not isinstance(prior, dict) or set(prior) != LEGACY_RECOVERY_RECEIPT_KEYS:
+        raise SystemExit("post-publication adoption requires the closed revision-11 receipt schema")
+    if (
+        prior.get("receipt_id") != prior_receipt_id
+        or prior.get("schema") != RECOVERY_RECEIPT_SCHEMA
+        or prior.get("plan_id") != plan_id
+        or prior.get("task_id") != task_id
+        or prior.get("binding_id") != binding_id
+        or prior.get("binding_sha256") != binding_sha256
+        or prior.get("baseline_head") != baseline.get("head")
+        or prior.get("baseline_tree") != baseline.get("tree")
+        or prior.get("expected_base_head") != resolved_expected_head
+        or prior.get("expected_base_tree") != resolved_expected_tree
+        or prior.get("absence_result") != "accepted_base_absent"
+        or prior.get("freshness") != "current_validation_attempt"
+        or not isinstance(prior.get("observed_at"), str)
+    ):
+        raise SystemExit("post-publication adoption prior receipt has a non-global defect")
+
+    stores = prior.get("handoff_stores")
+    index_identity = prior.get("handoff_index")
+    if not isinstance(stores, Mapping) or set(stores) != {"active", "archived"}:
+        raise SystemExit("post-publication adoption prior receipt stores are invalid")
+    recorded_ids: set[str] = set()
+    for status in ("active", "archived"):
+        store = stores[status]
+        if not isinstance(store, Mapping) or set(store) != {"store_id", "records", "sha256"}:
+            raise SystemExit("post-publication adoption prior receipt store is invalid")
+        records = store.get("records")
+        if (
+            store.get("store_id") != f"executor/{status}"
+            or not isinstance(records, list)
+            or store.get("sha256") != semantic_digest(records)
+        ):
+            raise SystemExit("post-publication adoption prior receipt store digest is invalid")
+        for record in records:
+            if not isinstance(record, Mapping) or set(record) != {"handoff_id", "path", "sha256"}:
+                raise SystemExit("post-publication adoption prior receipt record is invalid")
+            recorded_ids.add(str(record.get("handoff_id") or ""))
+            record_path = (control_root / str(record.get("path") or "")).resolve()
+            try:
+                record_path.relative_to(control_root)
+            except ValueError as error:
+                raise SystemExit("post-publication adoption prior receipt record path is unsafe") from error
+            if (
+                not record_path.is_file()
+                or record_path.is_symlink()
+                or hashlib.sha256(record_path.read_bytes()).hexdigest() != record.get("sha256")
+            ):
+                raise SystemExit("post-publication adoption prior receipt record is stale")
+            try:
+                recorded_handoff, _ = _read_structured(record_path)
+            except (OSError, SystemExit, ValueError) as error:
+                raise SystemExit("post-publication adoption prior receipt record is invalid") from error
+            if _is_recoverable_accepted_base(
+                recorded_handoff,
+                plan_id,
+                task_id,
+                resolved_expected_head,
+                resolved_expected_tree,
+            ):
+                raise SystemExit("post-publication adoption prior expected-base query was not absent")
+    if handoff_id in recorded_ids:
+        raise SystemExit("post-publication adoption candidate was already present in the prior receipt")
+    if not isinstance(index_identity, Mapping) or set(index_identity) != {
+        "index_id", "path", "sha256", "projected_entries_sha256"
+    }:
+        raise SystemExit("post-publication adoption prior receipt index is invalid")
+    if (
+        index_identity.get("index_id") != "handoff/index.jsonl"
+        or index_identity.get("path") != ".work-bundle/orchestration/handoff/index.jsonl"
+        or any(
+            not re.fullmatch(r"[0-9a-f]{64}", str(index_identity.get(field) or ""))
+            for field in ("sha256", "projected_entries_sha256")
+        )
+    ):
+        raise SystemExit("post-publication adoption prior receipt index digest is invalid")
+    prior_revision = semantic_digest(
+        {
+            "expected_base_head": resolved_expected_head,
+            "expected_base_tree": resolved_expected_tree,
+            "handoff_stores": stores,
+            "handoff_index": index_identity,
+        }
+    )
+    if prior.get("queried_historical_revision") != prior_revision:
+        raise SystemExit("post-publication adoption prior receipt historical revision is invalid")
+    expected_receipt_prefix = f"accepted-result-recovery-{task_id}-{prior_revision[:12]}-"
+    observed_suffix = hashlib.sha256(str(prior["observed_at"]).encode()).hexdigest()[:12]
+    if prior_receipt_id != f"{expected_receipt_prefix}{observed_suffix}":
+        raise SystemExit("post-publication adoption prior receipt identity is invalid")
+
+    snapshot = _accepted_base_query_snapshot(
+        control_root,
+        plan_id,
+        task_id,
+        resolved_expected_head,
+        resolved_expected_tree,
+        handoff_id,
+        review_id,
+        resolved_final_head,
+        resolved_final_tree,
+    )
+    if snapshot["recoverable_base_handoff_ids"]:
+        raise SystemExit("post-publication adoption rejected: recoverable accepted base exists")
+    if snapshot["proposal_state"] != "published":
+        raise SystemExit("post-publication adoption candidate is missing, mismatched, or ambiguous")
+
+    handoff_root = control_root / ".work-bundle/orchestration/handoff"
+    _, candidate = _exact_handoff_reference(
+        handoff_root, {"handoff_id": handoff_id, "handoff_sha256": handoff_sha256}
+    )
+    if not _valid_recovered_result(candidate, plan_id, task_id):
+        raise SystemExit("post-publication adoption candidate is not a valid recovered result")
+    for path in sorted(handoff_root.glob("executor/*/*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        if hashlib.sha256(path.read_bytes()).hexdigest() == handoff_sha256:
+            continue
+        try:
+            other, _ = _read_structured(path)
+        except (OSError, SystemExit, ValueError):
+            continue
+        if _valid_recovered_result(other, plan_id, task_id):
+            raise SystemExit("post-publication adoption rejected: valid competing recovered result exists")
+
+    current_legacy = _legacy_recovery_global_snapshot(
+        control_root,
+        plan_id,
+        task_id,
+        resolved_expected_head,
+        resolved_expected_tree,
+    )
+    if all(prior.get(field) == current_legacy[field] for field in current_legacy):
+        raise SystemExit("post-publication adoption prior receipt is not globally stale")
+    return _write_query_scoped_recovery_receipt(
+        control_root,
+        plan_id,
+        task_id,
+        binding,
+        binding_path,
+        resolved_expected_head,
+        resolved_expected_tree,
+        handoff_id,
+        review_id,
+        resolved_final_head,
+        resolved_final_tree,
+        snapshot["expected_base_query"],
+    )
 
 
 def validate_accepted_base_absence_receipt(
@@ -3737,6 +4110,27 @@ def cmd_create_accepted_base_absence_receipt(args: argparse.Namespace) -> None:
         str(args.proposed_review_id),
         str(args.final_head),
         str(args.final_tree),
+    )
+    print(json.dumps(reference, sort_keys=True))
+
+
+def cmd_adopt_existing_recovered_result(args: argparse.Namespace) -> None:
+    root = resolve_workspace_root(args)
+    reference = adopt_existing_recovered_result(
+        root,
+        str(args.plan_id),
+        str(args.task_id),
+        str(args.expected_head),
+        str(args.expected_tree),
+        str(args.handoff_id),
+        str(args.handoff_sha256),
+        str(args.review_id),
+        str(args.final_head),
+        str(args.final_tree),
+        {
+            "receipt_id": str(args.prior_receipt_id),
+            "receipt_sha256": str(args.prior_receipt_sha256),
+        },
     )
     print(json.dumps(reference, sort_keys=True))
 
