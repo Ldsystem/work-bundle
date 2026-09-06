@@ -55,14 +55,14 @@ Verify:
 11. orchestration evals that require v3 role labels are backed by orch skill documentation;
 12. specification and plan contracts allocate `dev-semantic-convergence`, caller-specific lenses, compact `semantic_loop` evidence, and the body-level `Quality gate: verified|blocked` result where applicable;
 13. task contracts carry source IDs, methodology, provider-neutral capability, compiled-brief context, and acceptance-review fields;
-14. execution contracts preserve no-retrieval execution, compile bounded task/review packets, require fresh task validation plus acceptance review, and keep reduced-independence fallback explicit;
+14. execution contracts preserve no-retrieval execution, compile bounded task/review packets, require mandatory subagent task ownership, and require fresh task validation plus acceptance review;
 15. the CodeGraph-first rule remains conditional on an indexed target and requires a recorded fallback reason when unavailable;
 16. active orchestration contracts do not depend on `HABITS.md` or the deprecated role-selection subsystem.
 17. executor-result contracts default to sparse YAML, require fields by applicability, reject forbidden executor advice fields, and do not require active orchestration handoffs;
 18. compact CodeGraph evidence retains `root`, `applicable`, `up_to_date`, and required fallback or blocker facts, including `no-index` and `sync-failed` where applicable;
-19. compact visible delegation evidence uses `delegation_evidence`, `visible_reference` when available, and `internal_spawn_used_for_task_delegation: false`;
-20. no active orch contract reintroduces invisible internal spawn work as a valid task-delegation vehicle;
-21. handoff and review contracts validate compact CodeGraph and visible delegation outcomes by applicability rather than fixed prose sections.
+19. compact neutral ownership evidence uses `delegation_evidence` with only delegated state, subagent owner kind, agent/run identity, and provider-neutral mechanism;
+20. no active orch contract permits controller or single-agent task mutation;
+21. handoff and review contracts validate compact CodeGraph and neutral ownership outcomes by applicability rather than fixed prose sections.
 
 ## Workflow Integrity Checks
 
@@ -70,9 +70,9 @@ Verify:
 
 - `orch-create-specification`, `orch-create-implementation-plan`, `orch-create-handoff`, `orch-execute-plan`, `orch-review-plan`, and `orch-doctor` keep distinct responsibilities;
 - artifact creation modes do not execute implementation work;
-- `orch-execute-plan` checks sub-agent support before delegation;
-- `orch-execute-plan` preserves the single-agent fallback and does not fail only because sub-agents are unavailable;
-- layered `prefer_subagent` remains permission-only and cannot bypass preflight, dependency, scope, or handoff safety checks;
+- `orch-execute-plan` requires subagent support before any implementation or repair mutation and fails closed when unavailable;
+- the orchestration thread schedules, compiles, coordinates, validates, reviews, and manages lifecycle without mutating task write scope;
+- planner-proven independent disjoint tasks dispatch before waiting while dependent, overlapping, and same-workspace tasks serialize;
 - executor-result handoffs require local task-fit evidence against the compiled brief and assigned task, with full lifecycle artifacts reserved for inconsistent context or source-contract escalation;
 - executor-result handoffs default to sparse YAML, omit non-applicable fields, reject forbidden executor advice fields, and require compact `codegraph:` and `delegation_evidence:` only when applicable;
 - active orchestration handoffs are unavailable and continuation uses active specs, plans, tasks, indexes, and executor-result handoffs;
@@ -85,13 +85,13 @@ Verify:
 
 Look for one-sided or conflicting instructions that would bias execution toward a single path when alternatives are required:
 
-- sub-agent scheduler must not be mandatory when sub-agents are unavailable or unsafe;
-- single-agent fallback must not silently bypass required handoffs or status updates;
+- mandatory subagent ownership must fail closed before mutation when no safe subagent path is available;
+- controller scheduling must not become controller implementation or repair;
 - review must not be treated as execution;
 - execution completion must not imply archival;
 - durable knowledge extraction must not be implied by executor-result handoffs;
 - CodeGraph sync evidence must not be optional when `.codegraph/` exists and graph-derived source work is in scope;
-- visible delegation wording must not allow invisible internal spawn work to own delegated plan, phase, or task execution.
+- ownership wording must remain provider-neutral and must not depend on UI visibility.
 
 Deterministic doctor checks are limited to bounded file presence, JSON shape,
 required contract terms, and forbidden active dependencies. They must not judge
@@ -119,7 +119,7 @@ Files changed: none
 
 ## Validation
 
-Confirm `dev-rules-doctor` was used first, diagnostics stayed read-only, orch skill coverage was checked, skill front matter was checked, semantic-convergence and compiled-context terms were present, sparse YAML and applicability terms were present, forbidden executor advice fields and active orchestration handoffs were rejected, compact CodeGraph and visible delegation safety terms were present, invisible internal spawn task-delegation regressions were absent, forbidden active dependencies were absent, workflow responsibilities remained distinct, required fallback paths were present, archival remained isolated to `orch-review-plan`, and no files were changed.
+Confirm `dev-rules-doctor` was used first, diagnostics stayed read-only, orch skill coverage was checked, skill front matter was checked, semantic-convergence and compiled-context terms were present, sparse YAML and applicability terms were present, forbidden executor advice fields and active orchestration handoffs were rejected, compact CodeGraph and neutral subagent ownership terms were present, controller mutation and single-agent fallback regressions were absent, forbidden active dependencies were absent, workflow responsibilities remained distinct, fail-closed paths were present, archival remained isolated to `orch-review-plan`, and no files were changed.
 
 ## Runtime Rules
 
@@ -137,12 +137,12 @@ Diagnose develop-rules installation health and orchestrator workflow consistency
 - Stop and report the blocker if `dev-rules-doctor` cannot run; do not treat installation health as passed.
 - Perform a read-only orchestrator audit across orchestrator skill files, workflow reference, orchestration evals, and helper commands in `scripts/orch.py`.
 - Verify skill coverage, front matter consistency, workflow responsibility separation, retrieval-policy mappings, helper command availability or declared fallback behavior, and required execution fallback paths.
-- Verify `orch-execute-plan` compiles bounded task/review packets, preserves visible sub-agent and reduced-independence fallback paths, requires fresh validation plus task acceptance, and does not archive artifacts during execution.
+- Verify `orch-execute-plan` compiles bounded task/review packets, requires mandatory subagent ownership for implementation and repair, fails closed before mutation when unavailable, requires fresh validation plus task acceptance, and does not archive artifacts during execution.
 - Verify `orch-review-plan` is the only skill that archives completed specification, plan, and handoff artifacts.
 - Verify knowledge-using orch skills route through `keep-summarizing` rather than direct `.work-bundle/knowledge/` browsing.
 - Verify executor-result contracts default to sparse YAML, require fields by applicability, omit non-applicable fields, reject forbidden executor advice fields, and do not require active orchestration handoffs.
 - Verify compact CodeGraph evidence includes `root`, `applicable`, `up_to_date`, and accepted fallback or blocker facts such as `no-index` and `sync-failed` where applicable.
-- Verify compact visible delegation evidence uses `delegation_evidence`, `visible_reference` when available, and `internal_spawn_used_for_task_delegation: false`, and does not permit invisible internal spawn work to own delegated task execution.
+- Verify compact neutral ownership evidence uses `delegation_evidence` with minimum agent/run identity and mechanism, rejects UI/visibility fields, and does not permit controller-owned task execution.
 - Look for workflow bias such as false review independence, skipped handoffs, scheduler-owned code review, mandatory full lifecycle context for a valid brief, or handoff conclusions treated as persisted knowledge.
 - Report findings as concrete repair actions with cited conflicting artifacts when issues are found.
 - Emit doctor output with `Files changed: none`.

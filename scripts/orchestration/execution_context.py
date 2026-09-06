@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Mapping
 from datetime import datetime, timezone
 
 
@@ -19,6 +19,12 @@ from core import is_relative_to, read_front_matter, resolve_workspace_root
 from artifact_inputs import (_split_top_level, _split_key_value, _parse_scalar, parse_yaml_subset,
                              _read_structured, _as_list, _input_path, _resolve_spec_paths)
 from repository_preflight import capture_repository_evidence, task_caused_paths
+from task_ownership import (
+    OwnershipBlocker,
+    RepairContinuity,
+    normalize_subagent_provenance,
+    validate_task_acceptance_ownership,
+)
 
 
 SOURCE_ID_TOKEN = r"[A-Z][A-Z0-9_-]*-\d+[A-Z]?"
@@ -58,6 +64,31 @@ EVIDENCE_REPAIR_OWNERS = {
     "missing": "plan",
     "unexecuted": "task",
 }
+CONTEXT_EXPANSION_REASONS = {
+    None,
+    "failed_validation",
+    "ambiguity",
+    "reviewer_request",
+    "authority_gap",
+}
+
+
+class AcceptanceOwnershipError(SystemExit):
+    """A completed result failed mandatory harness-owned ownership evidence."""
+
+
+class _SemanticReference(str):
+    """Legacy in-memory semantic view that serializes as its stable ID."""
+
+    def __new__(cls, semantic: str, reference_id: str):
+        value = super().__new__(cls, semantic)
+        value.reference_id = reference_id
+        return value
+
+    def __reduce__(self):
+        return self.__class__, (str(self), self.reference_id)
+
+
 KNOWLEDGE_PERSISTENCE_INSTRUCTION_RE = re.compile(
     r"(?:\.work-bundle/knowledge(?:/|\b)|\bks-[a-z0-9-]+\b)",
     re.IGNORECASE,
@@ -72,6 +103,8 @@ FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
     "strategy_advice",
     "knowledge_persistence",
     "baseline",
+    "mutation_events",
+    "accepted_dependency_deltas",
 }
 VALID_RESULT_STATES = {"completed", "blocked", "partial", "failed"}
 TASK_FIT_RESULTS = {"clean", "repaired", "unresolved", "skipped"}
@@ -723,9 +756,186 @@ def _compile_truth_basis(
         "purpose": purpose.strip(),
         "as_is_evidence": _resolve_reference(list_fields["as_is_evidence"], records, source_paths),
         "decision_authority": compiled_authority,
-        "expected_delta": _resolve_reference(list_fields["expected_delta"], records, source_paths),
+        # Source meanings are projected once elsewhere; the Truth Basis carries
+        # their stable IDs rather than duplicating accepted prose.
+        "expected_delta": _retain_source_references(list_fields["expected_delta"], records),
         "conflict_status": conflict_status,
     }
+
+
+def _retain_source_references(value: Any, records: dict[str, str]) -> Any:
+    if isinstance(value, str) and value in records:
+        return value
+    if isinstance(value, list):
+        return [_retain_source_references(item, records) for item in value]
+    if isinstance(value, dict):
+        return {key: _retain_source_references(item, records) for key, item in value.items()}
+    return value
+
+
+def _compile_validation_references(value: Any, records: dict[str, str]) -> Any:
+    if isinstance(value, str) and value in records:
+        return _SemanticReference(f"{value}: {records[value]}", value)
+    if isinstance(value, list):
+        return [_compile_validation_references(item, records) for item in value]
+    if isinstance(value, dict):
+        return {key: _compile_validation_references(item, records) for key, item in value.items()}
+    return value
+
+
+def semantic_digest(value: Any) -> str:
+    """Return a stable digest for projected semantic or evidence identity."""
+
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _compile_semantic_authority(
+    source_ids: list[str],
+    records: dict[str, str],
+    truth_basis: dict[str, Any],
+) -> dict[str, Any]:
+    """Index each accepted meaning at its single canonical packet location."""
+
+    index: dict[str, dict[str, str]] = {}
+    interface_semantics: dict[str, str] = {}
+    validation_semantics: dict[str, str] = {}
+    for source_id in source_ids:
+        if source_id.startswith("CON-"):
+            field = "constraints"
+        elif source_id.startswith(("API-", "IFACE-")):
+            field = "interface_semantics"
+            interface_semantics[source_id] = f"{source_id}: {records[source_id]}"
+        elif source_id.startswith("TEST-"):
+            field = "validation_semantics"
+            validation_semantics[source_id] = f"{source_id}: {records[source_id]}"
+        else:
+            field = "requirements"
+        index[source_id] = {
+            "canonical_field": field,
+            "digest": semantic_digest(records[source_id]),
+        }
+    for authority in _as_list(truth_basis.get("decision_authority")):
+        alias = str(authority).split(":", 1)[0].strip()
+        if AUTH_ALIAS_RE.fullmatch(alias):
+            index[alias] = {
+                "canonical_field": "truth_basis.decision_authority",
+                "digest": semantic_digest(authority),
+            }
+    return {
+        "records": index,
+        "interface_semantics": interface_semantics,
+        "validation_semantics": validation_semantics,
+    }
+
+
+def _compile_capability_projection(
+    executor_profile: dict[str, Any], rules: list[dict[str, Any]], skill_names: list[Any]
+) -> dict[str, Any]:
+    return {
+        "executor": {
+            "capability": executor_profile["capability"],
+            "reason": "task executor_profile allocation",
+        },
+        "rules": [
+            {"id": str(item["id"]), "reason": str(item["requirement"])}
+            for item in rules
+        ],
+        "skills": [
+            {"id": str(name), "reason": "task methodology allocation"}
+            for name in skill_names
+        ],
+        "traversal": "runtime_only",
+    }
+
+
+def _encoded_bytes(value: Any) -> int:
+    return len(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+
+
+def compiled_context_metrics(
+    task_brief: dict[str, Any],
+    *,
+    review_package: str | None = None,
+    evidence_projection: list[dict[str, Any]] | None = None,
+    omitted_by_reference_bytes: int = 0,
+    expansion_reason: str | None = None,
+) -> dict[str, Any]:
+    """Measure a compiled packet without imposing a global size policy."""
+
+    if expansion_reason not in CONTEXT_EXPANSION_REASONS:
+        raise SystemExit("compiled context expansion_reason is invalid")
+    semantic_projection = {
+        "semantic_authority": task_brief.get("semantic_authority", {}),
+        "requirements": task_brief.get("requirements", []),
+        "constraints": task_brief.get("constraints", []),
+        "decision_authority": (task_brief.get("truth_basis") or {}).get("decision_authority", []),
+    }
+    return {
+        "task_brief_bytes": len(("\n".join(_dump_yaml({"task_brief": task_brief})) + "\n").encode("utf-8")),
+        "semantic_authority_bytes": _encoded_bytes(semantic_projection),
+        "allocated_rule_bytes": _encoded_bytes(task_brief.get("allocated_rules", [])),
+        "allocated_skill_bytes": _encoded_bytes((task_brief.get("methodology") or {}).get("skills", [])),
+        "capability_projection_bytes": _encoded_bytes(task_brief.get("capability_projection", {})),
+        "evidence_projection_bytes": _encoded_bytes(
+            evidence_projection if evidence_projection is not None else task_brief.get("evidence_capability", {})
+        ),
+        "review_package_bytes": len(review_package.encode("utf-8")) if review_package is not None else 0,
+        "omitted_by_reference_bytes": max(0, int(omitted_by_reference_bytes)),
+        "expansion_reason": expansion_reason,
+    }
+
+
+def project_validation_evidence(
+    items: list[dict[str, Any]],
+    *,
+    evidence_capability: dict[str, Any],
+    observed: list[dict[str, Any]] | None = None,
+    expansion_reason: str | None = None,
+) -> list[dict[str, Any]]:
+    """Project successes as compact receipts and expand only explicit failures."""
+
+    if expansion_reason not in CONTEXT_EXPANSION_REASONS:
+        raise SystemExit("evidence projection expansion_reason is invalid")
+    observed_by_id = {
+        str(item.get("id")): item for item in (observed or []) if isinstance(item, dict) and item.get("id")
+    }
+    invariant_by_evidence: dict[str, dict[str, Any]] = {}
+    for invariant in _as_list(evidence_capability.get("invariants")):
+        if not isinstance(invariant, dict):
+            continue
+        for evidence_id in _as_list(invariant.get("evidence_ids")):
+            invariant_by_evidence.setdefault(str(evidence_id), invariant)
+    projected: list[dict[str, Any]] = []
+    for position, item in enumerate(items, start=1):
+        evidence_id = str(item.get("id") or f"validation-{position:03d}")
+        result = str(item.get("result") or "ambiguous")
+        if result not in {"passed", "skipped"}:
+            reason = expansion_reason or ("failed_validation" if result == "failed" else "ambiguity")
+            if reason not in CONTEXT_EXPANSION_REASONS - {None}:
+                raise SystemExit("evidence projection expansion_reason is invalid")
+            projected.append({
+                "id": evidence_id,
+                "digest": semantic_digest({"command": item.get("command"), "result": result}),
+                "result": result,
+                "expansion_reason": reason,
+                "details": dict(item),
+            })
+            continue
+        invariant = invariant_by_evidence.get(evidence_id, {})
+        observation = observed_by_id.get(evidence_id, {})
+        projected.append({
+            "id": evidence_id,
+            "digest": semantic_digest({"command": item.get("command"), "result": result}),
+            "result": result,
+            "boundary": invariant.get("boundary", "component"),
+            "freshness": invariant.get("freshness", "current_task_batch"),
+            "invalidation_receipt": observation.get("observation_id") or semantic_digest(
+                {"evidence_id": evidence_id, "result": result}
+            ),
+            "expansion_reason": None,
+        })
+    return projected
 
 
 def _compile_evidence_capability(
@@ -1279,12 +1489,1323 @@ def _path_is_forbidden(relative: str, forbidden: list[str]) -> bool:
 def _assert_task_caused_delta_in_write_scope(
     caused: list[str],
     task_files: dict[str, Any],
+    *,
+    accepted_dependency_paths: set[str] | None = None,
 ) -> None:
     write_paths = [str(path) for path in _as_list(task_files.get("write"))]
     forbidden = [str(path) for path in _as_list(task_files.get("forbidden"))]
     for relative in caused:
+        if relative in (accepted_dependency_paths or set()):
+            continue
         if _path_is_forbidden(relative, forbidden) or not _write_scope_match(relative, write_paths):
             raise SystemExit(f"Unauthorized task-caused delta outside write scope: {relative}")
+
+
+def _exact_handoff_reference(
+    handoff_root: Path,
+    reference: object,
+) -> tuple[Path, dict[str, Any]]:
+    if not isinstance(reference, Mapping) or set(reference) != {"handoff_id", "handoff_sha256"}:
+        raise SystemExit("accepted dependency handoff reference must use the closed identity shape")
+    handoff_id = str(reference["handoff_id"])
+    matches: list[tuple[Path, dict[str, Any]]] = []
+    for path in sorted(handoff_root.glob("executor/*/*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            document, _ = _read_structured(path)
+        except (OSError, SystemExit, ValueError):
+            continue
+        if document.get("id") == handoff_id:
+            matches.append((path, document))
+    if len(matches) != 1:
+        raise SystemExit(f"accepted dependency handoff identity is missing or ambiguous: {handoff_id}")
+    path, handoff = matches[0]
+    if hashlib.sha256(path.read_bytes()).hexdigest() != str(reference["handoff_sha256"]):
+        raise SystemExit(f"accepted dependency handoff identity is stale: {handoff_id}")
+    return path, handoff
+
+
+def _review_without_history(review: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in review.items() if key != "previous_review"}
+
+
+RECOVERY_RECEIPT_SCHEMA = "accepted-result-recovery-receipt-v1"
+RECOVERY_RECEIPT_KEYS = {
+    "receipt_id",
+    "schema",
+    "plan_id",
+    "task_id",
+    "binding_id",
+    "binding_sha256",
+    "baseline_head",
+    "baseline_tree",
+    "expected_base_head",
+    "expected_base_tree",
+    "expected_base_query",
+    "proposed_recovered_result",
+    "observed_at",
+    "freshness",
+}
+LEGACY_RECOVERY_RECEIPT_KEYS = {
+    "receipt_id",
+    "schema",
+    "plan_id",
+    "task_id",
+    "binding_id",
+    "binding_sha256",
+    "baseline_head",
+    "baseline_tree",
+    "expected_base_head",
+    "expected_base_tree",
+    "queried_historical_revision",
+    "handoff_stores",
+    "handoff_index",
+    "absence_result",
+    "observed_at",
+    "freshness",
+}
+
+
+def _recovery_receipt_path(
+    control_root: Path, plan_id: str, task_id: str, receipt_id: str
+) -> Path:
+    if not all(SAFE_ID_RE.fullmatch(value) for value in (plan_id, task_id, receipt_id)):
+        raise SystemExit("accepted-result recovery receipt identity is unsafe")
+    return (
+        control_root.expanduser().resolve()
+        / ".work-bundle/runtime/execution"
+        / plan_id
+        / task_id
+        / "accepted-result-recovery"
+        / f"{receipt_id}.json"
+    )
+
+
+def _is_recoverable_accepted_base(
+    handoff: Mapping[str, Any],
+    plan_id: str,
+    task_id: str,
+    expected_base_head: str,
+    expected_base_tree: str,
+) -> bool:
+    related = handoff.get("related") if isinstance(handoff.get("related"), Mapping) else {}
+    result = handoff.get("result") if isinstance(handoff.get("result"), Mapping) else {}
+    review = (
+        handoff.get("acceptance_review")
+        if isinstance(handoff.get("acceptance_review"), Mapping)
+        else {}
+    )
+    reset = review.get("review_reset") if isinstance(review.get("review_reset"), Mapping) else {}
+    if reset.get("reason_class") == "authority":
+        # This is the newly reconstructed whole-task result, never the missing
+        # historical accepted base whose absence authorizes reconstruction.
+        return False
+    if (
+        handoff.get("type") != "executor-result"
+        or related.get("plan") != plan_id
+        or related.get("task") != task_id
+        or result.get("state") != "completed"
+        or review.get("verdict") != "accept"
+    ):
+        return False
+    identity = review.get("target_identity") if isinstance(review.get("target_identity"), Mapping) else {}
+    if (
+        identity.get("artifact_id") != task_id
+        or identity.get("revision") != expected_base_head
+        or identity.get("source_tree") != expected_base_tree
+        or review.get("reviewed_head") != expected_base_head
+    ):
+        return False
+    try:
+        from review_runtime import ReviewContractError, validate_task_acceptance_review
+
+        validate_task_acceptance_review(review)
+    except (ReviewContractError, KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _accepted_base_query_snapshot(
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    expected_base_head: str,
+    expected_base_tree: str,
+    proposed_handoff_id: str,
+    proposed_review_id: str,
+    final_head: str,
+    final_tree: str,
+) -> dict[str, Any]:
+    handoff_root = control_root / ".work-bundle/orchestration/handoff"
+    recoverable_ids: list[str] = []
+    proposal_records: list[dict[str, Any]] = []
+    for status in ("active", "archived"):
+        for path in sorted((handoff_root / "executor" / status).glob("*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                handoff, _ = _read_structured(path)
+            except (OSError, SystemExit, ValueError):
+                continue
+            handoff_id = str(handoff.get("id") or "")
+            if _is_recoverable_accepted_base(
+                handoff,
+                plan_id,
+                task_id,
+                expected_base_head,
+                expected_base_tree,
+            ):
+                recoverable_ids.append(handoff_id)
+            related = handoff.get("related") if isinstance(handoff.get("related"), Mapping) else {}
+            review = (
+                handoff.get("acceptance_review")
+                if isinstance(handoff.get("acceptance_review"), Mapping)
+                else {}
+            )
+            identity = (
+                review.get("target_identity")
+                if isinstance(review.get("target_identity"), Mapping)
+                else {}
+            )
+            if handoff_id != proposed_handoff_id and review.get("review_id") != proposed_review_id:
+                continue
+            result = handoff.get("result") if isinstance(handoff.get("result"), Mapping) else {}
+            proposal_records.append(
+                {
+                    "handoff_id": handoff_id,
+                    "review_id": str(review.get("review_id") or ""),
+                    "path": path.relative_to(control_root).as_posix(),
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "exact": (
+                        handoff_id == proposed_handoff_id
+                        and handoff.get("type") == "executor-result"
+                        and related.get("plan") == plan_id
+                        and related.get("task") == task_id
+                        and result.get("state") == "completed"
+                        and review.get("review_id") == proposed_review_id
+                        and review.get("reviewed_head") == final_head
+                        and identity.get("artifact_id") == task_id
+                        and identity.get("revision") == final_head
+                        and identity.get("source_tree") == final_tree
+                    ),
+                }
+            )
+
+    index_path = handoff_root / "index.jsonl"
+    if not index_path.is_file() or index_path.is_symlink():
+        raise SystemExit("accepted-result recovery requires the native handoff index")
+    proposal_index_entries: list[dict[str, Any]] = []
+    for number, line in enumerate(index_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise SystemExit(f"accepted-result recovery handoff index is invalid at line {number}") from error
+        if not isinstance(entry, dict):
+            raise SystemExit(f"accepted-result recovery handoff index is invalid at line {number}")
+        if entry.get("id") == proposed_handoff_id:
+            proposal_index_entries.append(entry)
+
+    exact_records = [record for record in proposal_records if record["exact"]]
+    proposal_state = "absent"
+    if proposal_records or proposal_index_entries:
+        if len(proposal_records) != 1 or len(proposal_index_entries) != 1:
+            proposal_state = "ambiguous"
+        elif not exact_records:
+            proposal_state = "mismatch"
+        else:
+            proposal_path = str(exact_records[0]["path"])
+            index_entry = proposal_index_entries[0]
+            if (
+                index_entry.get("related_plan") != plan_id
+                or index_entry.get("related_task") != task_id
+                or index_entry.get("path") != proposal_path
+            ):
+                proposal_state = "mismatch"
+            else:
+                proposal_state = "published"
+
+    query_identity = {
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "expected_base_head": expected_base_head,
+        "expected_base_tree": expected_base_tree,
+    }
+    return {
+        "expected_base_query": {
+            "sha256": semantic_digest(query_identity),
+            "result": "present" if recoverable_ids else "absent",
+        },
+        "recoverable_base_handoff_ids": sorted(recoverable_ids),
+        "proposal_state": proposal_state,
+    }
+
+
+def _legacy_recovery_global_snapshot(
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    expected_base_head: str,
+    expected_base_tree: str,
+) -> dict[str, Any]:
+    """Reconstruct the obsolete revision-11 global-digest snapshot."""
+
+    handoff_root = control_root / ".work-bundle/orchestration/handoff"
+    stores: dict[str, dict[str, Any]] = {}
+    for status in ("active", "archived"):
+        records: list[dict[str, str]] = []
+        for path in sorted((handoff_root / "executor" / status).glob("*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                handoff, _ = _read_structured(path)
+            except (OSError, SystemExit, ValueError):
+                continue
+            related = handoff.get("related") if isinstance(handoff.get("related"), Mapping) else {}
+            if related.get("plan") != plan_id or related.get("task") != task_id:
+                continue
+            records.append(
+                {
+                    "handoff_id": str(handoff.get("id") or ""),
+                    "path": path.relative_to(control_root).as_posix(),
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            )
+        stores[status] = {
+            "store_id": f"executor/{status}",
+            "records": records,
+            "sha256": semantic_digest(records),
+        }
+
+    index_path = handoff_root / "index.jsonl"
+    if not index_path.is_file() or index_path.is_symlink():
+        raise SystemExit("accepted-result recovery requires the native handoff index")
+    index_entries: list[dict[str, Any]] = []
+    for number, line in enumerate(index_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise SystemExit(
+                f"accepted-result recovery handoff index is invalid at line {number}"
+            ) from error
+        if not isinstance(entry, dict):
+            raise SystemExit(f"accepted-result recovery handoff index is invalid at line {number}")
+        if entry.get("related_plan") == plan_id and entry.get("related_task") == task_id:
+            index_entries.append(entry)
+    index_identity = {
+        "index_id": "handoff/index.jsonl",
+        "path": index_path.relative_to(control_root).as_posix(),
+        "sha256": hashlib.sha256(index_path.read_bytes()).hexdigest(),
+        "projected_entries_sha256": semantic_digest(index_entries),
+    }
+    historical_revision = semantic_digest(
+        {
+            "expected_base_head": expected_base_head,
+            "expected_base_tree": expected_base_tree,
+            "handoff_stores": stores,
+            "handoff_index": index_identity,
+        }
+    )
+    return {
+        "queried_historical_revision": historical_revision,
+        "handoff_stores": stores,
+        "handoff_index": index_identity,
+    }
+
+
+def _valid_recovered_result(
+    handoff: Mapping[str, Any], plan_id: str, task_id: str
+) -> bool:
+    related = handoff.get("related") if isinstance(handoff.get("related"), Mapping) else {}
+    result = handoff.get("result") if isinstance(handoff.get("result"), Mapping) else {}
+    review = (
+        handoff.get("acceptance_review")
+        if isinstance(handoff.get("acceptance_review"), Mapping)
+        else {}
+    )
+    reset = review.get("review_reset") if isinstance(review.get("review_reset"), Mapping) else {}
+    evidence = review.get("evidence") if isinstance(review.get("evidence"), Mapping) else {}
+    reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), Mapping) else {}
+    identity = review.get("target_identity") if isinstance(review.get("target_identity"), Mapping) else {}
+    if (
+        handoff.get("type") != "executor-result"
+        or related.get("plan") != plan_id
+        or related.get("task") != task_id
+        or result.get("state") != "completed"
+        or review.get("verdict") != "accept"
+        or review.get("review_mode") != "initial"
+        or review.get("review_target_kind") != "task"
+        or review.get("reviewer_independent") is not True
+        or review.get("repair_frontier") is not None
+        or reset.get("reason_class") != "authority"
+        or evidence.get("unavailable_evidence") != []
+        or reviewer.get("capability") != "judgment"
+        or identity.get("artifact_id") != task_id
+        or review.get("reviewed_head") != identity.get("revision")
+    ):
+        return False
+    try:
+        from review_runtime import ReviewContractError, validate_task_acceptance_review
+
+        validate_task_acceptance_review(review)
+        owner = normalize_subagent_provenance(
+            handoff.get("delegation_evidence")
+            if isinstance(handoff.get("delegation_evidence"), Mapping)
+            else None
+        )
+    except (ReviewContractError, OwnershipBlocker, KeyError, TypeError, ValueError):
+        return False
+    return reviewer.get("agent_id") != owner.get("agent_id")
+
+
+def _write_query_scoped_recovery_receipt(
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    binding: Mapping[str, Any],
+    binding_path: Path,
+    expected_base_head: str,
+    expected_base_tree: str,
+    proposed_handoff_id: str,
+    proposed_review_id: str,
+    final_head: str,
+    final_tree: str,
+    expected_base_query: Mapping[str, Any],
+) -> dict[str, str]:
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    receipt_id = (
+        f"accepted-result-recovery-{task_id}-"
+        f"{str(expected_base_query['sha256'])[:12]}-"
+        f"{hashlib.sha256(observed_at.encode()).hexdigest()[:12]}"
+    )
+    receipt = {
+        "receipt_id": receipt_id,
+        "schema": RECOVERY_RECEIPT_SCHEMA,
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "binding_id": str((binding.get("ownership") or {}).get("binding_id") or ""),
+        "binding_sha256": hashlib.sha256(binding_path.read_bytes()).hexdigest(),
+        "baseline_head": str(baseline.get("head") or ""),
+        "baseline_tree": str(baseline.get("tree") or ""),
+        "expected_base_head": expected_base_head,
+        "expected_base_tree": expected_base_tree,
+        "expected_base_query": dict(expected_base_query),
+        "proposed_recovered_result": {
+            "handoff_id": proposed_handoff_id,
+            "review_id": proposed_review_id,
+            "final_head": final_head,
+            "final_tree": final_tree,
+        },
+        "observed_at": observed_at,
+        "freshness": "current_validation_attempt",
+    }
+    path = _recovery_receipt_path(control_root, plan_id, task_id, receipt_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "receipt_id": receipt_id,
+        "receipt_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def create_accepted_base_absence_receipt(
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    expected_base_head: str,
+    expected_base_tree: str,
+    proposed_handoff_id: str,
+    proposed_review_id: str,
+    final_head: str,
+    final_tree: str,
+) -> dict[str, str]:
+    """Persist helper-observed proof that no native accepted-result base survives."""
+
+    control_root = control_root.expanduser().resolve()
+    binding_path = _binding_path(control_root, plan_id, task_id)
+    binding = load_task_execution_binding(control_root, plan_id, task_id)
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    baseline_head = str(baseline.get("head") or "")
+    baseline_tree = str(baseline.get("tree") or "")
+    if not baseline_head or not baseline_tree:
+        raise SystemExit("accepted-result recovery requires the original one-time task baseline")
+    if not SAFE_ID_RE.fullmatch(proposed_handoff_id) or not SAFE_ID_RE.fullmatch(proposed_review_id):
+        raise SystemExit("accepted-result recovery proposed identity is unsafe")
+    execution_root = Path(str(binding.get("execution_path") or "")).resolve()
+    resolved_expected_head = _resolve_commit(execution_root, expected_base_head)
+    resolved_expected_tree = _git(
+        execution_root, "rev-parse", f"{resolved_expected_head}^{{tree}}"
+    ).strip()
+    if resolved_expected_tree != expected_base_tree:
+        raise SystemExit("accepted-result recovery expected base Git identity is mismatched")
+    resolved_final_head = _resolve_commit(execution_root, final_head)
+    resolved_final_tree = _git(execution_root, "rev-parse", f"{resolved_final_head}^{{tree}}").strip()
+    if resolved_final_tree != final_tree:
+        raise SystemExit("accepted-result recovery proposed final Git identity is mismatched")
+    snapshot = _accepted_base_query_snapshot(
+        control_root,
+        plan_id,
+        task_id,
+        resolved_expected_head,
+        resolved_expected_tree,
+        proposed_handoff_id,
+        proposed_review_id,
+        resolved_final_head,
+        resolved_final_tree,
+    )
+    if snapshot["recoverable_base_handoff_ids"]:
+        raise SystemExit("accepted-result recovery rejected: recoverable accepted base handoff exists")
+    if snapshot["proposal_state"] != "absent":
+        raise SystemExit("accepted-result recovery rejected: proposed result already exists or is ambiguous")
+    return _write_query_scoped_recovery_receipt(
+        control_root,
+        plan_id,
+        task_id,
+        binding,
+        binding_path,
+        resolved_expected_head,
+        resolved_expected_tree,
+        proposed_handoff_id,
+        proposed_review_id,
+        resolved_final_head,
+        resolved_final_tree,
+        snapshot["expected_base_query"],
+    )
+
+
+def adopt_existing_recovered_result(
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    expected_base_head: str,
+    expected_base_tree: str,
+    handoff_id: str,
+    handoff_sha256: str,
+    review_id: str,
+    final_head: str,
+    final_tree: str,
+    prior_receipt_reference: object,
+) -> dict[str, str]:
+    """Adopt one already-published result whose rev11 receipt only globally staled."""
+
+    control_root = control_root.expanduser().resolve()
+    if not isinstance(prior_receipt_reference, Mapping) or set(prior_receipt_reference) != {
+        "receipt_id", "receipt_sha256"
+    }:
+        raise SystemExit("post-publication adoption prior receipt reference is invalid")
+    if not SAFE_ID_RE.fullmatch(handoff_id) or not SAFE_ID_RE.fullmatch(review_id):
+        raise SystemExit("post-publication adoption proposed identity is unsafe")
+
+    binding_path = _binding_path(control_root, plan_id, task_id)
+    binding = load_task_execution_binding(control_root, plan_id, task_id)
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    binding_id = str((binding.get("ownership") or {}).get("binding_id") or "")
+    binding_sha256 = hashlib.sha256(binding_path.read_bytes()).hexdigest()
+    execution_root = Path(str(binding.get("execution_path") or "")).resolve()
+    resolved_expected_head = _resolve_commit(execution_root, expected_base_head)
+    resolved_expected_tree = _git(
+        execution_root, "rev-parse", f"{resolved_expected_head}^{{tree}}"
+    ).strip()
+    if resolved_expected_tree != expected_base_tree:
+        raise SystemExit("post-publication adoption expected base Git identity is mismatched")
+    resolved_final_head = _resolve_commit(execution_root, final_head)
+    resolved_final_tree = _git(
+        execution_root, "rev-parse", f"{resolved_final_head}^{{tree}}"
+    ).strip()
+    if resolved_final_tree != final_tree:
+        raise SystemExit("post-publication adoption final Git identity is mismatched")
+
+    prior_receipt_id = str(prior_receipt_reference["receipt_id"])
+    prior_path = _recovery_receipt_path(control_root, plan_id, task_id, prior_receipt_id)
+    if not prior_path.is_file() or prior_path.is_symlink():
+        raise SystemExit("post-publication adoption prior receipt is missing")
+    if hashlib.sha256(prior_path.read_bytes()).hexdigest() != str(
+        prior_receipt_reference["receipt_sha256"]
+    ):
+        raise SystemExit("post-publication adoption prior receipt digest is stale")
+    try:
+        prior = json.loads(prior_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit("post-publication adoption prior receipt is invalid") from error
+    if not isinstance(prior, dict) or set(prior) != LEGACY_RECOVERY_RECEIPT_KEYS:
+        raise SystemExit("post-publication adoption requires the closed revision-11 receipt schema")
+    if (
+        prior.get("receipt_id") != prior_receipt_id
+        or prior.get("schema") != RECOVERY_RECEIPT_SCHEMA
+        or prior.get("plan_id") != plan_id
+        or prior.get("task_id") != task_id
+        or prior.get("binding_id") != binding_id
+        or prior.get("binding_sha256") != binding_sha256
+        or prior.get("baseline_head") != baseline.get("head")
+        or prior.get("baseline_tree") != baseline.get("tree")
+        or prior.get("expected_base_head") != resolved_expected_head
+        or prior.get("expected_base_tree") != resolved_expected_tree
+        or prior.get("absence_result") != "accepted_base_absent"
+        or prior.get("freshness") != "current_validation_attempt"
+        or not isinstance(prior.get("observed_at"), str)
+    ):
+        raise SystemExit("post-publication adoption prior receipt has a non-global defect")
+
+    stores = prior.get("handoff_stores")
+    index_identity = prior.get("handoff_index")
+    if not isinstance(stores, Mapping) or set(stores) != {"active", "archived"}:
+        raise SystemExit("post-publication adoption prior receipt stores are invalid")
+    recorded_ids: set[str] = set()
+    for status in ("active", "archived"):
+        store = stores[status]
+        if not isinstance(store, Mapping) or set(store) != {"store_id", "records", "sha256"}:
+            raise SystemExit("post-publication adoption prior receipt store is invalid")
+        records = store.get("records")
+        if (
+            store.get("store_id") != f"executor/{status}"
+            or not isinstance(records, list)
+            or store.get("sha256") != semantic_digest(records)
+        ):
+            raise SystemExit("post-publication adoption prior receipt store digest is invalid")
+        for record in records:
+            if not isinstance(record, Mapping) or set(record) != {"handoff_id", "path", "sha256"}:
+                raise SystemExit("post-publication adoption prior receipt record is invalid")
+            recorded_ids.add(str(record.get("handoff_id") or ""))
+            record_path = (control_root / str(record.get("path") or "")).resolve()
+            try:
+                record_path.relative_to(control_root)
+            except ValueError as error:
+                raise SystemExit("post-publication adoption prior receipt record path is unsafe") from error
+            if (
+                not record_path.is_file()
+                or record_path.is_symlink()
+                or hashlib.sha256(record_path.read_bytes()).hexdigest() != record.get("sha256")
+            ):
+                raise SystemExit("post-publication adoption prior receipt record is stale")
+            try:
+                recorded_handoff, _ = _read_structured(record_path)
+            except (OSError, SystemExit, ValueError) as error:
+                raise SystemExit("post-publication adoption prior receipt record is invalid") from error
+            if _is_recoverable_accepted_base(
+                recorded_handoff,
+                plan_id,
+                task_id,
+                resolved_expected_head,
+                resolved_expected_tree,
+            ):
+                raise SystemExit("post-publication adoption prior expected-base query was not absent")
+    if handoff_id in recorded_ids:
+        raise SystemExit("post-publication adoption candidate was already present in the prior receipt")
+    if not isinstance(index_identity, Mapping) or set(index_identity) != {
+        "index_id", "path", "sha256", "projected_entries_sha256"
+    }:
+        raise SystemExit("post-publication adoption prior receipt index is invalid")
+    if (
+        index_identity.get("index_id") != "handoff/index.jsonl"
+        or index_identity.get("path") != ".work-bundle/orchestration/handoff/index.jsonl"
+        or any(
+            not re.fullmatch(r"[0-9a-f]{64}", str(index_identity.get(field) or ""))
+            for field in ("sha256", "projected_entries_sha256")
+        )
+    ):
+        raise SystemExit("post-publication adoption prior receipt index digest is invalid")
+    prior_revision = semantic_digest(
+        {
+            "expected_base_head": resolved_expected_head,
+            "expected_base_tree": resolved_expected_tree,
+            "handoff_stores": stores,
+            "handoff_index": index_identity,
+        }
+    )
+    if prior.get("queried_historical_revision") != prior_revision:
+        raise SystemExit("post-publication adoption prior receipt historical revision is invalid")
+    expected_receipt_prefix = f"accepted-result-recovery-{task_id}-{prior_revision[:12]}-"
+    observed_suffix = hashlib.sha256(str(prior["observed_at"]).encode()).hexdigest()[:12]
+    if prior_receipt_id != f"{expected_receipt_prefix}{observed_suffix}":
+        raise SystemExit("post-publication adoption prior receipt identity is invalid")
+
+    snapshot = _accepted_base_query_snapshot(
+        control_root,
+        plan_id,
+        task_id,
+        resolved_expected_head,
+        resolved_expected_tree,
+        handoff_id,
+        review_id,
+        resolved_final_head,
+        resolved_final_tree,
+    )
+    if snapshot["recoverable_base_handoff_ids"]:
+        raise SystemExit("post-publication adoption rejected: recoverable accepted base exists")
+    if snapshot["proposal_state"] != "published":
+        raise SystemExit("post-publication adoption candidate is missing, mismatched, or ambiguous")
+
+    handoff_root = control_root / ".work-bundle/orchestration/handoff"
+    _, candidate = _exact_handoff_reference(
+        handoff_root, {"handoff_id": handoff_id, "handoff_sha256": handoff_sha256}
+    )
+    if not _valid_recovered_result(candidate, plan_id, task_id):
+        raise SystemExit("post-publication adoption candidate is not a valid recovered result")
+    for path in sorted(handoff_root.glob("executor/*/*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        if hashlib.sha256(path.read_bytes()).hexdigest() == handoff_sha256:
+            continue
+        try:
+            other, _ = _read_structured(path)
+        except (OSError, SystemExit, ValueError):
+            continue
+        if _valid_recovered_result(other, plan_id, task_id):
+            raise SystemExit("post-publication adoption rejected: valid competing recovered result exists")
+
+    current_legacy = _legacy_recovery_global_snapshot(
+        control_root,
+        plan_id,
+        task_id,
+        resolved_expected_head,
+        resolved_expected_tree,
+    )
+    if all(prior.get(field) == current_legacy[field] for field in current_legacy):
+        raise SystemExit("post-publication adoption prior receipt is not globally stale")
+    return _write_query_scoped_recovery_receipt(
+        control_root,
+        plan_id,
+        task_id,
+        binding,
+        binding_path,
+        resolved_expected_head,
+        resolved_expected_tree,
+        handoff_id,
+        review_id,
+        resolved_final_head,
+        resolved_final_tree,
+        snapshot["expected_base_query"],
+    )
+
+
+def validate_accepted_base_absence_receipt(
+    control_root: Path,
+    plan_id: str,
+    task_id: str,
+    reference: object,
+) -> dict[str, Any]:
+    if not isinstance(reference, Mapping) or set(reference) != {"receipt_id", "receipt_sha256"}:
+        raise SystemExit("accepted-result recovery receipt reference must use the closed identity shape")
+    receipt_id = str(reference["receipt_id"])
+    path = _recovery_receipt_path(control_root, plan_id, task_id, receipt_id)
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit("accepted-result recovery receipt is missing")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != str(reference["receipt_sha256"]):
+        raise SystemExit("accepted-result recovery receipt is stale")
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit("accepted-result recovery receipt is invalid") from error
+    if not isinstance(receipt, dict) or set(receipt) != RECOVERY_RECEIPT_KEYS:
+        raise SystemExit("accepted-result recovery receipt must use the closed schema")
+    if (
+        receipt.get("receipt_id") != receipt_id
+        or receipt.get("schema") != RECOVERY_RECEIPT_SCHEMA
+        or receipt.get("plan_id") != plan_id
+        or receipt.get("task_id") != task_id
+        or receipt.get("freshness") != "current_validation_attempt"
+    ):
+        raise SystemExit("accepted-result recovery receipt identity is mismatched")
+    binding_path = _binding_path(control_root, plan_id, task_id)
+    binding = load_task_execution_binding(control_root, plan_id, task_id)
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    if (
+        receipt.get("binding_id") != (binding.get("ownership") or {}).get("binding_id")
+        or receipt.get("binding_sha256") != hashlib.sha256(binding_path.read_bytes()).hexdigest()
+        or receipt.get("baseline_head") != baseline.get("head")
+        or receipt.get("baseline_tree") != baseline.get("tree")
+    ):
+        raise SystemExit("accepted-result recovery receipt binding or baseline is stale")
+    execution_root = Path(str(binding.get("execution_path") or "")).resolve()
+    expected_head = _resolve_commit(execution_root, str(receipt.get("expected_base_head") or ""))
+    expected_tree = _git(execution_root, "rev-parse", f"{expected_head}^{{tree}}").strip()
+    if receipt.get("expected_base_tree") != expected_tree:
+        raise SystemExit("accepted-result recovery receipt expected base identity is stale")
+    proposal = receipt.get("proposed_recovered_result")
+    if not isinstance(proposal, Mapping) or set(proposal) != {
+        "handoff_id", "review_id", "final_head", "final_tree"
+    }:
+        raise SystemExit("accepted-result recovery receipt proposed result is invalid")
+    final_head = _resolve_commit(execution_root, str(proposal.get("final_head") or ""))
+    final_tree = _git(execution_root, "rev-parse", f"{final_head}^{{tree}}").strip()
+    if proposal.get("final_tree") != final_tree:
+        raise SystemExit("accepted-result recovery receipt proposed final identity is stale")
+    snapshot = _accepted_base_query_snapshot(
+        control_root,
+        plan_id,
+        task_id,
+        expected_head,
+        expected_tree,
+        str(proposal.get("handoff_id") or ""),
+        str(proposal.get("review_id") or ""),
+        final_head,
+        final_tree,
+    )
+    if snapshot["recoverable_base_handoff_ids"]:
+        raise SystemExit("accepted-result recovery rejected: recoverable accepted base handoff exists")
+    if receipt.get("expected_base_query") != snapshot["expected_base_query"]:
+        raise SystemExit("accepted-result recovery receipt expected-base query is stale")
+    if snapshot["proposal_state"] in {"mismatch", "ambiguous"}:
+        raise SystemExit("accepted-result recovery proposed result is mismatched or ambiguous")
+    return {**receipt, "proposal_state": snapshot["proposal_state"]}
+
+
+def _recovered_accepted_dependency_paths(
+    task: dict[str, Any],
+    execution_root: Path,
+    descriptors: list[Mapping[str, object]],
+) -> set[str]:
+    required_fields = {
+        "task_id",
+        "execution_baseline_recovery",
+        "recovered_result",
+        "accepted_result_delta",
+        "integrated_base",
+        "integrated_head",
+    }
+    recovery_fields = {
+        "binding_id",
+        "binding_sha256",
+        "baseline_head",
+        "baseline_tree",
+        "recovery_receipt",
+    }
+    delta_fields = {
+        "expected_base_head",
+        "expected_base_tree",
+        "final_head",
+        "final_tree",
+    }
+    dependencies = {str(value) for value in _as_list(task.get("depends_on"))}
+    plan_id = str(task.get("plan_id") or "")
+    workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
+    control_root = Path(str(workspace.get("root") or "")).resolve()
+    handoff_root = control_root / ".work-bundle/orchestration/handoff"
+    current_head = _resolve_commit(execution_root, "HEAD")
+    admitted: set[str] = set()
+    seen_dependencies: set[str] = set()
+    for descriptor in descriptors:
+        if set(descriptor) != required_fields:
+            raise SystemExit(
+                "accepted_dependency_deltas recovery entries must use the closed runtime identity shape"
+            )
+        dependency_id = str(descriptor["task_id"])
+        if dependency_id not in dependencies:
+            raise SystemExit(f"accepted_dependency_deltas names undeclared dependency: {dependency_id}")
+        if dependency_id in seen_dependencies:
+            raise SystemExit(f"accepted_dependency_deltas duplicates dependency: {dependency_id}")
+        seen_dependencies.add(dependency_id)
+        recovery = descriptor["execution_baseline_recovery"]
+        if not isinstance(recovery, Mapping) or set(recovery) != recovery_fields:
+            raise SystemExit("execution_baseline_recovery must use the closed runtime identity shape")
+
+        binding_path = _binding_path(control_root, plan_id, dependency_id)
+        binding = load_task_execution_binding(control_root, plan_id, dependency_id)
+        baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+        binding_id = str((binding.get("ownership") or {}).get("binding_id") or "")
+        binding_digest = hashlib.sha256(binding_path.read_bytes()).hexdigest()
+        if (
+            recovery.get("binding_id") != binding_id
+            or recovery.get("binding_sha256") != binding_digest
+            or recovery.get("baseline_head") != baseline.get("head")
+            or recovery.get("baseline_tree") != baseline.get("tree")
+        ):
+            raise SystemExit("execution_baseline_recovery binding or original baseline is mismatched")
+        receipt = validate_accepted_base_absence_receipt(
+            control_root,
+            plan_id,
+            dependency_id,
+            recovery.get("recovery_receipt"),
+        )
+        if receipt.get("proposal_state") != "published":
+            raise SystemExit("accepted-result recovery proposed result is not published and indexed")
+
+        delta = descriptor["accepted_result_delta"]
+        if not isinstance(delta, Mapping) or set(delta) != delta_fields:
+            raise SystemExit("accepted_result_delta must use the closed runtime identity shape")
+        proposal = receipt["proposed_recovered_result"]
+        if (
+            delta.get("expected_base_head") != receipt.get("expected_base_head")
+            or delta.get("expected_base_tree") != receipt.get("expected_base_tree")
+            or delta.get("final_head") != proposal.get("final_head")
+            or delta.get("final_tree") != proposal.get("final_tree")
+        ):
+            raise SystemExit("accepted_result_delta is mismatched with the recovery receipt")
+        recovered_reference = descriptor["recovered_result"]
+        if (
+            not isinstance(recovered_reference, Mapping)
+            or recovered_reference.get("handoff_id") != proposal.get("handoff_id")
+        ):
+            raise SystemExit("recovered result is mismatched with the recovery receipt proposal")
+
+        _, recovered = _exact_handoff_reference(handoff_root, recovered_reference)
+        related = recovered.get("related") if isinstance(recovered.get("related"), Mapping) else {}
+        result = recovered.get("result") if isinstance(recovered.get("result"), Mapping) else {}
+        review = (
+            recovered.get("acceptance_review")
+            if isinstance(recovered.get("acceptance_review"), Mapping)
+            else {}
+        )
+        reset = review.get("review_reset") if isinstance(review.get("review_reset"), Mapping) else {}
+        evidence = review.get("evidence") if isinstance(review.get("evidence"), Mapping) else {}
+        reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), Mapping) else {}
+        identity = review.get("target_identity") if isinstance(review.get("target_identity"), Mapping) else {}
+        if (
+            related.get("plan") != plan_id
+            or related.get("task") != dependency_id
+            or result.get("state") != "completed"
+            or review.get("verdict") != "accept"
+            or review.get("review_mode") != "initial"
+            or review.get("review_target_kind") != "task"
+            or review.get("reviewer_independent") is not True
+            or review.get("repair_frontier") is not None
+            or reset.get("reason_class") != "authority"
+            or evidence.get("unavailable_evidence") != []
+            or reviewer.get("capability") != "judgment"
+            or identity.get("artifact_id") != dependency_id
+            or review.get("reviewed_head") != identity.get("revision")
+            or review.get("review_id") != proposal.get("review_id")
+        ):
+            raise SystemExit(
+                "recovered result requires a fresh complete independent whole-task initial authority review with empty unavailable_evidence"
+            )
+        try:
+            from review_runtime import ReviewContractError, validate_task_acceptance_review
+
+            validate_task_acceptance_review(review)
+        except ReviewContractError as error:
+            raise SystemExit(f"recovered result task review is invalid: {error}") from error
+        try:
+            owner = normalize_subagent_provenance(
+                recovered.get("delegation_evidence")
+                if isinstance(recovered.get("delegation_evidence"), Mapping)
+                else None
+            )
+        except OwnershipBlocker as error:
+            raise SystemExit(f"recovered result ownership is invalid: {error}") from error
+        if reviewer.get("agent_id") == owner.get("agent_id"):
+            raise SystemExit("recovered result reviewer is not independent from the task owner")
+
+        source_base = _resolve_commit(execution_root, str(delta.get("expected_base_head") or ""))
+        source_head = _resolve_commit(execution_root, str(delta.get("final_head") or ""))
+        source_tree = _git(execution_root, "rev-parse", f"{source_head}^{{tree}}").strip()
+        source_base_tree = _git(execution_root, "rev-parse", f"{source_base}^{{tree}}").strip()
+        if delta.get("expected_base_tree") != source_base_tree:
+            raise SystemExit("accepted_result_delta expected base Git identity is mismatched")
+        if delta.get("final_tree") != source_tree or identity.get("source_tree") != source_tree:
+            raise SystemExit("recovered result Git identity is mismatched")
+        if subprocess.run(
+            ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", source_base, source_head],
+            capture_output=True,
+            check=False,
+        ).returncode:
+            raise SystemExit("recovered result source chain is non-ancestral")
+        integrated_base = _resolve_commit(execution_root, str(descriptor["integrated_base"]))
+        integrated_head = _resolve_commit(execution_root, str(descriptor["integrated_head"]))
+        if subprocess.run(
+            ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", integrated_head, current_head],
+            capture_output=True,
+            check=False,
+        ).returncode:
+            raise SystemExit("recovered result integration checkpoint is not current")
+        source_diff = _git(execution_root, "diff", "--binary", source_base, source_head, "--")
+        integrated_diff = _git(
+            execution_root, "diff", "--binary", integrated_base, integrated_head, "--"
+        )
+        if source_diff != integrated_diff:
+            raise SystemExit("recovered result integration checkpoint is mismatched")
+        paths = {
+            path
+            for line in _git(
+                execution_root, "diff", "--name-status", source_base, source_head, "--"
+            ).splitlines()
+            for path in _paths_from_name_status(line)
+        }
+        if paths and _git(
+            execution_root, "diff", "--name-only", integrated_head, "--", *sorted(paths)
+        ).strip():
+            raise SystemExit("recovered dependency path changed after integration")
+        admitted.update(paths)
+    return admitted
+
+
+def _cumulative_accepted_dependency_paths(
+    task: dict[str, Any],
+    execution_root: Path,
+    descriptors: list[Mapping[str, object]],
+) -> set[str]:
+    required_fields = {
+        "task_id", "accepted_result_base", "review_chain", "integrated_base", "integrated_head"
+    }
+    dependencies = {str(value) for value in _as_list(task.get("depends_on"))}
+    plan_id = str(task.get("plan_id") or "")
+    workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
+    handoff_root = (
+        Path(str(workspace.get("root") or "")).resolve()
+        / ".work-bundle/orchestration/handoff"
+    )
+    current_head = _resolve_commit(execution_root, "HEAD")
+    admitted: set[str] = set()
+    seen_dependencies: set[str] = set()
+    for descriptor in descriptors:
+        if set(descriptor) != required_fields:
+            raise SystemExit(
+                "accepted_dependency_deltas cumulative entries must use the closed runtime identity shape"
+            )
+        dependency_id = str(descriptor["task_id"])
+        if dependency_id not in dependencies:
+            raise SystemExit(f"accepted_dependency_deltas names undeclared dependency: {dependency_id}")
+        if dependency_id in seen_dependencies:
+            raise SystemExit(f"accepted_dependency_deltas duplicates dependency: {dependency_id}")
+        seen_dependencies.add(dependency_id)
+        chain_references = descriptor["review_chain"]
+        if (not isinstance(chain_references, list) or not chain_references
+                or any(not isinstance(item, Mapping) for item in chain_references)):
+            raise SystemExit("accepted dependency review_chain must be non-empty and exact")
+        reference_ids = [str(item.get("handoff_id") or "") for item in chain_references]
+        if len(reference_ids) != len(set(reference_ids)):
+            raise SystemExit("accepted dependency review_chain cannot contain duplicated handoffs")
+
+        _, base_handoff = _exact_handoff_reference(
+            handoff_root, descriptor["accepted_result_base"]
+        )
+        base_related = base_handoff.get("related") if isinstance(base_handoff.get("related"), dict) else {}
+        base_result = base_handoff.get("result") if isinstance(base_handoff.get("result"), dict) else {}
+        base_review = base_handoff.get("acceptance_review") if isinstance(base_handoff.get("acceptance_review"), dict) else {}
+        if (base_related.get("plan") != plan_id or base_related.get("task") != dependency_id
+                or base_result.get("state") != "completed" or base_review.get("verdict") != "accept"):
+            raise SystemExit("accepted dependency result base is not an accepted plan/task result")
+
+        chain: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+        for reference in chain_references:
+            _, handoff = _exact_handoff_reference(handoff_root, reference)
+            related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+            result = handoff.get("result") if isinstance(handoff.get("result"), dict) else {}
+            review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
+            if related.get("plan") != plan_id or related.get("task") != dependency_id:
+                raise SystemExit("accepted dependency review_chain plan/task identity is mismatched")
+            chain.append((handoff, result, review))
+
+        try:
+            from review_runtime import (
+                ReviewContractError,
+                review_evidence_identity,
+                validate_task_acceptance_review,
+            )
+            validate_task_acceptance_review(base_review)
+            base_identity = base_review.get("target_identity")
+            if (not isinstance(base_identity, Mapping)
+                    or base_identity.get("artifact_id") != dependency_id
+                    or base_review.get("reviewed_head") != base_identity.get("revision")):
+                raise SystemExit("accepted dependency result base identity is mismatched")
+            previous_review = base_review
+            seen_review_ids = {str(base_review.get("review_id") or "")}
+            for _, result, review in chain:
+                # The bounded previous_review embedded in each chain link lets the
+                # native sequence validator enforce repair continuity and material-
+                # change reset isolation without reacquiring older history.
+                validate_task_acceptance_review(review)
+                review_id = str(review.get("review_id") or "")
+                identity = review.get("target_identity")
+                if (review_id in seen_review_ids or not isinstance(identity, Mapping)
+                        or identity.get("artifact_id") != dependency_id
+                        or review.get("reviewed_head") != identity.get("revision")):
+                    raise SystemExit("accepted dependency review_chain review identity is duplicated or mismatched")
+                seen_review_ids.add(review_id)
+                revision = _resolve_commit(execution_root, str(identity.get("revision") or ""))
+                tree = _git(execution_root, "rev-parse", f"{revision}^{{tree}}").strip()
+                if tree != identity.get("source_tree"):
+                    raise SystemExit("accepted dependency review_chain Git identity is mismatched")
+                carried = review.get("previous_review")
+                if (not isinstance(carried, Mapping) or "previous_review" in carried
+                        or _review_without_history(carried) != _review_without_history(previous_review)):
+                    raise SystemExit("accepted dependency review_chain prior review is missing or mismatched")
+                mode = review.get("review_mode")
+                if mode == "repair":
+                    frontier = review.get("repair_frontier")
+                    if not isinstance(frontier, Mapping):
+                        raise SystemExit("accepted dependency review_chain repair frontier is missing")
+                    blocking = [
+                        str(item.get("finding_id"))
+                        for item in _as_list(previous_review.get("findings"))
+                        if isinstance(item, Mapping) and item.get("severity") == "blocking"
+                    ]
+                    if (frontier.get("prior_review_id") != previous_review.get("review_id")
+                            or frontier.get("previous_reviewed_identity") != previous_review.get("target_identity")
+                            or frontier.get("repaired_identity") != review.get("target_identity")
+                            or list(frontier.get("blocking_finding_ids") or []) != blocking
+                            or frontier.get("frozen_evidence_reference") != review_evidence_identity(previous_review)):
+                        raise SystemExit("accepted dependency review_chain repair continuity is mismatched")
+                else:
+                    reset = review.get("review_reset")
+                    if not isinstance(reset, Mapping) or reset.get("prior_review_id") != previous_review.get("review_id"):
+                        raise SystemExit("accepted dependency review_chain initial reset is non-contiguous")
+                if review.get("verdict") not in {"repair", "accept"}:
+                    raise SystemExit("accepted dependency review_chain contains a blocked review")
+                if review.get("verdict") == "accept" and result.get("state") != "completed":
+                    raise SystemExit("accepted dependency review_chain accepted result is incomplete")
+                previous_review = review
+        except ReviewContractError as error:
+            raise SystemExit(f"accepted dependency review_chain is invalid: {error}") from error
+
+        _, final_result, final_review = chain[-1]
+        if final_review.get("verdict") != "accept" or final_result.get("state") != "completed":
+            raise SystemExit("accepted dependency review_chain final result is not accepted")
+        base_identity = base_review.get("target_identity")
+        final_identity = final_review.get("target_identity")
+        if not isinstance(base_identity, Mapping) or not isinstance(final_identity, Mapping):
+            raise SystemExit("accepted dependency cumulative result identity is incomplete")
+        for identity in (base_identity, final_identity):
+            revision = _resolve_commit(execution_root, str(identity.get("revision") or ""))
+            tree = _git(execution_root, "rev-parse", f"{revision}^{{tree}}").strip()
+            if tree != identity.get("source_tree"):
+                raise SystemExit("accepted dependency cumulative Git identity is mismatched")
+
+        final_review_id = str(final_review.get("review_id") or "")
+        chain_ids = set(reference_ids)
+        successor_edges: list[tuple[str, str]] = []
+        for path in sorted(handoff_root.glob("executor/*/*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                candidate, _ = _read_structured(path)
+            except (OSError, SystemExit, ValueError):
+                continue
+            if str(candidate.get("id") or "") in chain_ids:
+                continue
+            related = candidate.get("related") if isinstance(candidate.get("related"), dict) else {}
+            review = candidate.get("acceptance_review") if isinstance(candidate.get("acceptance_review"), dict) else {}
+            frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), dict) else {}
+            reset = review.get("review_reset") if isinstance(review.get("review_reset"), dict) else {}
+            prior_id = frontier.get("prior_review_id") or reset.get("prior_review_id")
+            if (related.get("plan") == plan_id and related.get("task") == dependency_id
+                    and isinstance(prior_id, str) and prior_id):
+                successor_edges.append((prior_id, str(review.get("review_id") or "")))
+        reachable = {final_review_id}
+        while True:
+            additions = {current for prior, current in successor_edges if prior in reachable}
+            if additions.issubset(reachable):
+                break
+            reachable.update(additions)
+        if any(prior in reachable for prior, _ in successor_edges):
+            raise SystemExit("accepted dependency review_chain terminal result is stale")
+
+        source_base = _resolve_commit(execution_root, str(base_identity.get("revision") or ""))
+        source_head = _resolve_commit(execution_root, str(final_identity.get("revision") or ""))
+        if subprocess.run(
+            ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", source_base, source_head],
+            capture_output=True,
+            check=False,
+        ).returncode:
+            raise SystemExit("accepted dependency cumulative source chain is non-ancestral")
+        integrated_base = _resolve_commit(execution_root, str(descriptor["integrated_base"]))
+        integrated_head = _resolve_commit(execution_root, str(descriptor["integrated_head"]))
+        if subprocess.run(
+            ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", integrated_head, current_head],
+            capture_output=True,
+            check=False,
+        ).returncode:
+            raise SystemExit("accepted dependency cumulative integration checkpoint is not current")
+        source_diff = _git(execution_root, "diff", "--binary", source_base, source_head, "--")
+        integrated_diff = _git(
+            execution_root, "diff", "--binary", integrated_base, integrated_head, "--"
+        )
+        if source_diff != integrated_diff:
+            raise SystemExit("accepted dependency cumulative integration checkpoint is mismatched")
+        paths = {
+            path
+            for line in _git(execution_root, "diff", "--name-status", source_base, source_head, "--").splitlines()
+            for path in _paths_from_name_status(line)
+        }
+        if paths and _git(
+            execution_root, "diff", "--name-only", integrated_head, "--", *sorted(paths)
+        ).strip():
+            raise SystemExit("accepted dependency cumulative path changed after integration")
+        admitted.update(paths)
+    return admitted
+
+
+def _accepted_dependency_paths(
+    task: dict[str, Any],
+    execution_root: Path,
+    accepted_dependency_deltas: Iterable[Mapping[str, object]] | None,
+) -> set[str]:
+    descriptors = list(accepted_dependency_deltas or [])
+    if not descriptors:
+        return set()
+    cumulative_fields = {
+        "task_id", "accepted_result_base", "review_chain", "integrated_base", "integrated_head"
+    }
+    recovery_fields = {
+        "task_id", "execution_baseline_recovery", "recovered_result", "accepted_result_delta",
+        "integrated_base", "integrated_head"
+    }
+    cumulative = [
+        item for item in descriptors if isinstance(item, Mapping) and set(item) == cumulative_fields
+    ]
+    recovered = [
+        item for item in descriptors if isinstance(item, Mapping) and set(item) == recovery_fields
+    ]
+    if cumulative or recovered:
+        if len(cumulative) + len(recovered) != len(descriptors):
+            raise SystemExit("accepted_dependency_deltas cannot mix closed and legacy identities")
+        dependency_ids = [str(item["task_id"]) for item in [*cumulative, *recovered]]
+        if len(dependency_ids) != len(set(dependency_ids)):
+            raise SystemExit("accepted_dependency_deltas duplicates dependency")
+        return (
+            _cumulative_accepted_dependency_paths(task, execution_root, cumulative)
+            | _recovered_accepted_dependency_paths(task, execution_root, recovered)
+        )
+    dependencies = {str(value) for value in _as_list(task.get("depends_on"))}
+    plan_id = str(task.get("plan_id") or "")
+    workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
+    control_root = Path(str(workspace.get("root") or "")).resolve()
+    handoff_root = control_root / ".work-bundle/orchestration/handoff"
+    admitted: set[str] = set()
+    chain_tail_by_dependency: dict[str, dict[str, Any]] = {}
+    chain_by_dependency: dict[str, dict[str, Any]] = {}
+    last_checkpoint_by_path: dict[str, tuple[str, str]] = {}
+    current_head = _resolve_commit(execution_root, "HEAD")
+    required_fields = {
+        "task_id", "handoff_id", "handoff_sha256", "integrated_base", "integrated_head"
+    }
+    for descriptor in descriptors:
+        if not isinstance(descriptor, Mapping) or set(descriptor) != required_fields:
+            raise SystemExit("accepted_dependency_deltas entries must use the closed runtime identity shape")
+        dependency_id = str(descriptor["task_id"])
+        handoff_id = str(descriptor["handoff_id"])
+        if dependency_id not in dependencies:
+            raise SystemExit(f"accepted_dependency_deltas names undeclared dependency: {dependency_id}")
+        matches: list[tuple[Path, dict[str, Any]]] = []
+        for path in sorted(handoff_root.glob("executor/*/*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                document, _ = _read_structured(path)
+            except (OSError, SystemExit, ValueError):
+                continue
+            if document.get("id") == handoff_id:
+                matches.append((path, document))
+        if len(matches) != 1:
+            raise SystemExit(f"accepted dependency handoff identity is missing or ambiguous: {handoff_id}")
+        handoff_path, handoff = matches[0]
+        actual_digest = hashlib.sha256(handoff_path.read_bytes()).hexdigest()
+        if actual_digest != str(descriptor["handoff_sha256"]):
+            raise SystemExit(f"accepted dependency handoff identity is stale: {handoff_id}")
+        related = handoff.get("related") if isinstance(handoff.get("related"), dict) else {}
+        result = handoff.get("result") if isinstance(handoff.get("result"), dict) else {}
+        review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
+        frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), dict) else {}
+        previous = frontier.get("previous_reviewed_identity") if isinstance(frontier.get("previous_reviewed_identity"), dict) else {}
+        repaired = frontier.get("repaired_identity") if isinstance(frontier.get("repaired_identity"), dict) else {}
+        if related.get("plan") != plan_id or related.get("task") != dependency_id:
+            raise SystemExit(
+                f"accepted dependency handoff plan/task identity is mismatched: {handoff_id}"
+            )
+        if (result.get("state") != "completed" or review.get("verdict") != "accept"
+                or review.get("review_mode") != "repair"
+                or repaired != review.get("target_identity")):
+            raise SystemExit(f"dependency handoff is not an accepted repair result: {handoff_id}")
+        source_base = str(previous.get("revision") or "")
+        source_head = str(repaired.get("revision") or "")
+        integrated_base = _resolve_commit(execution_root, str(descriptor["integrated_base"]))
+        integrated_head = _resolve_commit(execution_root, str(descriptor["integrated_head"]))
+        if not source_base or not source_head:
+            raise SystemExit(f"accepted dependency repair identity is incomplete: {handoff_id}")
+        for commit, identity in ((source_base, previous), (source_head, repaired)):
+            resolved = _resolve_commit(execution_root, commit)
+            tree = _git(execution_root, "rev-parse", f"{resolved}^{{tree}}").strip()
+            if tree != identity.get("source_tree"):
+                raise SystemExit(f"accepted dependency Git identity is mismatched: {handoff_id}")
+        prior_link = chain_tail_by_dependency.get(dependency_id)
+        if prior_link is not None:
+            if previous != prior_link["repaired_identity"]:
+                raise SystemExit(
+                    "accepted dependency source chain is not ordered and contiguous: "
+                    f"{handoff_id}"
+                )
+            if integrated_base != prior_link["integrated_head"]:
+                raise SystemExit(
+                    "accepted dependency integrated chain is non-adjacent: "
+                    f"{handoff_id}"
+                )
+        if subprocess.run(
+            ["git", "-C", str(execution_root), "merge-base", "--is-ancestor", integrated_head, current_head],
+            capture_output=True,
+            check=False,
+        ).returncode:
+            raise SystemExit(f"accepted dependency integration checkpoint is not current: {handoff_id}")
+        source_diff = _git(execution_root, "diff", "--binary", source_base, source_head, "--")
+        integrated_diff = _git(
+            execution_root, "diff", "--binary", integrated_base, integrated_head, "--"
+        )
+        if source_diff != integrated_diff:
+            raise SystemExit(f"accepted dependency integration checkpoint is mismatched: {handoff_id}")
+        paths = {
+            path
+            for line in _git(execution_root, "diff", "--name-status", source_base, source_head, "--").splitlines()
+            for path in _paths_from_name_status(line)
+        }
+        chain_tail_by_dependency[dependency_id] = {
+            "repaired_identity": repaired,
+            "integrated_head": integrated_head,
+        }
+        chain = chain_by_dependency.setdefault(
+            dependency_id,
+            {
+                "first_previous_identity": previous,
+                "last_repaired_identity": repaired,
+                "accepted_edges": set(),
+            },
+        )
+        chain["last_repaired_identity"] = repaired
+        chain["accepted_edges"].add(
+            semantic_digest({"previous": previous, "repaired": repaired})
+        )
+        for path in paths:
+            last_checkpoint_by_path[path] = (integrated_head, handoff_id)
+    for dependency_id, chain in chain_by_dependency.items():
+        for path in sorted(handoff_root.glob("executor/*/*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                candidate, _ = _read_structured(path)
+            except (OSError, SystemExit, ValueError):
+                continue
+            related = candidate.get("related") if isinstance(candidate.get("related"), dict) else {}
+            result = candidate.get("result") if isinstance(candidate.get("result"), dict) else {}
+            review = candidate.get("acceptance_review") if isinstance(candidate.get("acceptance_review"), dict) else {}
+            frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), dict) else {}
+            previous = frontier.get("previous_reviewed_identity") if isinstance(frontier.get("previous_reviewed_identity"), dict) else {}
+            repaired = frontier.get("repaired_identity") if isinstance(frontier.get("repaired_identity"), dict) else {}
+            if (related.get("plan") != plan_id or related.get("task") != dependency_id
+                    or result.get("state") != "completed"
+                    or review.get("verdict") != "accept" or review.get("review_mode") != "repair"
+                    or repaired != review.get("target_identity") or not previous or not repaired):
+                continue
+            edge = semantic_digest({"previous": previous, "repaired": repaired})
+            if edge in chain["accepted_edges"]:
+                continue
+            if repaired == chain["first_previous_identity"]:
+                raise SystemExit(
+                    "accepted dependency repair chain is not anchored at its known accepted start: "
+                    f"{dependency_id}"
+                )
+            if previous == chain["last_repaired_identity"]:
+                raise SystemExit(
+                    "accepted dependency repair chain is incomplete at its known accepted head: "
+                    f"{dependency_id}"
+                )
+    for path, (integrated_head, handoff_id) in last_checkpoint_by_path.items():
+        if _git(execution_root, "diff", "--name-only", integrated_head, "--", path).strip():
+            raise SystemExit(f"accepted dependency path changed after integration: {handoff_id}")
+        admitted.add(path)
+    return admitted
 
 
 def _observe_completed_validation(
@@ -1297,6 +2818,7 @@ def _observe_completed_validation(
     execution_id: str | None = None,
     repository_id: str | None = None,
     execution_runtime_root: str | None = None,
+    accepted_dependency_deltas: Iterable[Mapping[str, object]] | None = None,
 ) -> list[dict[str, Any]]:
     if "harness_receipt" in handoff or (
         isinstance(handoff.get("validation"), dict) and "harness_receipt" in handoff["validation"]
@@ -1329,7 +2851,12 @@ def _observe_completed_validation(
         raise SystemExit(str(error)) from error
     observed_items: list[dict[str, Any]] = []
     task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
-    _assert_task_caused_delta_in_write_scope(task_caused_paths(baseline, pre_batch, execution_root), task_files)
+    accepted_paths = _accepted_dependency_paths(task, execution_root, accepted_dependency_deltas)
+    _assert_task_caused_delta_in_write_scope(
+        task_caused_paths(baseline, pre_batch, execution_root),
+        task_files,
+        accepted_dependency_paths=accepted_paths,
+    )
     for item in required_items:
         observed = _completion_provenance_module().observe_validation(
             binding, task, item, pre_batch,
@@ -1361,7 +2888,9 @@ def _observe_completed_validation(
         )
     caused = task_caused_paths(baseline, post_batch, execution_root)
     task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
-    _assert_task_caused_delta_in_write_scope(caused, task_files)
+    _assert_task_caused_delta_in_write_scope(
+        caused, task_files, accepted_dependency_paths=accepted_paths
+    )
     if binding.get("mutating") is True:
         updated = dict(binding)
         updated["mutating"] = False
@@ -1460,6 +2989,7 @@ def _observe_repository_and_codegraph_evidence(
     codegraph_entries: list[dict[str, Any]],
     *,
     codegraph_required: bool,
+    accepted_dependency_deltas: Iterable[Mapping[str, object]] | None = None,
 ) -> None:
     workspace = task.get("workspace") if isinstance(task.get("workspace"), dict) else {}
     control_root_raw = workspace.get("root")
@@ -1484,7 +3014,13 @@ def _observe_repository_and_codegraph_evidence(
         raise SystemExit("Task execution binding is missing harness provenance baseline")
     caused = task_caused_paths(baseline, observed_repository, execution_root)
     task_files = task.get("files") if isinstance(task.get("files"), dict) else {}
-    _assert_task_caused_delta_in_write_scope(caused, task_files)
+    _assert_task_caused_delta_in_write_scope(
+        caused,
+        task_files,
+        accepted_dependency_paths=_accepted_dependency_paths(
+            task, execution_root, accepted_dependency_deltas
+        ),
+    )
 
     metadata = repository.get("metadata")
     if isinstance(metadata, dict):
@@ -1569,6 +3105,11 @@ def validate_executor_result_for_task(
     execution_id: str | None = None,
     repository_id: str | None = None,
     execution_runtime_root: str | None = None,
+    mutation_events: Iterable[Mapping[str, object]] | None = None,
+    accepted_dependency_deltas: Iterable[Mapping[str, object]] | None = None,
+    prior_ownership: Mapping[str, Mapping[str, object]] | None = None,
+    repair_continuity: Mapping[str, Mapping[str, object] | RepairContinuity] | None = None,
+    authorized_replacements: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     if handoff.get("type") != "executor-result":
         raise SystemExit("Handoff is not executor-result")
@@ -1601,7 +3142,7 @@ def validate_executor_result_for_task(
     if state in {"completed", "partial"}:
         _assert_task_fit_check(handoff, task_id, state)
         _assert_changed_paths_in_write_scope(handoff, task_files)
-    _assert_handoff_review_matches_task(handoff, task, state)
+    acceptance_review_sequence = _assert_handoff_review_matches_task(handoff, task, state)
     required_items = [
         item
         for item in _as_list(task.get("validation"))
@@ -1662,10 +3203,11 @@ def validate_executor_result_for_task(
     if observe and (repository_entries or codegraph_entries):
         _observe_repository_and_codegraph_evidence(
             task,
-            repository_entries,
-            codegraph_entries,
-            codegraph_required=evidence_applicability["codegraph"]["required"],
-        )
+                repository_entries,
+                codegraph_entries,
+                codegraph_required=evidence_applicability["codegraph"]["required"],
+                accepted_dependency_deltas=accepted_dependency_deltas,
+            )
 
     if state == "completed" and required_items and observe:
         observed_validation = _observe_completed_validation(
@@ -1677,6 +3219,7 @@ def validate_executor_result_for_task(
             execution_id=execution_id,
             repository_id=repository_id,
             execution_runtime_root=execution_runtime_root,
+            accepted_dependency_deltas=accepted_dependency_deltas,
         )
         evidence_closure = _validate_evidence_closure(
             handoff, task, state, reported_commands, observed_validation
@@ -1686,14 +3229,121 @@ def validate_executor_result_for_task(
             raise SystemExit(
                 "evidence-closure-blocked: completed mapped invariants require produced harness observations and passed evidence closure"
             )
+    task_ownership = None
+    if state == "completed":
+        if mutation_events is None:
+            raise AcceptanceOwnershipError(
+                "review-blocked: completed task requires harness-owned mutation_events evidence"
+            )
+        runtime_mutation_events = list(mutation_events)
+        if any(not isinstance(event, Mapping) for event in runtime_mutation_events):
+            raise AcceptanceOwnershipError("Runtime mutation_events must contain mappings")
+        fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
+        operation = "repair" if fit.get("result") == "repaired" else "implementation"
+        try:
+            task_ownership = validate_task_acceptance_ownership(
+                delegation_evidence=(
+                    handoff.get("delegation_evidence")
+                    if isinstance(handoff.get("delegation_evidence"), dict)
+                    else None
+                ),
+                mutation_events=runtime_mutation_events,
+                write_scope=_as_list(task_files.get("write")),
+                validations_passed=True,
+                operation=operation,
+            )
+            if operation == "repair" and acceptance_review_sequence != "initial-reset":
+                _validate_repair_acceptance_continuity(
+                    task=task,
+                    handoff=handoff,
+                    current_ownership=task_ownership,
+                    prior_ownership=prior_ownership,
+                    repair_continuity=repair_continuity,
+                    authorized_replacements=authorized_replacements,
+                )
+        except OwnershipBlocker as error:
+            raise AcceptanceOwnershipError(str(error)) from error
     return {
         "knowledge_disposition": knowledge_disposition,
         "unresolved": unresolved,
         "result_state": state,
         "evidence_applicability": evidence_applicability,
         "evidence_closure": evidence_closure,
+        **({"task_ownership": task_ownership} if task_ownership is not None else {}),
         **({"observed_validation": observed_validation} if observed_validation is not None else {}),
     }
+
+
+def _validate_repair_acceptance_continuity(
+    *,
+    task: Mapping[str, object],
+    handoff: Mapping[str, object],
+    current_ownership: Mapping[str, object],
+    prior_ownership: Mapping[str, Mapping[str, object]] | None,
+    repair_continuity: Mapping[str, Mapping[str, object] | RepairContinuity] | None,
+    authorized_replacements: Iterable[str] | None,
+) -> None:
+    """Bind repair acceptance to the scheduler's original owner and identities."""
+
+    task_id = str(task.get("task_id") or "")
+    if prior_ownership is not None and not isinstance(prior_ownership, Mapping):
+        raise OwnershipBlocker("review-blocked", "repair prior_ownership must be a task mapping")
+    if repair_continuity is not None and not isinstance(repair_continuity, Mapping):
+        raise OwnershipBlocker("review-blocked", "repair_continuity must be a task mapping")
+    previous_value = (prior_ownership or {}).get(task_id)
+    continuity_value = (repair_continuity or {}).get(task_id)
+    if previous_value is None:
+        raise OwnershipBlocker("review-blocked", f"{task_id} repair lacks prior owner")
+    if continuity_value is None:
+        raise OwnershipBlocker("review-blocked", f"{task_id} repair lacks continuity identities")
+    previous = normalize_subagent_provenance(previous_value)
+    if isinstance(continuity_value, RepairContinuity):
+        continuity = continuity_value
+    else:
+        if not isinstance(continuity_value, Mapping) or set(continuity_value) != {
+            "binding_id",
+            "baseline_identity",
+            "evidence_identity",
+            "previous_review_identity",
+        }:
+            raise OwnershipBlocker("review-blocked", f"{task_id} repair continuity is not closed")
+        try:
+            continuity = RepairContinuity(**{key: str(value) for key, value in continuity_value.items()})
+        except (TypeError, ValueError) as error:
+            raise OwnershipBlocker("review-blocked", f"{task_id} repair continuity is invalid") from error
+
+    workspace = task.get("workspace") if isinstance(task.get("workspace"), Mapping) else {}
+    control_root = Path(str(workspace.get("root") or "")).expanduser().resolve()
+    if not control_root.is_dir():
+        raise OwnershipBlocker("review-blocked", f"{task_id} repair control root is unavailable")
+    binding = load_task_execution_binding(control_root, str(task.get("plan_id") or ""), task_id)
+    baseline = binding.get("baseline")
+    if not isinstance(baseline, Mapping) or not baseline.get("head"):
+        raise OwnershipBlocker("review-blocked", f"{task_id} repair baseline identity is unavailable")
+    review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), Mapping) else {}
+    frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), Mapping) else {}
+    ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
+    try:
+        expected = RepairContinuity(
+            binding_id=str(ownership.get("binding_id") or ""),
+            baseline_identity=semantic_digest(dict(baseline)),
+            evidence_identity=str(frontier.get("frozen_evidence_reference") or ""),
+            previous_review_identity=str(frontier.get("prior_review_id") or ""),
+        )
+    except ValueError as error:
+        raise OwnershipBlocker(
+            "review-blocked", f"{task_id} repair frontier continuity is unavailable"
+        ) from error
+    if continuity != expected:
+        raise OwnershipBlocker("review-blocked", f"{task_id} repair continuity identities do not match")
+    if isinstance(authorized_replacements, (str, bytes, Mapping)):
+        raise OwnershipBlocker("review-blocked", "authorized_replacements must be task IDs")
+    replacements = {str(value) for value in (authorized_replacements or [])}
+    replaced = current_ownership.get("agent_id") != previous.get("agent_id")
+    if replaced and task_id not in replacements:
+        raise OwnershipBlocker(
+            "review-blocked", f"{task_id} repair owner replacement is not authorized"
+        )
 
 
 def _acceptable_validation_results(item: dict[str, Any]) -> set[str]:
@@ -1735,7 +3385,9 @@ def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: di
             raise SystemExit(f"Executor result changed path is outside task write scope: {path}")
 
 
-def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str, Any], state: str) -> None:
+def _assert_handoff_review_matches_task(
+    handoff: dict[str, Any], task: dict[str, Any], state: str
+) -> str | None:
     compiled_required = task.get("review_required") is True
     review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
     handoff_required = review.get("required") is True
@@ -1743,9 +3395,48 @@ def _assert_handoff_review_matches_task(handoff: dict[str, Any], task: dict[str,
         raise SystemExit("Executor result acceptance_review.required must match compiled review_required")
     if compiled_required and state == "completed" and review.get("verdict") != "accept":
         raise SystemExit("Review-required task cannot complete without acceptance_review.verdict: accept")
+    if not compiled_required or state != "completed":
+        return None
+    fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
+    repaired = fit.get("result") == "repaired"
+    mode = review.get("review_mode")
+    reset_initial = mode == "initial" and review.get("review_reset") is not None
+    if repaired and mode != "repair" and not reset_initial:
+        raise SystemExit("Repaired task completion requires a sequenced repair acceptance_review")
+    if mode is not None:
+        try:
+            from review_runtime import ReviewContractError, validate_task_acceptance_review
+            validated = validate_task_acceptance_review(review)
+        except (ReviewContractError, TypeError, ValueError) as error:
+            raise SystemExit(f"Task acceptance review is invalid: {error}") from error
+        if validated.verdict != "accepted":
+            raise SystemExit("Review-required task cannot complete without an accepted task review")
+        if validated.target_identity["artifact_id"] != str(task.get("task_id")):
+            raise SystemExit("Task acceptance review target identity does not match the completed task")
+        if validated.review_mode == "repair":
+            repositories = [
+                item for item in _as_list(handoff.get("repository"))
+                if isinstance(item, dict) and item.get("target_kind") == "git-backed"
+            ]
+            if len(repositories) != 1:
+                raise SystemExit("Task repair review requires one observed Git repository identity")
+            root = Path(str(repositories[0].get("root") or "")).expanduser().resolve()
+            head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
+            tree = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD^{tree}"], capture_output=True, text=True)
+            if head.returncode or tree.returncode:
+                raise SystemExit("Task repair review Git identity is unavailable")
+            if (review.get("reviewed_head") != head.stdout.strip()
+                    or validated.target_identity["source_tree"] != tree.stdout.strip()):
+                raise SystemExit("Task repair review does not match the observed Git head/tree identity")
+        if validated.review_mode == "initial" and validated.review_reset is not None:
+            return "initial-reset"
+        return validated.review_mode
+    return None
 
 
 def _yaml_scalar(value: Any) -> str:
+    if isinstance(value, _SemanticReference):
+        return value.reference_id
     if value is True:
         return "true"
     if value is False:
@@ -1960,7 +3651,12 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
     truth_basis = _compile_truth_basis(task, records, source_paths)
     validation = [
         {
-            key: value if key in {"id", "invariant_ids"} else _resolve_reference(value, records, source_paths)
+            key: (
+                _compile_validation_references(value, records)
+                if key == "proves"
+                else value if key in {"id", "invariant_ids"}
+                else _resolve_reference(value, records, source_paths)
+            )
             for key, value in item.items()
         }
         for item in validation_value
@@ -1975,30 +3671,49 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         review_required = acceptance_review.get("required", False)
         if not isinstance(review_required, bool):
             raise SystemExit(f"Task acceptance_review.required must be boolean: {task_path}")
-    brief = {
-        "task_brief": {
+    semantic_authority = _compile_semantic_authority(source_ids, records, truth_basis)
+    capability_projection = _compile_capability_projection(executor_profile, rules, skill_names)
+    task_brief = {
             "task_id": task_id,
             "plan_id": plan_id,
+            "depends_on": [str(value) for value in _as_list(task.get("depends_on"))],
             "source_ids": source_ids,
             "goal": resolved_goal,
             "truth_basis": truth_basis,
+            "semantic_authority": semantic_authority,
             "requirements": source_by_kind["requirements"],
             "constraints": source_by_kind["constraints"],
             "interfaces": {
-                "consumes": _resolve_reference(_as_list(interfaces.get("consumes")), records, source_paths),
-                "produces": _resolve_reference(_as_list(interfaces.get("produces")), records, source_paths),
+                "consumes": _retain_source_references(_as_list(interfaces.get("consumes")), records),
+                "produces": _retain_source_references(_as_list(interfaces.get("produces")), records),
             },
             "files": {"read": read_files, "write": write_files, "forbidden": forbidden_files},
             "methodology": {"primary": methodology.get("primary", "direct"), "skills": skill_names},
             "allocated_rules": rules,
+            "capability_projection": capability_projection,
             "executor_profile": executor_profile,
             "evidence_applicability": evidence_applicability,
             "workspace": {"root": str(root)},
+            "runtime_context": {
+                "authority": "compiled",
+                "histories": "runtime_lazy",
+                "executor_retrieval": "forbidden",
+            },
             "validation": validation,
             "evidence_capability": evidence_capability,
             "handoff_contract": "executor-result-v1",
             "review_required": review_required,
-        }
+    }
+    omitted = 0
+    serialized_task = json.dumps(task, sort_keys=True, ensure_ascii=False)
+    for identifier in source_ids:
+        duplicate_references = max(0, serialized_task.count(identifier) - 1)
+        omitted += duplicate_references * max(0, len(records[identifier].encode("utf-8")) - len(identifier.encode("utf-8")))
+    brief = {
+        "task_brief": task_brief,
+        "compiled_context_metrics": compiled_context_metrics(
+            task_brief, omitted_by_reference_bytes=omitted
+        ),
     }
     for identifier in source_ids:
         if not _contains_resolved_source_record(brief, records[identifier]):
@@ -2162,6 +3877,19 @@ def build_review_package(args: argparse.Namespace) -> Path:
     handoff, _ = _read_structured(handoff_path)
     validated = validate_executor_result_for_task(handoff, task, observe=True, **_observation_kwargs(args))
     knowledge_disposition = validated["knowledge_disposition"]
+    review_request = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
+    review_mode = str(review_request.get("review_mode") or "initial")
+    if review_mode not in {"initial", "repair"}:
+        raise SystemExit("review-blocked: review_mode must be initial or repair")
+    repair_frontier: dict[str, Any] | None = None
+    if review_mode == "repair":
+        try:
+            from review_runtime import ReviewContractError, _repair_frontier
+            repair_frontier = dict(_repair_frontier(review_request.get("repair_frontier")))
+        except (ReviewContractError, TypeError, ValueError) as error:
+            raise SystemExit(f"review-blocked: invalid repair frontier: {error}") from error
+    elif review_request.get("repair_frontier") not in (None, {}):
+        raise SystemExit("review-blocked: initial review cannot carry repair_frontier")
     binding = load_task_execution_binding(root, plan_id, task_id)
     execution_root = Path(str(binding["execution_path"])).resolve()
 
@@ -2170,16 +3898,47 @@ def build_review_package(args: argparse.Namespace) -> Path:
     head, diff, name_status, out_of_scope = _review_diff(
         execution_root, base, str(args.head), write_paths
     )
+    if repair_frontier is not None:
+        base_tree = _git(execution_root, "rev-parse", f"{base}^{{tree}}").strip()
+        if head.startswith("worktree:"):
+            raise SystemExit("review-blocked: repair review requires a committed repaired identity")
+        head_tree = _git(execution_root, "rev-parse", f"{head}^{{tree}}").strip()
+        if repair_frontier["previous_reviewed_identity"]["source_tree"] != base_tree:
+            raise SystemExit("review-blocked: repair base does not match previous reviewed identity")
+        if repair_frontier["repaired_identity"]["source_tree"] != head_tree:
+            raise SystemExit("review-blocked: repair head does not match repaired identity")
+    omitted_diff_bytes = 0
     if len(diff.encode("utf-8")) > MAX_DIFF_BYTES or diff.count("\n") > MAX_DIFF_LINES:
         oversized = ", ".join(
             sorted({path for line in name_status for path in _paths_from_name_status(line)})
         ) or "unknown"
-        raise SystemExit(
-            "review-blocked: task-local review diff exceeds the bounded package limit "
-            f"(oversized paths: {oversized}). This is a compiler-or-plan defect, "
-            "not a reason to add implementation tasks."
+        if head.startswith("worktree:"):
+            raise SystemExit(
+                "review-blocked: oversized uncommitted task-local diff has no immutable "
+                f"source identity (oversized paths: {oversized})"
+            )
+        omitted_diff_bytes = len(diff.encode("utf-8"))
+        base_tree = _git(execution_root, "rev-parse", f"{base}^{{tree}}").strip()
+        head_tree = _git(execution_root, "rev-parse", f"{head}^{{tree}}").strip()
+        diff_digest = hashlib.sha256(diff.encode("utf-8")).hexdigest()
+        changed_paths = sorted(
+            {path for line in name_status for path in _paths_from_name_status(line)}
         )
-    diff = _redact_diff(diff)
+        diff = "\n".join(
+            [
+                "Exact source diff reference (content omitted from this bounded packet).",
+                f"Base commit: {base}",
+                f"Base tree: {base_tree}",
+                f"Head commit: {head}",
+                f"Head tree: {head_tree}",
+                f"Task-local diff SHA-256: {diff_digest}",
+                "Changed paths:",
+                *[f"- {path}" for path in changed_paths],
+                "Review the exact Git diff between these commits, restricted to the changed paths above.",
+            ]
+        )
+    else:
+        diff = _redact_diff(diff)
 
     changes = handoff.get("changes") if isinstance(handoff.get("changes"), dict) else {}
     handoff_files = [item for item in _as_list(changes.get("files")) if isinstance(item, dict)]
@@ -2188,11 +3947,26 @@ def build_review_package(args: argparse.Namespace) -> Path:
     )
     validation = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
     validation_commands = [item for item in _as_list(validation.get("commands")) if isinstance(item, dict)]
+    compiled_validation = {
+        str(item.get("command") or ""): item
+        for item in _as_list(task.get("validation"))
+        if isinstance(item, dict)
+    }
+    normalized_validation = []
+    for position, item in enumerate(validation_commands, start=1):
+        compiled = compiled_validation.get(str(item.get("command") or ""), {})
+        normalized_validation.append({**item, "id": item.get("id") or compiled.get("id") or f"validation-{position:03d}"})
+    evidence_projection = project_validation_evidence(
+        normalized_validation,
+        evidence_capability=task.get("evidence_capability") if isinstance(task.get("evidence_capability"), dict) else {},
+        observed=validated.get("observed_validation"),
+        expansion_reason=("failed_validation" if any(item.get("result") == "failed" for item in normalized_validation) else None),
+    )
     unresolved = _as_list(handoff.get("unresolved"))
     evidence = {
         "changed_files": name_status,
         "changed_symbols": symbols,
-        "validation": validation_commands,
+        "validation": evidence_projection,
         "unresolved": unresolved,
         "knowledge_disposition": knowledge_disposition,
     }
@@ -2214,12 +3988,16 @@ def build_review_package(args: argparse.Namespace) -> Path:
         f"Task: {task_id}",
         f"Base: {base}",
         f"Head: {head}",
+        f"Review mode: {review_mode}",
         "",
         "## Required behavior",
         *_markdown_items(required),
         "",
         "## Accepted Truth Basis",
         *_markdown_items([task.get("truth_basis", {})]),
+        "",
+        "## Semantic authority",
+        *_markdown_items([task.get("semantic_authority", {})]),
         "",
         "## Evidence capability",
         *_markdown_items([task.get("evidence_capability", {})]),
@@ -2234,7 +4012,7 @@ def build_review_package(args: argparse.Namespace) -> Path:
         *_markdown_items(symbols),
         "",
         "## Validation reported",
-        *_markdown_items(validation_commands),
+        *_markdown_items(evidence_projection),
         "",
         "## Knowledge disposition",
         *_markdown_items([knowledge_disposition]),
@@ -2250,6 +4028,23 @@ def build_review_package(args: argparse.Namespace) -> Path:
         diff.rstrip(),
         "```",
     ]
+    if repair_frontier is not None:
+        lines.extend(
+            [
+                "",
+                "## Repair frontier",
+                *_markdown_items(
+                    [{
+                        "prior_review_id": repair_frontier["prior_review_id"],
+                        "blocking_finding_ids": repair_frontier["blocking_finding_ids"],
+                        "previous_reviewed_identity": repair_frontier["previous_reviewed_identity"],
+                        "repaired_identity": repair_frontier["repaired_identity"],
+                        "affected_boundaries": repair_frontier["affected_boundaries"],
+                        "frozen_evidence_reference": repair_frontier["frozen_evidence_reference"],
+                    }]
+                ),
+            ]
+        )
     if out_of_scope:
         lines.extend(
             [
@@ -2278,6 +4073,20 @@ def build_review_package(args: argparse.Namespace) -> Path:
     review_target = target.with_name("review-package.md")
     review_target.parent.mkdir(parents=True, exist_ok=True)
     review_target.write_text(package, encoding="utf-8")
+    metrics = compiled_context_metrics(
+        task,
+        review_package=package,
+        evidence_projection=evidence_projection,
+        omitted_by_reference_bytes=omitted_diff_bytes,
+        expansion_reason=next(
+            (item.get("expansion_reason") for item in evidence_projection if item.get("expansion_reason")),
+            None,
+        ),
+    )
+    review_target.with_name("review-package-metrics.json").write_text(
+        json.dumps({"compiled_context_metrics": metrics}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return review_target
 
 
@@ -2294,7 +4103,23 @@ def cmd_build_review_package(args: argparse.Namespace) -> None:
 def cmd_observe_task_validation(args: argparse.Namespace) -> None:
     _, brief_document = _compile_task_brief(args)
     task = brief_document["task_brief"]
-    observed = _observe_completed_validation({}, task, task["validation"], None, **_observation_kwargs(args))
+    runtime = _observation_kwargs(args)
+    observed = _observe_completed_validation(
+        {},
+        task,
+        task["validation"],
+        None,
+        **{
+            key: runtime[key]
+            for key in (
+                "workspace_id",
+                "execution_id",
+                "repository_id",
+                "execution_runtime_root",
+                "accepted_dependency_deltas",
+            )
+        },
+    )
     print(json.dumps({"validation": observed}, sort_keys=True))
 
 
@@ -2311,12 +4136,56 @@ def cmd_validate_executor_result(args: argparse.Namespace) -> None:
     print(handoff_path.relative_to(root).as_posix())
 
 
-def _observation_kwargs(args: argparse.Namespace) -> dict[str, str | None]:
+def cmd_create_accepted_base_absence_receipt(args: argparse.Namespace) -> None:
+    root = resolve_workspace_root(args)
+    reference = create_accepted_base_absence_receipt(
+        root,
+        str(args.plan_id),
+        str(args.task_id),
+        str(args.expected_head),
+        str(args.expected_tree),
+        str(args.proposed_handoff_id),
+        str(args.proposed_review_id),
+        str(args.final_head),
+        str(args.final_tree),
+    )
+    print(json.dumps(reference, sort_keys=True))
+
+
+def cmd_adopt_existing_recovered_result(args: argparse.Namespace) -> None:
+    root = resolve_workspace_root(args)
+    reference = adopt_existing_recovered_result(
+        root,
+        str(args.plan_id),
+        str(args.task_id),
+        str(args.expected_head),
+        str(args.expected_tree),
+        str(args.handoff_id),
+        str(args.handoff_sha256),
+        str(args.review_id),
+        str(args.final_head),
+        str(args.final_tree),
+        {
+            "receipt_id": str(args.prior_receipt_id),
+            "receipt_sha256": str(args.prior_receipt_sha256),
+        },
+    )
+    print(json.dumps(reference, sort_keys=True))
+
+
+def _observation_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "workspace_id": getattr(args, "workspace_id", None) or None,
         "execution_id": getattr(args, "execution_id", None) or None,
         "repository_id": getattr(args, "repository_id", None) or None,
         "execution_runtime_root": getattr(args, "execution_runtime_root", None) or None,
+        "accepted_dependency_deltas": (
+            getattr(args, "accepted_dependency_deltas", None) or None
+        ),
+        "mutation_events": getattr(args, "mutation_events", None),
+        "prior_ownership": getattr(args, "prior_ownership", None) or None,
+        "repair_continuity": getattr(args, "repair_continuity", None) or None,
+        "authorized_replacements": getattr(args, "authorized_replacements", None) or None,
     }
 
 

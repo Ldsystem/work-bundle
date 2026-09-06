@@ -142,12 +142,11 @@ codegraph:
     reason: null | no-index | sync-failed | not-source-code | blocked
 
 delegation_evidence:
-  delegated: true | false
-  surface: visible-thread | visible-worktree | visible-thread-and-worktree | single-agent-fallback | blocked
-  visible_reference: null
-  internal_spawn_used_for_task_delegation: false
-  internal_workers_used_for_support: false
-  fallback_reason: null
+  delegated: true
+  owner_kind: subagent
+  agent_id: agent-or-provider-identity
+  run_id: task-run-identity
+  mechanism: host-native | execution-flow
 
 allocation_evidence:
   allocated_rules:
@@ -178,7 +177,7 @@ allocation_evidence:
 - `repository` is required when repository preflight, accepted baseline, changed paths, or blocker state matters for continuation.
 - `repository[].metadata` is required when project metadata baseline was used for target resolution, branch checks, commit checks, or CodeGraph policy decisions.
 - `codegraph` is required when source-code inspection or edits were in scope. Keep it compact: `root`, `applicable`, `up_to_date`, and required fallback or blocker facts are enough unless a failure needs detail.
-- `delegation_evidence` is required when task, phase, or plan ownership was delegated or when the execution path needs proof that invisible internal spawn did not own delegation.
+- `delegation_evidence` is required for every task executor-result and is optional for non-task scopes. Its five-field closed shape proves mandatory subagent ownership without UI-specific semantics.
 - `allocation_evidence` is required when allocated_rules or allocated_skills materially shaped execution or when an allocated rule/skill was unavailable, skipped, stale, or inapplicable.
 
 ## Forbidden Executor-Result Fields
@@ -206,7 +205,7 @@ Compact handoffs must not weaken safety gates:
 - Repository evidence must preserve root, target kind, preflight kind, baseline, and clean or blocked result when applicable.
 - Metadata evidence must preserve repository id, expected and actual branch, expected and actual commit, branch status, commit status, and baseline status when project metadata preflight applies.
 - CodeGraph evidence must preserve no-index fallback, sync-failed, stale, or blocker facts when applicable.
-- Delegation evidence must preserve visible surface, visible reference when available, and `internal_spawn_used_for_task_delegation: false`.
+- Delegation evidence must preserve delegated state, `owner_kind: subagent`, minimum agent/run identity, and `host-native|execution-flow` mechanism. UI, visibility, fallback, controller-owner, and internal-worker fields are invalid.
 - Validation evidence must list exact commands or inspections and their result. Executor-authored `result`, `exit_code`, or an equivalently named receipt block is corroboration, not independent proof and not authority for `Completed`. Direct helper observation in the bound worktree is the terminal evidence.
 - Task-fit evidence must prove the executor followed the compiled brief and assigned task. Full specification, root-plan, and phase inspection is an escalation path when compiled context is inconsistent.
 - Acceptance-review evidence must identify review independence, the reviewed tree, verdict, and blocking or advisory findings.

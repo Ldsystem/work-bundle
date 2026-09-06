@@ -11,7 +11,7 @@ from instruction_audit import cmd_instruction_audit
 from legacy import cmd_legacy_command_removed
 from metadata_profile import cmd_domain_profile
 from bootstrap_config import cmd_migrate_work_bundle_config
-from project import cmd_cleanup_member, cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_migrate_to_multi_repository, cmd_project, cmd_provision_member, cmd_register_project_command, cmd_session_start, cmd_set_prefer_subagent, cmd_show_project, cmd_validate_project
+from project import cmd_cleanup_member, cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_migrate_to_multi_repository, cmd_project, cmd_provision_member, cmd_register_project_command, cmd_session_start, cmd_show_project, cmd_validate_project
 from rules import cmd_create_rules, cmd_validate_rules
 from skill_registry import cmd_merge_skill_hints, cmd_registry
 from stage_events import cmd_stage_events
@@ -97,7 +97,7 @@ LIVE_COMMANDS = frozenset({
     'defer-workspace-member', 'attach-deferred-remote',
     'doctor-project', 'provision-member', 'cleanup-member', 'credential-list',
     'instruction-audit', 'session-start', 'inspect-project-initialization',
-    'validate-project', 'set-prefer-subagent', 'create-rules', 'validate-rules',
+    'validate-project', 'create-rules', 'validate-rules',
     'defect-ensure-store', 'defect-create-evidence', 'defect-build-index',
     'defect-write-index', 'defect-archive-evidence', 'defect-migrate-store',
     'validate-contract', 'assert-migration-stop',
@@ -207,8 +207,6 @@ def main() -> int:
         return cmd_project(parsed.args, inspect_only=True, repo_model=True)
     if command == 'validate-project':
         return cmd_validate_project(parsed.args)
-    if command == 'set-prefer-subagent':
-        return cmd_set_prefer_subagent(parsed.args)
     if command == 'create-rules':
         return cmd_create_rules(parsed.args)
     if command == 'validate-rules':

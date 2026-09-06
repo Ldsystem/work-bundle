@@ -231,7 +231,7 @@ def test_multi_member_add_preserves_mode_and_replays_without_root_git(multi, ado
     registry = config / "registry/projects.yaml"
     original = metadata.read_text()
     # Extra top-level fields must not capture the appended repository block.
-    original = original.replace("prefer_subagent: false\n", "") + "custom_owner_field: retained\n"
+    original = original + "custom_owner_field: retained\n"
     metadata.write_text(original)
     before = metadata.read_bytes(), registry.read_bytes()
     proposal = propose(config, workspace, remote)
@@ -399,9 +399,9 @@ def test_member_add_preserves_yaml_section_boundaries(multi, tmp_path, monkeypat
     elif shape == "anchored-header":
         text = text.replace("source_repositories:", "source_repositories: &sources")
     elif shape == "quoted-key":
-        text = text.replace("prefer_subagent:", "'custom_owner_field': retained\nprefer_subagent:")
+        text = text.replace("agents_sync:", "'custom_owner_field': retained\nagents_sync:", 1)
     elif shape == "quoted-nested":
-        text = text.replace("prefer_subagent:", "'owner_settings':\n  contact:\n    team: engineering\nprefer_subagent:")
+        text = text.replace("agents_sync:", "'owner_settings':\n  contact:\n    team: engineering\nagents_sync:", 1)
     elif shape == "commented-control":
         text = text.replace("control_plane:", "control_plane: # portable settings")
     elif shape == "owner-flow":

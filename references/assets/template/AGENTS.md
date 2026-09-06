@@ -23,10 +23,8 @@ must:
 - resolve `work_bundle_root` from `$work_bundle_config_root/bootstrap.yaml` -> `work_bundle_root`
 - resolve project registry from `$work_bundle_config_root/bootstrap.yaml` -> `project_registry`
 - resolve skill registry from `$work_bundle_config_root/bootstrap.yaml` -> `skill_registry`
-- resolve effective `prefer_subagent` as `.work-bundle/project.yaml` -> `prefer_subagent`, then `$work_bundle_config_root/bootstrap.yaml` -> `prefer_subagent`, then `false`
 - before material implementation, establish or consume one Truth Basis containing purpose, as-is evidence, accepted decision authority, expected delta, and conflict status; after preflight and source grounding, lightweight planning runs one bounded `ks-what-is-helpful` gateway and records accepted authority or evidence-backed `none relevant`, while heavy execution compiles carried authority without executor retrieval
 - after each meaningful validated move, record a knowledge disposition of `none`, `update`, `supersede`, or `reclassify`; the lightweight completion owner resolves its approved `ks-*` follow-up, while heavy executors return task-local evidence only and final orchestration review owns heavy-path persistence follow-up
-- treat `prefer_subagent` as permission to prefer sub-agent scheduling only when normal execution safety, write-scope, dependency, and fallback checks pass
 - use `work_bundle_root` only for toolkit assets, builtin skills, builtin rules, and references
 - use `work_bundle_config_root` only for non-project runtime state produced by tool use
 - resolve workspace-owned metadata, rules, knowledge, orchestration, `AGENTS.md`, `script/index.yaml`, and `credentials/credentials.yaml` from `workspace_root` in both workspace modes
@@ -47,7 +45,6 @@ must_not:
 - treat utility discovery as permission to execute a script
 - inspect or transfer credential values through chat, prompts, subagent messages, tool arguments/results, terminal output, logs, handoffs, knowledge, or orchestration artifacts
 - infer registry paths without reading `bootstrap.yaml` when registry access is required
-- let `prefer_subagent` bypass repository preflight, sub-agent capability checks, disjoint write-scope checks, dependency checks, or single-agent fallback
 - treat rule-store scope (`toolkit`, `global`, `project`) as separate from rule area directories such as `work-bundle`, `keep-summarizing`, and `orchestration`
 
 ## Rule Loading

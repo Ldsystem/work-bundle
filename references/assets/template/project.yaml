@@ -4,7 +4,6 @@ workspace_root: <absolute-path-to-workspace-root>
 workspace_mode: <single-repository|multi-repository>
 project_root: <absolute-path-to-project-root>
 industry: <industry-or-domain>
-prefer_subagent: false
 
 metadata_compatibility:
   readable_versions: [2, 3]

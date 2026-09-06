@@ -1,0 +1,73 @@
+{
+  "contract": "wor108-migration-impact-v1",
+  "issue": "WOR-108",
+  "evaluation_id": "wor108-legacy-closure-v1",
+  "accepted_legacy_baseline": {
+    "commit": "9dce5df221485174d6179f713e8b179bbc20567a",
+    "tree": "5a1f38355eae8068bab528923e807ce54e6f6fe5"
+  },
+  "changed_surfaces": {
+    "public_contracts": [
+      "references/assets/orchestration/contract/handoff-executor-result-v1.md",
+      "references/assets/orchestration/contract/stage-review-v1.schema.json",
+      "references/assets/orchestration/contract/task-v1.md",
+      "references/assets/orchestration/workflow.md"
+    ],
+    "instructions": [
+      "references/assets/template/AGENTS.md",
+      "references/assets/template/bootstrap.yaml",
+      "references/assets/template/project.yaml",
+      "rules/orchestration/orch-handoff-required.md",
+      "rules/work-bundle/wb-project-context-preflight.md",
+      "skills/orch-create-handoff/SKILL.md",
+      "skills/orch-doctor/SKILL.md",
+      "skills/orch-execute-plan/SKILL.md",
+      "skills/wb-initialize-project/SKILL.md"
+    ],
+    "operations": [
+      "scripts/orchestration/dispatcher.py",
+      "scripts/orchestration/execution_context.py",
+      "scripts/orchestration/plans.py",
+      "scripts/orchestration/review_runtime.py",
+      "scripts/orchestration/task_ownership.py",
+      "scripts/work-bundle/control_plane.py",
+      "scripts/work-bundle/core.py",
+      "scripts/work-bundle/dispatcher.py",
+      "scripts/work-bundle/migration.py",
+      "scripts/work-bundle/project.py",
+      "scripts/work-bundle/reviewer_workspace.py",
+      "scripts/work-bundle/stage_events.py"
+    ],
+    "fixtures_and_evaluations": [
+      "evals/wor105/components/native-transition-record.yaml",
+      "evals/wor105/freeze-manifest.json",
+      "evals/wor105/results.jsonl",
+      "evals/wor108/contracts-v1.schema.json",
+      "evals/wor108/fixtures.json",
+      "evals/wor108/migration-impact.json",
+      "evals/wor108/verify.py",
+      "references/evals/orchestration/evals.json",
+      "tests/test_control_plane_v4.py",
+      "tests/test_multi_repository_member.py",
+      "tests/test_orchestration_execution_context.py",
+      "tests/test_orchestration_skill_rule_boundary.py",
+      "tests/test_orchestration_workflow_contracts.py",
+      "tests/test_project_initialization.py",
+      "tests/test_registry_layout_migration.py",
+      "tests/test_wor108_closure.py",
+      "tests/test_wor108_context_projection.py",
+      "tests/test_wor108_review_frontier.py",
+      "tests/test_wor108_subagent_ownership.py"
+    ]
+  },
+  "evaluation_identities": [
+    "RF-01", "RF-02", "RF-03", "RF-04", "RF-05", "RF-06", "RF-07", "RF-08",
+    "SG-01", "SG-02", "SG-03", "SG-04", "SG-05", "SG-06", "SG-07", "SG-08",
+    "CTX-01", "CTX-02", "CTX-03", "CTX-04", "CTX-05", "CTX-06"
+  ],
+  "handoff_constraints": {
+    "final_git_identity": "post_acceptance_handoff_only",
+    "advance_wor107": false,
+    "touch_work_bundle_mcp": false
+  }
+}

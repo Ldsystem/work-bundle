@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import shlex
@@ -21,6 +22,20 @@ sys.path.insert(0, str(ORCHESTRATION))
 
 import execution_context  # noqa: E402
 from execution_context import build_review_package, build_task_brief  # noqa: E402
+
+
+def _load_orchestration_dispatcher():
+    path = ORCHESTRATION / "dispatcher.py"
+    spec = importlib.util.spec_from_file_location(
+        "test_orchestration_execution_context_dispatcher", path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+orchestration_dispatcher = _load_orchestration_dispatcher()
 
 
 def _counted_validation(tmp_path: Path, reuse_seconds: int = 3600, suffix: str = ""):
@@ -242,6 +257,148 @@ def test_observe_task_validation_is_dispatched() -> None:
     completed = subprocess.run([sys.executable, str(REPO_ROOT / "scripts/orch.py"), "observe-task-validation", "--help"], capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
     assert "--task" in completed.stdout
+
+
+@pytest.mark.parametrize("command", ["validate-executor-result", "set-plan-status"])
+def test_normal_cli_projects_controller_mutation_events_into_acceptance(
+    tmp_path: Path, command: str
+) -> None:
+    root, task, brief, handoff, _ = _counted_validation(tmp_path)
+    handoff_path = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff_path.write_text(
+        "\n".join(execution_context._dump_yaml(handoff)) + "\n", encoding="utf-8"
+    )
+    runtime = json.dumps(
+        [{"actor_kind": "controller", "paths": [brief["files"]["write"][0]]}]
+    )
+    if command == "validate-executor-result":
+        operation = [command, "--task", str(task), "--handoff", str(handoff_path)]
+    else:
+        operation = [
+            command,
+            "--id",
+            "task-004",
+            "--kind",
+            "task",
+            "--plan-id",
+            "plan-001",
+            "--status",
+            "Completed",
+            "--handoff",
+            str(handoff_path),
+        ]
+    parsed = orchestration_dispatcher.build_parser().parse_args(
+        [*operation, "--project-root", str(root), "--mutation-events", runtime]
+    )
+    with pytest.raises(SystemExit, match="controller mutated task-owned implementation scope"):
+        parsed.func(parsed)
+    task_data, _ = execution_context._read_structured(task)
+    assert task_data.get("status") != "Completed"
+
+
+@pytest.mark.parametrize("command", ["validate-executor-result", "set-plan-status"])
+def test_completed_task_cli_rejects_missing_controller_mutation_evidence(
+    tmp_path: Path, command: str
+) -> None:
+    root, task, _, handoff, _ = _counted_validation(tmp_path)
+    handoff_path = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff_path.write_text(
+        "\n".join(execution_context._dump_yaml(handoff)) + "\n", encoding="utf-8"
+    )
+    if command == "validate-executor-result":
+        operation = [command, "--task", str(task), "--handoff", str(handoff_path)]
+    else:
+        operation = [
+            command,
+            "--id",
+            "task-004",
+            "--kind",
+            "task",
+            "--plan-id",
+            "plan-001",
+            "--status",
+            "Completed",
+            "--handoff",
+            str(handoff_path),
+        ]
+    parsed = orchestration_dispatcher.build_parser().parse_args(
+        [*operation, "--project-root", str(root)]
+    )
+    with pytest.raises(SystemExit, match="mutation.*evidence|mutation_events"):
+        parsed.func(parsed)
+    task_data, _ = execution_context._read_structured(task)
+    assert task_data.get("status") != "Completed"
+
+
+@pytest.mark.parametrize("command", ["validate-executor-result", "set-plan-status"])
+def test_completed_task_cli_accepts_complete_no_controller_mutation_evidence(
+    tmp_path: Path, command: str
+) -> None:
+    root, task, _, handoff, _ = _counted_validation(tmp_path)
+    handoff_path = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
+    handoff_path.write_text(
+        "\n".join(execution_context._dump_yaml(handoff)) + "\n", encoding="utf-8"
+    )
+    if command == "validate-executor-result":
+        operation = [command, "--task", str(task), "--handoff", str(handoff_path)]
+    else:
+        operation = [
+            command,
+            "--id",
+            "task-004",
+            "--kind",
+            "task",
+            "--plan-id",
+            "plan-001",
+            "--status",
+            "Completed",
+            "--handoff",
+            str(handoff_path),
+        ]
+    parsed = orchestration_dispatcher.build_parser().parse_args(
+        [*operation, "--project-root", str(root), "--mutation-events", "[]"]
+    )
+    parsed.func(parsed)
+    if command == "set-plan-status":
+        task_data, _ = execution_context._read_structured(task)
+        assert task_data["status"] == "Completed"
+
+
+@pytest.mark.parametrize(
+    "command", ["validate-executor-result", "set-plan-status", "build-review-package"]
+)
+def test_acceptance_cli_projects_all_controller_owned_runtime_inputs(command: str) -> None:
+    expected = {
+        "mutation_events": [{"actor_kind": "controller", "paths": ["src/a.py"]}],
+        "accepted_dependency_deltas": [{"task_id": "task-a"}],
+        "prior_ownership": {"task-b": {"agent_id": "agent-a"}},
+        "repair_continuity": {"task-b": {"binding_id": "binding-b"}},
+        "authorized_replacements": ["task-b"],
+    }
+    if command == "validate-executor-result":
+        operation = [command, "--task", "task.md", "--handoff", "handoff.yaml"]
+    elif command == "set-plan-status":
+        operation = [command, "--id", "task-b", "--status", "Completed"]
+    else:
+        operation = [
+            command,
+            "--task",
+            "task.md",
+            "--handoff",
+            "handoff.yaml",
+            "--base",
+            "base",
+            "--head",
+            "head",
+        ]
+    argv = list(operation)
+    for name, value in expected.items():
+        argv.extend(["--" + name.replace("_", "-"), json.dumps(value)])
+
+    parsed = orchestration_dispatcher.build_parser().parse_args(argv)
+
+    projected = execution_context._observation_kwargs(parsed)
+    assert {name: projected[name] for name in expected} == expected
 
 
 def test_source_records_keep_letter_suffixed_ids_distinct(tmp_path: Path) -> None:
@@ -658,6 +815,7 @@ def args(root: Path, task: Path, **overrides: object) -> argparse.Namespace:
         "execution_id": None,
         "repository_id": None,
         "execution_runtime_root": None,
+        "mutation_events": [],
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -714,6 +872,12 @@ def evidence_blocks(root: Path, *, codegraph: str = "no-index") -> str:
         "codegraph:\n"
         f"  - root: {root.resolve()}\n"
         f"{codegraph_block}"
+        "delegation_evidence:\n"
+        "  delegated: true\n"
+        "  owner_kind: subagent\n"
+        "  agent_id: execution-context-fixture-agent\n"
+        "  run_id: execution-context-fixture-run\n"
+        "  mechanism: host-native\n"
     )
 
 
@@ -1899,7 +2063,7 @@ def test_review_package_keeps_sibling_and_rename_paths_as_out_of_scope_diagnosti
     assert "No out-of-scope change is present" not in package
 
 
-def test_review_package_overflow_fails_closed_on_write_scope_diff_only(
+def test_review_package_projects_committed_oversized_diff_by_exact_source_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, _, task = workspace(tmp_path)
@@ -1915,14 +2079,27 @@ def test_review_package_overflow_fails_closed_on_write_scope_diff_only(
     base = git(root, "rev-parse", "HEAD")
     scoped.write_text("def compile_task():\n    return 'IN-SCOPE-OVERFLOW-PAYLOAD'\n", encoding="utf-8")
     outsider.write_text("OUTSIDE = '" + ("Y" * 400) + "'\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "oversized committed task result")
+    head = git(root, "rev-parse", "HEAD")
+    head_tree = git(root, "rev-parse", "HEAD^{tree}")
     handoff = _bind_passing_observation(root, task)
 
-    with pytest.raises(SystemExit, match="review-blocked|bounded package limit") as error:
-        build_review_package(args(root, task, handoff=str(handoff), base=base, head="worktree"))
+    target = build_review_package(
+        args(root, task, handoff=str(handoff), base=base, head=head)
+    )
+    package = target.read_text(encoding="utf-8")
+    metrics = json.loads(
+        target.with_name("review-package-metrics.json").read_text(encoding="utf-8")
+    )["compiled_context_metrics"]
 
-    message = str(error.value)
-    assert WRITE_SCOPE_FILE in message
-    assert "implementation task" not in message.lower() or "not a reason to add implementation" in message
+    assert "Exact source diff reference" in package
+    assert f"Base commit: {base}" in package
+    assert f"Head commit: {head}" in package
+    assert f"Head tree: {head_tree}" in package
+    assert WRITE_SCOPE_FILE in package
+    assert "IN-SCOPE-OVERFLOW-PAYLOAD" not in package
+    assert metrics["omitted_by_reference_bytes"] > 0
 
 
 def test_review_package_does_not_overflow_on_out_of_scope_payload(
@@ -2124,7 +2301,9 @@ def test_validate_executor_result_accepts_explicit_shaped_no_index_evidence(tmp_
     handoff = _read_handoff(_completed_handoff_payload(root))
     brief = _compiled_brief(root, task)
 
-    validated = execution_context.validate_executor_result_for_task(handoff, brief)
+    validated = execution_context.validate_executor_result_for_task(
+        handoff, brief, mutation_events=[]
+    )
 
     assert validated["evidence_applicability"] == brief["evidence_applicability"]
 
@@ -2168,7 +2347,9 @@ def test_helper_observation_accepts_metadata_only_applicability_without_codegrap
         "baseline_status": "current",
     }
 
-    validated = execution_context.validate_executor_result_for_task(handoff, brief, observe=True)
+    validated = execution_context.validate_executor_result_for_task(
+        handoff, brief, observe=True, mutation_events=[]
+    )
 
     assert validated["evidence_applicability"]["codegraph"]["required"] is False
 
@@ -2381,6 +2562,283 @@ def test_validate_executor_result_rejects_review_required_upgrade(tmp_path: Path
         _validate_observed(_read_handoff(handoff), brief)
 
 
+def _repair_completion_fixture() -> tuple[dict, dict]:
+    brief = {
+        "task_id": "task-rf", "plan_id": "plan-rf", "review_required": True,
+        "source_ids": [], "files": {"read": [], "write": [], "forbidden": []},
+        "truth_basis": {}, "validation": [],
+        "evidence_applicability": {
+            "metadata": {"required": False, "reasons": []},
+            "repository": {"required": False, "reasons": []},
+            "codegraph": {"required": False, "reasons": []},
+        },
+        "evidence_capability": {"result": "no_validation_bearing_obligation", "invariants": []},
+    }
+    handoff = {
+        "type": "executor-result", "related": {"plan": "plan-rf", "task": "task-rf"},
+        "result": {"state": "completed"},
+        "task_fit_check": {"task": "task-rf", "result": "repaired"},
+        "acceptance_review": {"required": True, "verdict": "accept"},
+        "delegation_evidence": {
+            "delegated": True,
+            "owner_kind": "subagent",
+            "agent_id": "repair-fixture-agent",
+            "run_id": "repair-fixture-run",
+            "mechanism": "host-native",
+        },
+        "knowledge_disposition": {"action": "none", "reason": "No authority change.", "affected_authority": []},
+    }
+    return brief, handoff
+
+
+def test_rf_task_repair_completion_rejects_unsequenced_acceptance_review() -> None:
+    brief, handoff = _repair_completion_fixture()
+    with pytest.raises(SystemExit, match="repair.*review|review.*repair"):
+        execution_context.validate_executor_result_for_task(handoff, brief)
+
+
+def _material_reset_task_review() -> dict:
+    prior_identity = {
+        "artifact_id": "task-rf", "revision": "1", "sha256": "1" * 64, "source_tree": None,
+    }
+    current_identity = {
+        "artifact_id": "task-rf", "revision": "1", "sha256": "2" * 64, "source_tree": None,
+    }
+    prior = {
+        "required": True,
+        "reviewer_independent": True,
+        "verdict": "repair",
+        "review_id": "review-prior-material",
+        "review_mode": "initial",
+        "review_target_kind": "task",
+        "repair_frontier": None,
+        "review_reset": None,
+        "target_identity": prior_identity,
+        "reviewer": {
+            "agent_id": "reviewer-prior",
+            "capability": "judgment",
+            "authorship": "none",
+            "repair_participation": "none",
+            "decision_participation": "none",
+            "deliberation_participation": "none",
+            "context_origin": "direct_source",
+        },
+        "evidence": {
+            "mode": "direct", "capabilities": ["source inspection"],
+            "unavailable_evidence": [], "commands": [], "artifacts": [],
+        },
+        "findings": [{
+            "finding_id": "RF-MATERIAL-1",
+            "stage": "implementation",
+            "class": "implementation_defect",
+            "severity": "blocking",
+            "first_broken_artifact": "implementation",
+            "obligation_basis": "accepted_requirement",
+            "evidence": [{
+                "kind": "test", "locator": "RF", "digest_or_identity": "RF-RED",
+                "observation": "failed",
+            }],
+            "target_identity": prior_identity,
+            "summary": "Accepted boundary changed materially.",
+            "recommended_owner": "task_owner",
+            "disposition": "repair_task",
+        }],
+        "started_at": "2026-09-06T00:00:00Z",
+        "completed_at": "2026-09-06T00:01:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    return {
+        "required": True,
+        "reviewer_independent": True,
+        "verdict": "accept",
+        "review_id": "review-current-material-reset",
+        "review_mode": "initial",
+        "review_target_kind": "task",
+        "repair_frontier": None,
+        "review_reset": {
+            "prior_review_id": prior["review_id"],
+            "reason_class": "scope",
+            "reason": "Accepted write scope changed.",
+        },
+        "target_identity": current_identity,
+        "reviewer": {**prior["reviewer"], "agent_id": "reviewer-reset"},
+        "evidence": {
+            "mode": "direct", "capabilities": ["source inspection"],
+            "unavailable_evidence": [], "commands": [], "artifacts": [],
+        },
+        "findings": [],
+        "previous_review": prior,
+        "started_at": "2026-09-06T00:02:00Z",
+        "completed_at": "2026-09-06T00:03:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+
+
+def test_rf_repaired_task_completion_accepts_native_fresh_initial_review_reset() -> None:
+    brief, handoff = _repair_completion_fixture()
+    handoff["acceptance_review"] = _material_reset_task_review()
+
+    accepted = execution_context.validate_executor_result_for_task(
+        handoff, brief, mutation_events=[]
+    )
+
+    assert accepted["result_state"] == "completed"
+    assert accepted["task_ownership"]["agent_id"] == "repair-fixture-agent"
+
+
+def test_rf_repaired_task_completion_rejects_unclassified_initial_review_reset() -> None:
+    brief, handoff = _repair_completion_fixture()
+    handoff["acceptance_review"] = _material_reset_task_review()
+    handoff["acceptance_review"]["review_reset"]["reason_class"] = "fixture_recovery"
+
+    with pytest.raises(SystemExit, match="review_reset|material_change"):
+        execution_context.validate_executor_result_for_task(
+            handoff, brief, mutation_events=[]
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation_events",
+    [
+        [{}],
+        [{"paths": ["src/a.py"]}],
+        [{"actor_kind": "controller"}],
+        [{"actor_kind": 42, "paths": ["src/a.py"]}],
+        [{"actor_kind": "unknown", "paths": ["src/a.py"]}],
+        [{"actor_kind": "subagent", "paths": "src/a.py"}],
+        [{"actor_kind": "subagent", "paths": []}],
+        [{"actor_kind": "subagent", "paths": [42]}],
+        [{"actor_kind": "subagent", "paths": ["../src/a.py"]}],
+        [{"actor_kind": "subagent", "paths": ["/tmp/src/a.py"]}],
+        [{"actor_kind": "subagent", "paths": ["src/a.py"], "extra": True}],
+    ],
+)
+def test_completed_task_rejects_malformed_mutation_evidence(
+    tmp_path: Path, mutation_events: object
+) -> None:
+    _, _, brief, handoff, _ = _counted_validation(tmp_path)
+
+    with pytest.raises(SystemExit, match="mutation_events|mutation event"):
+        execution_context.validate_executor_result_for_task(
+            handoff,
+            brief,
+            observe=True,
+            mutation_events=mutation_events,
+        )
+
+
+def test_completed_task_accepts_complete_subagent_mutation_evidence(tmp_path: Path) -> None:
+    _, _, brief, handoff, _ = _counted_validation(tmp_path)
+
+    accepted = execution_context.validate_executor_result_for_task(
+        handoff,
+        brief,
+        observe=True,
+        mutation_events=[{"actor_kind": "subagent", "paths": [WRITE_SCOPE_FILE]}],
+    )
+
+    assert accepted["result_state"] == "completed"
+
+
+def test_completed_task_rejects_controller_mutation_with_dot_segment() -> None:
+    brief, handoff = _repair_completion_fixture()
+    brief["review_required"] = False
+    brief["files"]["write"] = ["src/a.py"]
+    handoff["task_fit_check"]["result"] = "clean"
+    handoff["acceptance_review"] = {"required": False}
+
+    with pytest.raises(SystemExit, match="controller mutated task-owned implementation scope"):
+        execution_context.validate_executor_result_for_task(
+            handoff,
+            brief,
+            mutation_events=[{"actor_kind": "controller", "paths": ["src/./a.py"]}],
+        )
+
+
+def test_completed_task_rejects_controller_mutation_with_repeated_separator() -> None:
+    brief, handoff = _repair_completion_fixture()
+    brief["review_required"] = False
+    brief["files"]["write"] = ["src/a.py"]
+    handoff["task_fit_check"]["result"] = "clean"
+    handoff["acceptance_review"] = {"required": False}
+
+    with pytest.raises(SystemExit, match="controller mutated task-owned implementation scope"):
+        execution_context.validate_executor_result_for_task(
+            handoff,
+            brief,
+            mutation_events=[{"actor_kind": "controller", "paths": ["src//a.py"]}],
+        )
+
+
+def test_rf_task_repair_completion_rejects_stale_repair_frontier(tmp_path: Path) -> None:
+    brief, handoff = _repair_completion_fixture()
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.com")
+    source = tmp_path / "source.py"
+    source.write_text("OLD = True\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "old")
+    old_tree = git(tmp_path, "rev-parse", "HEAD^{tree}")
+    source.write_text("NEW = True\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "repaired")
+    repaired_head = git(tmp_path, "rev-parse", "HEAD")
+    repaired_tree = git(tmp_path, "rev-parse", "HEAD^{tree}")
+    old = {"artifact_id": "task-rf", "revision": "1", "sha256": "1" * 64, "source_tree": old_tree}
+    new = {"artifact_id": "task-rf", "revision": "1", "sha256": "2" * 64, "source_tree": repaired_tree}
+    prior = {
+        "required": True, "reviewer_independent": True, "verdict": "repair", "review_id": "review-prior",
+        "review_mode": "initial", "review_target_kind": "task", "repair_frontier": None, "review_reset": None,
+        "target_identity": old,
+        "reviewer": {"agent_id": "reviewer-prior", "capability": "judgment", "authorship": "none", "repair_participation": "none", "decision_participation": "none", "deliberation_participation": "none", "context_origin": "direct_source"},
+        "evidence": {"mode": "direct", "capabilities": ["source inspection"], "unavailable_evidence": [], "commands": [], "artifacts": []},
+        "findings": [{
+            "finding_id": "RF-FINDING-1", "stage": "implementation", "class": "implementation_defect", "severity": "blocking",
+            "first_broken_artifact": "implementation", "obligation_basis": "accepted_requirement",
+            "evidence": [{"kind": "test", "locator": "RF", "digest_or_identity": "RF-RED", "observation": "failed"}],
+            "target_identity": old, "summary": "repair", "recommended_owner": "task_owner", "disposition": "repair_task",
+        }],
+        "started_at": "2026-09-06T00:00:00Z", "completed_at": "2026-09-06T00:01:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    from review_runtime import review_evidence_identity
+    handoff["acceptance_review"] = {
+        "required": True, "reviewer_independent": True, "verdict": "accept", "review_id": "review-repair",
+        "reviewed_head": repaired_head,
+        "review_mode": "repair", "review_target_kind": "task", "review_reset": None,
+        "repair_frontier": {
+            "prior_review_id": "review-prior", "blocking_finding_ids": ["RF-FINDING-1"],
+            "previous_reviewed_identity": old, "repaired_identity": new,
+            "affected_boundaries": ["scripts/orchestration/execution_context.py:_assert_handoff_review_matches_task"],
+            "frozen_evidence_reference": review_evidence_identity(prior),
+        },
+        "target_identity": new,
+        "reviewer": {**prior["reviewer"], "agent_id": "reviewer-new"},
+        "evidence": {"mode": "direct", "capabilities": ["bounded source inspection"], "unavailable_evidence": [], "commands": [], "artifacts": []},
+        "findings": [], "previous_review": prior,
+        "started_at": "2026-09-06T00:02:00Z", "completed_at": "2026-09-06T00:03:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    handoff["repository"] = [{"root": str(tmp_path), "target_kind": "git-backed", "preflight_kind": "git-clean-worktree", "baseline": "initial", "status": "clean"}]
+    execution_context._assert_handoff_review_matches_task(handoff, brief, "completed")
+    stale = deepcopy(handoff)
+    stale["acceptance_review"]["target_identity"] = {**new, "sha256": "3" * 64}
+    with pytest.raises(SystemExit, match="repaired identity|frontier"):
+        execution_context._assert_handoff_review_matches_task(stale, brief, "completed")
+    for field, value in (("required", False), ("reviewer_independent", False), ("review_target_kind", "wrong-kind")):
+        invalid_prior = deepcopy(handoff)
+        invalid_prior["acceptance_review"]["previous_review"][field] = value
+        with pytest.raises(SystemExit, match="previous|task acceptance|review_target_kind"):
+            execution_context._assert_handoff_review_matches_task(invalid_prior, brief, "completed")
+    fabricated = deepcopy(handoff)
+    fabricated_identity = {**new, "sha256": "3" * 64, "source_tree": "f" * 40}
+    fabricated["acceptance_review"]["target_identity"] = fabricated_identity
+    fabricated["acceptance_review"]["repair_frontier"]["repaired_identity"] = fabricated_identity
+    with pytest.raises(SystemExit, match="head|tree|Git identity"):
+        execution_context._assert_handoff_review_matches_task(fabricated, brief, "completed")
+
+
 def test_no_review_update_stays_closure_eligible_when_handoff_self_upgrades() -> None:
     handoffs = [
         {
@@ -2444,6 +2902,7 @@ def test_set_plan_status_completed_requires_validated_handoff(tmp_path: Path) ->
             status="Completed",
             kind="task",
             handoff=str(handoff),
+            mutation_events=[],
         )
     )
     data, _ = execution_context._read_structured(task)
@@ -2763,7 +3222,9 @@ def _enable_passing_observation(root: Path, task: Path, handoff: Path) -> None:
 
 
 def _validate_observed(handoff: dict, brief: dict) -> dict:
-    return execution_context.validate_executor_result_for_task(handoff, brief, observe=True)
+    return execution_context.validate_executor_result_for_task(
+        handoff, brief, observe=True, mutation_events=[]
+    )
 
 
 def _set_process_validation(task: Path, command: str, **fields: object) -> None:
@@ -3137,6 +3598,7 @@ def test_set_plan_status_completed_observes_bound_worktree(tmp_path: Path) -> No
             execution_id=None,
             repository_id=None,
             execution_runtime_root=None,
+            mutation_events=[],
         )
     )
     data, _ = execution_context._read_structured(task)

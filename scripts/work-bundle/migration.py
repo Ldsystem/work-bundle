@@ -405,7 +405,6 @@ def _metadata_text(
         'workspace_mode: multi-repository',
         f'project_root: {_yaml_string(member_root)}',
         f'industry: {_yaml_string(repository_id)}',
-        'prefer_subagent: false',
         'metadata_compatibility:',
         '  readable_versions: [2, 3]',
         '  migration_requires_explicit_apply: true',

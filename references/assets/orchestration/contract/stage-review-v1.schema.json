@@ -7,6 +7,8 @@
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "time": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "reviewMode": {"enum": ["initial", "repair"]},
+    "reviewTargetKind": {"enum": ["task", "stage"]},
     "targetIdentity": {
       "type": "object",
       "additionalProperties": false,
@@ -47,8 +49,40 @@
         "disposition": {"enum": ["reopen_specification", "repair_plan", "reslice_plan", "repair_task", "repair_oracle", "recover_environment", "record_advisory", "accepted", "rejected"]}
       }
     },
+    "repairFrontier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prior_review_id", "blocking_finding_ids", "previous_reviewed_identity", "repaired_identity", "affected_boundaries", "frozen_evidence_reference"],
+      "properties": {
+        "prior_review_id": {"$ref": "#/$defs/id"},
+        "blocking_finding_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "previous_reviewed_identity": {"$ref": "#/$defs/targetIdentity"},
+        "repaired_identity": {"$ref": "#/$defs/targetIdentity"},
+        "affected_boundaries": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "frozen_evidence_reference": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "reviewReset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prior_review_id", "reason_class", "reason"],
+      "properties": {
+        "prior_review_id": {"$ref": "#/$defs/id"},
+        "reason_class": {"enum": ["material_redesign", "authority", "scope", "acceptance", "decomposition", "validation_allocation"]},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
     "stageReview": {
       "allOf": [
+        {
+          "if": {"required": ["review_mode"], "properties": {"review_mode": {"const": "repair"}}},
+          "then": {"required": ["repair_frontier"], "properties": {"repair_frontier": {"$ref": "#/$defs/repairFrontier"}, "review_reset": {"type": "null"}}},
+          "else": {"properties": {"repair_frontier": {"type": "null"}}}
+        },
+        {
+          "if": {"required": ["review_target_kind"]},
+          "then": {"properties": {"review_target_kind": {"const": "stage"}}}
+        },
         {
           "if": {"properties": {"verdict": {"const": "accepted"}}},
           "then": {
@@ -81,6 +115,10 @@
       "required": ["review_id", "stage", "target_identity", "reviewer", "evidence", "verdict", "findings", "started_at", "completed_at", "staleness"],
       "properties": {
         "review_id": {"$ref": "#/$defs/id"},
+        "review_mode": {"$ref": "#/$defs/reviewMode"},
+        "review_target_kind": {"$ref": "#/$defs/reviewTargetKind"},
+        "repair_frontier": {"anyOf": [{"$ref": "#/$defs/repairFrontier"}, {"type": "null"}]},
+        "review_reset": {"anyOf": [{"$ref": "#/$defs/reviewReset"}, {"type": "null"}]},
         "reviewer_run": {
           "type": "object", "additionalProperties": false, "required": ["run_id", "sha256"],
           "properties": {"run_id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/sha256"}}

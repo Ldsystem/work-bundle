@@ -48,7 +48,23 @@ JOIN_ID_FIELDS = frozenset(
 )
 IDENTITY_FIELDS = frozenset({"product_tree", "artifact_digest", "mutation_epoch"})
 CLOCK_FIELDS = frozenset({"wall_ms", "active_ms", "billed_ms"})
-EVENT_FIELDS = frozenset(
+COMPILED_CONTEXT_METRIC_FIELDS = frozenset(
+    {
+        "task_brief_bytes",
+        "semantic_authority_bytes",
+        "allocated_rule_bytes",
+        "allocated_skill_bytes",
+        "capability_projection_bytes",
+        "evidence_projection_bytes",
+        "review_package_bytes",
+        "omitted_by_reference_bytes",
+        "expansion_reason",
+    }
+)
+CONTEXT_EXPANSION_REASONS = frozenset(
+    {None, "failed_validation", "ambiguity", "reviewer_request", "authority_gap"}
+)
+LEGACY_EVENT_FIELDS = frozenset(
     {
         "event_id",
         "timestamp",
@@ -66,6 +82,7 @@ EVENT_FIELDS = frozenset(
         "privacy",
     }
 )
+EVENT_FIELDS = LEGACY_EVENT_FIELDS | {"compiled_context_metrics"}
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _OID_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -103,9 +120,13 @@ class StageEventV1:
     owner: str | None
     identity: dict[str, str | int | None]
     privacy: str
+    compiled_context_metrics: dict[str, int | str | None] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return asdict(self)
+        result = asdict(self)
+        if self.compiled_context_metrics is None:
+            result.pop("compiled_context_metrics")
+        return result
 
 
 def _fail(code: str) -> None:
@@ -133,7 +154,7 @@ def _parse_timestamp(value: object) -> datetime:
 
 
 def _scan_for_sensitive_content(value: object, *, key: str | None = None) -> None:
-    if key is not None and _SENSITIVE_KEY_RE.search(key):
+    if key is not None and key != "compiled_context_metrics" and _SENSITIVE_KEY_RE.search(key):
         _fail("WB_STAGE_EVENT_PRIVACY_INVALID")
     if isinstance(value, Mapping):
         for nested_key, nested_value in value.items():
@@ -157,7 +178,10 @@ def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
     """Validate one closed API-004 event without retaining caller-owned containers."""
 
     _scan_for_sensitive_content(payload)
-    value = _validate_exact_fields(payload, EVENT_FIELDS, "WB_STAGE_EVENT_FIELDS_INVALID")
+    if set(payload) == LEGACY_EVENT_FIELDS:
+        value = payload
+    else:
+        value = _validate_exact_fields(payload, EVENT_FIELDS, "WB_STAGE_EVENT_FIELDS_INVALID")
     for field in ("event_id", "process_id", "attempt_id"):
         if not _is_id(value[field]):
             _fail("WB_STAGE_EVENT_ID_INVALID")
@@ -206,6 +230,21 @@ def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
     if value["privacy"] != "operational_metadata_only":
         _fail("WB_STAGE_EVENT_PRIVACY_INVALID")
 
+    metrics_value = value.get("compiled_context_metrics")
+    metrics: dict[str, int | str | None] | None = None
+    if metrics_value is not None:
+        checked = _validate_exact_fields(
+            metrics_value,
+            COMPILED_CONTEXT_METRIC_FIELDS,
+            "WB_STAGE_EVENT_CONTEXT_METRICS_INVALID",
+        )
+        for field in COMPILED_CONTEXT_METRIC_FIELDS - {"expansion_reason"}:
+            if not _is_nonnegative_int(checked[field]):
+                _fail("WB_STAGE_EVENT_CONTEXT_METRICS_INVALID")
+        if checked["expansion_reason"] not in CONTEXT_EXPANSION_REASONS:
+            _fail("WB_STAGE_EVENT_CONTEXT_METRICS_INVALID")
+        metrics = {field: checked[field] for field in sorted(COMPILED_CONTEXT_METRIC_FIELDS)}
+
     return StageEventV1(
         event_id=str(value["event_id"]),
         timestamp=str(value["timestamp"]),
@@ -221,6 +260,7 @@ def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
         owner=value["owner"] if isinstance(value["owner"], str) else None,
         identity={field: identity[field] for field in sorted(IDENTITY_FIELDS)},
         privacy="operational_metadata_only",
+        compiled_context_metrics=metrics,
     )
 
 

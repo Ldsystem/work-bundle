@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from core import *
 from core import _member_roots
 from execution_context import (
+    AcceptanceOwnershipError,
     cmd_validate_executor_result,
     evaluate_knowledge_closure_state,
     read_structured_artifact,
@@ -124,6 +125,8 @@ def _try_validate_task_handoff(
             observe=capability.get("result") == "mapped",
             **_observation_kwargs(args),
         )
+    except AcceptanceOwnershipError:
+        raise
     except SystemExit:
         return None
     return handoff, brief

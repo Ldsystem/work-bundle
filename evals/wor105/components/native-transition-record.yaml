@@ -2,11 +2,11 @@ schema: wor105-native-transition-v1
 issue: WOR-105
 transition_task: task-b06r
 enforcement_transition: bootstrap_policy_to_native
-source_identity: 10aa3aceeea4c440feaccb484b897af67cd0df0b+repository-evidence-sha256:279f142fad6ea3005370b9eaa82d7c88444032e668309173e9230754b28c40ae
+source_identity: 9dce5df221485174d6179f713e8b179bbc20567a+repository-evidence-sha256:279f142fad6ea3005370b9eaa82d7c88444032e668309173e9230754b28c40ae
 review_path: .work-bundle/orchestration/reviews/WOR-105-task-b06r-kernel-review-accepted.yaml
 review_sha256: d638b8959b4db57dd33e072b01428d6ce89f65a9771c05eff26d8e40d4293ebd
-accepted_commit: 10aa3aceeea4c440feaccb484b897af67cd0df0b
-accepted_tree: 3f70163e3aef240b0f1207f43433874c9139a7fb
+accepted_commit: 9dce5df221485174d6179f713e8b179bbc20567a
+accepted_tree: 5a1f38355eae8068bab528923e807ce54e6f6fe5
 integrated_validation: {id: VAL-B06R-TEST, result: passed, tests: 300}
 handoff_validation: {id: VAL-B06R-IDENTITY, result: passed, adversarial_cases: 5}
 participant_handoffs:

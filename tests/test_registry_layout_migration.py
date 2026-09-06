@@ -29,6 +29,20 @@ from registry_layout import (  # noqa: E402
 )
 
 
+def restore_work_bundle_import_boundary() -> None:
+    """Keep direct migration calls isolated from orchestration's `core` module."""
+
+    if _WB_SCRIPTS in sys.path:
+        sys.path.remove(_WB_SCRIPTS)
+    sys.path.insert(0, _WB_SCRIPTS)
+    core_module = sys.modules.get("core")
+    core_path = Path(getattr(core_module, "__file__", "")) if core_module is not None else None
+    if core_path is not None and Path(_WB_SCRIPTS) not in core_path.parents:
+        sys.modules.pop("core", None)
+    for name in ("project", "bootstrap_config"):
+        sys.modules.pop(name, None)
+
+
 def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update(
@@ -76,7 +90,6 @@ def bootstrap_config(tmp_path: Path) -> Path:
                 f"work_bundle_root: {REPO_ROOT}",
                 'project_registry: "$work_bundle_config_root/registry/projects.yaml"',
                 'skill_registry: "$work_bundle_config_root/registry/skill-registry.yaml"',
-                "prefer_subagent: false",
                 "",
             ]
         ),
@@ -471,6 +484,7 @@ def test_blocked_multi_repository_v2(tmp_path: Path) -> None:
 
 
 def test_validation_failure_after_transformation_restores_state(tmp_path: Path, monkeypatch) -> None:
+    restore_work_bundle_import_boundary()
     config = bootstrap_config(tmp_path)
     workspace, remote, _, repo_id = prepare_workspace(tmp_path, "validate-fail", "v3-single.yaml")
     registry = write_registry(config, [project_block("validate-fail", workspace, repo_id, str(remote))])
@@ -503,6 +517,7 @@ def test_validation_failure_after_transformation_restores_state(tmp_path: Path, 
 
 
 def test_intermediate_step_failure_restores_pre_migration_state(tmp_path: Path, monkeypatch) -> None:
+    restore_work_bundle_import_boundary()
     config = bootstrap_config(tmp_path)
     workspace, remote, _, repo_id = prepare_workspace(tmp_path, "mid-fail", "v2-project.yaml")
     registry = write_registry(config, [project_block("mid-fail", workspace, repo_id, str(remote))])
@@ -541,6 +556,7 @@ def test_intermediate_step_failure_restores_pre_migration_state(tmp_path: Path, 
 def test_failed_migration_preserves_symlink_and_nested_credentials(
     tmp_path: Path, monkeypatch
 ) -> None:
+    restore_work_bundle_import_boundary()
     config = bootstrap_config(tmp_path)
     workspace, remote, _, repo_id = prepare_workspace(tmp_path, "user-data", "v3-single.yaml")
     registry = write_registry(config, [project_block("user-data", workspace, repo_id, str(remote))])

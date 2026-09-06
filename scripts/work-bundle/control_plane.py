@@ -658,7 +658,6 @@ def _render_v4(
                 "    operation_policy: inherit",
             ]
         )
-    lines.append(f"prefer_subagent: {str(_parse_bool(_yaml_scalar(v3_text, 'prefer_subagent'))).lower()}")
     lines.append(_agents_contract_block())
     lines.extend(_portable_unknown_blocks(v3_text))
     return "\n".join(lines).rstrip() + "\n", workspace_id, repositories
@@ -1079,7 +1078,6 @@ def _render_new_v4_for_mode(
             f"      required: {str(bool(repository.get('required', True))).lower()}",
             "    operation_policy: inherit",
         ])
-    lines.append("prefer_subagent: false")
     lines.append(_agents_contract_block())
     return "\n".join(lines) + "\n", workspace_id
 

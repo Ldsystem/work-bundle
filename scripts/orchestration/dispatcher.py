@@ -2,11 +2,19 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from core import HANDOFF_TYPES
 from doctor import cmd_doctor
 from documents import cmd_git_status, cmd_next_action_candidates, cmd_related, cmd_state, cmd_write_doc
-from execution_context import cmd_build_review_package, cmd_build_task_brief, cmd_validate_executor_result, cmd_observe_task_validation
+from execution_context import (
+    cmd_build_review_package,
+    cmd_build_task_brief,
+    cmd_adopt_existing_recovered_result,
+    cmd_create_accepted_base_absence_receipt,
+    cmd_observe_task_validation,
+    cmd_validate_executor_result,
+)
 from handoffs import cmd_index_handoffs, cmd_list_handoffs, cmd_set_handoff_status, cmd_write_handoff
 from init import cmd_init
 from plans import cmd_archive_plan, cmd_index_plans, cmd_list_plans, cmd_set_plan_status, cmd_write_phase, cmd_write_plan, cmd_write_task
@@ -16,11 +24,30 @@ from specs import cmd_index_specs, cmd_list_specs, cmd_set_spec_status, cmd_writ
 RECOGNIZED_COMMANDS = frozenset({
     "init", "doctor", "state", "next-action-candidates", "git-status",
     "repository-preflight", "build-task-brief", "build-review-package",
-    "validate-executor-result", "observe-task-validation", "related", "write-doc", "write-spec",
+    "validate-executor-result", "observe-task-validation", "create-accepted-base-absence-receipt",
+    "adopt-existing-recovered-result",
+    "related", "write-doc", "write-spec",
     "list-specs", "set-spec-status", "index-specs", "write-plan", "list-plans",
     "set-plan-status", "archive-plan", "index-plans", "write-phase", "write-task",
     "write-handoff", "list-handoffs", "set-handoff-status", "index-handoffs",
 })
+
+
+def _runtime_json(value: str) -> object:
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as error:
+        raise argparse.ArgumentTypeError(f"invalid controller runtime JSON: {error.msg}") from error
+
+
+def _add_acceptance_runtime_inputs(parser: argparse.ArgumentParser) -> None:
+    """Expose harness observations without adding them to durable executor results."""
+
+    parser.add_argument("--mutation-events", type=_runtime_json)
+    parser.add_argument("--accepted-dependency-deltas", type=_runtime_json)
+    parser.add_argument("--prior-ownership", type=_runtime_json)
+    parser.add_argument("--repair-continuity", type=_runtime_json)
+    parser.add_argument("--authorized-replacements", type=_runtime_json)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,14 +82,43 @@ def build_parser() -> argparse.ArgumentParser:
     review_package.add_argument("--handoff", required=True)
     review_package.add_argument("--base", required=True)
     review_package.add_argument("--head", required=True)
+    _add_acceptance_runtime_inputs(review_package)
     review_package.set_defaults(func=cmd_build_review_package)
     validate_result = sub.add_parser("validate-executor-result", parents=[parent])
     validate_result.add_argument("--task", required=True)
     validate_result.add_argument("--handoff", required=True)
+    _add_acceptance_runtime_inputs(validate_result)
     validate_result.set_defaults(func=cmd_validate_executor_result)
     observe_validation = sub.add_parser("observe-task-validation", parents=[parent])
     observe_validation.add_argument("--task", required=True)
     observe_validation.set_defaults(func=cmd_observe_task_validation)
+    create_recovery_receipt = sub.add_parser(
+        "create-accepted-base-absence-receipt", parents=[parent]
+    )
+    create_recovery_receipt.add_argument("--plan-id", required=True)
+    create_recovery_receipt.add_argument("--task-id", required=True)
+    create_recovery_receipt.add_argument("--expected-head", required=True)
+    create_recovery_receipt.add_argument("--expected-tree", required=True)
+    create_recovery_receipt.add_argument("--proposed-handoff-id", required=True)
+    create_recovery_receipt.add_argument("--proposed-review-id", required=True)
+    create_recovery_receipt.add_argument("--final-head", required=True)
+    create_recovery_receipt.add_argument("--final-tree", required=True)
+    create_recovery_receipt.set_defaults(func=cmd_create_accepted_base_absence_receipt)
+    adopt_recovered_result = sub.add_parser(
+        "adopt-existing-recovered-result", parents=[parent]
+    )
+    adopt_recovered_result.add_argument("--plan-id", required=True)
+    adopt_recovered_result.add_argument("--task-id", required=True)
+    adopt_recovered_result.add_argument("--expected-head", required=True)
+    adopt_recovered_result.add_argument("--expected-tree", required=True)
+    adopt_recovered_result.add_argument("--handoff-id", required=True)
+    adopt_recovered_result.add_argument("--handoff-sha256", required=True)
+    adopt_recovered_result.add_argument("--review-id", required=True)
+    adopt_recovered_result.add_argument("--final-head", required=True)
+    adopt_recovered_result.add_argument("--final-tree", required=True)
+    adopt_recovered_result.add_argument("--prior-receipt-id", required=True)
+    adopt_recovered_result.add_argument("--prior-receipt-sha256", required=True)
+    adopt_recovered_result.set_defaults(func=cmd_adopt_existing_recovered_result)
     related = sub.add_parser("related", parents=[parent])
     related.add_argument("--id", required=True)
     related.set_defaults(func=cmd_related)
@@ -108,9 +164,11 @@ def build_parser() -> argparse.ArgumentParser:
     set_plan.add_argument("--kind", choices=["plan", "phase", "task"])
     set_plan.add_argument("--plan-id")
     set_plan.add_argument("--handoff")
+    _add_acceptance_runtime_inputs(set_plan)
     set_plan.set_defaults(func=cmd_set_plan_status)
     archive_plan = sub.add_parser("archive-plan", parents=[parent])
     archive_plan.add_argument("--id", required=True)
+    _add_acceptance_runtime_inputs(archive_plan)
     archive_plan.set_defaults(func=cmd_archive_plan)
     sub.add_parser("index-plans", parents=[parent]).set_defaults(func=cmd_index_plans)
     write_phase = sub.add_parser("write-phase", parents=[parent])

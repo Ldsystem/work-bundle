@@ -15,8 +15,6 @@ Initialize, doctor, validate, register, inspect, or migrate a project as a work-
 - `project_root`: one concrete source repository checkout; equal to `workspace_root` in single-repository mode and a member path in multi-repository mode.
 - Explicit `mode`: `single-repository` or `multi-repository` for new initialization.
 - `~/.work-bundle/bootstrap.yaml` for `project_registry` and `work_bundle_root` resolution.
-- `~/.work-bundle/bootstrap.yaml` field `prefer_subagent` for the global sub-agent scheduling preference default.
-- `$workspace_root/.work-bundle/project.yaml` field `prefer_subagent` for the current workspace override.
 - Optional `WB_WORK_BUNDLE_ROOT` environment override when the agent must pass an explicit toolkit root to dispatcher commands.
 - Work-bundle reference templates and manifests under the bootstrap-resolved work-bundle root:
   - `references/assets/template/project.yaml`
@@ -48,11 +46,10 @@ Invoke project lifecycle behavior only through `python3 scripts/wb.py` dispatche
 | Add v4 workspace member | `add-workspace-member <workspace-root> --repository-id <id> --remote <observed-url> --name <binding-name> --path <relative-path> --default-branch <branch> (--dry-run|--accepted-proposal-id <id> --apply)` |
 | Provision member | `provision-member --workspace-root <workspace-root> [--workspace-slug <slug>] --origin <origin-root> --repository-id <id> --working-branch <branch> --base-ref <ref> [--dry-run|--apply]` |
 | Cleanup member | `cleanup-member --workspace-root <workspace-root> --repository-id <id> (--dry-run|--apply)` |
-| Set sub-agent preference | `set-prefer-subagent <true|false|enable|disable|on|off> --scope <global|project> [--project-root <project-root>]` |
 
 `initialize-project` remains a compatibility alias for `init-project`; prefer `init-project` in new instructions.
 
-The explicit `--workspace-root` and `--project-root` selectors remain available only on commands whose live help lists them, such as `show-project` and project-scoped `set-prefer-subagent`. New creation must reject a missing or contradictory mode/root combination rather than silently infer topology. Single-repository mode is current and fully supported, not legacy or transitional.
+The explicit `--workspace-root` and `--project-root` selectors remain available only on commands whose live help lists them, such as `show-project`. New creation must reject a missing or contradictory mode/root combination rather than silently infer topology. Single-repository mode is current and fully supported, not legacy or transitional.
 
 **Portable v4 migration guardrails:** before `migrate-control-plane`, load every applicable rule body in full, including project context, registry authority, lifecycle, repository boundary, security exclusion, and defect routing. Do not sample those rules by keyword. Resolve canonical remotes from explicit `--repository-remote` input, registry locator authority, and the live origin chain. When authoritative network remotes conflict, stop and ask the user which remote is canonical; rerun the exact dry-run with `--repository-remote` after the decision. During this workflow, do not edit the project registry directly and do not change an external repository's Git config. `show-project`, `validate-project`, and `doctor-project` route metadata-version-4 workspaces to v4 control-plane validation; repair must never rewrite portable v4 metadata into v3 shape.
 
@@ -78,20 +75,6 @@ Use this command for v4 membership additions, not v3 `provision-member` or manua
 An exact workspace-local checkout created by an older WorkBundle version may have no recovery record. `provision-member` adopts it only when control scope, origin, repository ID, branch, and base HEAD all match; dry-run reports `resume_source: verified-orphan`. It never claims that adopted checkout as rollback-owned. `cleanup-member` is limited to recorded, unpublished, transaction-owned checkouts; published members require a separate deregistration workflow and unrecorded paths are never deleted.
 
 **`init-project --dry-run` / `validate-project --dry-run`:** inspect and report mechanical failures without writing project files.
-
-**`prefer_subagent` management:**
-
-- `prefer_subagent` is a boolean preference only; it does not bypass orchestration preflight, dependency, write-scope, handoff, or fallback rules.
-- Effective value resolves as project metadata first, then global bootstrap, then `false`:
-  - project: `$workspace_root/.work-bundle/project.yaml` -> `prefer_subagent`;
-  - global: `$work_bundle_config_root/bootstrap.yaml` -> `prefer_subagent`;
-  - default: `false`.
-- Use `set-prefer-subagent true --scope global` for requests such as "Enable global `prefer_subagent`".
-- Use `set-prefer-subagent false --scope global` for requests such as "Disable global `prefer_subagent`".
-- Use `set-prefer-subagent false --scope project --project-root <project-root>` for requests such as "Disable `prefer_subagent` for current workspace".
-- Use `set-prefer-subagent true --scope project --project-root <project-root>` for requests such as "Enable `prefer_subagent` for current workspace".
-- The command updates only the selected YAML file and reports `target_path`, `changed_files`, and `effective_prefer_subagent` in JSON.
-- Do not hand-edit either YAML file for this preference when the dispatcher command is available.
 
 **Registry and slug (per `wb-project-registry`):**
 
@@ -137,7 +120,6 @@ An exact workspace-local checkout created by an older WorkBundle version may hav
 - In multi-repository mode place runtime Git control stores beneath `$workspace_root/.work-bundle/git/` and exclude them from workspace-management commits and broad scans.
 - Render `.work-bundle/project.yaml` from `references/assets/template/project.yaml`.
 - Render `.work-bundle/project.yaml` with metadata v3 workspace/member state from mechanical Git and per-member `.codegraph/` inspection.
-- Render `.work-bundle/project.yaml` with a `prefer_subagent: false` default unless a future template version explicitly changes the default.
 - Render `.work-bundle/project.yaml` with an `agents_sync` section that owns WorkBundle `AGENTS.md` checksum and sync-status state.
 - Create, append, or refresh `AGENTS.md` with the WorkBundle managed section from `references/assets/template/AGENTS.md`; do not overwrite user-authored content outside the managed section.
 - Create or preserve required `.gitignore` entries.
@@ -193,7 +175,6 @@ Use `migrate-project` only for unambiguous single-repository legacy layout upgra
 - Initialized, doctored, validated, registered, or migrated project workspace.
 - Updated bootstrap-resolved project-registry locator or metadata-v4 device binding when its lifecycle command runs.
 - JSON command output with `status`, `failures`, registry status, metadata version/mode/resources/member evidence, redacted lifecycle transaction state, AGENTS sync evidence, and changed files where applicable. Compatibility reads retain existing v2 evidence fields until explicit migration.
-- For `set-prefer-subagent`, JSON command output with `status`, `scope`, `prefer_subagent`, `target_path`, `changed_files`, and `effective_prefer_subagent`.
 - Migration report and optional legacy-bootstrap archive paths under `.work-bundle/orchestration/docs/` when migration retires legacy artifacts.
 
 ## On Failure
