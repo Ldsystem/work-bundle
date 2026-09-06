@@ -6,6 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from reviewer_run_fixtures import bind_review_receipt
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +22,7 @@ from review_runtime import (  # noqa: E402
     resume_plan_return,
     route_review_verdict,
 )
-from stage_events import StageEventError, validate_stage_event  # noqa: E402
+from stage_events import StageEventError  # noqa: E402
 
 
 ZERO_SHA = "0" * 64
@@ -34,6 +35,23 @@ def identity(artifact_id: str, revision: str = "1") -> dict[str, object]:
         "revision": revision,
         "sha256": ZERO_SHA,
         "source_tree": ZERO_TREE,
+    }
+
+
+def binding_identity() -> dict[str, str]:
+    return {"binding_id": "binding-task-003", "sha256": "1" * 64}
+
+
+def baseline_identity() -> dict[str, str]:
+    return {"head": "2" * 40, "tree": "3" * 40}
+
+
+def affected_region() -> dict[str, list[str]]:
+    return {
+        "task_ids": ["task-003"],
+        "paths": ["scripts/orchestration/review_runtime.py"],
+        "interfaces": ["API-PD-001"],
+        "validation_oracles": ["VAL-004"],
     }
 
 
@@ -61,9 +79,9 @@ def allocation_gap() -> dict[str, object]:
     }
 
 
-def event() -> dict[str, object]:
-    return {
-        "event_id": "event-economics",
+def event(event_id: str = "event-economics", **updates: object) -> dict[str, object]:
+    value: dict[str, object] = {
+        "event_id": event_id,
         "timestamp": "2026-09-07T00:00:00Z",
         "process_id": "process-001",
         "stage": "integrated_implementation",
@@ -88,16 +106,9 @@ def event() -> dict[str, object]:
             "mutation_epoch": 2,
         },
         "privacy": "operational_metadata_only",
-        "planning_economics": {
-            "initial_cardinality": {"phases": 1, "tasks": 6},
-            "plan_revisions": 2,
-            "plan_reviews": 3,
-            "scope_allocation_repairs": 1,
-            "task_review_repairs": 2,
-            "validation_reruns": 4,
-            "first_green_to_final_accept_ms": 1200,
-        },
     }
+    value.update(updates)
+    return value
 
 
 def test_pd_07_returns_only_affected_region_and_preserves_unaffected_evidence() -> None:
@@ -105,68 +116,221 @@ def test_pd_07_returns_only_affected_region_and_preserves_unaffected_evidence() 
 
     routed = route_review_verdict(
         allocation_gap(),
-        affected_region=["task-003"],
+        affected_region=affected_region(),
         unaffected_evidence_identities=preserved,
+        original_binding_identity=binding_identity(),
+        original_baseline_identity=baseline_identity(),
     )
 
     assert routed["execution_state"] == "paused_for_reslice"
-    assert routed["affected_region"] == ["task-003"]
+    assert routed["affected_region"] == affected_region()
     assert routed["returned_authority_identity"] == identity("plan-001")
     assert routed["preserved_evidence_identities"] == preserved
     assert routed["resume_requires"] == "accepted_repaired_plan_authority"
-    assert routed["preserve_original_binding"] is True
-    assert routed["preserve_original_baseline"] is True
+    assert routed["original_binding_identity"] == binding_identity()
+    assert routed["original_baseline_identity"] == baseline_identity()
     assert routed["silent_expansion_allowed"] is False
 
 
-def test_pd_07_resume_waits_for_new_authority_and_exact_preserved_evidence() -> None:
+def test_pd_07_resume_waits_for_current_accepted_plan_review_and_exact_preserved_state(
+    tmp_path: Path,
+) -> None:
+    orch = tmp_path / ".work-bundle/orchestration"
+    spec = orch / "spec/active/spec.md"
+    plan = orch / "plan/active/plan.md"
+    spec.parent.mkdir(parents=True)
+    plan.parent.mkdir(parents=True)
+    spec.write_text("---\nid: spec-test\nstatus: verified\n---\nAuthority\n")
+    plan.write_text("---\nid: plan-001\nstatus: Planned\nsource_spec: [spec-test]\n---\nOriginal\n")
     preserved = [identity("task-001")]
     routed = route_review_verdict(
         allocation_gap(),
-        affected_region=["task-003"],
+        affected_region=affected_region(),
         unaffected_evidence_identities=preserved,
+        original_binding_identity=binding_identity(),
+        original_baseline_identity=baseline_identity(),
     )
+    plan.write_text(plan.read_text().replace("Original", "Resliced"))
 
-    with pytest.raises(ReviewContractError, match="repaired authority"):
+    with pytest.raises(ReviewContractError, match="accepted repaired plan-review authority"):
         resume_plan_return(
             routed,
-            accepted_repaired_authority_identity=identity("plan-001"),
+            workspace_root=tmp_path,
+            plan_path=plan,
+            current_binding_identity=binding_identity(),
+            current_baseline_identity=baseline_identity(),
             current_unaffected_evidence_identities=preserved,
         )
+
+    from review_runtime import plan_review_identity
+
+    review = {
+        "review_id": "review-plan",
+        "stage": "plan",
+        "target_identity": plan_review_identity(tmp_path, plan),
+        "reviewer": {
+            "agent_id": "reviewer-1",
+            "capability": "judgment",
+            "authorship": "none",
+            "repair_participation": "none",
+            "decision_participation": "none",
+            "deliberation_participation": "none",
+            "context_origin": "direct_source",
+        },
+        "evidence": {
+            "mode": "direct",
+            "capabilities": ["source inspection"],
+            "unavailable_evidence": [],
+            "commands": [],
+            "artifacts": [],
+        },
+        "verdict": "accepted",
+        "findings": [],
+        "started_at": "2026-09-07T00:00:00Z",
+        "completed_at": "2026-09-07T00:01:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    review = bind_review_receipt(tmp_path, review)
+    reviews = orch / "reviews"
+    reviews.mkdir()
+    (reviews / "plan.json").write_text(json.dumps(review))
 
     changed = deepcopy(preserved)
     changed[0]["revision"] = "2"
     with pytest.raises(ReviewContractError, match="unaffected evidence"):
         resume_plan_return(
             routed,
-            accepted_repaired_authority_identity=identity("plan-001", "2"),
+            workspace_root=tmp_path,
+            plan_path=plan,
+            current_binding_identity=binding_identity(),
+            current_baseline_identity=baseline_identity(),
             current_unaffected_evidence_identities=changed,
+        )
+
+    with pytest.raises(ReviewContractError, match="binding identity"):
+        resume_plan_return(
+            routed,
+            workspace_root=tmp_path,
+            plan_path=plan,
+            current_binding_identity={**binding_identity(), "sha256": "4" * 64},
+            current_baseline_identity=baseline_identity(),
+            current_unaffected_evidence_identities=preserved,
+        )
+
+    with pytest.raises(ReviewContractError, match="baseline identity"):
+        resume_plan_return(
+            routed,
+            workspace_root=tmp_path,
+            plan_path=plan,
+            current_binding_identity=binding_identity(),
+            current_baseline_identity={**baseline_identity(), "tree": "4" * 40},
+            current_unaffected_evidence_identities=preserved,
         )
 
     resumed = resume_plan_return(
         routed,
-        accepted_repaired_authority_identity=identity("plan-001", "2"),
+        workspace_root=tmp_path,
+        plan_path=plan,
+        current_binding_identity=binding_identity(),
+        current_baseline_identity=baseline_identity(),
         current_unaffected_evidence_identities=preserved,
     )
     assert resumed["execution_state"] == "ready_from_repaired_authority"
     assert resumed["preserved_evidence_identities"] == preserved
 
 
-@pytest.mark.parametrize("affected_region", [[], ["task-003", "task-003"], [""]])
-def test_pd_07_rejects_unbounded_or_ambiguous_affected_regions(affected_region) -> None:
+@pytest.mark.parametrize(
+    "region",
+    [
+        {},
+        {**affected_region(), "task_ids": ["task-003", "task-003"]},
+        {**affected_region(), "paths": ["../escape"]},
+        {**affected_region(), "validation_oracles": [""]},
+    ],
+)
+def test_pd_07_rejects_unbounded_or_ambiguous_affected_regions(region) -> None:
     with pytest.raises(ReviewContractError, match="affected region"):
-        route_review_verdict(allocation_gap(), affected_region=affected_region)
+        route_review_verdict(
+            allocation_gap(),
+            affected_region=region,
+            original_binding_identity=binding_identity(),
+            original_baseline_identity=baseline_identity(),
+        )
 
 
-def test_pd_08_emits_closed_nonjudgmental_planning_economics() -> None:
-    value = event()
-    validated = validate_stage_event(value)
+def test_pd_08_stage_event_path_derives_nonjudgmental_planning_economics(tmp_path: Path) -> None:
+    from stage_events import append_stage_event, query_stage_events
 
-    assert validated.to_dict()["planning_economics"] == value["planning_economics"]
+    events = [
+        event("phase", stage="implementation", event_type="stage_started"),
+        event(
+            "task-a",
+            stage="implementation",
+            event_type="stage_started",
+            join_ids={**event()["join_ids"], "task_id": "task-a"},
+        ),
+        event(
+            "task-b",
+            stage="implementation",
+            event_type="stage_started",
+            join_ids={**event()["join_ids"], "task_id": "task-b"},
+        ),
+        event("plan-review", stage="plan", event_type="stage_completed"),
+        event(
+            "scope-repair",
+            event_type="reslice_recorded",
+            finding_class="allocation_gap",
+            attempt_id="repair-scope",
+        ),
+        event(
+            "task-repair",
+            event_type="work_returned",
+            finding_class="implementation_defect",
+            attempt_id="repair-task",
+            join_ids={**event()["join_ids"], "task_id": "task-a"},
+        ),
+        event(
+            "suite-first",
+            event_type="suite_started",
+            attempt_id="validation",
+            join_ids={**event()["join_ids"], "evaluation_id": "eval-001"},
+        ),
+        event(
+            "suite-rerun",
+            event_type="suite_started",
+            attempt_id="validation-2",
+            join_ids={**event()["join_ids"], "evaluation_id": "eval-001"},
+        ),
+        event(
+            "green",
+            timestamp="2026-09-07T00:00:01Z",
+            event_type="suite_completed",
+            attempt_id="validation-2",
+            join_ids={**event()["join_ids"], "evaluation_id": "eval-001"},
+        ),
+        event(
+            "accepted",
+            timestamp="2026-09-07T00:00:02.200Z",
+            stage="integrated_implementation",
+            event_type="stage_completed",
+            attempt_id="final",
+        ),
+    ]
+    result = None
+    for item in events:
+        result = append_stage_event(tmp_path, item)
 
-    # Cardinality is observed, not judged: large and zero values remain valid metadata.
-    value["planning_economics"]["initial_cardinality"] = {"phases": 0, "tasks": 100_000}
-    assert validate_stage_event(value).planning_economics["initial_cardinality"]["tasks"] == 100_000
+    assert result is not None
+    assert result.planning_economics == {
+        "initial_cardinality": {"phases": 1, "tasks": 2},
+        "plan_revisions": 1,
+        "plan_reviews": 1,
+        "scope_allocation_repairs": 1,
+        "task_review_repairs": 1,
+        "validation_reruns": 1,
+        "first_green_to_final_accept_ms": 1200,
+    }
+    assert query_stage_events(tmp_path)[-1].planning_economics == result.planning_economics
 
     schema = json.loads(
         (REPO_ROOT / "references/assets/orchestration/contract/stage-event-v1.schema.json").read_text()
@@ -177,11 +341,18 @@ def test_pd_08_emits_closed_nonjudgmental_planning_economics() -> None:
     assert schema["$defs"]["planningEconomics"]["additionalProperties"] is False
 
 
-def test_pd_08_economics_is_closed_and_allows_pending_accept_latency() -> None:
-    value = event()
-    value["planning_economics"]["first_green_to_final_accept_ms"] = None
-    assert validate_stage_event(value).planning_economics["first_green_to_final_accept_ms"] is None
+def test_pd_08_rejects_caller_injected_economics(tmp_path: Path) -> None:
+    from stage_events import append_stage_event
 
-    value["planning_economics"]["task_count_verdict"] = "too-many"
+    value = event()
+    value["planning_economics"] = {
+        "initial_cardinality": {"phases": 0, "tasks": 100_000},
+        "plan_revisions": 0,
+        "plan_reviews": 0,
+        "scope_allocation_repairs": 0,
+        "task_review_repairs": 0,
+        "validation_reruns": 0,
+        "first_green_to_final_accept_ms": None,
+    }
     with pytest.raises(StageEventError, match="WB_STAGE_EVENT_ECONOMICS_INVALID"):
-        validate_stage_event(value)
+        append_stage_event(tmp_path, value)

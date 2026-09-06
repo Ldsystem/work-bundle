@@ -11,7 +11,7 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 EVENT_TYPES = frozenset(
@@ -190,7 +190,9 @@ def _validate_exact_fields(value: object, expected: frozenset[str], code: str) -
     return value
 
 
-def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
+def _validate_stage_event(
+    payload: Mapping[str, object], *, allow_derived_economics: bool
+) -> StageEventV1:
     """Validate one closed API-004 event without retaining caller-owned containers."""
 
     _scan_for_sensitive_content(payload)
@@ -266,6 +268,8 @@ def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
     economics_value = value.get("planning_economics")
     economics: dict[str, int | dict[str, int] | None] | None = None
     if economics_value is not None:
+        if not allow_derived_economics:
+            _fail("WB_STAGE_EVENT_ECONOMICS_INVALID")
         checked = _validate_exact_fields(
             economics_value,
             PLANNING_ECONOMICS_FIELDS,
@@ -288,7 +292,9 @@ def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
         if latency is not None and not _is_nonnegative_int(latency):
             _fail("WB_STAGE_EVENT_ECONOMICS_INVALID")
         economics = {
-            "initial_cardinality": {field: cardinality[field] for field in sorted(INITIAL_CARDINALITY_FIELDS)},
+            "initial_cardinality": {
+                field: cardinality[field] for field in sorted(INITIAL_CARDINALITY_FIELDS)
+            },
             **{field: checked[field] for field in sorted(count_fields)},
             "first_green_to_final_accept_ms": latency,
         }
@@ -311,6 +317,115 @@ def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
         compiled_context_metrics=metrics,
         planning_economics=economics,
     )
+
+
+def validate_stage_event(payload: Mapping[str, object]) -> StageEventV1:
+    """Validate one event record, including a stored derived economics projection."""
+
+    return _validate_stage_event(payload, allow_derived_economics=True)
+
+
+def derive_planning_economics(
+    records: Sequence[StageEventV1],
+) -> dict[str, int | dict[str, int] | None]:
+    """Derive neutral planning-cost observations from the typed event prefix."""
+
+    revision_events = [
+        item
+        for item in records
+        if item.event_type in {"reslice_recorded", "control_plane_repaired"}
+        and item.owner == "plan_owner"
+    ]
+    first_revision_index = next(
+        (
+            index
+            for index, item in enumerate(records)
+            if item.event_type in {"reslice_recorded", "control_plane_repaired"}
+            and item.owner == "plan_owner"
+        ),
+        len(records),
+    )
+    initial = records[:first_revision_index]
+    initial_phases = {
+        item.join_ids["phase_id"] for item in initial if item.join_ids["phase_id"] is not None
+    }
+    initial_tasks = {
+        item.join_ids["task_id"] for item in initial if item.join_ids["task_id"] is not None
+    }
+    plan_reviews = {
+        item.join_ids["review_id"]
+        for item in records
+        if item.stage == "plan"
+        and item.event_type == "stage_completed"
+        and item.join_ids["review_id"] is not None
+    }
+    scope_repairs = {
+        (item.process_id, item.attempt_id)
+        for item in records
+        if item.event_type in {"work_returned", "reslice_recorded", "control_plane_repaired"}
+        and item.finding_class in {"decomposition_gap", "allocation_gap"}
+    }
+    task_review_repairs = {
+        (item.process_id, item.attempt_id)
+        for item in records
+        if item.event_type == "work_returned"
+        and item.finding_class == "implementation_defect"
+        and item.join_ids["task_id"] is not None
+        and item.join_ids["review_id"] is not None
+    }
+    suite_starts: dict[tuple[str, ...], int] = {}
+    for item in records:
+        if item.event_type != "suite_started":
+            continue
+        evaluation_id = item.join_ids["evaluation_id"]
+        key = (
+            ("evaluation", evaluation_id)
+            if evaluation_id is not None
+            else (
+                "scope",
+                item.process_id,
+                item.stage,
+                item.join_ids["plan_id"] or "",
+                item.join_ids["task_id"] or "",
+            )
+        )
+        suite_starts[key] = suite_starts.get(key, 0) + 1
+    validation_reruns = sum(max(0, count - 1) for count in suite_starts.values())
+
+    first_green = min(
+        (
+            _parse_timestamp(item.timestamp)
+            for item in records
+            if item.event_type == "suite_completed"
+            and item.finding_class is None
+            and item.return_reason is None
+        ),
+        default=None,
+    )
+    final_accept = max(
+        (
+            _parse_timestamp(item.timestamp)
+            for item in records
+            if item.event_type == "stage_completed"
+            and item.stage == "integrated_implementation"
+            and item.join_ids["review_id"] is not None
+            and item.finding_class is None
+            and item.return_reason is None
+        ),
+        default=None,
+    )
+    latency = None
+    if first_green is not None and final_accept is not None and final_accept >= first_green:
+        latency = int((final_accept - first_green).total_seconds() * 1000)
+    return {
+        "initial_cardinality": {"phases": len(initial_phases), "tasks": len(initial_tasks)},
+        "plan_revisions": len({(item.process_id, item.attempt_id) for item in revision_events}),
+        "plan_reviews": len(plan_reviews),
+        "scope_allocation_repairs": len(scope_repairs),
+        "task_review_repairs": len(task_review_repairs),
+        "validation_reruns": validation_reruns,
+        "first_green_to_final_accept_ms": latency,
+    }
 
 
 def redact_event_payload(payload: Mapping[str, object]) -> dict[str, object]:
@@ -345,7 +460,10 @@ def _load_locked(handle) -> list[StageEventV1]:
         text = raw.decode("utf-8")
         if not text.endswith("\n"):
             _fail("WB_STAGE_EVENT_STORE_INVALID")
-        records = [validate_stage_event(json.loads(line)) for line in text.splitlines()]
+        records = [
+            _validate_stage_event(json.loads(line), allow_derived_economics=True)
+            for line in text.splitlines()
+        ]
     except (UnicodeDecodeError, json.JSONDecodeError, StageEventError, TypeError):
         _fail("WB_STAGE_EVENT_STORE_INVALID")
     if len({record.event_id for record in records}) != len(records):
@@ -364,6 +482,8 @@ def _load_locked(handle) -> list[StageEventV1]:
 def append_stage_event(workspace_root: Path, payload: Mapping[str, object]) -> StageEventV1:
     """Append one event atomically after validating all existing history."""
 
+    if "planning_economics" in payload:
+        _fail("WB_STAGE_EVENT_ECONOMICS_INVALID")
     record = validate_stage_event(payload)
     path = _event_store_path(Path(workspace_root), create_parent=True)
     flags = os.O_RDWR | os.O_APPEND | os.O_CREAT
@@ -389,6 +509,10 @@ def append_stage_event(workspace_root: Path, payload: Mapping[str, object]) -> S
                 _fail("WB_STAGE_EVENT_TIMESTAMP_ORDER_INVALID")
             if int(record.clocks["wall_ms"]) < int(previous.clocks["wall_ms"]):
                 _fail("WB_STAGE_EVENT_WALL_CLOCK_ORDER_INVALID")
+        if record.event_type == "stage_completed" and record.stage == "integrated_implementation":
+            derived = record.to_dict()
+            derived["planning_economics"] = derive_planning_economics([*existing, record])
+            record = _validate_stage_event(derived, allow_derived_economics=True)
         encoded = (json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
         handle.seek(0, os.SEEK_END)
         handle.write(encoded)

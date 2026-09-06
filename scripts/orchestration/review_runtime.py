@@ -61,6 +61,9 @@ FINDING_KEYS = frozenset(
     }
 )
 TARGET_KEYS = frozenset({"artifact_id", "revision", "sha256", "source_tree"})
+AFFECTED_REGION_KEYS = frozenset({"task_ids", "paths", "interfaces", "validation_oracles"})
+BINDING_IDENTITY_KEYS = frozenset({"binding_id", "sha256"})
+BASELINE_IDENTITY_KEYS = frozenset({"head", "tree"})
 PLAN_RETURN_KEYS = frozenset(
     {
         "finding_id",
@@ -72,8 +75,8 @@ PLAN_RETURN_KEYS = frozenset(
         "returned_authority_identity",
         "preserved_evidence_identities",
         "resume_requires",
-        "preserve_original_binding",
-        "preserve_original_baseline",
+        "original_binding_identity",
+        "original_baseline_identity",
         "preserve_valid_work_and_evidence",
         "silent_expansion_allowed",
     }
@@ -691,6 +694,49 @@ def classify_first_broken_owner(finding_class: str) -> tuple[str, str, str]:
         raise ReviewContractError(f"class is not classified: {finding_class}") from error
 
 
+def _affected_region(value: Any) -> dict[str, list[str]]:
+    region = _mapping(value, "affected region")
+    _closed(region, AFFECTED_REGION_KEYS, "affected region")
+    result: dict[str, list[str]] = {}
+    for field in ("task_ids", "interfaces", "validation_oracles"):
+        items = _string_list(region[field], f"affected region.{field}")
+        if len(items) != len(set(items)) or any(not ID_RE.fullmatch(item) for item in items):
+            raise ReviewContractError(f"affected region.{field} must contain unique valid ids")
+        result[field] = list(items)
+    if not result["task_ids"]:
+        raise ReviewContractError("affected region.task_ids must be non-empty")
+    paths = _string_list(region["paths"], "affected region.paths")
+    if len(paths) != len(set(paths)):
+        raise ReviewContractError("affected region.paths must be unique")
+    for item in paths:
+        path = Path(item)
+        if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+            raise ReviewContractError("affected region.paths must be canonical relative paths")
+    result["paths"] = list(paths)
+    return {field: result[field] for field in ("task_ids", "paths", "interfaces", "validation_oracles")}
+
+
+def _binding_identity(value: Any) -> dict[str, str]:
+    identity = _mapping(value, "binding identity")
+    _closed(identity, BINDING_IDENTITY_KEYS, "binding identity")
+    binding_id = _identifier(identity["binding_id"], "binding identity.binding_id")
+    digest = identity["sha256"]
+    if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+        raise ReviewContractError("binding identity.sha256 must be a lowercase SHA-256")
+    return {"binding_id": binding_id, "sha256": digest}
+
+
+def _baseline_identity(value: Any) -> dict[str, str]:
+    identity = _mapping(value, "baseline identity")
+    _closed(identity, BASELINE_IDENTITY_KEYS, "baseline identity")
+    if any(
+        not isinstance(identity[field], str) or not GIT_OID_RE.fullmatch(identity[field])
+        for field in BASELINE_IDENTITY_KEYS
+    ):
+        raise ReviewContractError("baseline identity must contain exact Git head and tree ids")
+    return {"head": str(identity["head"]), "tree": str(identity["tree"])}
+
+
 def validate_review_finding(value: Mapping[str, Any]) -> ReviewFindingV1:
     record = _mapping(value, "review_finding_v1")
     _closed(record, FINDING_KEYS, "review_finding_v1")
@@ -741,8 +787,10 @@ def validate_review_finding(value: Mapping[str, Any]) -> ReviewFindingV1:
 
 def route_review_verdict(
     value: Mapping[str, Any], *, previous_scope_expansions: int = 0,
-    affected_region: Sequence[str] | None = None,
+    affected_region: Mapping[str, Any] | None = None,
     unaffected_evidence_identities: Sequence[Mapping[str, Any]] = (),
+    original_binding_identity: Mapping[str, Any] | None = None,
+    original_baseline_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     finding = validate_review_finding(value)
     expected_action = ROUTES[finding.finding_class][2]
@@ -750,32 +798,42 @@ def route_review_verdict(
         raise ReviewContractError("terminal adjudicator disposition cannot authorize repair mutation")
     if finding.disposition != expected_action:
         raise ReviewContractError("review finding routing disposition is invalid")
-    if not isinstance(previous_scope_expansions, int) or isinstance(previous_scope_expansions, bool) or previous_scope_expansions < 0:
+    if (
+        not isinstance(previous_scope_expansions, int)
+        or isinstance(previous_scope_expansions, bool)
+        or previous_scope_expansions < 0
+    ):
         raise ReviewContractError("previous_scope_expansions must be a non-negative integer")
     result = {
         "finding_id": finding.finding_id,
         "first_broken_artifact": finding.first_broken_artifact,
         "return_to": finding.recommended_owner,
         "action": expected_action,
-        "execution_state": "paused_for_reslice" if expected_action == "reslice_plan" else "returned_for_repair",
+        "execution_state": (
+            "paused_for_reslice" if expected_action == "reslice_plan" else "returned_for_repair"
+        ),
         "preserve_valid_work_and_evidence": True,
         "silent_expansion_allowed": False,
     }
     if expected_action != "reslice_plan":
-        if affected_region is not None or unaffected_evidence_identities:
+        if (
+            affected_region is not None
+            or unaffected_evidence_identities
+            or original_binding_identity is not None
+            or original_baseline_identity is not None
+        ):
             raise ReviewContractError("affected region applies only to a plan reslice")
         return result
 
-    region = list(affected_region) if affected_region is not None else [finding.target_identity["artifact_id"]]
-    if (
-        not region
-        or any(not isinstance(item, str) or not ID_RE.fullmatch(item) for item in region)
-        or len(region) != len(set(region))
-    ):
-        raise ReviewContractError("affected region must contain unique valid artifact ids")
-    preserved = [dict(_target_identity(item, "unaffected_evidence_identity")) for item in unaffected_evidence_identities]
+    region = _affected_region(affected_region)
+    binding = _binding_identity(original_binding_identity)
+    baseline = _baseline_identity(original_baseline_identity)
+    preserved = [
+        dict(_target_identity(item, "unaffected_evidence_identity"))
+        for item in unaffected_evidence_identities
+    ]
     preserved_ids = [item["artifact_id"] for item in preserved]
-    if len(preserved_ids) != len(set(preserved_ids)) or set(region).intersection(preserved_ids):
+    if len(preserved_ids) != len(set(preserved_ids)) or set(region["task_ids"]).intersection(preserved_ids):
         raise ReviewContractError("affected region and unaffected evidence must be disjoint and unambiguous")
     result.update(
         {
@@ -783,8 +841,8 @@ def route_review_verdict(
             "returned_authority_identity": dict(finding.target_identity),
             "preserved_evidence_identities": preserved,
             "resume_requires": "accepted_repaired_plan_authority",
-            "preserve_original_binding": True,
-            "preserve_original_baseline": True,
+            "original_binding_identity": binding,
+            "original_baseline_identity": baseline,
         }
     )
     return result
@@ -792,7 +850,10 @@ def route_review_verdict(
 
 def resume_plan_return(
     value: Mapping[str, Any], *,
-    accepted_repaired_authority_identity: Mapping[str, Any],
+    workspace_root: Path,
+    plan_path: Path,
+    current_binding_identity: Mapping[str, Any],
+    current_baseline_identity: Mapping[str, Any],
     current_unaffected_evidence_identities: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Admit a paused affected region only from repaired authority and unchanged evidence."""
@@ -806,26 +867,27 @@ def resume_plan_return(
         or record["action"] != "reslice_plan"
         or record["execution_state"] != "paused_for_reslice"
         or record["resume_requires"] != "accepted_repaired_plan_authority"
-        or record["preserve_original_binding"] is not True
-        or record["preserve_original_baseline"] is not True
         or record["preserve_valid_work_and_evidence"] is not True
         or record["silent_expansion_allowed"] is not False
     ):
         raise ReviewContractError("plan return is not a paused bounded reslice")
-    region = record["affected_region"]
-    if (
-        not isinstance(region, list)
-        or not region
-        or any(not isinstance(item, str) or not ID_RE.fullmatch(item) for item in region)
-        or len(region) != len(set(region))
-    ):
-        raise ReviewContractError("affected region must contain unique valid artifact ids")
+    region = _affected_region(record["affected_region"])
+    original_binding = _binding_identity(record["original_binding_identity"])
+    original_baseline = _baseline_identity(record["original_baseline_identity"])
+    if _binding_identity(current_binding_identity) != original_binding:
+        raise ReviewContractError("original binding identity changed during bounded reslice")
+    if _baseline_identity(current_baseline_identity) != original_baseline:
+        raise ReviewContractError("original baseline identity changed during bounded reslice")
     returned = dict(
         _target_identity(record["returned_authority_identity"], "returned_authority_identity")
     )
-    repaired = dict(
-        _target_identity(accepted_repaired_authority_identity, "accepted_repaired_authority_identity")
-    )
+    try:
+        repaired = dict(plan_review_identity(Path(workspace_root), Path(plan_path)))
+        _require_current_review(Path(workspace_root), "plan", repaired)
+    except (OSError, SystemExit, ValueError) as error:
+        raise ReviewContractError(
+            "resume requires current accepted repaired plan-review authority"
+        ) from error
     if repaired["artifact_id"] != returned["artifact_id"] or repaired == returned:
         raise ReviewContractError("resume requires new accepted repaired authority")
 
@@ -834,7 +896,7 @@ def resume_plan_return(
         for item in record["preserved_evidence_identities"]
     ]
     preserved_ids = [item["artifact_id"] for item in preserved]
-    if len(preserved_ids) != len(set(preserved_ids)) or set(region).intersection(preserved_ids):
+    if len(preserved_ids) != len(set(preserved_ids)) or set(region["task_ids"]).intersection(preserved_ids):
         raise ReviewContractError("affected region and unaffected evidence must be disjoint and unambiguous")
     current = [
         dict(_target_identity(item, "current_unaffected_evidence_identity"))

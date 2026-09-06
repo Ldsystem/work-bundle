@@ -114,7 +114,19 @@ def test_api_001_routes_every_class_to_first_broken_owner(
         record["obligation_basis"] = "none"
     validated = validate_contract_instance("reviewFinding", record)
     assert validated.finding_class == finding_class
-    assert route_review_verdict(record)["return_to"] == expected[1]
+    route_context = {}
+    if finding_class == "allocation_gap":
+        route_context = {
+            "affected_region": {
+                "task_ids": ["task-b01"],
+                "paths": [],
+                "interfaces": [],
+                "validation_oracles": [],
+            },
+            "original_binding_identity": {"binding_id": "binding-b01", "sha256": "1" * 64},
+            "original_baseline_identity": {"head": ZERO_TREE, "tree": ZERO_TREE},
+        }
+    assert route_review_verdict(record, **route_context)["return_to"] == expected[1]
 
 
 @pytest.mark.parametrize("field", ["capabilities", "unavailable_evidence"])
@@ -172,14 +184,30 @@ def test_api_001_rejects_unclassified_wrong_layer_and_unauthorized_blocking_advi
 
 
 def test_api_001_reslice_pauses_repeated_expansion_and_preserves_evidence() -> None:
-    routed = route_review_verdict(finding("allocation_gap"), previous_scope_expansions=1)
+    routed = route_review_verdict(
+        finding("allocation_gap"),
+        previous_scope_expansions=1,
+        affected_region={
+            "task_ids": ["task-b01"],
+            "paths": [],
+            "interfaces": [],
+            "validation_oracles": [],
+        },
+        original_binding_identity={"binding_id": "binding-b01", "sha256": "1" * 64},
+        original_baseline_identity={"head": ZERO_TREE, "tree": ZERO_TREE},
+    )
     assert routed == {
         "finding_id": "finding-allocation_gap",
         "first_broken_artifact": "plan",
         "return_to": "plan_owner",
         "action": "reslice_plan",
         "execution_state": "paused_for_reslice",
-        "affected_region": ["task-b01"],
+        "affected_region": {
+            "task_ids": ["task-b01"],
+            "paths": [],
+            "interfaces": [],
+            "validation_oracles": [],
+        },
         "returned_authority_identity": {
             "artifact_id": "task-b01",
             "revision": "1",
@@ -188,8 +216,8 @@ def test_api_001_reslice_pauses_repeated_expansion_and_preserves_evidence() -> N
         },
         "preserved_evidence_identities": [],
         "resume_requires": "accepted_repaired_plan_authority",
-        "preserve_original_binding": True,
-        "preserve_original_baseline": True,
+        "original_binding_identity": {"binding_id": "binding-b01", "sha256": "1" * 64},
+        "original_baseline_identity": {"head": ZERO_TREE, "tree": ZERO_TREE},
         "preserve_valid_work_and_evidence": True,
         "silent_expansion_allowed": False,
     }
