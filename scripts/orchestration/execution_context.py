@@ -20,6 +20,7 @@ from artifact_inputs import (_split_top_level, _split_key_value, _parse_scalar, 
                              _read_structured, _as_list, _input_path, _resolve_spec_paths)
 from repository_preflight import capture_repository_evidence, task_caused_paths
 from task_ownership import (
+    canonical_relative_path,
     OwnershipBlocker,
     RepairContinuity,
     normalize_subagent_provenance,
@@ -411,9 +412,11 @@ def _task_scope_paths(values: list[Any], root: Path, label: str) -> list[str]:
     result: list[str] = []
     for value in values:
         text = str(value).strip()
-        if not text:
-            raise SystemExit(f"Task {label} contains an empty path")
-        if _protected_project_path(text, root):
+        try:
+            text = canonical_relative_path(text, allow_tree_pattern=label == "forbidden scope")
+        except OwnershipBlocker as error:
+            raise SystemExit(f"Task {label} contains an unsafe path: {value}") from error
+        if label != "forbidden scope" and _protected_project_path(text, root):
             raise SystemExit(f"Task {label} uses a forbidden protected path: {text}")
         if label == "write scope" and _directory_or_module_write_path(text, root):
             raise SystemExit(f"Task write scope is a directory or module path and fails closed: {text}")
@@ -1303,6 +1306,14 @@ def create_or_load_task_execution_binding(
 ) -> dict[str, Any]:
     control_root = control_root.expanduser().resolve()
     runtime_root = runtime_root.expanduser().resolve()
+    try:
+        canonical_write_scope = [canonical_relative_path(path) for path in (write_scope or [])]
+        canonical_forbidden_scope = [
+            canonical_relative_path(path, allow_tree_pattern=True)
+            for path in (forbidden_scope or [])
+        ]
+    except OwnershipBlocker as error:
+        raise SystemExit(f"Task execution binding scope is unsafe: {error.reason}") from error
     from review_runtime import require_plan_reviews
     require_plan_reviews(control_root, _find_plan(control_root, plan_id)[0])
     path = _binding_path(control_root, plan_id, task_id)
@@ -1340,8 +1351,8 @@ def create_or_load_task_execution_binding(
         "execution_path": str(Path(str(state["path"])).resolve()),
         "state_path": loaded["state_path"],
         "git_identity": identity,
-        "write_scope": list(write_scope or []),
-        "forbidden_scope": list(forbidden_scope or []),
+        "write_scope": canonical_write_scope,
+        "forbidden_scope": canonical_forbidden_scope,
         "ownership": ownership,
         "mutating": True,
         "baseline": None,
@@ -1384,6 +1395,208 @@ def load_task_execution_binding(control_root: Path, plan_id: str, task_id: str) 
     return binding
 
 
+ACCEPTED_TASK_RESULT_SCHEMA = "accepted-task-result-v1"
+ACCEPTED_TASK_RESULT_FIELDS = {
+    "schema", "plan_id", "task_id", "accepted_at", "source_identity", "scope",
+    "binding", "repository", "ownership", "validation_evidence_ids", "review",
+    "acceptance_contract_identity", "executor_result_digest", "claim_identity",
+}
+
+
+def _canonical_task_scopes(task: Mapping[str, Any]) -> dict[str, list[str]]:
+    files = task.get("files") if isinstance(task.get("files"), Mapping) else {}
+    try:
+        return {
+            "read": sorted(canonical_relative_path(str(path)) for path in _as_list(files.get("read"))),
+            "write": sorted(canonical_relative_path(str(path)) for path in _as_list(files.get("write"))),
+            "forbidden": sorted(
+                canonical_relative_path(str(path), allow_tree_pattern=True)
+                for path in _as_list(files.get("forbidden"))
+            ),
+        }
+    except OwnershipBlocker as error:
+        raise SystemExit(f"accepted task result scope is unsafe: {error.reason}") from error
+
+
+def _accepted_source_identity(task: Mapping[str, Any]) -> str:
+    authority = task.get("semantic_authority") if isinstance(task.get("semantic_authority"), Mapping) else {}
+    return semantic_digest({
+        "source_ids": sorted(str(value) for value in _as_list(task.get("source_ids"))),
+        "records": authority.get("records", {}),
+        "interface_semantics": authority.get("interface_semantics", {}),
+        "validation_semantics": authority.get("validation_semantics", {}),
+    })
+
+
+def _accepted_contract_identity(task: Mapping[str, Any]) -> str:
+    validations = [
+        {
+            key: item.get(key)
+            for key in (
+                "id", "kind", "command", "expected", "acceptable_results",
+                "invariant_ids", "mechanism", "digest",
+            )
+            if key in item
+        }
+        for item in _as_list(task.get("validation"))
+        if isinstance(item, Mapping)
+    ]
+    return semantic_digest({
+        "review_required": task.get("review_required") is True,
+        "validation": validations,
+        "evidence_capability": task.get("evidence_capability", {}),
+    })
+
+
+def _accepted_binding_identity(binding: Mapping[str, Any]) -> dict[str, Any]:
+    ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
+    baseline = binding.get("baseline") if isinstance(binding.get("baseline"), Mapping) else {}
+    return {
+        "workspace_id": str(binding.get("workspace_id") or ""),
+        "execution_id": str(binding.get("execution_id") or ""),
+        "repository_id": str(binding.get("repository_id") or ""),
+        "execution_path": str(Path(str(binding.get("execution_path") or "")).resolve()),
+        "git_identity": dict(binding.get("git_identity", {})) if isinstance(binding.get("git_identity"), Mapping) else {},
+        "binding_id": str(ownership.get("binding_id") or ""),
+        "owner": str(ownership.get("current_owner") or ""),
+        "baseline": {"head": baseline.get("head"), "tree": baseline.get("tree")},
+    }
+
+
+def _accepted_repository_identity(
+    task: Mapping[str, Any], binding: Mapping[str, Any]
+) -> dict[str, Any]:
+    evidence = capture_repository_evidence(Path(str(binding.get("execution_path") or "")).resolve())
+    return {
+        "head": evidence.get("head"),
+        "tree": evidence.get("tree"),
+        "write_scope_digest": _write_scope_file_digest(
+            Path(str(binding.get("execution_path") or "")).resolve(), dict(task)
+        ),
+    }
+
+
+def build_accepted_task_result(
+    task: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    handoff: Mapping[str, Any],
+    validated: Mapping[str, Any],
+    *,
+    accepted_at: str | None = None,
+) -> dict[str, Any]:
+    """Project a strongly validated executor result into compact durable authority."""
+
+    if validated.get("result_state") != "completed":
+        raise SystemExit("accepted task result requires a completed validated result")
+    ownership = validated.get("task_ownership")
+    if not isinstance(ownership, Mapping):
+        raise SystemExit("accepted task result requires validated subagent ownership")
+    if str(task.get("plan_id") or "") != str(binding.get("plan_id") or ""):
+        raise SystemExit("accepted task result plan binding mismatch")
+    if str(task.get("task_id") or "") != str(binding.get("task_id") or ""):
+        raise SystemExit("accepted task result task binding mismatch")
+    try:
+        accepted_ownership = normalize_subagent_provenance(ownership)
+    except OwnershipBlocker as error:
+        raise SystemExit(f"accepted task result ownership is invalid: {error.reason}") from error
+    review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), Mapping) else {}
+    if task.get("review_required") is True and (
+        review.get("required") is not True or review.get("verdict") not in {"accept", "accepted"}
+    ):
+        raise SystemExit("accepted task result requires the accepted mandatory review")
+    observed = [item for item in _as_list(validated.get("observed_validation")) if isinstance(item, Mapping)]
+    validation_ids = sorted(
+        str(
+            item.get("observation_id")
+            or item.get("id")
+            or f"validation:{semantic_digest(dict(item))}"
+        )
+        for item in observed
+    )
+    if _as_list(task.get("validation")) and not validation_ids:
+        raise SystemExit("accepted task result requires observed validation evidence")
+    result = handoff.get("result") if isinstance(handoff.get("result"), Mapping) else {}
+    changes = handoff.get("changes") if isinstance(handoff.get("changes"), Mapping) else {}
+    fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), Mapping) else {}
+    accepted = {
+        "schema": ACCEPTED_TASK_RESULT_SCHEMA,
+        "plan_id": str(task.get("plan_id") or ""),
+        "task_id": str(task.get("task_id") or ""),
+        "accepted_at": accepted_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "source_identity": _accepted_source_identity(task),
+        "acceptance_contract_identity": _accepted_contract_identity(task),
+        "scope": _canonical_task_scopes(task),
+        "binding": _accepted_binding_identity(binding),
+        "repository": _accepted_repository_identity(task, binding),
+        "ownership": accepted_ownership,
+        "validation_evidence_ids": validation_ids,
+        "review": {
+            key: review[key]
+            for key in ("required", "verdict", "review_id", "review_mode", "target_identity")
+            if key in review
+        },
+        "executor_result_digest": semantic_digest({
+            "state": result.get("state"),
+            "summary": result.get("summary"),
+            "changes": changes.get("files", []),
+            "task_fit": {"task": fit.get("task"), "result": fit.get("result")},
+        }),
+    }
+    accepted["claim_identity"] = semantic_digest({key: value for key, value in accepted.items() if key != "accepted_at"})
+    return accepted
+
+
+def assert_accepted_task_result_current(
+    task: Mapping[str, Any], binding: Mapping[str, Any], accepted: Mapping[str, Any]
+) -> None:
+    """Fail closed when current claim-relevant authority differs from acceptance."""
+
+    if accepted.get("schema") != ACCEPTED_TASK_RESULT_SCHEMA:
+        raise SystemExit("accepted task result schema is invalid")
+    if set(accepted) != ACCEPTED_TASK_RESULT_FIELDS:
+        raise SystemExit("accepted task result shape is not closed")
+    expected_claim = semantic_digest({
+        key: value
+        for key, value in accepted.items()
+        if key not in {"accepted_at", "claim_identity"}
+    })
+    if accepted.get("claim_identity") != expected_claim:
+        raise SystemExit("accepted task result claim identity is stale or tampered")
+    checks = {
+        "plan": str(task.get("plan_id") or "") == accepted.get("plan_id"),
+        "task": str(task.get("task_id") or "") == accepted.get("task_id"),
+        "source": _accepted_source_identity(task) == accepted.get("source_identity"),
+        "validation/review": (
+            _accepted_contract_identity(task) == accepted.get("acceptance_contract_identity")
+        ),
+        "scope": _canonical_task_scopes(task) == accepted.get("scope"),
+        "binding": _accepted_binding_identity(binding) == accepted.get("binding"),
+        "repository": _accepted_repository_identity(task, binding) == accepted.get("repository"),
+    }
+    for label, current in checks.items():
+        if not current:
+            raise SystemExit(f"accepted task result is stale: {label} authority changed")
+
+
+def materialize_accepted_task_result(
+    control_root: Path,
+    task: Mapping[str, Any],
+    handoff: Mapping[str, Any],
+    validated: Mapping[str, Any],
+    *,
+    accepted_at: str | None = None,
+) -> dict[str, Any]:
+    """Persist exactly one current accepted result in the existing task binding."""
+
+    root = control_root.expanduser().resolve()
+    binding = load_task_execution_binding(root, str(task.get("plan_id") or ""), str(task.get("task_id") or ""))
+    accepted = build_accepted_task_result(task, binding, handoff, validated, accepted_at=accepted_at)
+    updated = dict(binding)
+    updated["accepted_result"] = accepted
+    _persist_binding(updated, root)
+    return accepted
+
+
 def capture_task_baseline_once(binding: dict[str, Any], control_root: Path | None = None) -> dict[str, Any]:
     existing = binding.get("baseline")
     if isinstance(existing, dict) and existing.get("head"):
@@ -1407,10 +1620,16 @@ FILE_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 def _write_scope_file_digest(execution_root: Path, task: dict[str, Any]) -> str:
     digest = hashlib.sha256()
     files = task.get("files") if isinstance(task.get("files"), dict) else {}
-    for relative in _as_list(files.get("write")):
-        digest.update(str(relative).encode("utf-8"))
+    try:
+        paths = sorted(
+            canonical_relative_path(str(relative)) for relative in _as_list(files.get("write"))
+        )
+    except OwnershipBlocker as error:
+        raise SystemExit(f"Declared write scope is unsafe: {error.reason}") from error
+    for relative in paths:
+        digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
-        path = execution_root / str(relative)
+        path = execution_root / relative
         if path.is_file() and not path.is_symlink():
             digest.update(path.read_bytes())
         else:
@@ -1474,9 +1693,15 @@ def _observe_validation_item(item: dict[str, Any], execution_root: Path, task: d
 
 
 def _path_is_forbidden(relative: str, forbidden: list[str]) -> bool:
-    normalized = relative.removeprefix("./")
+    try:
+        normalized = canonical_relative_path(relative)
+    except OwnershipBlocker as error:
+        raise SystemExit(f"Observed mutation path is unsafe: {relative}") from error
     for pattern in forbidden:
-        pat = str(pattern).removeprefix("./")
+        try:
+            pat = canonical_relative_path(str(pattern), allow_tree_pattern=True)
+        except OwnershipBlocker as error:
+            raise SystemExit(f"Declared forbidden scope is unsafe: {pattern}") from error
         if pat.endswith("/**"):
             prefix = pat[:-3]
             if normalized == prefix or normalized.startswith(f"{prefix}/"):
@@ -3375,13 +3600,22 @@ def _assert_task_fit_check(handoff: dict[str, Any], task_id: str, state: str) ->
 
 
 def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: dict[str, Any]) -> None:
-    write_scope = {str(path).strip().removeprefix("./") for path in _as_list(task_files.get("write"))}
+    try:
+        write_scope = {
+            canonical_relative_path(str(path)) for path in _as_list(task_files.get("write"))
+        }
+    except OwnershipBlocker as error:
+        raise SystemExit(f"Declared write scope is unsafe: {error.reason}") from error
     changes = handoff.get("changes") if isinstance(handoff.get("changes"), dict) else {}
     for item in _as_list(changes.get("files")):
         if not isinstance(item, dict):
             continue
-        path = str(item.get("path") or "").strip().removeprefix("./")
-        if path and path not in write_scope:
+        path = str(item.get("path") or "").strip()
+        try:
+            canonical = canonical_relative_path(path) if path else ""
+        except OwnershipBlocker as error:
+            raise SystemExit(f"Executor result changed path is unsafe: {path}") from error
+        if canonical and canonical not in write_scope:
             raise SystemExit(f"Executor result changed path is outside task write scope: {path}")
 
 
@@ -3609,7 +3843,11 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
     write_files = _task_scope_paths(
         _as_list(files.get("write")) or _as_list(task.get("target_files")), root, "write scope"
     )
-    forbidden_files = _as_list(files.get("forbidden")) or _as_list(task.get("forbidden_files"))
+    forbidden_files = _task_scope_paths(
+        _as_list(files.get("forbidden")) or _as_list(task.get("forbidden_files")),
+        root,
+        "forbidden scope",
+    )
 
     methodology = task.get("methodology") if isinstance(task.get("methodology"), dict) else {}
     allocated_skills = [item for item in _as_list(task.get("allocated_skills")) if isinstance(item, dict)]
@@ -3770,9 +4008,15 @@ def _paths_from_name_status(line: str) -> list[str]:
 
 
 def _write_scope_match(path: str, write_paths: list[str]) -> bool:
-    normalized = path.removeprefix("./")
+    try:
+        normalized = canonical_relative_path(path)
+    except OwnershipBlocker as error:
+        raise SystemExit(f"Observed mutation path is unsafe: {path}") from error
     for write in write_paths:
-        write_n = str(write).removeprefix("./").rstrip("/")
+        try:
+            write_n = canonical_relative_path(str(write))
+        except OwnershipBlocker as error:
+            raise SystemExit(f"Declared write scope is unsafe: {write}") from error
         if normalized == write_n or normalized.startswith(f"{write_n}/"):
             return True
     return False
@@ -4132,7 +4376,11 @@ def cmd_validate_executor_result(args: argparse.Namespace) -> None:
     handoff_root = root / ".work-bundle/orchestration/handoff"
     handoff_path = _input_path(args.handoff, root, handoff_root, "handoff")
     handoff, _ = _read_structured(handoff_path)
-    validate_executor_result_for_task(handoff, task, observe=True, **_observation_kwargs(args))
+    validated = validate_executor_result_for_task(
+        handoff, task, observe=True, **_observation_kwargs(args)
+    )
+    if validated.get("result_state") == "completed":
+        materialize_accepted_task_result(root, task, handoff, validated)
     print(handoff_path.relative_to(root).as_posix())
 
 
