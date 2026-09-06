@@ -59,6 +59,16 @@ def handoff_args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**values)
 
 
+def archive_args(project_root: Path, plan_id: str, **overrides: object) -> argparse.Namespace:
+    values: dict[str, object] = {
+        "project_root": str(project_root),
+        "id": plan_id,
+        "mutation_events": [],
+    }
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
 def _task_brief(*, plan_id: str = "plan-001", task_id: str = "task-001") -> dict[str, object]:
     return {
         "task_id": task_id,
@@ -452,7 +462,77 @@ def test_archive_plan_uses_accepted_execution_dispositions_as_knowledge_gate(tmp
     )
 
     with pytest.raises(SystemExit, match="knowledge-blocked"):
+        cmd_archive_plan(archive_args(root, "plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
+
+
+def test_archive_plan_completed_handoff_rejects_missing_harness_mutation_evidence(
+    tmp_path: Path,
+) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import workspace, write_executor_handoff
+
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    write_executor_handoff(
+        root,
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n",
+    )
+
+    with pytest.raises(SystemExit, match="mutation.*evidence|mutation_events"):
         cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
+
+
+def test_archive_plan_cli_accepts_explicit_harness_mutation_evidence() -> None:
+    from dispatcher import build_parser
+
+    parsed = build_parser().parse_args(
+        [
+            "archive-plan",
+            "--id",
+            "plan-001",
+            "--mutation-events",
+            "[]",
+        ]
+    )
+
+    assert parsed.mutation_events == []
+
+
+def test_archive_plan_rejects_controller_task_scope_mutation_evidence(
+    tmp_path: Path,
+) -> None:
+    from plans import cmd_archive_plan
+    from test_orchestration_execution_context import (
+        WRITE_SCOPE_FILE,
+        workspace,
+        write_executor_handoff,
+    )
+
+    root, _, _ = workspace(tmp_path)
+    _append_plan_knowledge(root, closure_return="missing")
+    write_executor_handoff(
+        root,
+        "  action: none\n"
+        "  reason: No stable authority changed.\n"
+        "  affected_authority: []\n",
+    )
+
+    with pytest.raises(SystemExit, match="controller mutated task-owned implementation scope"):
+        cmd_archive_plan(
+            archive_args(
+                root,
+                "plan-001",
+                mutation_events=[
+                    {"actor_kind": "controller", "paths": [WRITE_SCOPE_FILE]}
+                ],
+            )
+        )
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
@@ -492,7 +572,7 @@ def test_archive_plan_allows_only_resolved_or_non_triggering_dispositions(
         encoding="utf-8",
     )
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-001"))
+    cmd_archive_plan(archive_args(tmp_path, "plan-001"))
 
     assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan.md").is_file()
 
@@ -705,7 +785,7 @@ def test_archive_plan_ignores_foreign_plan_handoff_with_colliding_task_id(tmp_pa
     _write_archive_plan(tmp_path, "plan-B")
     _write_archive_handoff(tmp_path, "plan-a.yaml", "{plan: plan-A, task: task-001}")
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+    cmd_archive_plan(archive_args(tmp_path, "plan-B"))
 
     assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
     assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-A.md").is_file()
@@ -737,7 +817,7 @@ def test_archive_plan_skips_unrelated_unparseable_executor_yaml(tmp_path: Path) 
         encoding="utf-8",
     )
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+    cmd_archive_plan(archive_args(tmp_path, "plan-B"))
 
     assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
     assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-A.md").is_file()
@@ -749,7 +829,7 @@ def test_archive_plan_ignores_task_only_handoff_with_ambiguous_task_id(tmp_path:
     _write_archive_plan(tmp_path, "plan-B")
     _write_archive_handoff(tmp_path, "task-only.yaml", "{task: task-001}")
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+    cmd_archive_plan(archive_args(tmp_path, "plan-B"))
 
     assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
 
@@ -763,7 +843,7 @@ def test_archive_plan_ignores_archived_foreign_handoff_with_colliding_task_id(tm
         tmp_path, "historical.yaml", "{plan: plan-A, task: task-001}", location="archived"
     )
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+    cmd_archive_plan(archive_args(tmp_path, "plan-B"))
 
     assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
 
@@ -780,7 +860,7 @@ def test_archive_plan_same_plan_accepted_update_still_blocks_unresolved_closure(
     )
 
     with pytest.raises(SystemExit, match="knowledge-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
@@ -791,7 +871,7 @@ def test_archive_plan_same_plan_resolved_closure_allows_archive(tmp_path: Path) 
     _write_archive_plan(tmp_path, "plan-B", closure_return="completed")
     _write_archive_handoff(tmp_path, "plan-b.yaml", "{plan: plan-B, task: task-001}")
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+    cmd_archive_plan(archive_args(tmp_path, "plan-B"))
 
     assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
 
@@ -986,7 +1066,9 @@ def test_no_review_completed_handoff_does_not_require_accept_or_reviewer() -> No
         assert token in execute
     assert "verdict: accept" not in str(_completed_executor_result())
 
-    validated = validate_executor_result_for_task(_completed_executor_result(), _task_brief())
+    validated = validate_executor_result_for_task(
+        _completed_executor_result(), _task_brief(), mutation_events=[]
+    )
     assert validated["result_state"] == "completed"
     assert validated["knowledge_disposition"]["action"] == "none"
 
@@ -1097,7 +1179,7 @@ def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer
     )
 
     with pytest.raises(SystemExit, match="acceptance-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+        cmd_archive_plan(archive_args(tmp_path, "plan-B"))
 
     assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md").is_file()
 
@@ -1161,7 +1243,7 @@ def test_archive_plan_accepts_mapped_invariant_handoff_with_harness_observation(
 
     root, _binding, _command = _mapped_archive_workspace(tmp_path)
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+    cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
@@ -1172,9 +1254,9 @@ def test_archive_plan_forwards_execution_binding_into_task_revalidation(tmp_path
     root, binding, command = _mapped_archive_workspace(tmp_path)
 
     cmd_archive_plan(
-        argparse.Namespace(
-            project_root=str(root),
-            id="plan-001",
+        archive_args(
+            root,
+            "plan-001",
             workspace_id=binding["workspace_id"],
             execution_id=binding["execution_id"],
             repository_id=binding["repository_id"],
@@ -1188,9 +1270,9 @@ def test_archive_plan_forwards_execution_binding_into_task_revalidation(tmp_path
     restored_root, restored_binding, _command = _mapped_archive_workspace(restored)
     with pytest.raises(SystemExit, match=rf"acceptance-blocked: declared plan-level acceptance {command} is missing"):
         cmd_archive_plan(
-            argparse.Namespace(
-                project_root=str(restored_root),
-                id="plan-001",
+            archive_args(
+                restored_root,
+                "plan-001",
                 workspace_id="wrong-workspace",
                 execution_id=restored_binding["execution_id"],
                 repository_id=restored_binding["repository_id"],
@@ -1236,7 +1318,7 @@ def test_passing_declared_plan_acceptance_allows_archive_without_second_reviewer
         encoding="utf-8",
     )
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+    cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
@@ -1273,7 +1355,7 @@ def test_unvalidated_handoff_cannot_satisfy_declared_plan_acceptance(tmp_path: P
     )
 
     with pytest.raises(SystemExit, match="acceptance-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+        cmd_archive_plan(archive_args(tmp_path, "plan-B"))
 
 
 def _record_tree_fresh_integration_pass(root: Path, command: str) -> str:
@@ -1306,7 +1388,7 @@ def test_tree_fresh_executor_pass_without_harness_observation_blocks_archive(tmp
     _record_tree_fresh_integration_pass(root, command)
 
     with pytest.raises(SystemExit, match="acceptance-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
@@ -1327,7 +1409,7 @@ def test_task_worktree_command_pass_cannot_archive_different_final_workspace(tmp
     _write_earlier_integration_pass(root, command, created_at="2026-08-17")
 
     with pytest.raises(SystemExit, match="acceptance-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
     assert not (root / "worktree-only-marker").exists()
@@ -1344,7 +1426,7 @@ def test_passing_mutating_integration_command_blocks_archive(tmp_path: Path) -> 
     _record_tree_fresh_integration_pass(root, command)
 
     with pytest.raises(SystemExit, match="acceptance-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
@@ -1390,7 +1472,7 @@ def test_contradictory_validated_plan_acceptance_blocks_archive(tmp_path: Path) 
     )
 
     with pytest.raises(SystemExit, match="acceptance-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
 
 def test_stale_plan_acceptance_after_later_material_task_blocks_archive(tmp_path: Path) -> None:
@@ -1417,7 +1499,7 @@ def test_stale_plan_acceptance_after_later_material_task_blocks_archive(tmp_path
     )
 
     with pytest.raises(SystemExit, match="acceptance-blocked:.*is stale"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
@@ -1447,7 +1529,7 @@ def test_fresh_plan_acceptance_rerun_after_later_task_allows_archive(tmp_path: P
         actual_commit=later,
     )
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+    cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
@@ -1462,7 +1544,7 @@ def test_archive_moves_plan_directory_named_for_root_artifact(tmp_path: Path) ->
     (active / "compiler-plan.md").rename(active / "plan-001-feature.md")
     (active / "plan-001").rename(active / "plan-001-feature")
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+    cmd_archive_plan(archive_args(root, "plan-001"))
 
     archived = root / ".work-bundle/orchestration/plan/archived"
     assert (archived / "plan-001-feature.md").is_file()
@@ -1483,7 +1565,7 @@ def test_archive_reconciles_archived_root_with_active_plan_directory(tmp_path: P
     (active / "compiler-plan.md").rename(archived / "plan-001-feature.md")
     (active / "plan-001").rename(active / "plan-001-feature")
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+    cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (archived / "plan-001-feature.md").is_file()
     assert (archived / "plan-001-feature").is_dir()
@@ -1523,7 +1605,7 @@ def test_same_day_out_of_id_order_stale_plan_acceptance_blocks_archive(tmp_path:
     )
 
     with pytest.raises(SystemExit, match="acceptance-blocked:.*is stale"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
@@ -1561,7 +1643,7 @@ def test_same_day_out_of_id_order_fresh_rerun_allows_archive(tmp_path: Path) -> 
         actual_commit=later,
     )
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+    cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
@@ -1600,7 +1682,7 @@ def test_historical_failed_plan_acceptance_does_not_poison_fresh_head_pass(tmp_p
         actual_commit=later,
     )
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+    cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
@@ -1634,7 +1716,7 @@ def test_same_tree_contradictory_plan_acceptance_still_blocks_archive(tmp_path: 
     )
 
     with pytest.raises(SystemExit, match="acceptance-blocked:.*contradictory"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
 
 def test_precommit_tree_pass_survives_same_tree_finalization_commit(tmp_path: Path) -> None:
@@ -1667,7 +1749,7 @@ def test_precommit_tree_pass_survives_same_tree_finalization_commit(tmp_path: Pa
     )
     git(root, "commit", "-qm", "finalize")
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+    cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
@@ -1686,7 +1768,7 @@ def test_archive_plan_no_review_completed_update_blocks_until_closure_return(
     )
 
     with pytest.raises(SystemExit, match="knowledge-blocked"):
-        cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
@@ -1703,7 +1785,7 @@ def test_archive_plan_ignores_unvalidated_update_handoff(tmp_path: Path) -> None
         result_state="completed",
     )
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-B"))
+    cmd_archive_plan(archive_args(tmp_path, "plan-B"))
 
     assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan-B.md").is_file()
 
@@ -1726,7 +1808,7 @@ def test_archive_plan_review_required_cannot_downgrade_via_omitted_required(tmp_
         f"  action: update\n  reason: Task-local evidence.\n  affected_authority: [{ACCEPTED_AUTHORITY}]\n",
     )
 
-    cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-001"))
+    cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
@@ -1785,7 +1867,11 @@ def test_review_required_task_fails_closed_until_independent_accept() -> None:
     accepted = _completed_executor_result(
         acceptance_review={"required": True, "verdict": "accept"}
     )
-    validated = validate_executor_result_for_task(accepted, {**_task_brief(), "review_required": True})
+    validated = validate_executor_result_for_task(
+        accepted,
+        {**_task_brief(), "review_required": True},
+        mutation_events=[],
+    )
     assert validated["result_state"] == "completed"
 
 

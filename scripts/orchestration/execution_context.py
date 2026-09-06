@@ -73,6 +73,10 @@ CONTEXT_EXPANSION_REASONS = {
 }
 
 
+class AcceptanceOwnershipError(SystemExit):
+    """A completed result failed mandatory harness-owned ownership evidence."""
+
+
 class _SemanticReference(str):
     """Legacy in-memory semantic view that serializes as its stable ID."""
 
@@ -3228,12 +3232,12 @@ def validate_executor_result_for_task(
     task_ownership = None
     if state == "completed":
         if mutation_events is None:
-            raise SystemExit(
+            raise AcceptanceOwnershipError(
                 "review-blocked: completed task requires harness-owned mutation_events evidence"
             )
         runtime_mutation_events = list(mutation_events)
         if any(not isinstance(event, Mapping) for event in runtime_mutation_events):
-            raise SystemExit("Runtime mutation_events must contain mappings")
+            raise AcceptanceOwnershipError("Runtime mutation_events must contain mappings")
         fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
         operation = "repair" if fit.get("result") == "repaired" else "implementation"
         try:
@@ -3258,7 +3262,7 @@ def validate_executor_result_for_task(
                     authorized_replacements=authorized_replacements,
                 )
         except OwnershipBlocker as error:
-            raise SystemExit(str(error)) from error
+            raise AcceptanceOwnershipError(str(error)) from error
     return {
         "knowledge_disposition": knowledge_disposition,
         "unresolved": unresolved,

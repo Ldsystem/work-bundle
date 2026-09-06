@@ -168,6 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     set_plan.set_defaults(func=cmd_set_plan_status)
     archive_plan = sub.add_parser("archive-plan", parents=[parent])
     archive_plan.add_argument("--id", required=True)
+    _add_acceptance_runtime_inputs(archive_plan)
     archive_plan.set_defaults(func=cmd_archive_plan)
     sub.add_parser("index-plans", parents=[parent]).set_defaults(func=cmd_index_plans)
     write_phase = sub.add_parser("write-phase", parents=[parent])
