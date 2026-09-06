@@ -944,7 +944,7 @@ def test_workflow_separates_durable_artifacts_from_runtime_packets() -> None:
         "earliest ordinary task",
         "knowledge disposition",
         "review owns approved persistence",
-        "minimum orchestration overhead",
+        "expected total orchestration cost",
         "accepted task dispositions",
     ]:
         assert token in workflow

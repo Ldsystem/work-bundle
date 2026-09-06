@@ -81,10 +81,10 @@ def test_specification_uses_compact_semantic_convergence_and_workspace_policy() 
 def test_planner_allocates_methodology_capability_and_bounded_context() -> None:
     text = read("skills/orch-create-implementation-plan/SKILL.md")
     for token in [
-        "minimum orchestration overhead",
+        "expected total orchestration cost",
         "independently falsifiable",
         "bounded failure radius",
-        "Do not split one mechanical increment",
+        "coherent mechanical increment",
         "source-ID coverage",
         "dev-systematic-debugging",
         "dev-test-driven-development",
