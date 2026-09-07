@@ -97,7 +97,9 @@ def _verify_migration(path: Path, fixture_ids: tuple[str, ...]) -> int:
     for row in manifest["semantic_deltas"].values():
         if set(row) != {"source_ids", "affected_paths"} or not row["source_ids"] or not row["affected_paths"]:
             raise VerificationError("semantic delta row incomplete")
-    if set(manifest["parity_owners"]) != {"WOR-76", "WOR-78", "WOR-81", "WOR-82"} or any(set(row) != {"status", "navigation"} or row["status"] != "likely" for row in manifest["parity_owners"].values()):
+    telemetry_changed = any(path in listed for path in ("scripts/work-bundle/stage_events.py", "scripts/orchestration/review_runtime.py"))
+    expected_parity = {"WOR-76", "WOR-78", "WOR-81", "WOR-82"} | ({"WOR-83"} if telemetry_changed else set())
+    if set(manifest["parity_owners"]) != expected_parity or any(set(row) != {"status", "navigation"} or row["status"] != "likely" for row in manifest["parity_owners"].values()):
         raise VerificationError("parity owner rows mismatch")
     evidence = manifest["epoch1_evidence"]
     if set(evidence) != {"reusable", "invalidated"} or not isinstance(evidence["reusable"], list) or not isinstance(evidence["invalidated"], list):

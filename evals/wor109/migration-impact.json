@@ -19,7 +19,8 @@
     "WOR-76": {"status": "likely", "navigation": "Review accepted-result authority and lifecycle projection consumers."},
     "WOR-78": {"status": "likely", "navigation": "Review planner decomposition and bounded reslice contracts."},
     "WOR-81": {"status": "likely", "navigation": "Review lightweight scope-control lane semantics."},
-    "WOR-82": {"status": "likely", "navigation": "Review deterministic integrated evaluation and closure gates."}
+    "WOR-82": {"status": "likely", "navigation": "Review deterministic integrated evaluation and closure gates."},
+    "WOR-83": {"status": "likely", "navigation": "Review planning telemetry and diagnostics emitted by stage-event convergence."}
   },
   "epoch1_evidence": {
     "reusable": ["WOR-108 closure fixtures", "baseline identity cfa089f0d2ed211b98d049eb37bfcdccb8091516"],
