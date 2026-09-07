@@ -54,6 +54,12 @@ def _verify_fixtures(path: Path) -> tuple[str, ...]:
         node = item["pytest_node"]
         if not NODE.fullmatch(node) or node in nodes:
             raise VerificationError(f"invalid or duplicate pytest node: {node}")
+        semantic_prefix = (
+            "tests/test_wor109_planner_scenarios.py::"
+            f"test_pd_{item['id'][3:]}_"
+        )
+        if not node.startswith(semantic_prefix):
+            raise VerificationError(f"semantic oracle binding mismatch: {item['id']}")
         nodes.add(node)
         test_path, function = node.split("::")
         source = REPO_ROOT / test_path

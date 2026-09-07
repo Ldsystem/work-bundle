@@ -30,6 +30,19 @@ def test_wor109_tampered_fixture_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(verifier.VerificationError, match="exactly PD-01..PD-14"):
         verifier.verify(fixtures_path=path)
 
+
+def test_wor109_valid_existing_node_semantic_substitution_is_rejected(tmp_path: Path) -> None:
+    payload = json.loads((EVAL / "fixtures.json").read_text(encoding="utf-8"))
+    first = payload["fixtures"][0]
+    second = payload["fixtures"][1]
+    first["pytest_node"], second["pytest_node"] = second["pytest_node"], first["pytest_node"]
+    path = tmp_path / "fixtures.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(verifier.VerificationError, match="semantic oracle binding mismatch"):
+        verifier.verify(fixtures_path=path)
+
+
 def test_wor109_tampered_manifest_is_rejected(tmp_path: Path) -> None:
     payload = copy.deepcopy(json.loads((EVAL / "migration-impact.json").read_text(encoding="utf-8")))
     payload["exclusions"]["WOR-107"]["authorized"] = True
