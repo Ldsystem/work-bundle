@@ -8,6 +8,10 @@ import pytest
 
 
 ORCHESTRATION = Path(__file__).resolve().parents[1] / "scripts" / "orchestration"
+loaded_core = sys.modules.get("core")
+loaded_core_path = Path(getattr(loaded_core, "__file__", "")) if loaded_core is not None else None
+if loaded_core_path is not None and ORCHESTRATION not in loaded_core_path.parents:
+    sys.modules.pop("core", None)
 sys.path.insert(0, str(ORCHESTRATION))
 
 import execution_context  # noqa: E402
@@ -36,6 +40,7 @@ ACCEPTED_RESULT_FIELDS = {
     "validation_evidence_ids",
     "review_id",
     "owner_identity",
+    "knowledge_disposition",
     "accepted_at",
     "invalidation",
 }
@@ -109,6 +114,11 @@ def _handoff() -> dict[str, object]:
 def _validated() -> dict[str, object]:
     return {
         "result_state": "completed",
+        "knowledge_disposition": {
+            "action": "none",
+            "reason": "No durable authority changed.",
+            "affected_authority": [],
+        },
         "task_ownership": {
             "delegated": True,
             "owner_kind": "subagent",
@@ -191,12 +201,23 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
             "baseline_identity": {"head": OID_A, "tree": OID_B},
             "accepted_source": {"head": OID_A, "tree": OID_B},
             "authority_projection": first["authority_projection"],
+            "knowledge_disposition": first["knowledge_disposition"],
         }
     )
     assert first["validation_evidence_ids"] == ["obs-001"]
+    assert first["knowledge_disposition"] == _validated()["knowledge_disposition"]
     assert "mutation_events" not in repr(first)
     assert "validation" not in first["executor_result_digest"]
     execution_context.assert_accepted_task_result_current(task, appended, first)
+
+    tampered_disposition = deepcopy(first)
+    tampered_disposition["knowledge_disposition"] = {
+        "action": "update",
+        "reason": "Tampered after acceptance.",
+        "affected_authority": ["REQ-001"],
+    }
+    with pytest.raises(SystemExit, match="accepted task result.*source"):
+        execution_context.assert_accepted_task_result_current(task, binding, tampered_disposition)
 
     changed_scope = deepcopy(task)
     changed_scope["files"]["write"] = ["src/other.py"]
@@ -222,6 +243,34 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
     invalidated["invalidation"] = {"reason": "accepted source changed"}
     with pytest.raises(SystemExit, match="explicitly invalidated"):
         execution_context.assert_accepted_task_result_current(task, binding, invalidated)
+
+
+def test_legacy_accepted_result_without_disposition_remains_current_for_nonknowledge_consumers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = _task(tmp_path)
+    binding = _binding(tmp_path)
+    monkeypatch.setattr(
+        execution_context,
+        "capture_repository_evidence",
+        lambda _root: {"head": OID_A, "tree": OID_B, "entries": {}, "status": "clean"},
+    )
+    accepted = execution_context.build_accepted_task_result(
+        task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
+    )
+    legacy = deepcopy(accepted)
+    legacy.pop("knowledge_disposition")
+    legacy["accepted_source"]["state_digest"] = execution_context._accepted_source_state_digest(
+        plan_id=legacy["plan_id"],
+        task_id=legacy["task_id"],
+        binding_id=legacy["binding_id"],
+        baseline_identity=legacy["baseline_identity"],
+        head=legacy["accepted_source"]["head"],
+        tree=legacy["accepted_source"]["tree"],
+        authority_projection=legacy["authority_projection"],
+    )
+
+    execution_context.assert_accepted_task_result_current(task, binding, legacy)
 
 
 def test_actual_accepted_repair_review_mode_and_frontier_are_digest_authority(

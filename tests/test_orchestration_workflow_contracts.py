@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -35,6 +36,28 @@ def accepted_stage_boundary_for_legacy_archive_unit_tests(monkeypatch):
 
 def read(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def load_orchestration_dispatcher():
+    previous_core = sys.modules.get("core")
+    core_spec = importlib.util.spec_from_file_location("core", ORCH_ROOT / "core.py")
+    assert core_spec is not None and core_spec.loader is not None
+    core_module = importlib.util.module_from_spec(core_spec)
+    sys.modules["core"] = core_module
+    try:
+        core_spec.loader.exec_module(core_module)
+        dispatcher_spec = importlib.util.spec_from_file_location(
+            "orchestration_workflow_contracts_dispatcher", ORCH_ROOT / "dispatcher.py"
+        )
+        assert dispatcher_spec is not None and dispatcher_spec.loader is not None
+        dispatcher = importlib.util.module_from_spec(dispatcher_spec)
+        dispatcher_spec.loader.exec_module(dispatcher)
+        return dispatcher
+    finally:
+        if previous_core is None:
+            sys.modules.pop("core", None)
+        else:
+            sys.modules["core"] = previous_core
 
 
 def evals() -> list[dict[str, object]]:
@@ -489,9 +512,7 @@ def test_archive_plan_completed_handoff_rejects_missing_harness_mutation_evidenc
 
 
 def test_archive_plan_cli_accepts_explicit_harness_mutation_evidence() -> None:
-    from dispatcher import build_parser
-
-    parsed = build_parser().parse_args(
+    parsed = load_orchestration_dispatcher().build_parser().parse_args(
         [
             "archive-plan",
             "--id",
@@ -1248,7 +1269,7 @@ def test_archive_plan_accepts_mapped_invariant_handoff_with_harness_observation(
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
 
-def test_archive_plan_forwards_execution_binding_into_task_revalidation(tmp_path: Path) -> None:
+def test_archive_plan_does_not_replay_task_validation_from_execution_binding(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
 
     root, binding, command = _mapped_archive_workspace(tmp_path)
@@ -1268,18 +1289,17 @@ def test_archive_plan_forwards_execution_binding_into_task_revalidation(tmp_path
     restored = tmp_path / "restored-mapped"
     restored.mkdir()
     restored_root, restored_binding, _command = _mapped_archive_workspace(restored)
-    with pytest.raises(SystemExit, match=rf"acceptance-blocked: declared plan-level acceptance {command} is missing"):
-        cmd_archive_plan(
-            archive_args(
-                restored_root,
-                "plan-001",
-                workspace_id="wrong-workspace",
-                execution_id=restored_binding["execution_id"],
-                repository_id=restored_binding["repository_id"],
-                execution_runtime_root=restored_binding["runtime_root"],
-            )
+    cmd_archive_plan(
+        archive_args(
+            restored_root,
+            "plan-001",
+            workspace_id="wrong-workspace",
+            execution_id=restored_binding["execution_id"],
+            repository_id=restored_binding["repository_id"],
+            execution_runtime_root=restored_binding["runtime_root"],
         )
-    assert (restored_root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
+    )
+    assert (restored_root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
 
 def test_passing_declared_plan_acceptance_allows_archive_without_second_reviewer(tmp_path: Path) -> None:
@@ -1498,7 +1518,7 @@ def test_stale_plan_acceptance_after_later_material_task_blocks_archive(tmp_path
         actual_commit=later,
     )
 
-    with pytest.raises(SystemExit, match="acceptance-blocked:.*is stale"):
+    with pytest.raises(SystemExit, match="acceptance-blocked:.*is failed"):
         cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
@@ -1604,7 +1624,7 @@ def test_same_day_out_of_id_order_stale_plan_acceptance_blocks_archive(tmp_path:
         actual_commit=later,
     )
 
-    with pytest.raises(SystemExit, match="acceptance-blocked:.*is stale"):
+    with pytest.raises(SystemExit, match="acceptance-blocked:.*is failed"):
         cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()

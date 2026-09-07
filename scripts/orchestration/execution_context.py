@@ -1396,11 +1396,15 @@ def load_task_execution_binding(control_root: Path, plan_id: str, task_id: str) 
 
 
 ACCEPTED_TASK_RESULT_SCHEMA = "accepted-task-result-v1"
-ACCEPTED_TASK_RESULT_FIELDS = {
+LEGACY_ACCEPTED_TASK_RESULT_FIELDS = {
     "schema", "plan_id", "task_id", "binding_id", "baseline_identity",
     "accepted_source", "authority_projection", "executor_result_digest",
     "validation_evidence_ids", "review_id", "owner_identity", "accepted_at",
     "invalidation",
+}
+ACCEPTED_TASK_RESULT_FIELDS = {
+    *LEGACY_ACCEPTED_TASK_RESULT_FIELDS,
+    "knowledge_disposition",
 }
 ACCEPTED_AUTHORITY_PROJECTION_FIELDS = {
     "task_digest", "binding_digest", "scope_digest", "validation_obligations_digest",
@@ -1528,15 +1532,19 @@ def _accepted_source_state_digest(
     head: object,
     tree: object,
     authority_projection: Mapping[str, Any],
+    knowledge_disposition: Mapping[str, Any] | None = None,
 ) -> str:
-    return semantic_digest({
+    state = {
         "plan_id": plan_id,
         "task_id": task_id,
         "binding_id": binding_id,
         "baseline_identity": dict(baseline_identity),
         "accepted_source": {"head": head, "tree": tree},
         "authority_projection": dict(authority_projection),
-    })
+    }
+    if knowledge_disposition is not None:
+        state["knowledge_disposition"] = dict(knowledge_disposition)
+    return semantic_digest(state)
 
 
 def build_accepted_task_result(
@@ -1595,6 +1603,10 @@ def build_accepted_task_result(
         accepted_review=review,
         owner_identity=accepted_ownership,
     )
+    knowledge_disposition = validated.get("knowledge_disposition")
+    if not isinstance(knowledge_disposition, Mapping):
+        raise SystemExit("accepted task result requires validated knowledge disposition")
+    knowledge_disposition = dict(knowledge_disposition)
     evidence = capture_repository_evidence(Path(str(binding.get("execution_path") or "")).resolve())
     accepted_source = {"head": evidence.get("head"), "tree": evidence.get("tree")}
     accepted_source["state_digest"] = _accepted_source_state_digest(
@@ -1605,6 +1617,7 @@ def build_accepted_task_result(
         head=accepted_source["head"],
         tree=accepted_source["tree"],
         authority_projection=authority_projection,
+        knowledge_disposition=knowledge_disposition,
     )
     return {
         "schema": ACCEPTED_TASK_RESULT_SCHEMA,
@@ -1623,6 +1636,7 @@ def build_accepted_task_result(
         "validation_evidence_ids": validation_ids,
         "review_id": review_id,
         "owner_identity": accepted_ownership,
+        "knowledge_disposition": knowledge_disposition,
         "accepted_at": accepted_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "invalidation": None,
     }
@@ -1635,7 +1649,11 @@ def assert_accepted_task_result_current(
 
     if accepted.get("schema") != ACCEPTED_TASK_RESULT_SCHEMA:
         raise SystemExit("accepted task result schema is invalid")
-    if set(accepted) != ACCEPTED_TASK_RESULT_FIELDS:
+    accepted_fields = frozenset(accepted)
+    if accepted_fields not in {
+        frozenset(LEGACY_ACCEPTED_TASK_RESULT_FIELDS),
+        frozenset(ACCEPTED_TASK_RESULT_FIELDS),
+    }:
         raise SystemExit("accepted task result shape is not closed")
     if accepted.get("invalidation") is not None:
         raise SystemExit("accepted task result was explicitly invalidated")
@@ -1648,6 +1666,29 @@ def assert_accepted_task_result_current(
         raise SystemExit("accepted task result authority projection is not closed")
     if not isinstance(owner_identity, Mapping):
         raise SystemExit("accepted task result owner identity is invalid")
+    knowledge_disposition = accepted.get("knowledge_disposition")
+    if "knowledge_disposition" in accepted:
+        if not isinstance(knowledge_disposition, Mapping):
+            raise SystemExit("accepted task result knowledge disposition is invalid")
+        task_files = task.get("files") if isinstance(task.get("files"), Mapping) else {}
+        truth_basis = task.get("truth_basis") if isinstance(task.get("truth_basis"), Mapping) else {}
+        try:
+            current_disposition = _validated_knowledge_disposition(
+                {"knowledge_disposition": dict(knowledge_disposition)},
+                [str(value) for value in _as_list(task.get("source_ids"))],
+                [
+                    str(value)
+                    for value in [
+                        *_as_list(task_files.get("read")),
+                        *_as_list(task_files.get("write")),
+                    ]
+                ],
+                _allocated_decision_aliases(truth_basis),
+            )
+        except SystemExit as error:
+            raise SystemExit("accepted task result knowledge disposition is invalid") from error
+        if dict(knowledge_disposition) != current_disposition:
+            raise SystemExit("accepted task result knowledge disposition is invalid")
     current_projection = {
         "task_digest": semantic_digest(_accepted_task_projection(task)),
         "binding_digest": semantic_digest(_accepted_binding_projection(binding)),
@@ -1686,6 +1727,11 @@ def assert_accepted_task_result_current(
             head=accepted_source.get("head"),
             tree=accepted_source.get("tree"),
             authority_projection=authority_projection,
+            knowledge_disposition=(
+                knowledge_disposition
+                if isinstance(knowledge_disposition, Mapping)
+                else None
+            ),
         ),
     }
     for label, current in checks.items():

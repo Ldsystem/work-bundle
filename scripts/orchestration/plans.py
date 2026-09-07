@@ -50,7 +50,25 @@ def _assert_archive_knowledge_gate(
     if upstream is None:
         raise SystemExit("knowledge-blocked: plan has no Knowledge Base Update disposition")
     closure_return = _plan_knowledge_field(body, "Closure return") or "missing"
-    handoffs = [handoff for handoff, _brief in validated]
+    legacy = [result for result, _brief in validated if "knowledge_disposition" not in result]
+    if legacy:
+        if upstream == "required" and closure_return == "completed":
+            return
+        raise SystemExit(
+            "knowledge-blocked: legacy accepted results require plan-level required/completed closure"
+        )
+    handoffs = [
+        {
+            "related": {"plan": plan_id, "task": result.get("task_id")},
+            "result": {"state": "completed"},
+            "acceptance_review": {
+                "required": brief.get("review_required") is True,
+                "verdict": "accept",
+            },
+            "knowledge_disposition": result.get("knowledge_disposition"),
+        }
+        for result, brief in validated
+    ]
     review_required_by_task = {
         str(brief.get("task_id") or ""): brief.get("review_required") is True for _handoff, brief in validated
     }
@@ -145,14 +163,14 @@ def _validated_plan_task_handoffs(
     return validated
 
 
-def _plan_section_table(body: str, name: str) -> list[list[str]]:
+def _plan_section_table_parts(body: str, name: str) -> tuple[list[str], list[list[str]]]:
     section = re.search(
         rf"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?{re.escape(name)}\s*$([\s\S]*?)(?=^##\s|\Z)",
         body,
         re.MULTILINE,
     )
     if not section:
-        return []
+        return [], []
     rows: list[list[str]] = []
     for line in section.group(1).splitlines():
         if not line.strip().startswith("|"):
@@ -161,18 +179,29 @@ def _plan_section_table(body: str, name: str) -> list[list[str]]:
         if not cells or all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
             continue
         rows.append(cells)
-    return rows[1:] if rows else []
+    return (rows[0], rows[1:]) if rows else ([], [])
+
+
+def _plan_section_table(body: str, name: str) -> list[list[str]]:
+    _header, rows = _plan_section_table_parts(body, name)
+    return rows
 
 
 def _declared_integration_commands(body: str) -> list[str]:
     commands: list[str] = []
-    for cells in _plan_section_table(body, "Tests"):
-        if len(cells) < 6:
+    header, rows = _plan_section_table_parts(body, "Tests")
+    normalized = [re.sub(r"\s+", " ", cell.strip().lower()) for cell in header]
+    if "test type" not in normalized or "command" not in normalized:
+        return []
+    test_type_index = normalized.index("test type")
+    command_index = normalized.index("command")
+    for cells in rows:
+        if max(test_type_index, command_index) >= len(cells):
             continue
-        test_type = cells[1].lower()
+        test_type = cells[test_type_index].lower()
         if "integration" not in test_type or "unit|integration" in test_type:
             continue
-        command = cells[5].strip().strip("`")
+        command = cells[command_index].strip().strip("`")
         if command and command not in {"-", "[command if applicable]"}:
             commands.append(command)
     return commands
@@ -417,7 +446,6 @@ def _assert_archive_plan_acceptance(
     material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
     for command in commands:
         terminal_results: set[str] = set()
-        other_results: set[str] = set()
         for handoff, _brief in validated:
             result = _handoff_command_result(handoff, command)
             if result is None:
@@ -425,22 +453,14 @@ def _assert_archive_plan_acceptance(
             tree = _verified_handoff_tree(git_root, handoff)
             if terminal_tree and tree == terminal_tree:
                 terminal_results.add(result)
-            else:
-                other_results.add(result)
-        judged = terminal_results or other_results
         if terminal_results:
             if terminal_results == {"passed"}:
                 continue
             raise SystemExit(
                 f"acceptance-blocked: declared plan-level acceptance {command} is {_acceptance_result_detail(terminal_results)}"
             )
-        if judged == {"passed"}:
-            if len(material) <= 1:
-                continue
-            raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is stale")
-        raise SystemExit(
-            f"acceptance-blocked: declared plan-level acceptance {command} is {_acceptance_result_detail(judged)}"
-        )
+        # Historical task evidence is not terminal plan authority. The archive
+        # gate obtains one fresh state-neutral observation below instead.
     workspace = git_root if material else _resolve_final_plan_workspace(args)
     for command in commands:
         _assert_archive_command_state_neutral(command, workspace)
@@ -783,8 +803,7 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
     root_path = artifact_path_from_row(root_match, args)
     require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))
     if _plan_uses_accepted_result_authority(args, args.id):
-        _accepted_plan_task_results(args, args.id)
-        validated: list[tuple[dict[str, object], dict[str, object]]] = []
+        validated = _accepted_plan_task_results(args, args.id)
     else:
         # Pre-accepted-result plans retain a bounded migration path. New plans
         # switch irreversibly once any task publishes durable accepted authority.

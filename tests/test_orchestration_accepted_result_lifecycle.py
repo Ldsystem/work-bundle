@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import importlib.util
 import json
 from pathlib import Path
@@ -15,17 +16,29 @@ sys.path.insert(0, str(ORCHESTRATION))
 
 import execution_context  # noqa: E402
 import plans  # noqa: E402
-from test_wor109_accepted_result import _binding, _handoff, _task, _validated  # noqa: E402
+from test_orchestration_accepted_result import _binding, _handoff, _task, _validated  # noqa: E402
 
 
 def _dispatcher():
-    spec = importlib.util.spec_from_file_location(
-        "wor109_dispatcher", ORCHESTRATION / "dispatcher.py"
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    previous_core = sys.modules.get("core")
+    core_spec = importlib.util.spec_from_file_location("core", ORCHESTRATION / "core.py")
+    assert core_spec is not None and core_spec.loader is not None
+    core_module = importlib.util.module_from_spec(core_spec)
+    sys.modules["core"] = core_module
+    try:
+        core_spec.loader.exec_module(core_module)
+        spec = importlib.util.spec_from_file_location(
+            "orchestration_accepted_result_dispatcher", ORCHESTRATION / "dispatcher.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        if previous_core is None:
+            sys.modules.pop("core", None)
+        else:
+            sys.modules["core"] = previous_core
 
 
 def test_current_accepted_result_does_not_read_handoff_or_replay_validation(
@@ -174,25 +187,138 @@ def test_archive_switches_irreversibly_to_accepted_results_without_handoff_repla
         json.dumps({"accepted_result": {"schema": "accepted-task-result-v1"}}),
         encoding="utf-8",
     )
-    calls: list[str] = []
+    accepted = [
+        (
+            {
+                "schema": "accepted-task-result-v1",
+                "task_id": "task-001",
+                "knowledge_disposition": {
+                    "action": "none",
+                    "reason": "No durable authority changed.",
+                    "affected_authority": [],
+                },
+            },
+            {"task_id": "task-001", "review_required": False},
+        )
+    ]
+    calls: list[object] = []
     monkeypatch.setattr(plans, "require_plan_reviews", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         plans,
         "_accepted_plan_task_results",
-        lambda *_args: calls.append("accepted") or [],
+        lambda *_args: calls.append("accepted") or accepted,
     )
     monkeypatch.setattr(
         plans,
         "_validated_plan_task_handoffs",
         lambda *_args: (_ for _ in ()).throw(AssertionError("handoff replayed")),
     )
-    monkeypatch.setattr(plans, "_assert_archive_knowledge_gate", lambda *_args: None)
-    monkeypatch.setattr(plans, "_assert_archive_plan_acceptance", lambda *_args: None)
+    monkeypatch.setattr(
+        plans, "_assert_archive_knowledge_gate", lambda *_args: calls.append(_args[-1])
+    )
+    monkeypatch.setattr(
+        plans, "_assert_archive_plan_acceptance", lambda *_args: calls.append(_args[-1])
+    )
 
     plans.cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-001"))
 
-    assert calls == ["accepted"]
+    assert calls == ["accepted", accepted, accepted]
     assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan.md").is_file()
+
+
+def test_archive_knowledge_gate_aggregates_new_results_and_bounds_legacy_bridge(
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "plan.md"
+    args = argparse.Namespace()
+    update = {
+        "schema": "accepted-task-result-v1",
+        "task_id": "task-001",
+        "knowledge_disposition": {
+            "action": "update",
+            "reason": "Stable authority changed.",
+            "affected_authority": ["REQ-001"],
+        },
+    }
+    brief = {"task_id": "task-001", "review_required": True}
+    plan.write_text(
+        "---\nid: plan-001\n---\n\n## 2.1 Knowledge Base Update Carry Forward\n\n"
+        "- **Disposition**: not-needed\n- **Closure return**: missing\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="task-001:update"):
+        plans._assert_archive_knowledge_gate(args, "plan-001", plan, [(update, brief)])
+
+    plan.write_text(
+        plan.read_text(encoding="utf-8").replace(
+            "Closure return**: missing", "Closure return**: completed"
+        ),
+        encoding="utf-8",
+    )
+    plans._assert_archive_knowledge_gate(args, "plan-001", plan, [(update, brief)])
+
+    legacy = deepcopy(update)
+    legacy.pop("knowledge_disposition")
+    with pytest.raises(SystemExit, match="legacy accepted results require plan-level required/completed"):
+        plans._assert_archive_knowledge_gate(args, "plan-001", plan, [(legacy, brief)])
+    plan.write_text(
+        plan.read_text(encoding="utf-8").replace(
+            "Disposition**: not-needed", "Disposition**: required"
+        ),
+        encoding="utf-8",
+    )
+    plans._assert_archive_knowledge_gate(args, "plan-001", plan, [(legacy, brief)])
+
+
+def test_declared_integration_commands_follow_table_headers() -> None:
+    five_columns = (
+        "## 7. Tests\n\n"
+        "| ID | Test Type | Target | Command | Expected Result |\n"
+        "|---|---|---|---|---|\n"
+        "| TEST-001 | integration | archive | `env true` | passed |\n"
+    )
+    reordered = (
+        "## Tests\n\n"
+        "| Command | Expected Result | Target | Test Type | ID | Can Run With |\n"
+        "|---|---|---|---|---|---|\n"
+        "| `python -m pytest -q` | passed | archive | integration | TEST-002 | - |\n"
+    )
+
+    assert plans._declared_integration_commands(five_columns) == ["env true"]
+    assert plans._declared_integration_commands(reordered) == ["python -m pytest -q"]
+
+
+def test_missing_terminal_plan_proof_executes_once_state_neutrally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subprocess = __import__("subprocess")
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    (tmp_path / "tracked.txt").write_text("stable\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
+    plan = tmp_path / "plan.md"
+    plan.write_text(
+        "---\nid: plan-001\n---\n\n## 7. Tests\n\n"
+        "| ID | Test Type | Target | Command | Expected Result |\n"
+        "|---|---|---|---|---|\n"
+        "| TEST-001 | integration | archive | `env true` | passed |\n",
+        encoding="utf-8",
+    )
+    observed: list[str] = []
+    monkeypatch.setattr(plans, "_material_repository_root", lambda *_args: tmp_path)
+    monkeypatch.setattr(
+        plans,
+        "_observe_archive_command",
+        lambda command, _workspace: observed.append(command) or "passed",
+    )
+
+    plans._assert_archive_plan_acceptance(
+        argparse.Namespace(project_root=str(tmp_path)), "plan-001", plan, []
+    )
+
+    assert observed == ["env true"]
 
 
 def test_recovery_commands_are_not_public_dispatcher_actions() -> None:
