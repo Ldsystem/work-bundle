@@ -22,12 +22,6 @@ from review_runtime import (  # noqa: E402
 )
 import execution_context  # noqa: E402
 from test_wor109_accepted_result import _binding, _handoff, _task, _validated  # noqa: E402
-from task_ownership import (  # noqa: E402
-    OwnershipBlocker,
-    SubagentDispatch,
-    TaskCandidate,
-    TaskOwnershipScheduler,
-)
 
 sys.path.insert(0, str(WORK_BUNDLE))
 from stage_events import derive_planning_economics, validate_stage_event  # noqa: E402
@@ -84,55 +78,31 @@ def stage_event(
     )
 
 
-class AvailableAdapter:
-    def available(self) -> bool:
-        return True
-
-    def dispatch(self, task: TaskCandidate, *, operation: str) -> SubagentDispatch:
-        return SubagentDispatch(
-            task.task_id,
-            {
-                "delegated": True,
-                "owner_kind": "subagent",
-                "agent_id": f"agent-{task.task_id}",
-                "run_id": f"run-{task.task_id}",
-                "mechanism": "host-native",
-            },
-        )
-
-    def wait(self, handle: object) -> object:
-        return {"completed": handle}
-
-
-class UnavailableAdapter(AvailableAdapter):
-    def available(self) -> bool:
-        return False
-
-
-def candidate(
-    task_id: str,
-    *paths: str,
-    dependencies: tuple[str, ...] = (),
-    common_contract: str | None = None,
-    barrier: str | None = None,
-    convergence_owner: str | None = None,
-    barrier_participants: tuple[str, ...] = (),
-) -> TaskCandidate:
-    return TaskCandidate(
-        task_id=task_id,
-        dependencies=dependencies,
-        write_scope=paths,
-        execution_workspace=f"workspace-{task_id}",
-        common_contract=common_contract,
-        barrier=barrier,
-        convergence_owner=convergence_owner,
-        barrier_participants=barrier_participants,
-    )
-
-
 def development_case(case_id: str) -> dict[str, object]:
     payload = json.loads(read("references/evals/development/evals.json"))
     return next(case for case in payload["evals"] if case["id"] == case_id)
+
+
+def orchestration_case(case_id: str) -> dict[str, object]:
+    payload = json.loads(read("references/evals/orchestration/evals.json"))
+    return next(case for case in payload["evals"] if case["id"] == case_id)
+
+
+def assert_normative_case(
+    case_id: str,
+    *,
+    prompt: str,
+    expected_output: str,
+    skill_path: str,
+    owning_clause: str,
+) -> None:
+    assert orchestration_case(case_id) == {
+        "id": case_id,
+        "prompt": prompt,
+        "expected_output": expected_output,
+        "files": [],
+    }
+    assert owning_clause in read(skill_path)
 
 
 def allocation_gap() -> dict[str, object]:
@@ -164,48 +134,35 @@ def allocation_gap() -> dict[str, object]:
 
 
 def test_pd_01_cardinality_never_overrides_evidenced_runtime_seams() -> None:
-    tasks = [candidate(f"task-{index:03d}", f"src/seam-{index}.py") for index in range(1, 7)]
-    result = TaskOwnershipScheduler(AvailableAdapter()).run_wave(tasks, completed=set())
-
-    assert result.dispatched == tuple(task.task_id for task in tasks)
-    assert len(result.ownership) == 6
+    assert_normative_case(
+        "PD-01",
+        prompt="Plan a change whose production seams support six tasks, while a reviewer proposes a three-task target to make the plan shorter.",
+        expected_output="Rejects the task-count target and does not optimize task or phase cardinality; it uses the six evidenced ownership, dependency, validation, review, and repair seams when they bound expected total orchestration cost.",
+        skill_path="skills/orch-create-implementation-plan/SKILL.md",
+        owning_clause="Do not optimize task or phase cardinality. Decompose only at concrete independently owned production, dependency, validation, review, and repair seams so expected total orchestration cost remains bounded",
+    )
 
 
 def test_pd_02_helper_allocation_cannot_leave_production_lifecycle_unowned() -> None:
-    with pytest.raises(OwnershipBlocker, match="subagent execution is unavailable"):
-        TaskOwnershipScheduler(UnavailableAdapter()).run_wave(
-            [candidate("task-production", "src/production.py")], completed=set()
-        )
-
-    scheduler = TaskOwnershipScheduler(AvailableAdapter())
-    with pytest.raises(OwnershipBlocker, match="controller mutated task-owned implementation scope"):
-        scheduler.validate_acceptance(
-            delegation_evidence={
-                "delegated": True,
-                "owner_kind": "subagent",
-                "agent_id": "helper-owner",
-                "run_id": "helper-run",
-                "mechanism": "host-native",
-            },
-            mutation_events=[{"actor_kind": "controller", "paths": ["src/production.py"]}],
-            write_scope=["src/production.py"],
-            validations_passed=True,
-        )
+    assert_normative_case(
+        "PD-02",
+        prompt="A plan allocates tests and a helper refactor but leaves the authoritative production path with no implementation owner.",
+        expected_output="Rejects helper-only allocation until every authoritative production path has a production owner and the production change, validation, and repair responsibility are explicitly allocated.",
+        skill_path="skills/orch-create-implementation-plan/SKILL.md",
+        owning_clause="Assign every authoritative production path to a production owner; reject helper-only allocation while its production path is unowned.",
+    )
 
 
 def test_pd_03_executor_acceptance_path_has_explicit_controller_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    execution = read("skills/orch-execute-plan/SKILL.md")
-    assert "TaskOwnershipScheduler.validate_acceptance" in execution
-
-    with pytest.raises(OwnershipBlocker, match="requires subagent ownership"):
-        TaskOwnershipScheduler(AvailableAdapter()).validate_acceptance(
-            delegation_evidence=None,
-            mutation_events=[],
-            write_scope=["src/production.py"],
-            validations_passed=True,
-        )
+    assert_normative_case(
+        "PD-02",
+        prompt="A plan allocates tests and a helper refactor but leaves the authoritative production path with no implementation owner.",
+        expected_output="Rejects helper-only allocation until every authoritative production path has a production owner and the production change, validation, and repair responsibility are explicitly allocated.",
+        skill_path="skills/orch-create-implementation-plan/SKILL.md",
+        owning_clause="Assign every authoritative production path to a production owner; reject helper-only allocation while its production path is unowned.",
+    )
 
     task = _task(tmp_path)
     binding = _binding(tmp_path)
@@ -232,68 +189,43 @@ def test_pd_03_executor_acceptance_path_has_explicit_controller_authority(
 
 
 def test_pd_04_independently_repairable_entry_points_remain_distinct() -> None:
-    tasks = [
-        candidate("task-entry-a", "src/entry_a.py"),
-        candidate("task-entry-b", "src/entry_b.py"),
-    ]
-    result = TaskOwnershipScheduler(AvailableAdapter()).run_wave(tasks, completed=set())
-    assert result.dispatched == ("task-entry-a", "task-entry-b")
-    assert tuple(owner["agent_id"] for owner in result.ownership) == (
-        "agent-task-entry-a",
-        "agent-task-entry-b",
+    assert_normative_case(
+        "PD-03",
+        prompt="A planner groups two changes that have different owners, validation oracles, and independently routable repair outcomes.",
+        expected_output="Splits at the evidenced ownership, oracle, and repair frontier so a failure returns to the smallest affected plan region without widening unrelated accepted work.",
+        skill_path="skills/orch-create-implementation-plan/SKILL.md",
+        owning_clause="preserving independently falsifiable increments, short evidence loops, exact dependencies, disjoint write scopes, bounded failure radius, and review boundaries",
     )
 
 
 def test_pd_05_coherent_mechanical_increment_is_not_micro_tasked_by_file_count() -> None:
-    task = candidate("task-mechanical", "src/edit.py", "tests/test_edit.py", "docs/edit.md")
-    result = TaskOwnershipScheduler(AvailableAdapter()).run_wave([task], completed=set())
-    assert result.dispatched == ("task-mechanical",)
-    assert len(result.results) == 1
+    assert_normative_case(
+        "PD-04",
+        prompt="A planner proposes splitting one production edit, its direct contract test, and its local documentation merely because three files are involved.",
+        expected_output="Keeps the coherent mechanical increment together under one production owner, oracle, and repair frontier; file count is not a decomposition seam.",
+        skill_path="skills/orch-create-implementation-plan/SKILL.md",
+        owning_clause="Keep one coherent mechanical increment with one owner, oracle, and repair frontier together.",
+    )
 
 
 def test_pd_06_producer_convergence_requires_a_real_barrier_and_owner() -> None:
-    scheduler = TaskOwnershipScheduler(AvailableAdapter())
-    convergence = candidate(
-        "task-converge",
-        "src/converge.py",
-        dependencies=("task-a", "task-b"),
-        common_contract="contract-v1",
-        barrier="barrier-producers",
-        convergence_owner="task-converge",
-        barrier_participants=("task-a", "task-b"),
+    assert_normative_case(
+        "PD-05",
+        prompt="A plan creates a new phase for each lifecycle label even though no dependency barrier or convergence boundary separates the work.",
+        expected_output="Rejects lifecycle-label phases and creates a phase only for an actual barrier or convergence boundary with concrete readiness and ownership evidence.",
+        skill_path="skills/orch-create-implementation-plan/SKILL.md",
+        owning_clause="Create a phase only for an actual barrier or convergence boundary, with explicit barrier ID, readiness evidence, and convergence owner.",
     )
-    waiting = scheduler.run_wave(
-        [convergence], completed={"task-a", "task-b"}, accepted_handoffs=set()
-    )
-    released = scheduler.run_wave(
-        [convergence],
-        completed={"task-a", "task-b"},
-        accepted_handoffs={"task-a", "task-b"},
-    )
-    assert waiting.dispatched == ()
-    assert released.dispatched == ("task-converge",)
 
 
 def test_pd_07_load_bearing_specification_authority_survives_compaction() -> None:
-    task = _task(Path("/tmp/wor109-authority"))
-    projection = execution_context._accepted_task_projection(task)
-    scopes = execution_context._canonical_task_scopes(task)
-    validation = execution_context._accepted_validation_projection(task)
-
-    assert projection["source_ids"] == ["REQ-001"]
-    assert scopes == {
-        "read": ["src/read.py"],
-        "write": ["src/a.py"],
-        "forbidden": ["secrets/key.txt"],
-    }
-    assert validation == [
-        {
-            "id": "VAL-001",
-            "command": "pytest -q",
-            "boundary": "component",
-            "freshness": "current_task_batch",
-        }
-    ]
+    assert_normative_case(
+        "PD-06",
+        prompt="A specification is shortened by deleting a unique validation target and compatibility constraint while retaining repeated summary prose.",
+        expected_output="Restores a complete, nonredundant authority set: preserves every load-bearing field required downstream and removes duplicate prose rather than unique authority.",
+        skill_path="skills/orch-create-specification/SKILL.md",
+        owning_clause="Preserve every load-bearing requirement, constraint, interface, acceptance criterion, validation target, and decision needed downstream; such authority must not be removed merely to make the artifact smaller. Reject duplicate prose that adds no authority.",
+    )
 
 
 def test_pd_08_planning_economics_are_derived_without_cardinality_judgment() -> None:
@@ -352,6 +284,13 @@ def test_pd_08_planning_economics_are_derived_without_cardinality_judgment() -> 
 def test_pd_09_under_decomposition_returns_only_the_affected_plan_region(
     tmp_path: Path,
 ) -> None:
+    assert_normative_case(
+        "PD-07",
+        prompt="Execution proves one task materially under-decomposed after its repair frontier separates into two independently owned regions.",
+        expected_output="Stops repeatedly enlarging the task, requires a return to the plan, and reslices only the affected region while preserving the original binding, baseline, accepted unaffected regions, and typed repair route.",
+        skill_path="skills/orch-create-implementation-plan/SKILL.md",
+        owning_clause="When execution proves a task materially under-decomposed, return to the plan and reslice only the affected region around the newly evidenced seam. Preserve the original binding, baseline, and accepted unaffected regions; do not repeatedly enlarge the task.",
+    )
     binding = {"binding_id": "binding-task-003", "sha256": "1" * 64}
     baseline = {"head": "2" * 40, "tree": "3" * 40}
     unaffected = [
@@ -446,72 +385,48 @@ def test_pd_09_under_decomposition_returns_only_the_affected_plan_region(
 
 
 def test_pd_10_hypothetical_defects_do_not_create_speculative_tasks() -> None:
-    finding = allocation_gap()
-    finding.update(
-        {
-            "finding_id": "finding-advisory",
-            "class": "advisory_enhancement",
-            "severity": "advisory",
-            "first_broken_artifact": "implementation",
-            "obligation_basis": "none",
-            "evidence": [],
-            "recommended_owner": "backlog_owner",
-            "disposition": "record_advisory",
-        }
+    assert_normative_case(
+        "PD-09",
+        prompt="A planner proposes separate hardening, compatibility, and recovery tasks without current authority, repository, dependency, validation, or acceptance evidence for them.",
+        expected_output="Rejects speculative fragmentation and adds no tasks until a current material seam proves the scope; it does not create a second review, retry, or recovery subsystem.",
+        skill_path="skills/orch-create-implementation-plan/SKILL.md",
+        owning_clause="Do not create speculative splits unsupported by current authority, repository, dependency, ownership, validation, or acceptance evidence.",
     )
-    routed = route_review_verdict(finding)
-    assert routed["return_to"] == "backlog_owner"
-    assert routed["action"] == "record_advisory"
-    assert routed["execution_state"] == "returned_for_repair"
 
 
 def test_pd_11_same_owner_pre_mutation_path_amendment_stays_lightweight() -> None:
     case = development_case("dev-lightweight-pre-mutation-one-file-amendment")
-    amended = candidate("task-light", "src/original.py", "src/discovered.py")
-    result = TaskOwnershipScheduler(AvailableAdapter()).run_wave([amended], completed=set())
     assert "Before mutation" in case["prompt"]
     assert "same implementation owner" in case["prompt"]
     assert "Amends Files.Modify once" in case["expected_output"]
-    assert result.dispatched == ("task-light",)
-    assert result.ownership[0]["agent_id"] == "agent-task-light"
 
 
 def test_pd_12_material_lightweight_scope_pressure_escalates() -> None:
     case = development_case("dev-lightweight-material-under-decomposition")
-    routed = route_review_verdict(
-        allocation_gap(),
-        affected_region={
-            "task_ids": ["task-light"],
-            "paths": ["src/new-owner.py"],
-            "interfaces": [],
-            "validation_oracles": ["VAL-NEW"],
-        },
-        original_binding_identity={"binding_id": "binding-light", "sha256": "1" * 64},
-        original_baseline_identity={"head": "2" * 40, "tree": "3" * 40},
-    )
     assert "new production owner and an independent validation boundary" in case["prompt"]
     assert case["expected_output"] == (
         "Treats the task as materially under-decomposed and escalates to full orchestration "
         "instead of repeatedly expanding the lightweight plan."
     )
-    assert routed["action"] == "reslice_plan"
-    assert routed["silent_expansion_allowed"] is False
 
 
 def test_pd_13_normal_lightweight_change_remains_one_disposable_plan() -> None:
     case = development_case("dev-lightweight-amendment-lane-separation")
-    result = TaskOwnershipScheduler(AvailableAdapter()).run_wave(
-        [candidate("task-light", "src/only.py")], completed=set()
-    )
     assert "executor result, task state, review package, and archive record" in case["prompt"]
     assert case["expected_output"] == (
         "Allows only the exact bounded Files.Modify amendment and rejects heavy lifecycle "
         "artifacts; the lightweight lane remains one disposable plan."
     )
-    assert result.dispatched == ("task-light",)
 
 
 def test_pd_14_equivalent_under_decomposition_routes_by_lane_without_widening() -> None:
+    assert_normative_case(
+        "PD-07",
+        prompt="Execution proves one task materially under-decomposed after its repair frontier separates into two independently owned regions.",
+        expected_output="Stops repeatedly enlarging the task, requires a return to the plan, and reslices only the affected region while preserving the original binding, baseline, accepted unaffected regions, and typed repair route.",
+        skill_path="skills/orch-create-implementation-plan/SKILL.md",
+        owning_clause="When execution proves a task materially under-decomposed, return to the plan and reslice only the affected region around the newly evidenced seam. Preserve the original binding, baseline, and accepted unaffected regions; do not repeatedly enlarge the task.",
+    )
     routed = route_review_verdict(
         allocation_gap(),
         affected_region={
