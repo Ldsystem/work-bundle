@@ -15,7 +15,7 @@ verifier = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verifier)
 
 def test_wor109_closure_has_exact_fixture_and_manifest_identity() -> None:
-    assert verifier.verify() == {"evaluation_id": "wor109-review-stable-orchestration-v1", "fixtures": 14, "changed_surfaces": 30, "verdict": "accepted"}
+    assert verifier.verify() == {"evaluation_id": "wor109-review-stable-orchestration-v1", "fixtures": 14, "changed_surfaces": 31, "verdict": "accepted"}
 
 def test_wor109_fixture_registry_is_closed_and_unique() -> None:
     payload = json.loads((EVAL / "fixtures.json").read_text(encoding="utf-8"))
