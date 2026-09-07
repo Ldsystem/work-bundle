@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sys
-from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -166,6 +165,17 @@ def test_pd_03_executor_acceptance_path_has_explicit_controller_authority(
 
     task = _task(tmp_path)
     binding = _binding(tmp_path)
+    persisted: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        execution_context,
+        "load_task_execution_binding",
+        lambda *_args: binding,
+    )
+    monkeypatch.setattr(
+        execution_context,
+        "_persist_binding",
+        lambda value, _root: persisted.append(value),
+    )
     monkeypatch.setattr(
         execution_context,
         "capture_repository_evidence",
@@ -176,16 +186,17 @@ def test_pd_03_executor_acceptance_path_has_explicit_controller_authority(
             "status": "clean",
         },
     )
-    first = execution_context.build_accepted_task_result(
-        task, binding, _handoff(), _validated(), accepted_at="2026-09-07T00:00:00Z"
+    accepted = execution_context.materialize_accepted_task_result(
+        tmp_path,
+        task,
+        _handoff(),
+        _validated(),
+        accepted_at="2026-09-07T00:00:00Z",
     )
-    historical = deepcopy(binding)
-    historical["ownership"]["history"].append({"event": "historical-audit"})
-    second = execution_context.build_accepted_task_result(
-        task, historical, _handoff(), _validated(), accepted_at="2026-09-07T00:00:00Z"
-    )
-    assert first == second
-    assert "mutation_events" not in repr(first)
+    assert persisted == [{**binding, "accepted_result": accepted}]
+    assert accepted["schema"] == "accepted-task-result-v1"
+    assert accepted["owner_identity"]["owner_kind"] == "subagent"
+    assert "mutation_events" not in repr(accepted)
 
 
 def test_pd_04_independently_repairable_entry_points_remain_distinct() -> None:
@@ -250,6 +261,12 @@ def test_pd_08_planning_economics_are_derived_without_cardinality_judgment() -> 
         stage_event("suite-first", event_type="suite_started", evaluation_id="eval-001"),
         stage_event("suite-rerun", event_type="suite_started", evaluation_id="eval-001"),
         stage_event(
+            "plan-review",
+            stage="plan",
+            event_type="stage_completed",
+            review_id="review-plan",
+        ),
+        stage_event(
             "green",
             event_type="suite_completed",
             evaluation_id="eval-001",
@@ -266,6 +283,7 @@ def test_pd_08_planning_economics_are_derived_without_cardinality_judgment() -> 
     result = derive_planning_economics(records, process_id="process-001", plan_id="plan-001")
     assert result["initial_cardinality"] == {"phases": 1, "tasks": 2}
     assert result["plan_revisions"] == 1
+    assert result["plan_reviews"] == 1
     assert result["scope_allocation_repairs"] == 1
     assert result["task_review_repairs"] == 1
     assert result["validation_reruns"] == 1
@@ -419,7 +437,9 @@ def test_pd_13_normal_lightweight_change_remains_one_disposable_plan() -> None:
     )
 
 
-def test_pd_14_equivalent_under_decomposition_routes_by_lane_without_widening() -> None:
+def test_pd_14_equivalent_under_decomposition_routes_by_lane_without_widening(
+    tmp_path: Path,
+) -> None:
     assert_normative_case(
         "PD-07",
         prompt="Execution proves one task materially under-decomposed after its repair frontier separates into two independently owned regions.",
@@ -427,20 +447,100 @@ def test_pd_14_equivalent_under_decomposition_routes_by_lane_without_widening() 
         skill_path="skills/orch-create-implementation-plan/SKILL.md",
         owning_clause="When execution proves a task materially under-decomposed, return to the plan and reslice only the affected region around the newly evidenced seam. Preserve the original binding, baseline, and accepted unaffected regions; do not repeatedly enlarge the task.",
     )
+    binding = {"binding_id": "binding-task-003", "sha256": "1" * 64}
+    baseline = {"head": "2" * 40, "tree": "3" * 40}
+    unaffected = [
+        {
+            "artifact_id": "task-001",
+            "revision": "1",
+            "sha256": ZERO_SHA,
+            "source_tree": ZERO_TREE,
+        },
+        {
+            "artifact_id": "task-002",
+            "revision": "1",
+            "sha256": "4" * 64,
+            "source_tree": "5" * 40,
+        },
+    ]
+    region = {
+        "task_ids": ["task-003"],
+        "paths": ["scripts/orchestration/review_runtime.py"],
+        "interfaces": ["API-PD-001"],
+        "validation_oracles": ["VAL-004"],
+    }
     routed = route_review_verdict(
         allocation_gap(),
-        affected_region={
-            "task_ids": ["task-003"],
-            "paths": ["scripts/orchestration/review_runtime.py"],
-            "interfaces": ["API-PD-001"],
-            "validation_oracles": ["VAL-004"],
-        },
-        original_binding_identity={"binding_id": "binding-task-003", "sha256": "1" * 64},
-        original_baseline_identity={"head": "2" * 40, "tree": "3" * 40},
+        affected_region=region,
+        unaffected_evidence_identities=unaffected,
+        original_binding_identity=binding,
+        original_baseline_identity=baseline,
     )
     assert routed["action"] == "reslice_plan"
+    assert routed["affected_region"] == region
+    assert routed["preserved_evidence_identities"] == unaffected
     assert routed["silent_expansion_allowed"] is False
     assert routed["preserve_valid_work_and_evidence"] is True
-    case = development_case("dev-lightweight-material-under-decomposition")
-    assert "escalates to full orchestration" in case["expected_output"]
-    assert "instead of repeatedly expanding" in case["expected_output"]
+
+    orch = tmp_path / ".work-bundle/orchestration"
+    spec = orch / "spec/active/spec.md"
+    plan = orch / "plan/active/plan.md"
+    spec.parent.mkdir(parents=True)
+    plan.parent.mkdir(parents=True)
+    spec.write_text("---\nid: spec-test\nstatus: verified\n---\nAuthority\n", encoding="utf-8")
+    plan.write_text(
+        "---\nid: plan-001\nstatus: Planned\nsource_spec: [spec-test]\n---\nResliced\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewContractError, match="accepted repaired plan-review authority"):
+        resume_plan_return(
+            routed,
+            workspace_root=tmp_path,
+            plan_path=plan,
+            current_binding_identity=binding,
+            current_baseline_identity=baseline,
+            current_unaffected_evidence_identities=unaffected,
+        )
+
+    review = {
+        "review_id": "review-plan-pd14",
+        "stage": "plan",
+        "target_identity": plan_review_identity(tmp_path, plan),
+        "reviewer": {
+            "agent_id": "reviewer-pd14",
+            "capability": "judgment",
+            "authorship": "none",
+            "repair_participation": "none",
+            "decision_participation": "none",
+            "deliberation_participation": "none",
+            "context_origin": "direct_source",
+        },
+        "evidence": {
+            "mode": "direct",
+            "capabilities": ["source inspection"],
+            "unavailable_evidence": [],
+            "commands": [],
+            "artifacts": [],
+        },
+        "verdict": "accepted",
+        "findings": [],
+        "started_at": "2026-09-07T00:00:00Z",
+        "completed_at": "2026-09-07T00:01:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    review = bind_review_receipt(tmp_path, review)
+    reviews = orch / "reviews"
+    reviews.mkdir()
+    (reviews / "pd14-plan.json").write_text(json.dumps(review), encoding="utf-8")
+
+    resumed = resume_plan_return(
+        routed,
+        workspace_root=tmp_path,
+        plan_path=plan,
+        current_binding_identity=binding,
+        current_baseline_identity=baseline,
+        current_unaffected_evidence_identities=unaffected,
+    )
+    assert resumed["execution_state"] == "ready_from_repaired_authority"
+    assert resumed["affected_region"] == region
+    assert resumed["preserved_evidence_identities"] == unaffected
