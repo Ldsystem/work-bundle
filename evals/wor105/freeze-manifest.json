@@ -72,7 +72,7 @@
   "components": {
     "profile": {
       "path": "evals/wor105/components/native-transition-record.yaml",
-      "sha256": "0d39d8709d8b4884a93384a51829d147e465dbf674e2c122d324d67c1283205a"
+      "sha256": "de18914cbaecd55cd7e6009eea843e5f5733f764f0c72d88f1b93314f8011f72"
     },
     "fixtures": {
       "path": "evals/wor105/fixtures",
