@@ -104,6 +104,23 @@ def assert_normative_case(
     assert owning_clause in read(skill_path)
 
 
+def assert_development_case(
+    case_id: str,
+    *,
+    prompt: str,
+    expected_output: str,
+    owning_clauses: tuple[str, ...],
+) -> None:
+    assert development_case(case_id) == {
+        "id": case_id,
+        "prompt": prompt,
+        "expected_output": expected_output,
+    }
+    skill = read("skills/dev-create-task-plan/SKILL.md")
+    for clause in owning_clauses:
+        assert clause in skill
+
+
 def allocation_gap() -> dict[str, object]:
     return {
         "finding_id": "finding-under-decomposed",
@@ -413,33 +430,68 @@ def test_pd_10_hypothetical_defects_do_not_create_speculative_tasks() -> None:
 
 
 def test_pd_11_same_owner_pre_mutation_path_amendment_stays_lightweight() -> None:
-    case = development_case("dev-lightweight-pre-mutation-one-file-amendment")
-    assert "Before mutation" in case["prompt"]
-    assert "same implementation owner" in case["prompt"]
-    assert "Amends Files.Modify once" in case["expected_output"]
+    assert_development_case(
+        "dev-lightweight-pre-mutation-one-file-amendment",
+        prompt="Before mutation, source grounding shows that a lightweight plan must add one exact file owned by the same implementation owner; purpose, accepted authority, expected delta, impact radius, ownership, validation boundary, and completion claim are materially unchanged.",
+        expected_output="Amends Files.Modify once with the exact additional path and records the supporting evidence before the first write, while keeping the same disposable lightweight plan.",
+        owning_clauses=(
+            "Before the first write, one explicit plan amendment may add exactly one additional path to `Files.Modify` when it has the same implementation owner and purpose, decision authority, expected delta, impact radius, ownership, validation boundary, and completion claim remain materially unchanged.",
+            "Record the exact path and supporting evidence in the existing disposable plan.",
+        ),
+    )
 
 
 def test_pd_12_material_lightweight_scope_pressure_escalates() -> None:
-    case = development_case("dev-lightweight-material-under-decomposition")
-    assert "new production owner and an independent validation boundary" in case["prompt"]
-    assert case["expected_output"] == (
-        "Treats the task as materially under-decomposed and escalates to full orchestration "
-        "instead of repeatedly expanding the lightweight plan."
+    assert_development_case(
+        "dev-lightweight-material-under-decomposition",
+        prompt="Execution reveals that the proposed extra file introduces a new production owner and an independent validation boundary.",
+        expected_output="Treats the task as materially under-decomposed and escalates to full orchestration instead of repeatedly expanding the lightweight plan.",
+        owning_clauses=(
+            "If new evidence makes the task materially under-decomposed—a new production or lifecycle owner, independent validation boundary, wide impact, API or workflow decision, second repository, or barrier or convergence topology—stop and escalate to full orchestration.",
+        ),
+    )
+    assert_development_case(
+        "dev-lightweight-amendment-after-mutation",
+        prompt="A lightweight task has already mutated an authorized file when it discovers one more file that would otherwise satisfy the bounded amendment conditions.",
+        expected_output="Does not amend the mutation envelope after mutation has begun; stops and escalates to full orchestration with the concrete scope evidence.",
+        owning_clauses=(
+            "The amendment must not be repeated or made after mutation begins.",
+        ),
     )
 
 
 def test_pd_13_normal_lightweight_change_remains_one_disposable_plan() -> None:
-    case = development_case("dev-lightweight-amendment-lane-separation")
-    assert "executor result, task state, review package, and archive record" in case["prompt"]
-    assert case["expected_output"] == (
-        "Allows only the exact bounded Files.Modify amendment and rejects heavy lifecycle "
-        "artifacts; the lightweight lane remains one disposable plan."
+    assert_development_case(
+        "dev-lightweight-algorithm-not-settled",
+        prompt="Plan a bounded mechanical change whose algorithm is not yet chosen, while purpose, accepted authority, expected delta, and impact radius are settled.",
+        expected_output="Allows the disposable lightweight plan because eligibility does not require a settled implementation strategy; it does not import executor-result, Completed, or a review package. Eval JSON stores this as a pressure scenario; presence is not executed agent-behavior proof.",
+        owning_clauses=(
+            "Create a bounded mechanical plan when purpose, accepted or `none relevant` authority, expected delta, and impact radius are settled even if the internal algorithm is not chosen.",
+            "Eligibility does not require the internal implementation strategy to be settled.",
+        ),
+    )
+    assert_development_case(
+        "dev-lightweight-amendment-lane-separation",
+        prompt="A pre-mutation one-file amendment remains same-owner and mechanically bounded, but the agent proposes adding an executor result, task state, review package, and archive record for assurance.",
+        expected_output="Allows only the exact bounded Files.Modify amendment and rejects heavy lifecycle artifacts; the lightweight lane remains one disposable plan.",
+        owning_clauses=(
+            "Keep one disposable `.work-bundle/runtime/dev-plans/` artifact.",
+            "Do not import executor-result, `Completed`, review package, archive helper, or heavy Knowledge Base Update closure into the lightweight lane.",
+        ),
     )
 
 
 def test_pd_14_equivalent_under_decomposition_routes_by_lane_without_widening(
     tmp_path: Path,
 ) -> None:
+    assert_development_case(
+        "dev-lightweight-material-under-decomposition",
+        prompt="Execution reveals that the proposed extra file introduces a new production owner and an independent validation boundary.",
+        expected_output="Treats the task as materially under-decomposed and escalates to full orchestration instead of repeatedly expanding the lightweight plan.",
+        owning_clauses=(
+            "If new evidence makes the task materially under-decomposed—a new production or lifecycle owner, independent validation boundary, wide impact, API or workflow decision, second repository, or barrier or convergence topology—stop and escalate to full orchestration.",
+        ),
+    )
     assert_normative_case(
         "PD-07",
         prompt="Execution proves one task materially under-decomposed after its repair frontier separates into two independently owned regions.",
