@@ -33,6 +33,7 @@ ALLOWED_TRANSITION_FIELDS = {
     "review_sha256",
     "accepted_commit",
     "accepted_tree",
+    "release_anchor",
     "integrated_validation",
     "handoff_validation",
     "participant_handoffs",
@@ -62,6 +63,12 @@ def _validate_transition_record(transition: dict[str, object]) -> None:
     assert re.fullmatch(r"[0-9a-f]{64}", str(transition["review_sha256"]))
     assert re.fullmatch(r"[0-9a-f]{40}", str(transition["accepted_commit"]))
     assert re.fullmatch(r"[0-9a-f]{40}", str(transition["accepted_tree"]))
+    release_anchor = transition["release_anchor"]
+    assert isinstance(release_anchor, dict)
+    assert release_anchor == {
+        "commit": "cfa089f0d2ed211b98d049eb37bfcdccb8091516",
+        "tree": "12e4a696c3caf991654f0b9ac9ef40594699c8d4",
+    }
     assert re.fullmatch(
         rf"{transition['accepted_commit']}\+repository-evidence-sha256:[0-9a-f]{{64}}",
         str(transition["source_identity"]),
@@ -100,6 +107,7 @@ def test_repository_frozen_transition_record_is_self_validating() -> None:
         lambda value: value.update(review_sha256="not-a-digest"),
         lambda value: value["excluded_work"].append("unapproved-work"),
         lambda value: value.update(source_identity="substitute-identity"),
+        lambda value: value["release_anchor"].update(commit="substitute-identity"),
     ],
 )
 def test_frozen_transition_validation_rejects_incomplete_or_injected_records(mutation) -> None:

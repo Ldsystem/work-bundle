@@ -9,6 +9,8 @@
   "changed_surfaces": {
     "public_contracts": [
       "references/assets/orchestration/contract/handoff-executor-result-v1.md",
+      "references/assets/orchestration/contract/plan-v1.md",
+      "references/assets/orchestration/contract/stage-event-v1.schema.json",
       "references/assets/orchestration/contract/stage-review-v1.schema.json",
       "references/assets/orchestration/contract/task-v1.md",
       "references/assets/orchestration/workflow.md"
@@ -17,9 +19,13 @@
       "references/assets/template/AGENTS.md",
       "references/assets/template/bootstrap.yaml",
       "references/assets/template/project.yaml",
+      "rules/orchestration/orch-artifact-authoring.md",
       "rules/orchestration/orch-handoff-required.md",
       "rules/work-bundle/wb-project-context-preflight.md",
+      "skills/dev-create-task-plan/SKILL.md",
       "skills/orch-create-handoff/SKILL.md",
+      "skills/orch-create-implementation-plan/SKILL.md",
+      "skills/orch-create-specification/SKILL.md",
       "skills/orch-doctor/SKILL.md",
       "skills/orch-execute-plan/SKILL.md",
       "skills/wb-initialize-project/SKILL.md"
@@ -46,18 +52,31 @@
       "evals/wor108/fixtures.json",
       "evals/wor108/migration-impact.json",
       "evals/wor108/verify.py",
+      "evals/wor109/contracts-v1.schema.json",
+      "evals/wor109/fixtures.json",
+      "evals/wor109/migration-impact.json",
+      "evals/wor109/verify.py",
+      "references/evals/development/evals.json",
       "references/evals/orchestration/evals.json",
       "tests/test_control_plane_v4.py",
       "tests/test_multi_repository_member.py",
       "tests/test_orchestration_execution_context.py",
+      "tests/test_orchestration_reviews.py",
       "tests/test_orchestration_skill_rule_boundary.py",
       "tests/test_orchestration_workflow_contracts.py",
       "tests/test_project_initialization.py",
       "tests/test_registry_layout_migration.py",
+      "tests/test_wor105_native_transition.py",
       "tests/test_wor108_closure.py",
       "tests/test_wor108_context_projection.py",
       "tests/test_wor108_review_frontier.py",
-      "tests/test_wor108_subagent_ownership.py"
+      "tests/test_wor108_subagent_ownership.py",
+      "tests/test_wor109_accepted_result.py",
+      "tests/test_wor109_closure.py",
+      "tests/test_wor109_lifecycle.py",
+      "tests/test_wor109_lightweight.py",
+      "tests/test_wor109_planner_contracts.py",
+      "tests/test_wor109_planner_runtime.py"
     ]
   },
   "evaluation_identities": [
