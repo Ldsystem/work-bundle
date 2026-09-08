@@ -28,6 +28,29 @@ REVIEW_TARGET_KINDS = frozenset({"task", "stage"})
 MATERIAL_CHANGE_CLASSES = frozenset(
     {"material_redesign", "authority", "scope", "acceptance", "decomposition", "validation_allocation"}
 )
+EVIDENCE_CAUSAL_CLASSES = frozenset(
+    {
+        "claim_relevant_drift",
+        "implementation_defect",
+        "authority_plan_gap",
+        "evaluator_control_defect",
+        "non_claim_relevant",
+    }
+)
+EVIDENCE_CAUSAL_ROUTES: dict[str, tuple[str, str]] = {
+    "claim_relevant_drift": ("revalidate_claim", "route_current_owner"),
+    "implementation_defect": ("repair_task", "route_current_owner"),
+    "authority_plan_gap": ("repair_authority_plan", "route_current_owner"),
+    "evaluator_control_defect": ("repair_evaluator_control", "route_evaluator_control_owner"),
+    "non_claim_relevant": ("none", "diagnostic_only"),
+}
+EVIDENCE_CAUSAL_COMPARISONS = {
+    "claim_relevant_drift": "claim_relevant",
+    "implementation_defect": "claim_relevant",
+    "authority_plan_gap": "claim_relevant",
+    "evaluator_control_defect": "evaluator_only",
+    "non_claim_relevant": "unrelated",
+}
 PARTICIPATION_FIELDS = (
     "authorship",
     "repair_participation",
@@ -82,6 +105,18 @@ PLAN_RETURN_KEYS = frozenset(
     }
 )
 EVIDENCE_ITEM_KEYS = frozenset({"kind", "locator", "digest_or_identity", "observation"})
+EVIDENCE_CAUSAL_CLASSIFICATION_KEYS = frozenset(
+    {
+        "observation_reference",
+        "accepted_authority_comparison",
+        "causal_class",
+        "affected_claim",
+        "affected_owner",
+        "authorized_lifecycle_action",
+        "disposition",
+    }
+)
+ACCEPTED_AUTHORITY_COMPARISON_KEYS = frozenset({"authority_identity", "result", "basis"})
 STAGE_REVIEW_KEYS = frozenset(
     {"review_id", "review_mode", "review_target_kind", "repair_frontier", "review_reset", "stage", "target_identity", "reviewer", "evidence", "verdict", "findings", "started_at", "completed_at", "staleness"}
 )
@@ -664,6 +699,19 @@ class ReviewFindingV1:
 
 
 @dataclass(frozen=True)
+class EvidenceCausalClassificationV1:
+    """Agent-authored causal judgment required before evidence can route action."""
+
+    observation_reference: str
+    accepted_authority_comparison: Mapping[str, str]
+    causal_class: str
+    affected_claim: str
+    affected_owner: str
+    authorized_lifecycle_action: str
+    disposition: str
+
+
+@dataclass(frozen=True)
 class StageReviewV1:
     review_id: str
     review_mode: str
@@ -787,6 +835,60 @@ def classify_first_broken_owner(finding_class: str) -> tuple[str, str, str]:
         return ROUTES[finding_class]
     except KeyError as error:
         raise ReviewContractError(f"class is not classified: {finding_class}") from error
+
+
+def validate_evidence_causal_classification(
+    value: Mapping[str, Any],
+) -> EvidenceCausalClassificationV1:
+    """Validate an agent's classification; this helper never infers a semantic class."""
+
+    record = _mapping(value, "evidence causal classification")
+    _closed(record, EVIDENCE_CAUSAL_CLASSIFICATION_KEYS, "evidence causal classification")
+    observation = _nonempty(record["observation_reference"], "observation_reference")
+    comparison = _mapping(record["accepted_authority_comparison"], "accepted_authority_comparison")
+    _closed(comparison, ACCEPTED_AUTHORITY_COMPARISON_KEYS, "accepted_authority_comparison")
+    authority_identity = _nonempty(
+        comparison["authority_identity"], "accepted_authority_comparison.authority_identity"
+    )
+    basis = _nonempty(comparison["basis"], "accepted_authority_comparison.basis")
+    causal_class = _enum(record["causal_class"], EVIDENCE_CAUSAL_CLASSES, "causal_class")
+    expected_comparison = EVIDENCE_CAUSAL_COMPARISONS[causal_class]
+    if comparison["result"] != expected_comparison:
+        raise ReviewContractError("accepted authority comparison does not support the causal class")
+    affected_claim = _nonempty(record["affected_claim"], "affected_claim")
+    affected_owner = _nonempty(record["affected_owner"], "affected_owner")
+    expected_action, expected_disposition = EVIDENCE_CAUSAL_ROUTES[causal_class]
+    if record["authorized_lifecycle_action"] != expected_action:
+        raise ReviewContractError("authorized lifecycle action does not match the causal class")
+    if record["disposition"] != expected_disposition:
+        raise ReviewContractError("classification disposition does not match the causal class")
+    return EvidenceCausalClassificationV1(
+        observation_reference=observation,
+        accepted_authority_comparison={
+            "authority_identity": authority_identity,
+            "result": expected_comparison,
+            "basis": basis,
+        },
+        causal_class=causal_class,
+        affected_claim=affected_claim,
+        affected_owner=affected_owner,
+        authorized_lifecycle_action=expected_action,
+        disposition=expected_disposition,
+    )
+
+
+def review_remains_current_after_observation(
+    classification: Mapping[str, Any], *, reviewed_claim: str
+) -> bool:
+    """Apply a classification to one review claim without treating raw evidence as authority."""
+
+    record = validate_evidence_causal_classification(classification)
+    claim = _nonempty(reviewed_claim, "reviewed_claim")
+    return not (
+        record.causal_class
+        in {"claim_relevant_drift", "implementation_defect", "authority_plan_gap"}
+        and record.affected_claim == claim
+    )
 
 
 def _affected_region(value: Any) -> dict[str, list[str]]:

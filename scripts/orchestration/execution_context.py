@@ -922,6 +922,8 @@ def project_validation_evidence(
                 "digest": semantic_digest({"command": item.get("command"), "result": result}),
                 "result": result,
                 "expansion_reason": reason,
+                "authority_effect": "observation_only",
+                "lifecycle_action_authorized": False,
                 "details": dict(item),
             })
             continue
