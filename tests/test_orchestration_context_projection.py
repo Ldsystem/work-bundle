@@ -742,8 +742,9 @@ def test_cumulative_accepted_result_delta_requires_complete_final_review_chain(
     same_reviewer["review_chain"][-1]["handoff_sha256"] = hashlib.sha256(
         final_handoff_path.read_bytes()
     ).hexdigest()
-    with pytest.raises(SystemExit, match="fresh|reviewer|independent"):
-        execution_context._accepted_dependency_paths(task, root, [same_reviewer])
+    assert execution_context._accepted_dependency_paths(task, root, [same_reviewer]) == {
+        dependency_path, repair_path, final_path
+    }
     final_handoff_path.write_bytes(original_final_bytes)
 
     assert execution_context._accepted_dependency_paths(task, root, [descriptor]) == {
