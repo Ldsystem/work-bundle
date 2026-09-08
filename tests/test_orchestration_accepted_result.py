@@ -254,8 +254,9 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
         execution_context.assert_accepted_task_result_current(task, binding, invalidated)
 
 
+@pytest.mark.parametrize("predecessor_kind", ["task", "integrated_stage"])
 def test_standalone_repair_review_rematerializes_compact_result_without_executor_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, predecessor_kind: str
 ) -> None:
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "test@example.com")
@@ -278,7 +279,7 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
     )
     binding["accepted_result"] = prior
     previous_identity = {
-        "artifact_id": "task-001",
+        "artifact_id": "task-001" if predecessor_kind == "task" else "plan-001",
         "revision": accepted_head,
         "sha256": "1" * 64,
         "source_tree": accepted_tree,
@@ -310,9 +311,7 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         "commands": [],
         "artifacts": [],
     }
-    previous_review = {
-        "required": True,
-        "reviewer_independent": True,
+    previous_review: dict[str, object] = {
         "verdict": "repair",
         "review_id": "review-finding-001",
         "reviewed_head": accepted_head,
@@ -345,8 +344,21 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         "completed_at": "2026-09-08T01:02:00Z",
         "staleness": {"is_stale": False, "reason": None, "supersedes": None},
     }
+    if predecessor_kind == "task":
+        previous_review.update(
+            required=True,
+            reviewer_independent=True,
+            reviewed_head=accepted_head,
+        )
+    else:
+        previous_review.pop("reviewed_head")
+        previous_review["review_target_kind"] = "stage"
+        previous_review["stage"] = "integrated_implementation"
     repair_review = {
         **previous_review,
+        "required": True,
+        "reviewer_independent": True,
+        "review_target_kind": "task",
         "verdict": "accept",
         "review_id": "review-repair-001",
         "reviewed_head": reviewed_head,
@@ -421,6 +433,22 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
             execution_context.materialize_accepted_task_repair_review(
                 tmp_path, task, invalid, accepted_at="2026-09-08T01:05:00Z"
             )
+    if predecessor_kind == "integrated_stage":
+        wrong_plan = deepcopy(repair_review)
+        wrong_identity = {
+            **wrong_plan["previous_review"]["target_identity"],
+            "artifact_id": "plan-other",
+        }
+        wrong_plan["previous_review"]["target_identity"] = wrong_identity
+        wrong_plan["previous_review"]["findings"][0]["target_identity"] = wrong_identity
+        wrong_plan["repair_frontier"]["previous_reviewed_identity"] = wrong_identity
+        with pytest.raises(SystemExit, match="exact task and repair frontier"):
+            execution_context.materialize_accepted_task_repair_review(tmp_path, task, wrong_plan)
+
+        wrong_stage = deepcopy(repair_review)
+        wrong_stage["previous_review"]["stage"] = "plan"
+        with pytest.raises(SystemExit, match="stage predecessor must be integrated_implementation"):
+            execution_context.materialize_accepted_task_repair_review(tmp_path, task, wrong_stage)
 
 
 def test_legacy_accepted_result_without_disposition_remains_current_for_nonknowledge_consumers(

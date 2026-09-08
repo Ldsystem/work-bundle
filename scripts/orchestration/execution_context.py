@@ -1797,13 +1797,33 @@ def materialize_accepted_task_repair_review(
     except (ReviewContractError, KeyError, TypeError, ValueError) as error:
         raise SystemExit(f"Accepted task repair review is invalid: {error}") from error
     task_id = str(task.get("task_id") or "")
+    plan_id = str(task.get("plan_id") or "")
     frontier = validated_review.repair_frontier
+    previous_review = review.get("previous_review")
+    previous_kind = (
+        previous_review.get("review_target_kind")
+        if isinstance(previous_review, Mapping)
+        else None
+    )
+    previous_artifact = (
+        frontier["previous_reviewed_identity"].get("artifact_id")
+        if frontier is not None
+        else None
+    )
+    previous_owner_matches = (
+        previous_kind == "task" and previous_artifact == task_id
+    ) or (
+        previous_kind == "stage"
+        and previous_review.get("stage") == "integrated_implementation"
+        and previous_artifact == plan_id
+    )
     if (
         validated_review.review_mode != "repair"
         or validated_review.verdict != "accepted"
         or frontier is None
         or validated_review.target_identity.get("artifact_id") != task_id
-        or frontier["previous_reviewed_identity"].get("artifact_id") != task_id
+        or frontier["repaired_identity"].get("artifact_id") != task_id
+        or not previous_owner_matches
     ):
         raise SystemExit("accepted task repair review must bind the exact task and repair frontier")
     reviewer = validated_review.reviewer
