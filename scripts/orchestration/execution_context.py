@@ -1777,6 +1777,85 @@ def load_current_accepted_task_result(
     return binding, dict(accepted)
 
 
+def materialize_accepted_task_repair_review(
+    control_root: Path,
+    task: Mapping[str, Any],
+    review: Mapping[str, Any],
+    *,
+    accepted_at: str | None = None,
+) -> dict[str, Any]:
+    """Advance compact accepted authority from one standalone task repair review."""
+
+    root = control_root.expanduser().resolve()
+    binding, prior = load_current_accepted_task_result(root, task)
+    if task.get("review_required") is not True:
+        raise SystemExit("accepted task repair review requires mandatory task review authority")
+    try:
+        from review_runtime import ReviewContractError, validate_task_acceptance_review
+
+        validated_review = validate_task_acceptance_review(review)
+    except (ReviewContractError, KeyError, TypeError, ValueError) as error:
+        raise SystemExit(f"Accepted task repair review is invalid: {error}") from error
+    task_id = str(task.get("task_id") or "")
+    frontier = validated_review.repair_frontier
+    if (
+        validated_review.review_mode != "repair"
+        or validated_review.verdict != "accepted"
+        or frontier is None
+        or validated_review.target_identity.get("artifact_id") != task_id
+        or frontier["previous_reviewed_identity"].get("artifact_id") != task_id
+    ):
+        raise SystemExit("accepted task repair review must bind the exact task and repair frontier")
+    reviewer = validated_review.reviewer
+    owner = prior.get("owner_identity") if isinstance(prior.get("owner_identity"), Mapping) else {}
+    if reviewer.get("agent_id") == owner.get("agent_id"):
+        raise SystemExit("accepted task repair review must be independent from the executor owner")
+    execution_path = Path(str(binding.get("execution_path") or "")).expanduser().resolve()
+    try:
+        evidence = capture_repository_evidence(execution_path)
+    except RuntimeError as error:
+        raise SystemExit("accepted task repair review Git identity is unavailable") from error
+    identity = validated_review.target_identity
+    if (
+        evidence.get("status") != "clean"
+        or evidence.get("entries")
+        or review.get("reviewed_head") != identity.get("revision")
+        or evidence.get("head") != identity.get("revision")
+        or evidence.get("tree") != identity.get("source_tree")
+    ):
+        raise SystemExit("accepted task repair review does not match the clean exact source identity")
+
+    authority_projection = dict(prior["authority_projection"])
+    authority_projection["required_review_digest"] = semantic_digest(
+        _accepted_review_projection(review)
+    )
+    accepted_source = {"head": evidence["head"], "tree": evidence["tree"]}
+    knowledge_disposition = prior.get("knowledge_disposition")
+    accepted_source["state_digest"] = _accepted_source_state_digest(
+        plan_id=str(prior["plan_id"]),
+        task_id=str(prior["task_id"]),
+        binding_id=str(prior["binding_id"]),
+        baseline_identity=prior["baseline_identity"],
+        head=accepted_source["head"],
+        tree=accepted_source["tree"],
+        authority_projection=authority_projection,
+        knowledge_disposition=(
+            knowledge_disposition if isinstance(knowledge_disposition, Mapping) else None
+        ),
+    )
+    accepted = dict(prior)
+    accepted.update(
+        accepted_source=accepted_source,
+        authority_projection=authority_projection,
+        review_id=validated_review.review_id,
+        accepted_at=accepted_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    )
+    updated = dict(binding)
+    updated["accepted_result"] = accepted
+    _persist_binding(updated, root)
+    return accepted
+
+
 def has_persisted_accepted_task_result(
     control_root: Path, plan_id: str, task_id: str
 ) -> bool:

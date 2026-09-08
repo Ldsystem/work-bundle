@@ -15,6 +15,7 @@ if loaded_core_path is not None and ORCHESTRATION not in loaded_core_path.parent
 sys.path.insert(0, str(ORCHESTRATION))
 
 import execution_context  # noqa: E402
+import review_runtime  # noqa: E402
 from task_ownership import (  # noqa: E402
     OwnershipBlocker,
     TaskCandidate,
@@ -244,6 +245,141 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
     with pytest.raises(SystemExit, match="explicitly invalidated"):
         execution_context.assert_accepted_task_result_current(task, binding, invalidated)
 
+
+def test_standalone_repair_review_rematerializes_compact_result_without_executor_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = _task(tmp_path)
+    binding = _binding(tmp_path)
+    binding["baseline"] = {"head": OID_A, "tree": OID_B}
+    repository_evidence = {"head": OID_A, "tree": OID_B, "status": "clean", "entries": {}}
+    monkeypatch.setattr(
+        execution_context, "capture_repository_evidence", lambda _root: dict(repository_evidence)
+    )
+    prior = execution_context.build_accepted_task_result(
+        task,
+        binding,
+        _handoff(),
+        _validated(),
+        accepted_at="2026-09-08T01:00:00Z",
+    )
+    binding["accepted_result"] = prior
+    previous_identity = {
+        "artifact_id": "task-001",
+        "revision": OID_A,
+        "sha256": "1" * 64,
+        "source_tree": OID_B,
+    }
+    repaired_identity = {
+        "artifact_id": "task-001",
+        "revision": OID_C,
+        "sha256": "2" * 64,
+        "source_tree": OID_D,
+    }
+    reviewer = {
+        "agent_id": "reviewer-001",
+        "capability": "judgment",
+        "authorship": "none",
+        "repair_participation": "none",
+        "decision_participation": "none",
+        "deliberation_participation": "none",
+        "context_origin": "direct_source",
+    }
+    evidence = {
+        "mode": "direct",
+        "capabilities": ["bounded source inspection"],
+        "unavailable_evidence": [],
+        "commands": [],
+        "artifacts": [],
+    }
+    previous_review = {
+        "required": True,
+        "reviewer_independent": True,
+        "verdict": "repair",
+        "review_id": "review-finding-001",
+        "reviewed_head": OID_A,
+        "review_mode": "initial",
+        "review_target_kind": "task",
+        "repair_frontier": None,
+        "review_reset": None,
+        "target_identity": previous_identity,
+        "reviewer": reviewer,
+        "evidence": evidence,
+        "findings": [{
+            "finding_id": "FINDING-001",
+            "stage": "implementation",
+            "class": "implementation_defect",
+            "severity": "blocking",
+            "first_broken_artifact": "implementation",
+            "obligation_basis": "accepted_requirement",
+            "evidence": [{
+                "kind": "test",
+                "locator": "tests/test_orchestration_accepted_result.py",
+                "digest_or_identity": "red-001",
+                "observation": "standalone repair review could not be materialized",
+            }],
+            "target_identity": previous_identity,
+            "summary": "Repair acceptance was coupled to executor redispatch.",
+            "recommended_owner": "task_owner",
+            "disposition": "repair_task",
+        }],
+        "started_at": "2026-09-08T01:01:00Z",
+        "completed_at": "2026-09-08T01:02:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    repair_review = {
+        **previous_review,
+        "verdict": "accept",
+        "review_id": "review-repair-001",
+        "reviewed_head": OID_C,
+        "review_mode": "repair",
+        "target_identity": repaired_identity,
+        "findings": [],
+        "previous_review": previous_review,
+        "repair_frontier": {
+            "prior_review_id": "review-finding-001",
+            "blocking_finding_ids": ["FINDING-001"],
+            "previous_reviewed_identity": previous_identity,
+            "repaired_identity": repaired_identity,
+            "affected_boundaries": ["scripts/orchestration/execution_context.py"],
+            "frozen_evidence_reference": review_runtime.review_evidence_identity(previous_review),
+        },
+        "started_at": "2026-09-08T01:03:00Z",
+        "completed_at": "2026-09-08T01:04:00Z",
+    }
+    persisted: dict[str, object] = {}
+    monkeypatch.setattr(execution_context, "load_task_execution_binding", lambda *_: binding)
+    repository_evidence.update(head=OID_C, tree=OID_D)
+    monkeypatch.setattr(execution_context, "_persist_binding", lambda value, _root: persisted.update(value))
+    monkeypatch.setattr(
+        execution_context,
+        "build_accepted_task_result",
+        lambda *_args, **_kwargs: pytest.fail("executor handoff must not be replayed"),
+    )
+
+    repaired = execution_context.materialize_accepted_task_repair_review(
+        tmp_path,
+        task,
+        repair_review,
+        accepted_at="2026-09-08T01:05:00Z",
+    )
+
+    for field in (
+        "baseline_identity",
+        "executor_result_digest",
+        "validation_evidence_ids",
+        "owner_identity",
+        "knowledge_disposition",
+    ):
+        assert repaired[field] == prior[field]
+    assert repaired["accepted_source"]["head"] == OID_C
+    assert repaired["accepted_source"]["tree"] == OID_D
+    assert repaired["review_id"] == "review-repair-001"
+    assert repaired["authority_projection"]["required_review_digest"] == execution_context.semantic_digest(
+        execution_context._accepted_review_projection(repair_review)
+    )
+    assert persisted["accepted_result"] == repaired
+    assert "previous_review" not in repr(repaired)
 
 def test_legacy_accepted_result_without_disposition_remains_current_for_nonknowledge_consumers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
