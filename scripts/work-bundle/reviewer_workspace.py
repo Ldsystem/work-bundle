@@ -71,6 +71,54 @@ def _validate_stage_context(context: object) -> dict[str, object]:
     return context
 
 
+def _validate_task_context(context: object) -> dict[str, object]:
+    fields = {
+        "target_identity", "agent_id", "capability", "execution_id", "evidence_mode",
+        "review_mode", "review_target_kind", "repair_frontier", "review_reset",
+    }
+    if not isinstance(context, dict) or set(context) != fields:
+        raise ReviewerWorkspaceError("WB_REVIEW_TASK_CONTEXT_INVALID")
+    if (
+        context["review_target_kind"] != "task"
+        or context["capability"] not in {"standard", "judgment"}
+        or context["evidence_mode"] not in {"direct_source", "reproducible_snapshot", "packet_only"}
+        or not all(isinstance(context[key], str) and context[key] for key in ("agent_id", "execution_id"))
+    ):
+        raise ReviewerWorkspaceError("WB_REVIEW_TASK_CONTEXT_INVALID")
+    _review_runtime()._target_identity(context["target_identity"])
+    try:
+        mode = _review_runtime()._enum(context["review_mode"], _review_runtime().REVIEW_MODES, "review_mode")
+        if mode == "repair":
+            _review_runtime()._repair_frontier(context["repair_frontier"])
+            if context["review_reset"] is not None:
+                raise ValueError("repair reset")
+        elif context["repair_frontier"] is not None:
+            raise ValueError("initial frontier")
+    except (ValueError, TypeError):
+        raise ReviewerWorkspaceError("WB_REVIEW_TASK_CONTEXT_INVALID") from None
+    return context
+
+
+def _validate_task_source_identity(source_root: Path, context: dict[str, object]) -> None:
+    identity = context["target_identity"]
+    assert isinstance(identity, dict)
+    head = subprocess.run(
+        ["git", "-C", str(source_root), "rev-parse", "HEAD"], capture_output=True, text=True
+    )
+    tree = subprocess.run(
+        ["git", "-C", str(source_root), "rev-parse", "HEAD^{tree}"], capture_output=True, text=True
+    )
+    status = subprocess.run(
+        ["git", "-C", str(source_root), "status", "--porcelain=v1"], capture_output=True, text=True
+    )
+    if (
+        head.returncode or tree.returncode or status.returncode or status.stdout
+        or head.stdout.strip() != identity.get("revision")
+        or tree.stdout.strip() != identity.get("source_tree")
+    ):
+        raise ReviewerWorkspaceError("WB_REVIEW_TASK_TARGET_MISMATCH")
+
+
 class ReviewerWorkspaceError(RuntimeError):
     def __init__(self, code: str, result: dict[str, object] | None = None) -> None:
         super().__init__(code)
@@ -158,6 +206,7 @@ def build_direct_evidence_packet(
     sentinels: list[str],
     network_state: str,
     stage_review_context: dict[str, object] | None = None,
+    task_review_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Copy only named direct evidence into a location-free packet.
 
@@ -222,6 +271,8 @@ def build_direct_evidence_packet(
         sentinel_records.append(
             {"locator": f"{scope}:{relative.as_posix()}", "sha256": _sha256_bytes(candidate.read_bytes())}
         )
+    if stage_review_context is not None and task_review_context is not None:
+        raise ReviewerWorkspaceError("WB_REVIEW_CONTEXT_AMBIGUOUS")
     stage_fields = {}
     if stage_review_context is not None:
         context = dict(_validate_stage_context(stage_review_context))
@@ -230,6 +281,10 @@ def build_direct_evidence_packet(
         # is a reproducible snapshot; a caller's direct-source label grants nothing.
         context["evidence_mode"] = "packet_only" if manifest["missing"] else "reproducible_snapshot"
         stage_fields = {"stage_review_context": context, "stage_evidence_manifest": manifest}
+    elif task_review_context is not None:
+        context = dict(_validate_task_context(task_review_context))
+        _validate_task_source_identity(source_root, context)
+        stage_fields = {"task_review_context": context}
     return {
         "schema": "review-direct-evidence-packet-v1",
         **stage_fields,
@@ -412,6 +467,9 @@ def create_reviewer_workspace(
         mode = "packet_only" if manifest["missing"] else "reproducible_snapshot"
         if packet.get("stage_evidence_manifest") != manifest or context["evidence_mode"] != mode:
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_EVIDENCE_MISMATCH")
+    elif "task_review_context" in packet:
+        context = _validate_task_context(packet["task_review_context"])
+        _validate_task_source_identity(effective_source, context)
     try:
         workspace.mkdir(parents=True)
         scope_digests: dict[str, list[str]] = {"source": [], "control": []}
@@ -673,19 +731,30 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
         "started_at": started_at,
         "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    if "stage_review_context" in packet:
-        context = _validate_stage_context(packet["stage_review_context"])
+    context_key = "stage_review_context" if "stage_review_context" in packet else (
+        "task_review_context" if "task_review_context" in packet else None
+    )
+    if context_key is not None:
+        context = (
+            _validate_stage_context(packet[context_key])
+            if context_key == "stage_review_context"
+            else _validate_task_context(packet[context_key])
+        )
         try:
             review = json.loads(completed.stdout)
-            validated = _review_runtime().validate_stage_review(review)
+            validated = (
+                _review_runtime().validate_stage_review(review)
+                if context_key == "stage_review_context"
+                else _review_runtime().validate_task_acceptance_review(review)
+            )
         except (ValueError, TypeError) as error:
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_INVALID") from error
         mode = "direct_source" if validated.evidence["mode"] == "direct" else validated.evidence["mode"]
         review_context = {
-            "review_mode": validated.review_mode,
-            "review_target_kind": validated.review_target_kind,
-            "repair_frontier": validated.repair_frontier,
-            "review_reset": validated.review_reset,
+            "review_mode": review.get("review_mode", "initial"),
+            "review_target_kind": review.get("review_target_kind", "stage"),
+            "repair_frontier": review.get("repair_frontier"),
+            "review_reset": review.get("review_reset"),
         }
         packet_context = {
             "review_mode": context.get("review_mode", "initial"),
@@ -694,18 +763,19 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
             "review_reset": context.get("review_reset"),
         }
         if ("reviewer_run" in review or validated.review_id != review_id
-                or validated.stage != context["stage"] or validated.target_identity != context["target_identity"]
+                or (context_key == "stage_review_context" and validated.stage != context["stage"])
+                or validated.target_identity != context["target_identity"]
                 or validated.reviewer["agent_id"] != context["agent_id"]
                 or validated.reviewer["context_origin"] != context["evidence_mode"]
                 or validated.reviewer["capability"] != context["capability"] or mode != context["evidence_mode"]
                 or review_context != packet_context):
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_MISMATCH")
-        if validated.verdict == "accepted":
+        if validated.verdict == "accepted" and context_key == "stage_review_context":
             try:
                 _review_runtime().validate_stage_evidence(workspace / "evidence/control", context, packet)
             except (ValueError, OSError, SystemExit) as error:
                 raise ReviewerWorkspaceError("WB_REVIEW_STAGE_EVIDENCE_INCOMPLETE") from error
-        receipt["stage_review_context"] = context
+        receipt[context_key] = context
         receipt["review_result_sha256"] = _canonical_digest(review)
         receipt["isolation"] = {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
     receipt_path = (runtime_root / "receipts" / "reviewer-process" / f"{run_id}.json").resolve(strict=False)
@@ -725,7 +795,7 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
     receipt_path.chmod(0o400)
     reference = {"run_id": run_id, "sha256": _sha256_bytes(receipt_path.read_bytes())}
     return {**receipt, "receipt_path": str(receipt_path), "event_log_path": sealed["event_log_path"],
-            **({"reviewer_run": reference} if "stage_review_context" in packet else {})}
+            **({"reviewer_run": reference} if context_key is not None else {})}
 
 
 def _execute_reviewer_request(workspace: Path, request: dict[str, object]) -> dict[str, object]:

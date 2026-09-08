@@ -1825,7 +1825,7 @@ def _load_materialized_accepted_task_result(
 def materialize_accepted_task_review(
     control_root: Path,
     task: Mapping[str, Any],
-    review: Mapping[str, Any],
+    review_reference: Mapping[str, Any],
     causal_classification: Mapping[str, Any],
     *,
     accepted_at: str | None = None,
@@ -1851,9 +1851,18 @@ def materialize_accepted_task_review(
     if task.get("review_required") is not True:
         raise SystemExit("accepted task repair review requires mandatory task review authority")
     try:
-        from review_runtime import ReviewContractError, validate_task_acceptance_review
+        from review_runtime import (
+            ReviewContractError,
+            load_stored_review,
+            stored_review_target_identity,
+        )
 
-        validated_review = validate_task_acceptance_review(review)
+        target_identity = stored_review_target_identity(root, review_reference)
+        review, validated_review = load_stored_review(
+            root,
+            review_reference,
+            current_target_identity=target_identity,
+        )
     except (ReviewContractError, KeyError, TypeError, ValueError) as error:
         raise SystemExit(f"Accepted task repair review is invalid: {error}") from error
     task_id = str(task.get("task_id") or "")
@@ -4823,6 +4832,53 @@ def _markdown_items(values: list[Any], empty: str = "None.") -> list[str]:
     return result
 
 
+def build_product_review_candidate(
+    *,
+    task: Mapping[str, Any],
+    base: str,
+    head: str,
+    diff: str,
+    changed_files: Sequence[str],
+    changed_symbols: Sequence[str],
+    validation_observations: Sequence[Mapping[str, Any]],
+    knowledge_disposition: Mapping[str, Any],
+    unresolved: Sequence[Any] = (),
+) -> dict[str, Any]:
+    """Build the sole semantic task-review input, excluding transport bookkeeping."""
+
+    candidate = {
+        "task_authority": {
+            "task_id": str(task.get("task_id") or ""),
+            "plan_id": str(task.get("plan_id") or ""),
+            "goal": task.get("goal"),
+            "requirements": list(_as_list(task.get("requirements"))),
+            "constraints": list(_as_list(task.get("constraints"))),
+            "truth_basis": task.get("truth_basis", {}),
+            "semantic_authority": task.get("semantic_authority", {}),
+            "evidence_capability": task.get("evidence_capability", {}),
+            "files": task.get("files", {}),
+            "interfaces": task.get("interfaces", {}),
+            "allocated_rules": list(_as_list(task.get("allocated_rules"))),
+            "methodology": task.get("methodology", {}),
+        },
+        "source": {
+            "base": base,
+            "head": head,
+            "diff": diff,
+            "changed_files": list(changed_files),
+            "changed_symbols": list(changed_symbols),
+        },
+        "validation_observations": [dict(item) for item in validation_observations],
+        "knowledge_disposition": dict(knowledge_disposition),
+        "unresolved": list(unresolved),
+    }
+    forbidden = {"handoff", "acceptance_review", "publication", "reviewer_run"}
+    if forbidden.intersection(candidate):
+        raise SystemExit("product review candidate contains publication bookkeeping")
+    _assert_no_credential_values(candidate, "product review candidate")
+    return candidate
+
+
 def build_review_package(args: argparse.Namespace) -> Path:
     if not args.handoff or not args.base or not args.head:
         raise SystemExit("build-review-package requires --handoff, --base, and --head")
@@ -4933,60 +4989,74 @@ def build_review_package(args: argparse.Namespace) -> Path:
     }
     _assert_no_credential_values(evidence, "review evidence")
 
-    required = [f"Goal: {task.get('goal')}", *task.get("requirements", []), *task.get("constraints", [])]
-    interfaces = task.get("interfaces", {})
+    candidate = build_product_review_candidate(
+        task=task,
+        base=base,
+        head=head,
+        diff=diff,
+        changed_files=name_status,
+        changed_symbols=symbols,
+        validation_observations=evidence_projection,
+        knowledge_disposition=knowledge_disposition,
+        unresolved=unresolved,
+    )
+    authority = candidate["task_authority"]
+    source = candidate["source"]
+
+    required = [f"Goal: {authority.get('goal')}", *authority.get("requirements", []), *authority.get("constraints", [])]
+    interfaces = authority.get("interfaces", {})
     if isinstance(interfaces, dict):
         required.extend(_as_list(interfaces.get("consumes")))
         required.extend(_as_list(interfaces.get("produces")))
     assertions = [
-        *[f"rule {item['id']}: {item['requirement']}" for item in task.get("allocated_rules", [])],
-        f"methodology {task['methodology'].get('primary')}: skills {', '.join(map(str, task['methodology'].get('skills', []))) or 'none'}",
+        *[f"rule {item['id']}: {item['requirement']}" for item in authority.get("allocated_rules", [])],
+        f"methodology {authority['methodology'].get('primary')}: skills {', '.join(map(str, authority['methodology'].get('skills', []))) or 'none'}",
     ]
-    allowed_scope = list(dict.fromkeys([*task.get("files", {}).get("write", []), *task.get("files", {}).get("read", [])]))
+    allowed_scope = list(dict.fromkeys([*authority.get("files", {}).get("write", []), *authority.get("files", {}).get("read", [])]))
     lines = [
         "# Task Review Package",
         "",
         f"Task: {task_id}",
-        f"Base: {base}",
-        f"Head: {head}",
+        f"Base: {source['base']}",
+        f"Head: {source['head']}",
         f"Review mode: {review_mode}",
         "",
         "## Required behavior",
         *_markdown_items(required),
         "",
         "## Accepted Truth Basis",
-        *_markdown_items([task.get("truth_basis", {})]),
+        *_markdown_items([authority.get("truth_basis", {})]),
         "",
         "## Semantic authority",
-        *_markdown_items([task.get("semantic_authority", {})]),
+        *_markdown_items([authority.get("semantic_authority", {})]),
         "",
         "## Evidence capability",
-        *_markdown_items([task.get("evidence_capability", {})]),
+        *_markdown_items([authority.get("evidence_capability", {})]),
         "",
         "## Allowed scope",
         *_markdown_items(allowed_scope),
         "",
         "## Changed files",
-        *_markdown_items(name_status),
+        *_markdown_items(source["changed_files"]),
         "",
         "## Changed symbols",
-        *_markdown_items(symbols),
+        *_markdown_items(source["changed_symbols"]),
         "",
         "## Validation reported",
-        *_markdown_items(evidence_projection),
+        *_markdown_items(candidate["validation_observations"]),
         "",
         "## Knowledge disposition",
-        *_markdown_items([knowledge_disposition]),
+        *_markdown_items([candidate["knowledge_disposition"]]),
         "",
         "## Allocated rule and methodology assertions",
         *_markdown_items(assertions),
         "",
         "## Unresolved concerns",
-        *_markdown_items(unresolved),
+        *_markdown_items(candidate["unresolved"]),
         "",
         "## Diff",
         "```diff",
-        diff.rstrip(),
+        source["diff"].rstrip(),
         "```",
     ]
     if repair_frontier is not None:

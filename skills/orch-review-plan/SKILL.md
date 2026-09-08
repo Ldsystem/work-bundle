@@ -30,6 +30,8 @@ Verify:
 - approved `ks-*` return evidence exists when durable knowledge was required;
 - allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh completed or are explicitly not applicable.
 - dependency, finalization, resume, and archive decisions consume compact accepted results and current harness observations without replaying transient evidence or historical handoff chains.
+- required task and stage verdicts are admitted from immutable review-store references with native reviewer-run receipts and still-current targets; bare output, unattached receipts, and bare findings are not lifecycle authority.
+- product findings concern the task authority, exact source/diff, harness observations, and task-local disposition; handoff schema and publication/status/archive bookkeeping stay with controller audit.
 
 ## Evidence capability correspondence
 

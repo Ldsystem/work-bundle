@@ -396,6 +396,23 @@ def _known_execution_ids(root: Path, stage: str, identity: Mapping[str, Any]) ->
     return ids
 
 
+def _known_task_execution_ids(root: Path, task_id: str) -> set[str]:
+    ids: set[str] = set()
+    runtime = root / ".work-bundle/runtime/execution"
+    for path in runtime.glob(f"*/{task_id}/execution-binding.json"):
+        if not path.resolve().is_relative_to(runtime.resolve()):
+            raise ReviewContractError("task review provenance binding path escapes store")
+        binding = json.loads(path.read_text())
+        for field in ("execution_id",):
+            if binding.get(field):
+                ids.add(str(binding[field]))
+        ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
+        for field in ("run_id", "agent_id"):
+            if ownership.get(field):
+                ids.add(str(ownership[field]))
+    return ids
+
+
 def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     reference = review.get("reviewer_run")
     if not isinstance(reference, dict) or set(reference) != {"run_id", "sha256"}:
@@ -422,7 +439,9 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     def canonical(value: Any) -> str:
         return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     result = {key: value for key, value in review.items() if key != "reviewer_run"}
-    context = _mapping(receipt.get("stage_review_context", {}), "reviewer-run provenance context")
+    kind = str(review.get("review_target_kind") or "stage")
+    context_key = "task_review_context" if kind == "task" else "stage_review_context"
+    context = _mapping(receipt.get(context_key, {}), "reviewer-run provenance context")
     mode = "direct_source" if review["evidence"]["mode"] == "direct" else review["evidence"]["mode"]
     review_context = {
         "review_mode": review.get("review_mode", "initial"),
@@ -439,8 +458,9 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     if (receipt.get("schema") != "reviewer-process-receipt-v1" or receipt.get("run_id") != run_id
             or receipt.get("review_id") != review["review_id"] or receipt.get("status") != "passed"
             or receipt.get("exit_code") != 0 or receipt.get("review_result_sha256") != canonical(result)
-            or receipt.get("packet_sha256") != canonical(packet) or packet.get("stage_review_context") != context
-            or context.get("target_identity") != review["target_identity"] or context.get("stage") != review["stage"]
+            or receipt.get("packet_sha256") != canonical(packet) or packet.get(context_key) != context
+            or context.get("target_identity") != review["target_identity"]
+            or (kind == "stage" and context.get("stage") != review["stage"])
             or context.get("agent_id") != review["reviewer"]["agent_id"]
             or context.get("evidence_mode") != review["reviewer"]["context_origin"]
             or context.get("capability") != review["reviewer"]["capability"] or context.get("evidence_mode") != mode
@@ -450,8 +470,13 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
             or receipt.get("sandbox_profile_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".profile.sb"))).hexdigest()
             or receipt.get("event_log_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".events.jsonl"))).hexdigest()):
         raise ReviewContractError("reviewer-run provenance does not bind this accepted review")
-    known = _known_execution_ids(root, str(review["stage"]), review["target_identity"])
-    validate_stage_evidence(root, context, packet)
+    known = (
+        _known_task_execution_ids(root, str(review["target_identity"]["artifact_id"]))
+        if kind == "task"
+        else _known_execution_ids(root, str(review["stage"]), review["target_identity"])
+    )
+    if kind == "stage":
+        validate_stage_evidence(root, context, packet)
     if run_id in known or context["execution_id"] in known:
         raise ReviewContractError("reviewer-run provenance overlaps author/repair execution")
 
@@ -982,7 +1007,7 @@ def validate_review_finding(value: Mapping[str, Any]) -> ReviewFindingV1:
     )
 
 
-def route_review_verdict(
+def _route_review_finding(
     value: Mapping[str, Any], *, previous_scope_expansions: int = 0,
     affected_region: Mapping[str, Any] | None = None,
     unaffected_evidence_identities: Sequence[Mapping[str, Any]] = (),
@@ -1043,6 +1068,154 @@ def route_review_verdict(
         }
     )
     return result
+
+
+def _validated_review_envelope(value: Mapping[str, Any]) -> StageReviewV1:
+    """Validate one bounded task-or-stage review without walking older history."""
+
+    if value.get("review_target_kind") == "task":
+        return validate_task_acceptance_review(value)
+    current = validate_stage_review(value)
+    previous = value.get("previous_review")
+    if current.review_mode == "repair":
+        if not isinstance(previous, Mapping) or "previous_review" in previous:
+            raise ReviewContractError("stage repair review requires exactly one previous_review")
+        return validate_review_sequence(value, previous_review=previous)
+    if current.review_reset is not None:
+        if not isinstance(previous, Mapping) or "previous_review" in previous:
+            raise ReviewContractError("stage reset review requires exactly one previous_review")
+        return validate_review_sequence(
+            value,
+            previous_review=previous,
+            material_change=str(current.review_reset["reason_class"]),
+        )
+    return validate_review_sequence(value)
+
+
+def _review_store_path(root: Path, review_id: str) -> Path:
+    store = root.expanduser().resolve() / ".work-bundle/orchestration/reviews"
+    path = (store / f"{_identifier(review_id, 'review_id')}.json").resolve(strict=False)
+    if not path.is_relative_to(store.resolve()):
+        raise ReviewContractError("stored review path escapes review store")
+    return path
+
+
+def publish_review(
+    root: Path,
+    review: Mapping[str, Any],
+    *,
+    current_target_identity: Mapping[str, Any],
+) -> dict[str, str]:
+    """Publish a natively receipted current task-or-stage review exactly once."""
+
+    record = dict(_mapping(review, "review publication"))
+    validated = _validated_review_envelope(record)
+    current = dict(_target_identity(current_target_identity, "current_target_identity"))
+    if validated.target_identity != current:
+        raise ReviewContractError("review publication target is not current")
+    _validate_reviewer_run(root.expanduser().resolve(), record)
+    path = _review_store_path(root, validated.review_id)
+    content = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    digest = hashlib.sha256(content).hexdigest()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        if path.is_symlink() or path.read_bytes() != content:
+            raise ReviewContractError("stored review identity collision")
+    else:
+        with path.open("xb") as stream:
+            stream.write(content)
+        path.chmod(0o444)
+    return {"review_id": validated.review_id, "sha256": digest}
+
+
+def load_stored_review(
+    root: Path,
+    reference: Mapping[str, Any],
+    *,
+    current_target_identity: Mapping[str, Any],
+) -> tuple[dict[str, Any], StageReviewV1]:
+    """Load stored review authority and revalidate its receipt and current target."""
+
+    if not isinstance(reference, Mapping) or set(reference) != {"review_id", "sha256"}:
+        raise ReviewContractError("stored review reference is required")
+    path = _review_store_path(root, str(reference.get("review_id") or ""))
+    if (
+        path.is_symlink()
+        or not path.is_file()
+        or path.stat().st_mode & 0o222
+    ):
+        raise ReviewContractError("stored review is missing or mutable")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != reference.get("sha256"):
+        raise ReviewContractError("stored review digest mismatch")
+    record = dict(_mapping(json.loads(raw), "stored review"))
+    validated = _validated_review_envelope(record)
+    current = dict(_target_identity(current_target_identity, "current_target_identity"))
+    if validated.target_identity != current:
+        raise ReviewContractError("stored review target is not current")
+    _validate_reviewer_run(root.expanduser().resolve(), record)
+    return record, validated
+
+
+def stored_review_target_identity(
+    root: Path, reference: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Read only a digest-bound target hint; this does not admit review authority."""
+
+    if not isinstance(reference, Mapping) or set(reference) != {"review_id", "sha256"}:
+        raise ReviewContractError("stored review reference is required")
+    path = _review_store_path(root, str(reference.get("review_id") or ""))
+    if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o222:
+        raise ReviewContractError("stored review is missing or mutable")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != reference.get("sha256"):
+        raise ReviewContractError("stored review digest mismatch")
+    record = _mapping(json.loads(raw), "stored review")
+    return dict(_target_identity(record.get("target_identity"), "stored review target_identity"))
+
+
+def route_stored_review_verdict(
+    root: Path,
+    review_reference: Mapping[str, Any],
+    *,
+    current_target_identity: Mapping[str, Any],
+    finding_id: str | None = None,
+    previous_scope_expansions: int = 0,
+    affected_region: Mapping[str, Any] | None = None,
+    unaffected_evidence_identities: Sequence[Mapping[str, Any]] = (),
+    original_binding_identity: Mapping[str, Any] | None = None,
+    original_baseline_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Expose a verdict or route one finding only from stored current authority."""
+
+    record, validated = load_stored_review(
+        root, review_reference, current_target_identity=current_target_identity
+    )
+    if finding_id is None:
+        return {
+            "review_id": validated.review_id,
+            "verdict": validated.verdict,
+            "target_identity": dict(validated.target_identity),
+        }
+    matches = [
+        item for item in record.get("findings", [])
+        if isinstance(item, Mapping) and item.get("finding_id") == finding_id
+    ]
+    if len(matches) != 1:
+        raise ReviewContractError("stored review does not contain exactly one selected finding")
+    return _route_review_finding(
+        matches[0],
+        previous_scope_expansions=previous_scope_expansions,
+        affected_region=affected_region,
+        unaffected_evidence_identities=unaffected_evidence_identities,
+        original_binding_identity=original_binding_identity,
+        original_baseline_identity=original_baseline_identity,
+    )
+
+
+# The public legacy name now enforces stored authority too. Pure classification tests
+# use the explicitly private helper and cannot be mistaken for lifecycle routing.
+route_review_verdict = route_stored_review_verdict
 
 
 def resume_plan_return(

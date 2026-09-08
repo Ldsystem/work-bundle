@@ -17,6 +17,8 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 ## Must
 
 - Confirm each required task review compared the accepted Truth Basis, implementation, test oracle, and task-local knowledge disposition before accepting the task.
+- Admit a task-or-stage verdict or route a finding only from its immutable review-store reference after native reviewer-run receipt and exact current-target validation. Treat bare reviewer output, unattached receipts, and bare findings as observations only.
+- Keep product review candidates limited to task authority, exact source/diff identity, harness-owned observations, unresolved product concerns, and task-local disposition. Handoff schema and publication/archive bookkeeping remain controller audit concerns and cannot become product findings.
 - On reviewer infrastructure or provider failure, replace only the reviewer against the same immutable review package; preserve source identity, validation evidence, plan decomposition, and review frontier.
 - For a finding-scoped repair review under unchanged authority, carry exactly the previous finding/evidence frontier and review only the repaired identity and affected boundaries. Reset to an initial frontier only after a material authority, scope, acceptance, decomposition, or validation-allocation change.
 - Check that declared completion evidence corresponds to the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints.

@@ -258,7 +258,7 @@ def test_rf_03_capable_untouched_invariant_stays_blocking_during_narrow_repair(
     }]
     narrow.update(verdict="repair", findings=[safety])
     assert review_runtime.validate_review_sequence(narrow, previous_review=prior).verdict == "repair"
-    routed = review_runtime.route_review_verdict(safety)
+    routed = review_runtime._route_review_finding(safety)
     assert routed["first_broken_artifact"] == first_broken
     assert routed["preserve_valid_work_and_evidence"] is True
 
@@ -309,4 +309,4 @@ def test_rf_06_final_broad_integrated_review_rediscovers_and_classifies_latent_b
         "observation": "Final broad review rediscovered deferred non-load-bearing B.",
     }]
     assert review_runtime.validate_review_finding(latent_finding).finding_id == "RF-LATENT-B"
-    assert review_runtime.route_review_verdict(latent_finding)["return_to"] == "backlog_owner"
+    assert review_runtime._route_review_finding(latent_finding)["return_to"] == "backlog_owner"

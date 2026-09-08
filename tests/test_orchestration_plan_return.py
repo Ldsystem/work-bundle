@@ -20,7 +20,7 @@ from review_runtime import (  # noqa: E402
     ReviewContractError,
     classify_first_broken_owner,
     resume_plan_return,
-    route_review_verdict,
+    _route_review_finding as route_review_verdict,
 )
 from stage_events import StageEventError  # noqa: E402
 

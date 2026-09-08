@@ -6,6 +6,7 @@ import platform
 from pathlib import Path
 import subprocess
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -113,6 +114,76 @@ def test_workspace_contains_copied_direct_evidence_and_declares_network_denied(
     assert not (workspace / "evidence" / "control" / "credentials").exists()
     assert "source_root" not in json.dumps(state)
     assert "control_root" not in json.dumps(state)
+
+
+def test_task_review_worker_output_receives_native_bound_receipt(
+    review_roots: tuple[Path, Path, Path]
+) -> None:
+    source, control, runtime = review_roots
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "src/target.py", ".wor105-review-sentinel"], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"],
+        check=True,
+    )
+    head = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
+    tree = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD^{tree}"], text=True).strip()
+    identity = {"artifact_id": "task-006", "revision": head, "sha256": "1" * 64, "source_tree": tree}
+    context = {
+        "target_identity": identity,
+        "agent_id": "reviewer-task",
+        "capability": "judgment",
+        "execution_id": "review-execution-task",
+        "evidence_mode": "reproducible_snapshot",
+        "review_mode": "initial",
+        "review_target_kind": "task",
+        "repair_frontier": None,
+        "review_reset": None,
+    }
+    direct = build_direct_evidence_packet(
+        source_root=source,
+        control_root=control,
+        protected_roots=[control / "credentials"],
+        artifacts=["source:src/target.py"],
+        search_roots=[], validators=[], sentinels=[], network_state="denied",
+        task_review_context=context,
+    )
+    created = create_reviewer_workspace(runtime, "review-task-native", direct)
+    review = {
+        "required": True,
+        "reviewer_independent": True,
+        "review_id": "review-task-native",
+        "reviewed_head": head,
+        "review_mode": "initial",
+        "review_target_kind": "task",
+        "repair_frontier": None,
+        "review_reset": None,
+        "target_identity": identity,
+        "reviewer": {
+            "agent_id": "reviewer-task", "capability": "judgment",
+            "authorship": "none", "repair_participation": "none",
+            "decision_participation": "none", "deliberation_participation": "none",
+            "context_origin": "reproducible_snapshot",
+        },
+        "evidence": {
+            "mode": "reproducible_snapshot", "capabilities": ["frozen source"],
+            "unavailable_evidence": [], "commands": [],
+            "artifacts": [{"path": direct["artifacts"][0]["locator"], "sha256": direct["artifacts"][0]["sha256"]}],
+        },
+        "verdict": "accept", "findings": [],
+        "started_at": "2026-09-08T00:00:00Z", "completed_at": "2026-09-08T00:01:00Z",
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    with patch.object(
+        reviewer_workspace,
+        "_run_sandboxed_process",
+        return_value=subprocess.CompletedProcess(["reviewer"], 0, json.dumps(review), ""),
+    ):
+        receipt = reviewer_workspace.run_sandboxed_reviewer(Path(str(created["workspace_path"])), ["reviewer"])
+
+    assert receipt["status"] == "passed"
+    assert receipt["task_review_context"]["target_identity"] == identity
+    assert set(receipt["reviewer_run"]) == {"run_id", "sha256"}
 
 
 def test_bounded_read_search_and_validators_are_allowed(review_roots: tuple[Path, Path, Path]) -> None:

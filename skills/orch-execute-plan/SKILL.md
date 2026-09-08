@@ -47,7 +47,7 @@ python3 scripts/orch.py validate-executor-result --task <task-path> --handoff <h
 
 ## Independent task review
 
-When `acceptance_review.required: true` or `review_required: true`, build the package from the task, handoff, and original base/current head. Skip this hop when review is not required.
+When `acceptance_review.required: true` or `review_required: true`, first validate the executor handoff as a controller precondition, then build the product candidate only from compiled task authority, exact base/current source and diff identity, harness-owned validation observations, unresolved product concerns, and the task-local knowledge disposition. Handoff shape, receipt attachment, publication, status, and archive bookkeeping are not product-review inputs or findings. Skip this hop when review is not required.
 
 ```bash
 python3 scripts/orch.py build-review-package \
@@ -56,7 +56,7 @@ python3 scripts/orch.py build-review-package \
 
 Use `--head worktree` for pre-commit review; the compiler includes tracked, staged, unstaged, and untracked changes, assigns a stable worktree identity, and withholds protected-path content.
 
-The reviewer uses only the bounded package and `dev-code-review`. It compares the accepted Truth Basis, implementation, test oracle, and knowledge disposition, then returns `accept`, `repair`, or `blocked` with the reviewed tree identity and compact evidence-backed findings.
+The reviewer uses only that bounded product candidate and `dev-code-review`. It compares the accepted Truth Basis, implementation, test oracle, and knowledge disposition, then returns `accept`, `repair`, or `blocked` with the reviewed tree identity and compact evidence-backed findings. A task or stage verdict becomes lifecycle authority only after the exact result and native immutable reviewer-run receipt are published together in the review store and revalidated against the current target. Bare output, an unattached receipt, or a bare finding never authorizes routing.
 
 If reviewer infrastructure or provider failure prevents a verdict, replace only the reviewer against the same immutable review package. Preserve package/source identity, validation evidence, plan decomposition, and the existing frontier; do not change source, rerun validation, or reslice for reviewer availability.
 
@@ -66,7 +66,7 @@ On `repair`, return blocking findings to the task-owning subagent with the same 
 
 A task becomes `Completed` only when implementation criteria, fresh validation, neutral subagent ownership provenance, no controller mutation of task write scope, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan completion derive from accepted children and declared dependency, barrier, and convergence gates.
 
-Enforce acceptance once: after the helper verifies binding, source/scope, subagent ownership, validation, and required review, persist one compact accepted result. Dependency release and later lifecycle steps consume that result plus current harness observations; they do not replay transient acceptance evidence or historical handoff chains.
+Enforce acceptance once: after the helper verifies binding, source/scope, subagent ownership, validation, and stored required-review authority, persist one compact accepted result. A later stored task repair review recomposes that result through the existing materializer, preserving executor and validation authority without redispatch, handoff rewrite, validation rerun, or embedded review history. Dependency release and later lifecycle steps consume the compact result plus current harness observations; they do not replay transient acceptance evidence or historical handoff chains.
 
 Use typed blockers:
 

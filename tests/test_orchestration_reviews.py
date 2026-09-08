@@ -13,12 +13,15 @@ from reviewer_run_fixtures import bind_review_receipt
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATION = REPO_ROOT / "scripts" / "orchestration"
 sys.path.insert(0, str(ORCHESTRATION))
+import review_runtime  # noqa: E402
 
 from review_runtime import (  # noqa: E402
     ReviewContractError,
     classify_first_broken_owner,
+    publish_review,
     review_evidence_identity,
-    route_review_verdict,
+    route_stored_review_verdict,
+    _route_review_finding as route_review_verdict,
     transition_review_finding,
     validate_contract_instance,
     validate_review_sequence,
@@ -264,6 +267,48 @@ def test_api_001_routes_every_class_to_first_broken_owner(
             "original_baseline_identity": {"head": ZERO_TREE, "tree": ZERO_TREE},
         }
     assert route_review_verdict(record, **route_context)["return_to"] == expected[1]
+
+
+def test_review_store_is_required_before_public_finding_routing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = stage_review("integrated_implementation")
+    record.update(
+        review_id="review-task-publication",
+        review_mode="initial",
+        review_target_kind="stage",
+        repair_frontier=None,
+        review_reset=None,
+        verdict="repair",
+    )
+    item = finding()
+    item["target_identity"] = record["target_identity"]
+    record["findings"] = [item]
+    record["reviewer_run"] = {
+        "run_id": "reviewer-run-00000000-0000-0000-0000-000000000001",
+        "sha256": ZERO_SHA,
+    }
+    monkeypatch.setattr(review_runtime, "_validate_reviewer_run", lambda *_: None)
+
+    with pytest.raises(ReviewContractError, match="stored review"):
+        route_stored_review_verdict(
+            tmp_path, item, current_target_identity=record["target_identity"]
+        )
+    with pytest.raises(ReviewContractError, match="stored review"):
+        review_runtime.route_review_verdict(
+            tmp_path, item, current_target_identity=record["target_identity"]
+        )
+
+    reference = publish_review(
+        tmp_path, record, current_target_identity=record["target_identity"]
+    )
+    routed = route_stored_review_verdict(
+        tmp_path,
+        reference,
+        current_target_identity=record["target_identity"],
+        finding_id=item["finding_id"],
+    )
+    assert routed["return_to"] == "task_owner"
 
 
 @pytest.mark.parametrize("field", ["capabilities", "unavailable_evidence"])

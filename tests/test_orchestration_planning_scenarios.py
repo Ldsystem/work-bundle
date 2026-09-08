@@ -17,7 +17,7 @@ from review_runtime import (  # noqa: E402
     ReviewContractError,
     plan_review_identity,
     resume_plan_return,
-    route_review_verdict,
+    _route_review_finding as route_review_verdict,
 )
 import execution_context  # noqa: E402
 from test_orchestration_accepted_result import _binding, _handoff, _task, _validated  # noqa: E402

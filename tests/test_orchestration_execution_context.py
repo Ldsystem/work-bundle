@@ -24,6 +24,29 @@ import execution_context  # noqa: E402
 from execution_context import build_review_package, build_task_brief  # noqa: E402
 
 
+def test_product_review_candidate_excludes_handoff_and_publication_bookkeeping() -> None:
+    task = {
+        "task_id": "task-006", "plan_id": "plan-001", "goal": "Review product behavior",
+        "requirements": ["REQ-REV-004"], "constraints": [],
+        "truth_basis": {"purpose": "product review"},
+        "semantic_authority": {"requirements": ["REQ-REV-004"]},
+        "evidence_capability": {"mode": "direct"},
+        "files": {"read": [], "write": ["src/a.py"]}, "interfaces": {},
+        "allocated_rules": [],
+        "methodology": {"primary": "dev-test-driven-development", "skills": []},
+    }
+    candidate = execution_context.build_product_review_candidate(
+        task=task, base="a" * 40, head="b" * 40,
+        diff="diff --git a/src/a.py b/src/a.py\n", changed_files=["M\tsrc/a.py"],
+        changed_symbols=["run"],
+        validation_observations=[{"id": "VAL-006", "result": "passed"}],
+        knowledge_disposition={"status": "none", "reason": "task local"},
+    )
+    encoded = json.dumps(candidate, sort_keys=True)
+    assert all(term not in encoded for term in ("handoff", "acceptance_review", "reviewer_run"))
+    assert candidate["task_authority"]["task_id"] == "task-006"
+
+
 def _load_orchestration_dispatcher():
     path = ORCHESTRATION / "dispatcher.py"
     spec = importlib.util.spec_from_file_location(

@@ -390,10 +390,15 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         lambda *_args, **_kwargs: pytest.fail("executor handoff must not be replayed"),
     )
 
+    monkeypatch.setattr(review_runtime, "_validate_reviewer_run", lambda *_: None)
+    (tmp_path / ".git/info/exclude").write_text(".work-bundle/\n", encoding="utf-8")
+    review_reference = review_runtime.publish_review(
+        tmp_path, repair_review, current_target_identity=repaired_identity
+    )
     repaired = execution_context.materialize_accepted_task_repair_review(
         tmp_path,
         task,
-        repair_review,
+        review_reference,
         accepted_at="2026-09-08T01:05:00Z",
     )
 
@@ -420,8 +425,9 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         ("f" * 40, accepted_tree, "target revision does not resolve"),
         (divergent_head, accepted_tree, "not an ancestor"),
     ]
-    for target_head, target_tree, message in cases:
+    for index, (target_head, target_tree, message) in enumerate(cases):
         invalid = deepcopy(repair_review)
+        invalid["review_id"] = f"review-invalid-target-{index}"
         invalid_identity = {
             **invalid["target_identity"],
             "revision": target_head,
@@ -430,12 +436,16 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         invalid["reviewed_head"] = target_head
         invalid["target_identity"] = invalid_identity
         invalid["repair_frontier"]["repaired_identity"] = invalid_identity
+        invalid_reference = review_runtime.publish_review(
+            tmp_path, invalid, current_target_identity=invalid_identity
+        )
         with pytest.raises(SystemExit, match=message):
             execution_context.materialize_accepted_task_repair_review(
-                tmp_path, task, invalid, accepted_at="2026-09-08T01:05:00Z"
+                tmp_path, task, invalid_reference, accepted_at="2026-09-08T01:05:00Z"
             )
     if predecessor_kind == "integrated_stage":
         wrong_plan = deepcopy(repair_review)
+        wrong_plan["review_id"] = "review-wrong-predecessor-plan"
         wrong_identity = {
             **wrong_plan["previous_review"]["target_identity"],
             "artifact_id": "plan-other",
@@ -443,13 +453,19 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         wrong_plan["previous_review"]["target_identity"] = wrong_identity
         wrong_plan["previous_review"]["findings"][0]["target_identity"] = wrong_identity
         wrong_plan["repair_frontier"]["previous_reviewed_identity"] = wrong_identity
+        wrong_plan_reference = review_runtime.publish_review(
+            tmp_path, wrong_plan, current_target_identity=repaired_identity
+        )
         with pytest.raises(SystemExit, match="exact current task and predecessor owner"):
-            execution_context.materialize_accepted_task_repair_review(tmp_path, task, wrong_plan)
+            execution_context.materialize_accepted_task_repair_review(
+                tmp_path, task, wrong_plan_reference
+            )
 
         wrong_stage = deepcopy(repair_review)
+        wrong_stage["review_id"] = "review-wrong-predecessor-stage"
         wrong_stage["previous_review"]["stage"] = "plan"
-        with pytest.raises(SystemExit, match="stage predecessor must be integrated_implementation"):
-            execution_context.materialize_accepted_task_repair_review(tmp_path, task, wrong_stage)
+        with pytest.raises(review_runtime.ReviewContractError, match="stage predecessor must be integrated_implementation"):
+            review_runtime.publish_review(tmp_path, wrong_stage, current_target_identity=repaired_identity)
 
 
 def test_standalone_review_recomposes_changed_task_authority_without_executor_replay(
@@ -509,7 +525,16 @@ def test_standalone_review_recomposes_changed_task_authority_without_executor_re
         reviewer={"agent_id": "reviewer-current"},
     )
     monkeypatch.setattr(execution_context, "load_task_execution_binding", lambda *_: binding)
-    monkeypatch.setattr(review_runtime, "validate_task_acceptance_review", lambda _review: validated_review)
+    monkeypatch.setattr(
+        review_runtime,
+        "load_stored_review",
+        lambda _root, _reference, **_kwargs: (review, validated_review),
+    )
+    monkeypatch.setattr(
+        review_runtime,
+        "stored_review_target_identity",
+        lambda _root, _reference: current_identity,
+    )
     monkeypatch.setattr(
         execution_context,
         "capture_repository_evidence",
@@ -534,7 +559,7 @@ def test_standalone_review_recomposes_changed_task_authority_without_executor_re
     accepted = execution_context.materialize_accepted_task_review(
         tmp_path,
         current_task,
-        review,
+        {"review_id": "review-current-authority", "sha256": "9" * 64},
         {
             "causal_class": "claim_relevant_drift",
             "affected_task": "task-001",

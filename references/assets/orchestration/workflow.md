@@ -109,9 +109,13 @@ not lifecycle admission. The gate resolves the controller-owned store through
 `reviewer_runtime_root(workspace_root)` under `~/.work-bundle/reviewer-runtime/workspaces/`;
 the envelope cannot select an arbitrary receipt path or store.
 
-Before workspace creation, the controller adds `stage_review_context` to the direct
+Before workspace creation, the controller adds `stage_review_context` to a stage direct
 evidence packet: `stage`, `target_identity`, `target_locator` (a copied control
 artifact), `agent_id`, `capability`, `execution_id`, and `evidence_mode`.
+For task review it instead adds native `task_review_context`, binding the task target,
+review mode/frontier or reset, reviewer identity/capability, execution identity, and
+evidence mode. Workspace creation admits it only when the source checkout is clean and
+its exact HEAD/tree still equal that task target.
 The current sandbox denies live source/control access, so its packet builder derives
 `evidence_mode`; requesting `direct_source` does not grant it. A mechanically complete
 `stage-evidence-manifest-v1` yields `reproducible_snapshot`; missing evidence yields
@@ -145,7 +149,10 @@ workspace creation checks it again. Run the worker with `reviewer-process-run` u
 that runtime root. Its stdout must be exactly one stage-review JSON object, without
 `reviewer_run`; the native publisher verifies it against the frozen context and
 binds its canonical digest into the receipt. The controller then attaches the run
-ID and SHA-256 of the immutable receipt bytes to that exact result.
+ID and SHA-256 of the immutable receipt bytes to that exact result and publishes the
+task-or-stage envelope as a read-only review-store record. Verdict admission and
+named-finding routing resolve only that stored reference and recheck its receipt and
+current target; bare stdout, unattached receipts, and bare findings remain observations.
 
 The lifecycle gate verifies review ID, exact result/target/profile, successful
 completion, sandbox/network/write boundary, and immutable packet/profile/event
@@ -170,6 +177,12 @@ remain single-flight. Publication rejects an intervening mutation epoch or expir
 freshness. Reservation lock files are retained to avoid splitting concurrent waiters;
 they are runtime artifacts, not source inputs or a separate cache subsystem.
 
+Task code review consumes one product candidate compiled from task authority, exact
+source/diff identity, harness-owned validation observations, unresolved product
+concerns, and task-local disposition. Executor-handoff schema and publication,
+status, and archive bookkeeping remain controller preconditions and never become
+product findings.
+
 The **acceptance once** lifecycle rule makes the harness strongly verify binding,
 source/scope, subagent ownership, validation, and required review, then persists one
 compact accepted result. Dependency release, finalization, resume, and archive consume
@@ -177,6 +190,10 @@ that result plus a current harness observation while its identity and freshness 
 they do not replay transient acceptance evidence or historical handoff chains. A
 status-only or append-only evidence change neither invalidates the canonical semantic
 plan projection nor causes a terminal rerun.
+A later stored task repair review recomposes this compact result through the existing
+materializer while preserving executor-result, validation, owner, baseline, and
+knowledge authority; it performs no executor redispatch, handoff rewrite, validation
+rerun, or review-history embedding.
 
 Capability context projects trusted intent/evaluation seeds through the existing
 typed-relation traversal (`light`: 1 hop, `standard`: 2, `deep`: 4), bounded by
