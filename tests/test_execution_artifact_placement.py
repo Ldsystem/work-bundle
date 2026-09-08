@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,6 +29,37 @@ def test_static_admission_rejects_issue_run_artifacts_in_source(path: str) -> No
     task = {"files": {"write": [path]}}
     with pytest.raises(SystemExit, match="source-local execution artifact"):
         execution_context._assert_no_source_local_execution_artifacts(task, Path("task.md"))
+
+
+def test_static_admission_allows_only_proven_historical_cleanup_targets(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    historical = source / "tests/test_wor108_context_projection.py"
+    historical.parent.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
+    historical.write_text("def test_historical(): pass\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "historical execution test"], cwd=source, check=True)
+    historical.unlink()
+    subprocess.run(["git", "add", "-u"], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "remove historical execution test"], cwd=source, check=True)
+    task = {
+        "target_files": ["tests/test_wor108_context_projection.py"],
+        "completion_criteria": ["Listed execution-only wrappers are absent from source."],
+    }
+
+    execution_context._assert_no_source_local_execution_artifacts(
+        task, Path("task.md"), source_members=[source]
+    )
+
+    task["target_files"] = ["tests/test_wor999_new_evidence.py"]
+    with pytest.raises(SystemExit, match="source-local execution artifact"):
+        execution_context._assert_no_source_local_execution_artifacts(
+            task, Path("task.md"), source_members=[source]
+        )
 
 
 def test_execution_artifacts_resolve_to_workspace_root_outside_source_member(tmp_path: Path) -> None:

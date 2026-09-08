@@ -15,7 +15,7 @@ from typing import Any, Iterable, Mapping
 from datetime import datetime, timezone
 
 
-from core import is_relative_to, read_front_matter, resolve_workspace_root
+from core import _member_roots, is_relative_to, read_front_matter, resolve_workspace_root
 from artifact_inputs import (_split_top_level, _split_key_value, _parse_scalar, parse_yaml_subset,
                              _read_structured, _as_list, _input_path, _resolve_spec_paths)
 from repository_preflight import capture_repository_evidence, task_caused_paths
@@ -4127,7 +4127,27 @@ def _assert_static_task_fields(task: dict[str, Any], task_path: Path) -> None:
         )
 
 
-def _assert_no_source_local_execution_artifacts(task: dict[str, Any], task_path: Path) -> None:
+def _is_proven_historical_cleanup_target(
+    task: dict[str, Any], path: str, source_members: Iterable[Path]
+) -> bool:
+    criteria = " ".join(str(value).lower() for value in _as_list(task.get("completion_criteria")))
+    if "absent from source" not in criteria:
+        return False
+    for source_member in source_members:
+        history = subprocess.run(
+            ["git", "-C", str(source_member), "log", "--all", "-n", "1", "--format=%H", "--", path],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if history.returncode == 0 and history.stdout.strip():
+            return True
+    return False
+
+
+def _assert_no_source_local_execution_artifacts(
+    task: dict[str, Any], task_path: Path, *, source_members: Iterable[Path] = ()
+) -> None:
     files = task.get("files") if isinstance(task.get("files"), dict) else {}
     write_paths = _as_list(files.get("write")) or _as_list(task.get("target_files"))
     for value in write_paths:
@@ -4146,12 +4166,13 @@ def _assert_no_source_local_execution_artifacts(task: dict[str, Any], task_path:
             and parts[0] == "tests"
             and re.match(r"test_(?:wor|issue)[-_]?\d+(?:_|\.py)", parts[1], re.IGNORECASE)
         )
-        if (
-            path == "orchestration/executions"
-            or path.startswith("orchestration/executions/")
-            or issue_eval
-            or issue_test
-        ):
+        workspace_execution = path == "orchestration/executions" or path.startswith(
+            "orchestration/executions/"
+        )
+        historical_cleanup = (issue_eval or issue_test) and _is_proven_historical_cleanup_target(
+            task, path, source_members
+        )
+        if workspace_execution or ((issue_eval or issue_test) and not historical_cleanup):
             raise SystemExit(
                 f"Task write scope uses a source-local execution artifact path: {task_path}: {path}"
             )
@@ -4162,7 +4183,10 @@ def static_task_brief(root: Path, task_path: Path) -> dict[str, Any]:
 
     task, _ = _read_structured(task_path)
     _assert_static_task_fields(task, task_path)
-    _assert_no_source_local_execution_artifacts(task, task_path)
+    source_members = _member_roots(root) if (root / ".work-bundle/project.yaml").is_file() else []
+    if not source_members and (root / ".git").exists():
+        source_members = [root]
+    _assert_no_source_local_execution_artifacts(task, task_path, source_members=source_members)
     compile_args = argparse.Namespace(
         project_root=str(root),
         workspace_root=str(root),
