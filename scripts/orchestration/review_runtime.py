@@ -442,11 +442,8 @@ def artifact_review_identity(path: Path, *, content: str | None = None) -> dict[
             "sha256": hashlib.sha256(payload.encode()).hexdigest(), "source_tree": None}
 
 
-PLAN_PROGRESS_FIELDS = frozenset(
+PLAN_APPEND_ONLY_FIELDS = frozenset(
     {
-        "status",
-        "last_updated",
-        "updated_at",
         "accepted_result",
         "accepted_results",
         "accepted_result_reference",
@@ -454,10 +451,7 @@ PLAN_PROGRESS_FIELDS = frozenset(
         "evidence_reference",
         "evidence_references",
         "review_id",
-        "reviewed_head",
         "target_identity",
-        "verdict",
-        "findings",
         "review_mode",
         "repair_frontier",
         "review_reset",
@@ -465,13 +459,28 @@ PLAN_PROGRESS_FIELDS = frozenset(
 )
 
 
-def _semantic_plan_value(value: Any) -> Any:
+def _semantic_plan_value(value: Any, *, top_level: bool = False) -> Any:
     if isinstance(value, dict):
-        return {
-            key: _semantic_plan_value(child)
-            for key, child in sorted(value.items())
-            if key not in PLAN_PROGRESS_FIELDS
-        }
+        projected: dict[str, Any] = {}
+        created = value.get("date_created")
+        for key, child in sorted(value.items()):
+            if key in PLAN_APPEND_ONLY_FIELDS:
+                continue
+            if top_level and key in {"status", "last_updated", "updated_at"}:
+                continue
+            if key == "status":
+                projected[key] = "Planned"
+            elif key in {"last_updated", "updated_at"} and created is not None:
+                projected[key] = _semantic_plan_value(created)
+            elif key == "verdict":
+                projected[key] = "pending"
+            elif key == "reviewed_head":
+                projected[key] = ""
+            elif key == "findings":
+                projected[key] = []
+            else:
+                projected[key] = _semantic_plan_value(child)
+        return projected
     if isinstance(value, list):
         return [_semantic_plan_value(child) for child in value]
     return value
@@ -485,7 +494,17 @@ def _semantic_plan_artifact(path: Path, *, content: str | None = None) -> dict[s
     metadata = parse_yaml_subset(raw)
     if not isinstance(metadata, dict) or not metadata.get("id"):
         raise SystemExit(f"stage review: missing artifact identity: {path}")
-    return {"metadata": _semantic_plan_value(metadata), "body": body}
+    return {"metadata": _semantic_plan_value(metadata, top_level=True), "body": body}
+
+
+def _semantic_plan_artifact_digest(projection: Mapping[str, Any]) -> str:
+    payload = json.dumps(
+        [projection["metadata"], projection["body"]],
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def semantic_plan_projection(
@@ -499,7 +518,9 @@ def semantic_plan_projection(
     root_projection = _semantic_plan_artifact(plan_path, content=content)
     plan_data = root_projection["metadata"]
     plan_id = str(plan_data["id"])
-    members = {str(plan_path.relative_to(plan_root)): root_projection}
+    members = {
+        str(plan_path.relative_to(plan_root)): _semantic_plan_artifact_digest(root_projection)
+    }
     for path in sorted(plan_root.rglob("*.md")):
         if path == plan_path:
             continue
@@ -508,13 +529,13 @@ def semantic_plan_projection(
         data, _ = _read_structured(path)
         if str(data.get("plan_id", "")) != plan_id:
             continue
-        members[str(path.relative_to(plan_root))] = _semantic_plan_artifact(path)
+        members[str(path.relative_to(plan_root))] = _semantic_plan_artifact_digest(
+            _semantic_plan_artifact(path)
+        )
     specifications = [
         artifact_review_identity(path) for path in _resolve_spec_paths(root, {}, plan_data)
     ]
     return {
-        "artifact_id": plan_id,
-        "revision": str(plan_data.get("version", "1")),
         "members": members,
         "specifications": specifications,
     }
@@ -590,13 +611,10 @@ def require_specification_review(root: Path, path: Path, *, content: str | None 
 
 def plan_review_identity(root: Path, plan_path: Path, *, content: str | None = None) -> dict[str, Any]:
     projection = semantic_plan_projection(root, plan_path, content=content)
-    payload = json.dumps(projection, sort_keys=True, separators=(",", ":"), default=str)
-    return {
-        "artifact_id": projection["artifact_id"],
-        "revision": projection["revision"],
-        "sha256": hashlib.sha256(payload.encode()).hexdigest(),
-        "source_tree": None,
-    }
+    identity = artifact_review_identity(plan_path, content=content)
+    payload = json.dumps(projection, sort_keys=True, default=str)
+    identity["sha256"] = hashlib.sha256(payload.encode()).hexdigest()
+    return identity
 
 
 def require_plan_reviews(root: Path, plan_path: Path, *, source_root: Path | None = None,
