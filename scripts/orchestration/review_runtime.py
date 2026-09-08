@@ -442,6 +442,84 @@ def artifact_review_identity(path: Path, *, content: str | None = None) -> dict[
             "sha256": hashlib.sha256(payload.encode()).hexdigest(), "source_tree": None}
 
 
+PLAN_PROGRESS_FIELDS = frozenset(
+    {
+        "status",
+        "last_updated",
+        "updated_at",
+        "accepted_result",
+        "accepted_results",
+        "accepted_result_reference",
+        "accepted_result_references",
+        "evidence_reference",
+        "evidence_references",
+        "review_id",
+        "reviewed_head",
+        "target_identity",
+        "verdict",
+        "findings",
+        "review_mode",
+        "repair_frontier",
+        "review_reset",
+    }
+)
+
+
+def _semantic_plan_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _semantic_plan_value(child)
+            for key, child in sorted(value.items())
+            if key not in PLAN_PROGRESS_FIELDS
+        }
+    if isinstance(value, list):
+        return [_semantic_plan_value(child) for child in value]
+    return value
+
+
+def _semantic_plan_artifact(path: Path, *, content: str | None = None) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8") if content is None else content.rstrip() + "\n"
+    if not text.startswith("---\n") or "\n---\n" not in text[4:]:
+        raise SystemExit(f"stage review: missing artifact front matter: {path}")
+    raw, body = text[4:].split("\n---\n", 1)
+    metadata = parse_yaml_subset(raw)
+    if not isinstance(metadata, dict) or not metadata.get("id"):
+        raise SystemExit(f"stage review: missing artifact identity: {path}")
+    return {"metadata": _semantic_plan_value(metadata), "body": body}
+
+
+def semantic_plan_projection(
+    root: Path, plan_path: Path, *, content: str | None = None
+) -> dict[str, Any]:
+    """Return the canonical executable projection used by plan review freshness."""
+
+    plan_root = root / ".work-bundle/orchestration/plan"
+    if not plan_path.resolve().is_relative_to(plan_root.resolve()):
+        raise SystemExit("stage review: root plan escapes plan store")
+    root_projection = _semantic_plan_artifact(plan_path, content=content)
+    plan_data = root_projection["metadata"]
+    plan_id = str(plan_data["id"])
+    members = {str(plan_path.relative_to(plan_root)): root_projection}
+    for path in sorted(plan_root.rglob("*.md")):
+        if path == plan_path:
+            continue
+        if not path.resolve().is_relative_to(plan_root.resolve()):
+            raise SystemExit("stage review: plan member escapes plan store")
+        data, _ = _read_structured(path)
+        if str(data.get("plan_id", "")) != plan_id:
+            continue
+        members[str(path.relative_to(plan_root))] = _semantic_plan_artifact(path)
+    specifications = [
+        artifact_review_identity(path) for path in _resolve_spec_paths(root, {}, plan_data)
+    ]
+    return {
+        "artifact_id": plan_id,
+        "revision": str(plan_data.get("version", "1")),
+        "members": members,
+        "specifications": specifications,
+    }
+
+
 def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any]) -> None:
     """Read native records; historical prose is not an acceptance envelope."""
     accepted = []
@@ -511,26 +589,14 @@ def require_specification_review(root: Path, path: Path, *, content: str | None 
 
 
 def plan_review_identity(root: Path, plan_path: Path, *, content: str | None = None) -> dict[str, Any]:
-    plan_root = root / ".work-bundle/orchestration/plan"
-    if not plan_path.resolve().is_relative_to(plan_root.resolve()):
-        raise SystemExit("stage review: root plan escapes plan store")
-    identity = artifact_review_identity(plan_path, content=content)
-    members = {str(plan_path.relative_to(plan_root)): identity["sha256"]}
-    for path in sorted(plan_root.rglob("*.md")):
-        if path == plan_path:
-            continue
-        if not path.resolve().is_relative_to(plan_root.resolve()):
-            raise SystemExit("stage review: plan member escapes plan store")
-        data, _ = _read_structured(path)
-        if str(data.get("plan_id", "")) != identity["artifact_id"]:
-            continue
-        members[str(path.relative_to(plan_root))] = artifact_review_identity(path)["sha256"]
-    plan_data = (_read_structured(plan_path)[0] if content is None
-                 else parse_yaml_subset(content.split("---", 2)[1]))
-    specifications = [artifact_review_identity(path) for path in _resolve_spec_paths(root, {}, plan_data)]
-    payload = {"members": members, "specifications": specifications}
-    identity["sha256"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-    return identity
+    projection = semantic_plan_projection(root, plan_path, content=content)
+    payload = json.dumps(projection, sort_keys=True, separators=(",", ":"), default=str)
+    return {
+        "artifact_id": projection["artifact_id"],
+        "revision": projection["revision"],
+        "sha256": hashlib.sha256(payload.encode()).hexdigest(),
+        "source_tree": None,
+    }
 
 
 def require_plan_reviews(root: Path, plan_path: Path, *, source_root: Path | None = None,
@@ -540,6 +606,8 @@ def require_plan_reviews(root: Path, plan_path: Path, *, source_root: Path | Non
     for spec in _resolve_spec_paths(root, {}, data):
         require_specification_review(root, spec)
     identity = plan_review_identity(root, plan_path, content=content)
+    from execution_context import static_plan_task_admission
+    static_plan_task_admission(root, plan_path, content=content)
     _require_current_review(root, "plan", identity)
     if source_root is not None:
         def git(*args: str) -> str:

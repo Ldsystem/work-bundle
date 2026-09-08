@@ -4055,6 +4055,172 @@ def _contains_resolved_source_record(value: Any, record: str) -> bool:
     return False
 
 
+STATIC_TASK_FIELDS = frozenset(
+    {
+        "id",
+        "plan_id",
+        "phase_id",
+        "name",
+        "goal",
+        "status",
+        "order",
+        "task_type",
+        "date_created",
+        "last_updated",
+        "updated_at",
+        "owner",
+        "depends_on",
+        "source_ids",
+        "truth_basis",
+        "source_files",
+        "target_files",
+        "forbidden_files",
+        "target_symbols",
+        "interfaces",
+        "completion_criteria",
+        "methodology",
+        "executor_profile",
+        "acceptance_review",
+        "allocated_rules",
+        "allocated_skills",
+        "validation",
+        "evidence_reuse",
+        "evidence_capability",
+        "files",
+        "project_metadata_required",
+        "metadata_preflight",
+        "repository_id",
+        "repository_target",
+        "repository_preflight",
+        "accepted_repository_baseline",
+        "repository_baseline",
+        "dependency_paths",
+        "call_chains",
+        "path",
+        "accepted_result",
+        "accepted_results",
+        "accepted_result_reference",
+        "accepted_result_references",
+        "evidence_reference",
+        "evidence_references",
+    }
+)
+
+
+def _assert_static_task_fields(task: dict[str, Any], task_path: Path) -> None:
+    unsupported = sorted(set(task) - STATIC_TASK_FIELDS)
+    if unsupported:
+        raise SystemExit(
+            f"Task has unsupported static contract fields {', '.join(unsupported)}: {task_path}"
+        )
+
+
+def _assert_no_source_local_execution_artifacts(task: dict[str, Any], task_path: Path) -> None:
+    files = task.get("files") if isinstance(task.get("files"), dict) else {}
+    write_paths = _as_list(files.get("write")) or _as_list(task.get("target_files"))
+    for value in write_paths:
+        try:
+            path = canonical_relative_path(str(value))
+        except OwnershipBlocker:
+            continue
+        if path == "orchestration/executions" or path.startswith("orchestration/executions/"):
+            raise SystemExit(
+                f"Task write scope uses a source-local execution artifact path: {task_path}: {path}"
+            )
+
+
+def static_task_brief(root: Path, task_path: Path) -> dict[str, Any]:
+    """Compile one task's static authority without runtime bindings or dependency results."""
+
+    task, _ = _read_structured(task_path)
+    _assert_static_task_fields(task, task_path)
+    _assert_no_source_local_execution_artifacts(task, task_path)
+    compile_args = argparse.Namespace(
+        project_root=str(root),
+        workspace_root=str(root),
+        task=str(task_path),
+        handoff=None,
+        base=None,
+        head=None,
+    )
+    return _compile_task_brief(compile_args)[1]["task_brief"]
+
+
+def static_plan_task_admission(
+    root: Path, plan_path: Path, *, content: str | None = None
+) -> list[dict[str, Any]]:
+    """Compile and statically admit every task belonging to one executable plan."""
+
+    plan_root = root / ".work-bundle/orchestration/plan"
+    if not plan_path.resolve().is_relative_to(plan_root.resolve()):
+        raise SystemExit("plan review static-admission-blocked: root plan escapes plan store")
+    if content is None:
+        plan, _ = _read_structured(plan_path)
+    else:
+        if not content.startswith("---\n") or "\n---\n" not in content[4:]:
+            raise SystemExit("plan review static-admission-blocked: root plan lacks front matter")
+        plan = parse_yaml_subset(content[4:].split("\n---\n", 1)[0])
+        if not isinstance(plan, dict):
+            raise SystemExit("plan review static-admission-blocked: root plan front matter is invalid")
+    plan_id = _artifact_id(plan, "id", plan_path)
+    task_paths: list[Path] = []
+    for path in sorted(plan_root.rglob("*.md")):
+        if path == plan_path:
+            continue
+        data, _ = _read_structured(path)
+        if str(data.get("plan_id") or "") != plan_id or not data.get("phase_id"):
+            continue
+        task_paths.append(path)
+    compiled: list[dict[str, Any]] = []
+    by_id: dict[str, Path] = {}
+    for task_path in task_paths:
+        try:
+            brief = static_task_brief(root, task_path)
+        except SystemExit as error:
+            raise SystemExit(
+                f"plan review static-admission-blocked: {task_path}: {error}"
+            ) from error
+        task_id = str(brief["task_id"])
+        if task_id in by_id:
+            raise SystemExit(
+                f"plan review static-admission-blocked: duplicate task ID {task_id}: "
+                f"{by_id[task_id]} and {task_path}"
+            )
+        by_id[task_id] = task_path
+        compiled.append(brief)
+    task_ids = set(by_id)
+    dependencies = {
+        str(brief["task_id"]): [str(value) for value in _as_list(brief.get("depends_on"))]
+        for brief in compiled
+    }
+    for task_id, required in dependencies.items():
+        invalid = [value for value in required if value == task_id or value not in task_ids]
+        if invalid:
+            raise SystemExit(
+                f"plan review static-admission-blocked: {task_id} has impossible dependency "
+                f"{', '.join(invalid)}"
+            )
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(task_id: str) -> None:
+        if task_id in visiting:
+            raise SystemExit(
+                f"plan review static-admission-blocked: dependency cycle includes {task_id}"
+            )
+        if task_id in visited:
+            return
+        visiting.add(task_id)
+        for dependency in dependencies[task_id]:
+            visit(dependency)
+        visiting.remove(task_id)
+        visited.add(task_id)
+
+    for task_id in dependencies:
+        visit(task_id)
+    return compiled
+
+
 def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     root, task_path, task, task_body, records, source_paths = _task_context(args)
     task_id = _artifact_id(task, "id", task_path)
