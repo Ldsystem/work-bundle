@@ -43,22 +43,34 @@ def test_static_admission_allows_only_proven_historical_cleanup_targets(
     historical.write_text("def test_historical(): pass\n", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=source, check=True)
     subprocess.run(["git", "commit", "-qm", "historical execution test"], cwd=source, check=True)
+    accepted_baseline = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=source, check=True, capture_output=True, text=True
+    ).stdout.strip()
     historical.unlink()
     subprocess.run(["git", "add", "-u"], cwd=source, check=True)
     subprocess.run(["git", "commit", "-qm", "remove historical execution test"], cwd=source, check=True)
     task = {
         "target_files": ["tests/test_wor108_context_projection.py"],
+        "truth_basis": {"purpose": "Remove execution-only source residue."},
         "completion_criteria": ["Listed execution-only wrappers are absent from source."],
     }
 
     execution_context._assert_no_source_local_execution_artifacts(
-        task, Path("task.md"), source_members=[source]
+        task, Path("task.md"), cleanup_baselines={source: accepted_baseline}
     )
+
+    historical.write_text("def test_recreated(): pass\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "recreate historical execution test"], cwd=source, check=True)
+    with pytest.raises(SystemExit, match="source-local execution artifact"):
+        execution_context._assert_no_source_local_execution_artifacts(
+            task, Path("task.md"), cleanup_baselines={source: accepted_baseline}
+        )
 
     task["target_files"] = ["tests/test_wor999_new_evidence.py"]
     with pytest.raises(SystemExit, match="source-local execution artifact"):
         execution_context._assert_no_source_local_execution_artifacts(
-            task, Path("task.md"), source_members=[source]
+            task, Path("task.md"), cleanup_baselines={source: accepted_baseline}
         )
 
 

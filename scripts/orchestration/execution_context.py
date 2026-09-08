@@ -15,7 +15,7 @@ from typing import Any, Iterable, Mapping
 from datetime import datetime, timezone
 
 
-from core import _member_roots, is_relative_to, read_front_matter, resolve_workspace_root
+from core import is_relative_to, read_front_matter, resolve_workspace_root
 from artifact_inputs import (_split_top_level, _split_key_value, _parse_scalar, parse_yaml_subset,
                              _read_structured, _as_list, _input_path, _resolve_spec_paths)
 from repository_preflight import capture_repository_evidence, task_caused_paths
@@ -4128,25 +4128,35 @@ def _assert_static_task_fields(task: dict[str, Any], task_path: Path) -> None:
 
 
 def _is_proven_historical_cleanup_target(
-    task: dict[str, Any], path: str, source_members: Iterable[Path]
+    task: dict[str, Any], path: str, cleanup_baselines: Mapping[Path, str]
 ) -> bool:
+    truth_basis = task.get("truth_basis") if isinstance(task.get("truth_basis"), dict) else {}
+    purpose = str(truth_basis.get("purpose") or "").lower()
     criteria = " ".join(str(value).lower() for value in _as_list(task.get("completion_criteria")))
-    if "absent from source" not in criteria:
+    if "remove" not in purpose or "absent from source" not in criteria:
         return False
-    for source_member in source_members:
-        history = subprocess.run(
-            ["git", "-C", str(source_member), "log", "--all", "-n", "1", "--format=%H", "--", path],
+    for source_member, baseline in cleanup_baselines.items():
+        at_baseline = subprocess.run(
+            ["git", "-C", str(source_member), "cat-file", "-e", f"{baseline}:{path}"],
             capture_output=True,
             text=True,
             check=False,
         )
-        if history.returncode == 0 and history.stdout.strip():
+        at_result = subprocess.run(
+            ["git", "-C", str(source_member), "cat-file", "-e", f"HEAD:{path}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if at_baseline.returncode == 0 and at_result.returncode != 0 and not (
+            source_member / path
+        ).exists():
             return True
     return False
 
 
 def _assert_no_source_local_execution_artifacts(
-    task: dict[str, Any], task_path: Path, *, source_members: Iterable[Path] = ()
+    task: dict[str, Any], task_path: Path, *, cleanup_baselines: Mapping[Path, str] | None = None
 ) -> None:
     files = task.get("files") if isinstance(task.get("files"), dict) else {}
     write_paths = _as_list(files.get("write")) or _as_list(task.get("target_files"))
@@ -4170,7 +4180,7 @@ def _assert_no_source_local_execution_artifacts(
             "orchestration/executions/"
         )
         historical_cleanup = (issue_eval or issue_test) and _is_proven_historical_cleanup_target(
-            task, path, source_members
+            task, path, cleanup_baselines or {}
         )
         if workspace_execution or ((issue_eval or issue_test) and not historical_cleanup):
             raise SystemExit(
@@ -4183,10 +4193,25 @@ def static_task_brief(root: Path, task_path: Path) -> dict[str, Any]:
 
     task, _ = _read_structured(task_path)
     _assert_static_task_fields(task, task_path)
-    source_members = _member_roots(root) if (root / ".work-bundle/project.yaml").is_file() else []
-    if not source_members and (root / ".git").exists():
-        source_members = [root]
-    _assert_no_source_local_execution_artifacts(task, task_path, source_members=source_members)
+    cleanup_baselines: dict[Path, str] = {}
+    task_plan_id = str(task.get("plan_id") or "")
+    task_id = str(task.get("id") or "")
+    binding_path = _binding_path(root, task_plan_id, task_id)
+    if binding_path.is_file():
+        binding = load_task_execution_binding(root, task_plan_id, task_id)
+        baseline = binding.get("baseline") if isinstance(binding.get("baseline"), dict) else {}
+        execution_path = str(binding.get("execution_path") or "")
+        baseline_head = str(baseline.get("head") or "")
+        if (
+            binding.get("plan_id") == task.get("plan_id")
+            and binding.get("task_id") == task.get("id")
+            and execution_path
+            and baseline_head
+        ):
+            cleanup_baselines[Path(execution_path).expanduser().resolve()] = baseline_head
+    _assert_no_source_local_execution_artifacts(
+        task, task_path, cleanup_baselines=cleanup_baselines
+    )
     compile_args = argparse.Namespace(
         project_root=str(root),
         workspace_root=str(root),
