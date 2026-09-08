@@ -4016,7 +4016,17 @@ def _compile_task_validation(
 ) -> list[Any]:
     validation_items = _as_list(task.get("validation"))
     if validation_items:
-        return [_compile_structured_validation_item(item) for item in validation_items]
+        task_policy = task.get("evidence_reuse")
+        compiled: list[dict[str, Any]] = []
+        for item in validation_items:
+            if task_policy is not None and isinstance(item, dict) and not (
+                "evidence_reuse" in item or "reuse_seconds" in item
+            ):
+                item = {**item, "evidence_reuse": task_policy}
+            elif task_policy is not None and not isinstance(item, dict):
+                raise SystemExit("Task validation items must be mappings")
+            compiled.append(_compile_structured_validation_item(item))
+        return compiled
     if _section_table(task_body, "Validation"):
         raise SystemExit(
             "Untyped Validation table row is legacy-untyped; migrate to front-matter validation with explicit kind"

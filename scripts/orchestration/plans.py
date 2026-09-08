@@ -11,6 +11,7 @@ from execution_context import (
     unique_explicit_handoff_plan_id,
     validate_executor_result_for_task,
     _compile_task_brief,
+    _observe_validation_item,
     _observation_kwargs,
     _parse_scalar,
     _execution_workspace_module,
@@ -20,7 +21,13 @@ from execution_context import (
     load_current_accepted_task_result,
     semantic_digest,
 )
-from completion_provenance import ManagedProvenanceStore, release_completion_binding
+from completion_provenance import (
+    CompletionProvenanceError,
+    ManagedProvenanceStore,
+    load_observation,
+    observe_validation,
+    release_completion_binding,
+)
 from handoffs import _read_compact_yaml_metadata
 from repository_preflight import capture_repository_evidence, task_caused_paths
 from specs import load_index, replace_front_matter_value
@@ -431,6 +438,82 @@ def _assert_archive_command_state_neutral(command: str, workspace: Path) -> None
         )
 
 
+def _observe_archive_obligations(
+    control_root: Path,
+    command: str,
+    workspace: Path,
+    validated: list[tuple[dict[str, object], dict[str, object]]],
+) -> list[dict[str, object]]:
+    """Consume accepted task observations through the shared validation observer."""
+
+    store = ManagedProvenanceStore(
+        control_root / ".work-bundle/runtime/completion-provenance"
+    )
+    matches: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
+    for accepted, task in validated:
+        if accepted.get("schema") != "accepted-task-result-v1":
+            continue
+        for item in task.get("validation", []):
+            if isinstance(item, dict) and str(item.get("command") or "").strip() == command:
+                matches.append((accepted, task, item))
+    if not matches:
+        return []
+
+    observed: list[dict[str, object]] = []
+    for accepted, task, item in matches:
+        evidence_ids = accepted.get("validation_evidence_ids")
+        if not isinstance(evidence_ids, list) or not evidence_ids:
+            raise SystemExit(
+                "acceptance-blocked: accepted task result has no harness observation"
+            )
+        definition = {
+            key: item.get(key)
+            for key in (
+                "id", "kind", "command", "mechanism", "expected",
+                "acceptable_results", "invariant_ids", "digest", "proves",
+            )
+        }
+        expected_command_digest = semantic_digest(definition)
+        capable = False
+        for evidence_id in evidence_ids:
+            try:
+                prior = load_observation(store, str(evidence_id))
+            except CompletionProvenanceError:
+                continue
+            if prior.command_digest == expected_command_digest:
+                capable = True
+                break
+        if not capable:
+            raise SystemExit(
+                "acceptance-blocked: accepted task result does not reference an accepted harness observation"
+            )
+        binding = load_task_execution_binding(
+            control_root, str(task.get("plan_id") or ""), str(task.get("task_id") or "")
+        )
+        if Path(str(binding.get("execution_path") or "")).resolve() != workspace.resolve():
+            raise SystemExit(
+                "acceptance-blocked: accepted observation execution workspace mismatch"
+            )
+        try:
+            before = capture_repository_evidence(workspace)
+        except RuntimeError as error:
+            raise SystemExit(f"acceptance-blocked: {error}") from error
+        result = observe_validation(
+            binding,
+            task,
+            item,
+            before,
+            lambda receipt: _observe_validation_item(item, workspace, task, receipt),
+            lambda: capture_repository_evidence(workspace),
+        )
+        if result.get("result") != "passed":
+            raise SystemExit(
+                f"acceptance-blocked: declared plan-level acceptance {command} is {result.get('result')}"
+            )
+        observed.append(result)
+    return observed
+
+
 def _assert_archive_plan_acceptance(
     args: argparse.Namespace,
     plan_id: str,
@@ -444,7 +527,20 @@ def _assert_archive_plan_acceptance(
     git_root = _material_repository_root(args, plan_id, validated, commands)
     terminal_tree = _git_tree_id(git_root, "HEAD")
     material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
+    uses_accepted_results = any(
+        result.get("schema") == "accepted-task-result-v1" for result, _brief in validated
+    )
+    control_root = resolve_workspace_root(args) if uses_accepted_results else None
     for command in commands:
+        if control_root is not None:
+            observed = _observe_archive_obligations(
+                control_root, command, git_root, validated
+            )
+            if observed:
+                continue
+            raise SystemExit(
+                f"acceptance-blocked: no accepted validation obligation for {command}"
+            )
         terminal_results: set[str] = set()
         for handoff, _brief in validated:
             result = _handoff_command_result(handoff, command)
@@ -461,6 +557,8 @@ def _assert_archive_plan_acceptance(
             )
         # Historical task evidence is not terminal plan authority. The archive
         # gate obtains one fresh state-neutral observation below instead.
+    if control_root is not None:
+        return
     workspace = git_root if material else _resolve_final_plan_workspace(args)
     for command in commands:
         _assert_archive_command_state_neutral(command, workspace)
