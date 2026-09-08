@@ -87,8 +87,23 @@ def test_reuse_revalidates_stored_result_shape(tmp_path):
         state = store._read_unlocked()
         del state["observations"][0]["result"]["exit_code"]
         store._write_unlocked(state)
-    with pytest.raises(CompletionProvenanceError, match="closed and complete"):
-        reuse_observation(store, _request(observation_id="obs-002"), lambda: pytest.fail("must not execute"), now=NOW)
+    calls = 0
+
+    def execute():
+        nonlocal calls
+        calls += 1
+        return _result()
+
+    replacement = reuse_observation(
+        store,
+        _request(observation_id="obs-002", invocation_id="invoke-002"),
+        execute,
+        now=NOW,
+    )
+
+    assert calls == 1
+    assert replacement.observation_id == "obs-002"
+    assert replacement.reuse_of is None
 
 
 def _result():

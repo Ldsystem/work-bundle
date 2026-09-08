@@ -221,6 +221,25 @@ def test_stale_harness_observation_executes_fresh_once_at_public_archive(tmp_pat
     assert repaired["observations"][-1]["observation_id"] != first["observation_id"]
 
 
+def test_malformed_harness_observation_executes_fresh_once_at_public_archive(tmp_path, monkeypatch):
+    root, control, counter, accepted, task, command, first = _fixture(tmp_path, monkeypatch)
+    store_path = control / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json"
+    state = json.loads(store_path.read_text())
+    del state["observations"][0]["result"]["exit_code"]
+    store_path.write_text(json.dumps(state))
+
+    _public_archive(tmp_path, monkeypatch, control, root, command, accepted, task)
+
+    assert counter.read_text() == "2"
+    repaired = json.loads(store_path.read_text())
+    assert len(repaired["observations"]) == 2
+    replacement = repaired["observations"][-1]
+    assert replacement["observation_id"] != first["observation_id"]
+    assert repaired["consumptions"][replacement["observation_id"]] == (
+        "archive:plan-001:task-001:VAL-001"
+    )
+
+
 def test_distinct_accepted_obligations_each_reuse_without_lifecycle_replay(tmp_path, monkeypatch):
     root, control, counter, accepted, task, command, _ = _fixture(tmp_path, monkeypatch)
     other = deepcopy(task)

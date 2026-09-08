@@ -544,7 +544,13 @@ def reuse_observation(
                 if all(raw[field] == request[field] for field in OBSERVATION_IDENTITY_FIELDS) and (
                     _utc(raw["freshness_deadline"], "freshness_deadline") >= observed_at
                 ):
-                    _validate_result(raw["result"])
+                    try:
+                        _validate_result(raw["result"])
+                    except (KeyError, TypeError, CompletionProvenanceError):
+                        # A store-owned record can establish harness lineage
+                        # without remaining capable positive evidence. Do not
+                        # repair or replay it; obtain one fresh observation.
+                        break
                     return ObservationIdentityV1(**{**raw,
                         "invocation_id": request["invocation_id"], "reuse_of": raw["observation_id"],
                         "consumed_by_finalization": state["consumptions"].get(raw["observation_id"]),
