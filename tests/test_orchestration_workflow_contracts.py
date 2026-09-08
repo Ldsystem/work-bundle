@@ -927,6 +927,20 @@ def test_task_contract_compiles_methodology_capability_and_review() -> None:
         assert token in contract
 
 
+def test_task_contract_defines_material_review_freshness_without_identity_rotation() -> None:
+    contract = read("references/assets/orchestration/contract/task-v1.md")
+
+    for token in [
+        "`review_reset` bound to the prior review, classified reason, and current target and evidence",
+        "may reuse the same agent identity",
+        "judgment-capable",
+        "authorship/repair/decision/deliberation participation",
+        "review provenance",
+    ]:
+        assert token in contract
+    assert "may not reuse the repair reviewer identity" not in contract
+
+
 def test_executor_result_contract_carries_acceptance_review() -> None:
     contract = read("references/assets/orchestration/contract/handoff-executor-result-v1.md")
     for token in [

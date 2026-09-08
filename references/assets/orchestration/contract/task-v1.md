@@ -149,7 +149,7 @@ A legacy 3-column `Command or inspection | Proves | Expected` row without YAML `
 - A newly authored task acceptance record exposes `review_mode: initial|repair` and `review_target_kind: task`. Legacy records without these fields are tolerated only as initial-review migration input.
 - When `task_fit_check.result` is `repaired`, completion requires `review_mode: repair`, the native review envelope fields, and exactly one `previous_review`. The closed `repair_frontier` binds that predecessor's review ID, blocking finding IDs, previous and repaired target identities, affected boundaries, and frozen evidence identity. Whole review history is not embedded or reacquired.
 - Both the current and previous task-review records retain `required: true`, `reviewer_independent: true`, and `review_target_kind: task`; the adapter does not infer or overwrite those ownership facts. The accepted repaired target names the completed task and its `source_tree` plus `reviewed_head` must equal the helper-observed Git tree and head.
-- Material redesign or changed authority, scope, acceptance, decomposition, or validation allocation uses a fresh `initial` review with `review_reset`; it may not reuse the repair reviewer identity.
+- Material redesign or changed authority, scope, acceptance, decomposition, or validation allocation requires a fresh `initial` review with `review_reset` bound to the prior review, classified reason, and current target and evidence. The reviewer may reuse the same agent identity when judgment-capable and independent by authorship/repair/decision/deliberation participation and review provenance; identity rotation is not a freshness requirement.
 
 ## Planning verification
 
