@@ -1816,20 +1816,49 @@ def materialize_accepted_task_repair_review(
     except RuntimeError as error:
         raise SystemExit("accepted task repair review Git identity is unavailable") from error
     identity = validated_review.target_identity
+    reviewed_head = str(identity.get("revision") or "")
     if (
         evidence.get("status") != "clean"
         or evidence.get("entries")
-        or review.get("reviewed_head") != identity.get("revision")
-        or evidence.get("head") != identity.get("revision")
-        or evidence.get("tree") != identity.get("source_tree")
+        or review.get("reviewed_head") != reviewed_head
     ):
         raise SystemExit("accepted task repair review does not match the clean exact source identity")
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", reviewed_head):
+        raise SystemExit("accepted task repair review target revision is invalid")
+    reviewed_commit = subprocess.run(
+        ["git", "-C", str(execution_path), "rev-parse", "--verify", f"{reviewed_head}^{{commit}}"],
+        capture_output=True,
+        text=True,
+    )
+    reviewed_tree = subprocess.run(
+        ["git", "-C", str(execution_path), "rev-parse", "--verify", f"{reviewed_head}^{{tree}}"],
+        capture_output=True,
+        text=True,
+    )
+    if (
+        reviewed_commit.returncode
+        or reviewed_tree.returncode
+        or reviewed_commit.stdout.strip() != reviewed_head
+    ):
+        raise SystemExit("accepted task repair review target revision does not resolve exactly")
+    if reviewed_tree.stdout.strip() != identity.get("source_tree"):
+        raise SystemExit("accepted task repair review target revision/tree identity is mismatched")
+    ancestor = subprocess.run(
+        [
+            "git", "-C", str(execution_path), "merge-base", "--is-ancestor",
+            reviewed_head, str(evidence.get("head") or ""),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if ancestor.returncode != 0:
+        raise SystemExit("accepted task repair review target is not an ancestor of current HEAD")
 
     authority_projection = dict(prior["authority_projection"])
     authority_projection["required_review_digest"] = semantic_digest(
         _accepted_review_projection(review)
     )
-    accepted_source = {"head": evidence["head"], "tree": evidence["tree"]}
+    accepted_source = {"head": reviewed_head, "tree": reviewed_tree.stdout.strip()}
     knowledge_disposition = prior.get("knowledge_disposition")
     accepted_source["state_digest"] = _accepted_source_state_digest(
         plan_id=str(prior["plan_id"]),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -45,6 +46,13 @@ ACCEPTED_RESULT_FIELDS = {
     "accepted_at",
     "invalidation",
 }
+
+
+def _git(root: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ["git", *arguments], cwd=root, check=True, capture_output=True, text=True
+    )
+    return completed.stdout.strip()
 
 
 def _task(root: Path) -> dict[str, object]:
@@ -249,13 +257,18 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
 def test_standalone_repair_review_rematerializes_compact_result_without_executor_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    source = tmp_path / "source.py"
+    source.write_text("VALUE = 1\n")
+    _git(tmp_path, "add", "source.py")
+    _git(tmp_path, "commit", "-qm", "accepted executor result")
+    accepted_head = _git(tmp_path, "rev-parse", "HEAD")
+    accepted_tree = _git(tmp_path, "rev-parse", "HEAD^{tree}")
     task = _task(tmp_path)
     binding = _binding(tmp_path)
-    binding["baseline"] = {"head": OID_A, "tree": OID_B}
-    repository_evidence = {"head": OID_A, "tree": OID_B, "status": "clean", "entries": {}}
-    monkeypatch.setattr(
-        execution_context, "capture_repository_evidence", lambda _root: dict(repository_evidence)
-    )
+    binding["baseline"] = {"head": accepted_head, "tree": accepted_tree}
     prior = execution_context.build_accepted_task_result(
         task,
         binding,
@@ -266,15 +279,20 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
     binding["accepted_result"] = prior
     previous_identity = {
         "artifact_id": "task-001",
-        "revision": OID_A,
+        "revision": accepted_head,
         "sha256": "1" * 64,
-        "source_tree": OID_B,
+        "source_tree": accepted_tree,
     }
+    source.write_text("VALUE = 2\n")
+    _git(tmp_path, "add", "source.py")
+    _git(tmp_path, "commit", "-qm", "repair reviewed endpoint")
+    reviewed_head = _git(tmp_path, "rev-parse", "HEAD")
+    reviewed_tree = _git(tmp_path, "rev-parse", "HEAD^{tree}")
     repaired_identity = {
         "artifact_id": "task-001",
-        "revision": OID_C,
+        "revision": reviewed_head,
         "sha256": "2" * 64,
-        "source_tree": OID_D,
+        "source_tree": reviewed_tree,
     }
     reviewer = {
         "agent_id": "reviewer-001",
@@ -297,7 +315,7 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         "reviewer_independent": True,
         "verdict": "repair",
         "review_id": "review-finding-001",
-        "reviewed_head": OID_A,
+        "reviewed_head": accepted_head,
         "review_mode": "initial",
         "review_target_kind": "task",
         "repair_frontier": None,
@@ -331,7 +349,7 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         **previous_review,
         "verdict": "accept",
         "review_id": "review-repair-001",
-        "reviewed_head": OID_C,
+        "reviewed_head": reviewed_head,
         "review_mode": "repair",
         "target_identity": repaired_identity,
         "findings": [],
@@ -347,9 +365,11 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         "started_at": "2026-09-08T01:03:00Z",
         "completed_at": "2026-09-08T01:04:00Z",
     }
+    (tmp_path / "unrelated.py").write_text("UNCHANGED_FRONTIER = True\n")
+    _git(tmp_path, "add", "unrelated.py")
+    _git(tmp_path, "commit", "-qm", "later unrelated lifecycle progress")
     persisted: dict[str, object] = {}
     monkeypatch.setattr(execution_context, "load_task_execution_binding", lambda *_: binding)
-    repository_evidence.update(head=OID_C, tree=OID_D)
     monkeypatch.setattr(execution_context, "_persist_binding", lambda value, _root: persisted.update(value))
     monkeypatch.setattr(
         execution_context,
@@ -372,14 +392,36 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         "knowledge_disposition",
     ):
         assert repaired[field] == prior[field]
-    assert repaired["accepted_source"]["head"] == OID_C
-    assert repaired["accepted_source"]["tree"] == OID_D
+    assert repaired["accepted_source"]["head"] == reviewed_head
+    assert repaired["accepted_source"]["tree"] == reviewed_tree
     assert repaired["review_id"] == "review-repair-001"
     assert repaired["authority_projection"]["required_review_digest"] == execution_context.semantic_digest(
         execution_context._accepted_review_projection(repair_review)
     )
     assert persisted["accepted_result"] == repaired
     assert "previous_review" not in repr(repaired)
+
+    divergent_head = _git(tmp_path, "commit-tree", accepted_tree, "-m", "divergent endpoint")
+    cases = [
+        (reviewed_head, accepted_tree, "revision/tree identity is mismatched"),
+        ("f" * 40, accepted_tree, "target revision does not resolve"),
+        (divergent_head, accepted_tree, "not an ancestor"),
+    ]
+    for target_head, target_tree, message in cases:
+        invalid = deepcopy(repair_review)
+        invalid_identity = {
+            **invalid["target_identity"],
+            "revision": target_head,
+            "source_tree": target_tree,
+        }
+        invalid["reviewed_head"] = target_head
+        invalid["target_identity"] = invalid_identity
+        invalid["repair_frontier"]["repaired_identity"] = invalid_identity
+        with pytest.raises(SystemExit, match=message):
+            execution_context.materialize_accepted_task_repair_review(
+                tmp_path, task, invalid, accepted_at="2026-09-08T01:05:00Z"
+            )
+
 
 def test_legacy_accepted_result_without_disposition_remains_current_for_nonknowledge_consumers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
