@@ -47,6 +47,23 @@ def test_native_transcript_requires_one_actual_fresh_completed_judgment():
             reviewer_workspace.parse_native_reviewer_transcript(forged)
 
 
+def test_native_observed_catalog_notice_is_initialization_only():
+    notice = {"type": "item.completed", "item": {"id": "warning", "type": "error", "message":
+        "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."}}
+    events = native_events({"verdict": "repair"}).splitlines()
+    events.insert(2, json.dumps(notice))
+    assert reviewer_workspace.parse_native_reviewer_transcript("\n".join(events))[1] == {"verdict": "repair"}
+    events.pop(2)
+    events.insert(3, json.dumps(notice))
+    with pytest.raises(ReviewerWorkspaceError, match="NATIVE_TRANSCRIPT"):
+        reviewer_workspace.parse_native_reviewer_transcript("\n".join(events))
+    events.pop(3)
+    notice["item"]["message"] += " A tool also failed."
+    events.insert(2, json.dumps(notice))
+    with pytest.raises(ReviewerWorkspaceError, match="NATIVE_TRANSCRIPT"):
+        reviewer_workspace.parse_native_reviewer_transcript("\n".join(events))
+
+
 @pytest.mark.parametrize("kind", ["command_execution", "mcp_tool_call", "collab_tool_call", "error", "file_change"])
 def test_native_transcript_rejects_all_observed_tool_or_failure_activity(kind):
     events = native_events({}).splitlines()

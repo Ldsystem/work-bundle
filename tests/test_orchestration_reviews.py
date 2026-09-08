@@ -846,7 +846,7 @@ def test_old_packet_bytes_cannot_be_relabelled_as_current_target(tmp_path):
         reviewer_workspace.create_reviewer_workspace(runtime, "relabelled", packet)
 
 
-def _native_spec_receipt(tmp_path, monkeypatch):
+def _native_spec_receipt(tmp_path, monkeypatch, *, observed_events=None):
     import reviewer_workspace
     spec, _, reviews = _reviewed_plan_fixture(tmp_path)
     record = json.loads((reviews / "specification.json").read_text())
@@ -859,12 +859,34 @@ def _native_spec_receipt(tmp_path, monkeypatch):
             "stage_review": {key: record[key] for key in ("target_identity", "verdict", "findings")}})}},
         {"type": "turn.completed", "usage": {}},
     ]
+    if observed_events is not None:
+        events = observed_events
     monkeypatch.setattr(reviewer_workspace, "_run_native_process", lambda *_:
         subprocess.CompletedProcess([], 0, "\n".join(json.dumps(event) for event in events), ""))
     receipt = reviewer_workspace.run_native_reviewer(workspace, Path(sys.executable), model="test-model",
                                                      review_instructions="Assess supplied specification and return its stage judgment.")
     result = {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]}
     return spec, receipt, result
+
+
+def test_failed_native_admission_retains_actual_unadmitted_diagnostics(tmp_path, monkeypatch):
+    import reviewer_workspace
+    events = [{"type": "thread.started", "thread_id": "01a0821d-f359-7d60-a9bd-90dd0e006166"},
+              {"type": "turn.started"},
+              {"type": "item.completed", "item": {"id": "tool", "type": "command_execution"}}]
+    with pytest.raises(reviewer_workspace.ReviewerWorkspaceError, match="NATIVE_TRANSCRIPT") as failed:
+        _native_spec_receipt(tmp_path, monkeypatch, observed_events=events)
+    diagnostic = Path(failed.value.result["diagnostic_path"])
+    assert diagnostic.is_relative_to(review_runtime.reviewer_runtime_root(tmp_path) / "diagnostics")
+    assert [json.loads(line) for line in (diagnostic / "stdout.jsonl").read_text().splitlines()] == events
+    assert (diagnostic / "request.json").is_file()
+    assert (diagnostic / "stderr.txt").is_file()
+    assert (diagnostic / "launch.json").is_file()
+    metadata = json.loads((diagnostic / "capture.json").read_text())
+    assert metadata["status"] == "unadmitted"
+    assert "review_result" not in metadata and "reviewer_run" not in metadata
+    assert all(not item.stat().st_mode & 0o222 for item in diagnostic.iterdir())
+    assert not (review_runtime.reviewer_runtime_root(tmp_path) / "receipts/reviewer-process" / (metadata["run_id"] + ".json")).exists()
 
 
 def test_plugin_absent_native_review_publishes_and_consumes_actual_host_identity(tmp_path, monkeypatch):

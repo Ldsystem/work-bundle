@@ -29,7 +29,8 @@ NATIVE_DISABLED_FEATURES = (
 )
 NATIVE_ISOLATION = {
     "mechanism": "native-host-read-only", "network": "model-transport",
-    "write_scope": "read-only", "context": "fresh-bounded-input",
+    "write_scope": "read-only", "context": "fresh-native-host-context-with-explicit-evidence",
+    "host_skill_catalog": "may-be-present",
     "tools": "disabled-and-no-observed-activity", "os_process_isolation": False,
 }
 
@@ -39,6 +40,7 @@ def parse_native_reviewer_transcript(raw: str, stderr: str = "") -> tuple[str, d
     thread_id = None
     phase = "new"
     messages = []
+    model_activity = False
     try:
         # The host can report failed tool dispatch only on stderr, with no JSONL
         # tool item. Unknown diagnostics are inadmissible, not evidence of silence.
@@ -59,8 +61,14 @@ def parse_native_reviewer_transcript(raw: str, stderr: str = "") -> tuple[str, d
                     or str(item.get("message", "")).startswith("Code Mode is unavailable because code-mode host is disabled.")
                 ):
                     continue
+                if (phase == "running" and not model_activity and item["type"] == "error"
+                        and item.get("message") == "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."):
+                    # Observed host initialization notice, not an attempted tool
+                    # or model failure. Native catalog metadata may be present.
+                    continue
                 if phase != "running" or item["type"] not in {"agent_message", "reasoning"}:
                     raise ValueError("unexpected host activity")
+                model_activity = True
                 if item["type"] == "agent_message":
                     messages.append(item["text"])
             elif kind == "turn.completed" and phase == "running" and messages:
@@ -94,6 +102,32 @@ def _run_native_process(workspace: Path, argv: list[str], request: str) -> subpr
         environment["CODEX_HOME"] = os.environ["CODEX_HOME"]
     return subprocess.run(argv, cwd=workspace, env=environment, input=request, text=True,
                           capture_output=True, check=False, timeout=1800)
+
+
+def _retain_native_diagnostics(runtime_root, run_id, review_id, argv, request_bytes, executable_digest, completed):
+    """Keep actual transport evidence before admission; this is never a receipt."""
+    directory = runtime_root / "diagnostics/reviewer-native" / run_id
+    if not _inside(runtime_root, directory):
+        raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_PATH_ESCAPE")
+    directory.mkdir(parents=True, exist_ok=False)
+    items = {
+        "request.json": request_bytes,
+        "stdout.jsonl": completed.stdout.encode(),
+        "stderr.txt": completed.stderr.encode(),
+        "launch.json": json.dumps({"argv": argv, "executable_sha256": executable_digest}, sort_keys=True).encode(),
+    }
+    items["capture.json"] = json.dumps({
+        "schema": "reviewer-native-diagnostic-v1", "status": "unadmitted",
+        "run_id": run_id, "review_id": review_id, "exit_code": completed.returncode,
+        "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "artifacts": {name: _sha256_bytes(content) for name, content in items.items()},
+    }, sort_keys=True).encode()
+    for name, content in items.items():
+        target = directory / name
+        with target.open("xb") as stream:
+            stream.write(content)
+        target.chmod(0o400)
+    return str(directory)
 
 
 def _native_review_input(packet: dict[str, object]) -> dict[str, object]:
@@ -944,6 +978,7 @@ def _run_reviewer(workspace: Path, argv: list[str], *, native_request: dict[str,
         except (ValueError, OSError, SystemExit) as error:
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_EVIDENCE_INCOMPLETE") from error
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    run_id = f"reviewer-run-{uuid.uuid4()}"
     native = native_request is not None
     request_bytes = json.dumps(native_request, sort_keys=True, ensure_ascii=False).encode() if native else b""
     executable_digest = _sha256_bytes(Path(argv[0]).read_bytes()) if native else None
@@ -952,11 +987,17 @@ def _run_reviewer(workspace: Path, argv: list[str], *, native_request: dict[str,
     host_run_id = None
     native_worker_output = None
     if native:
+        diagnostic_path = _retain_native_diagnostics(
+            runtime_root, run_id, review_id, argv, request_bytes, executable_digest, completed)
         if completed.returncode != 0:
-            raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_PROCESS_FAILED", {"exit_code": completed.returncode})
+            raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_PROCESS_FAILED", {
+                "exit_code": completed.returncode, "diagnostic_path": diagnostic_path})
         if _sha256_bytes(Path(argv[0]).read_bytes()) != executable_digest:
-            raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_EXECUTABLE_MUTATED")
-        host_run_id, native_worker_output = parse_native_reviewer_transcript(completed.stdout, completed.stderr)
+            raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_EXECUTABLE_MUTATED", {"diagnostic_path": diagnostic_path})
+        try:
+            host_run_id, native_worker_output = parse_native_reviewer_transcript(completed.stdout, completed.stderr)
+        except ReviewerWorkspaceError as error:
+            raise ReviewerWorkspaceError(error.code, {**error.result, "diagnostic_path": diagnostic_path}) from error
     if _artifact_digest(workspace, packet) != state.get("evidence_digest"):
         raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
     denied = not native and _sandbox_denied(completed)
@@ -968,7 +1009,6 @@ def _run_reviewer(workspace: Path, argv: list[str], *, native_request: dict[str,
         )
     sealed = _seal_event_log(runtime_root, review_id)
     sandbox_state = state.get("sandbox") if isinstance(state.get("sandbox"), dict) else {}
-    run_id = f"reviewer-run-{uuid.uuid4()}"
     receipt = {
         "schema": "reviewer-native-receipt-v1" if native else "reviewer-process-receipt-v1",
         "run_id": run_id,
