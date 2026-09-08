@@ -81,10 +81,10 @@ def test_specification_uses_compact_semantic_convergence_and_workspace_policy() 
 def test_planner_allocates_methodology_capability_and_bounded_context() -> None:
     text = read("skills/orch-create-implementation-plan/SKILL.md")
     for token in [
-        "minimum orchestration overhead",
+        "expected total orchestration cost",
         "independently falsifiable",
         "bounded failure radius",
-        "Do not split one mechanical increment",
+        "coherent mechanical increment",
         "source-ID coverage",
         "dev-systematic-debugging",
         "dev-test-driven-development",
@@ -127,7 +127,7 @@ def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> 
         "TaskOwnershipScheduler.validate_acceptance",
         "there is no controller or single-agent fallback",
         "must not implement or repair task write scope",
-        "After two failed repair rounds",
+        "one scoped rereview",
         "acceptance_review.required: true",
         "review_required: true",
         "does not require `verdict: accept`",
@@ -254,6 +254,70 @@ def test_runtime_verification_classification_contract_routes_the_first_broken_ar
             assert token in text, f"{relative}: {token}"
         assert "unit tests alone" in text
         assert "must not decide the semantic class" in text
+
+
+def test_durable_owners_state_current_acceptance_and_review_semantics() -> None:
+    required = {
+        "rules/lifecycle-authority.md": [
+            "compact accepted result",
+            "acceptance once",
+            "historical handoff chains",
+            "current harness observation",
+        ],
+        "rules/repository-boundary.md": [
+            "issue-run artifacts",
+            "workspace control plane",
+            "exact baseline and endpoint",
+            "live `HEAD`",
+            "historical cleanup",
+        ],
+        "rules/work-bundle/wb-defect-evaluation.md": [
+            "causal class",
+            "first owning layer",
+            "before responding",
+        ],
+        "rules/orchestration/orch-artifact-authoring.md": [
+            "canonical semantic plan projection",
+            "static task admission",
+            "status-only",
+        ],
+        "rules/orchestration/orch-orchestration-boundary.md": [
+            "compact accepted result",
+            "transient acceptance evidence",
+            "historical handoff chains",
+        ],
+        "rules/orchestration/orch-review-completion.md": [
+            "reviewer infrastructure or provider failure",
+            "publication-only/control resume",
+            "finding-scoped repair review",
+            "previous finding/evidence frontier",
+        ],
+        "skills/orch-create-implementation-plan/SKILL.md": [
+            "canonical semantic plan projection",
+            "static task admission",
+            "status-only or append-only evidence",
+        ],
+        "skills/orch-execute-plan/SKILL.md": [
+            "compact accepted result",
+            "acceptance once",
+            "preserve the immutable package",
+            "affected frontier",
+        ],
+        "skills/orch-review-plan/SKILL.md": [
+            "compact accepted results",
+            "historical handoff chains",
+            "current harness observations",
+        ],
+        "references/assets/orchestration/contract/plan-v1.md": [
+            "canonical semantic plan projection",
+            "static task admission",
+            "status-only or append-only evidence",
+        ],
+    }
+    for relative, tokens in required.items():
+        text = read(relative)
+        for token in tokens:
+            assert token in text, f"{relative}: {token}"
 
 
 def test_workflow_makes_task_review_optional_on_the_chain() -> None:

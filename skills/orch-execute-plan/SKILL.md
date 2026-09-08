@@ -47,7 +47,7 @@ python3 scripts/orch.py validate-executor-result --task <task-path> --handoff <h
 
 ## Independent task review
 
-When `acceptance_review.required: true` or `review_required: true`, build the package from the task, handoff, and original base/current head. Skip this hop when review is not required.
+When `acceptance_review.required: true` or `review_required: true`, validate initial executor facts without demanding the future review verdict, then build the product candidate only from accepted product requirements/boundaries, exact base/current product source and diff identity, harness-owned normalized validation observations, and unresolved product concerns. Handoff, knowledge, reviewer-history, receipt/publication, status, and archive bookkeeping are not product-review inputs or findings. Controller/orchestration code is still product when the task allocates it. Skip this hop when review is not required.
 
 ```bash
 python3 scripts/orch.py build-review-package \
@@ -56,13 +56,17 @@ python3 scripts/orch.py build-review-package \
 
 Use `--head worktree` for pre-commit review; the compiler includes tracked, staged, unstaged, and untracked changes, assigns a stable worktree identity, and withholds protected-path content.
 
-The reviewer uses only the bounded package and `dev-code-review`. It compares the accepted Truth Basis, implementation, test oracle, and knowledge disposition, then returns `accept`, `repair`, or `blocked` with the reviewed tree identity and compact evidence-backed findings.
+The reviewer uses only that bounded product candidate and `dev-code-review`, returning compact `accept|repair` product judgment. Invalid or incomplete input is a controller input/runner failure outside the product verdict. The controller composes the native envelope, verifies independent provenance, and publishes it. A task or stage verdict becomes lifecycle authority only after exact result and native immutable reviewer-run receipt are stored and validated against controller-authorized target identity.
 
-On `repair`, return blocking findings to the task-owning subagent with the same brief and current diff. That subagent makes the smallest repair, reruns fresh task validation, regenerates the package from the original task base, and re-reviews. If subagent execution becomes unavailable, fail closed before repair mutation. After two failed repair rounds, raise capability one tier when available. Repeated evidence of a decomposition or requirement defect stops retries and routes to plan or specification repair.
+If reviewer infrastructure or provider failure prevents a verdict, preserve the immutable package and repair the first broken runner/provider owner. A capable independent reviewer may be reused. Do not change source, rerun validation, reslice, or require identity rotation for provider availability. Publication retry after a completed judgment reuses the exact result and receipt.
+
+On `repair`, return blocking findings to the existing task owner. Repair from the exact previously reviewed source, rerun only claim-relevant validation invalidated by the repair, and perform one scoped rereview of the affected frontier. Reuse unaffected executor and validation authority. Only a material authority, scope, acceptance, decomposition, or validation-allocation change resets to an initial frontier. Publication-only/control resume never redispatches the executor or reruns validation/review.
 
 ## Completion semantics
 
 A task becomes `Completed` only when implementation criteria, fresh validation, neutral subagent ownership provenance, no controller mutation of task write scope, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan completion derive from accepted children and declared dependency, barrier, and convergence gates.
+
+Enforce acceptance once: after the helper verifies binding, source/scope, subagent ownership, validation, and stored required-review authority, persist one compact accepted result. A later stored task repair review recomposes that result through the existing materializer, preserving executor and validation authority without redispatch, handoff rewrite, validation rerun, or embedded review history. Dependency release and later lifecycle steps consume the compact result plus current harness observations; they do not replay transient acceptance evidence or historical handoff chains.
 
 Use typed blockers:
 

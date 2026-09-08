@@ -55,6 +55,32 @@
         "mutation_epoch": {"type": ["integer", "null"], "minimum": 0}
       }
     },
+    "planningEconomics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "initial_cardinality", "plan_revisions", "plan_reviews",
+        "scope_allocation_repairs", "task_review_repairs", "validation_reruns",
+        "first_green_to_final_accept_ms"
+      ],
+      "properties": {
+        "initial_cardinality": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["phases", "tasks"],
+          "properties": {
+            "phases": {"type": "integer", "minimum": 0},
+            "tasks": {"type": "integer", "minimum": 0}
+          }
+        },
+        "plan_revisions": {"type": "integer", "minimum": 0},
+        "plan_reviews": {"type": "integer", "minimum": 0},
+        "scope_allocation_repairs": {"type": "integer", "minimum": 0},
+        "task_review_repairs": {"type": "integer", "minimum": 0},
+        "validation_reruns": {"type": "integer", "minimum": 0},
+        "first_green_to_final_accept_ms": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
     "stageEvent": {
       "type": "object",
       "additionalProperties": false,
@@ -77,7 +103,8 @@
         "return_reason": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
         "owner": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
         "identity": {"$ref": "#/$defs/identity"},
-        "privacy": {"const": "operational_metadata_only"}
+        "privacy": {"const": "operational_metadata_only"},
+        "planning_economics": {"$ref": "#/$defs/planningEconomics"}
       }
     }
   }

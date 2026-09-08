@@ -7,7 +7,7 @@ description: 'Create or repair an AI-ready WorkBundle implementation specificati
 
 ## Scope
 
-Create the smallest authoritative specification under `.work-bundle/orchestration/spec/active/`. Do not implement source changes or provision execution workspaces.
+Create a complete, nonredundant authoritative specification under `.work-bundle/orchestration/spec/active/`. Preserve every load-bearing requirement, constraint, interface, acceptance criterion, validation target, and decision needed downstream; such authority must not be removed merely to make the artifact smaller. Reject duplicate prose that adds no authority. Do not implement source changes or provision execution workspaces.
 
 ## Workflow
 

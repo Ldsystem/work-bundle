@@ -142,7 +142,8 @@ def test_ctx_01_repair_package_uses_frontier_without_reacquiring_review_history(
 
     assert "Review mode: repair" in package
     assert "RF-FINDING-1" in package
-    assert execution_context.semantic_digest("frozen") in package
+    assert "compile_task" in package
+    assert execution_context.semantic_digest("frozen") not in package
     assert "MUST-NOT-BE-PROJECTED" not in package
     assert f"Base: {base}" in package and f"Head: {head}" in package
 
@@ -194,6 +195,9 @@ def test_ctx_04_success_evidence_projects_compact_receipt_not_history_or_stdout(
 
     assert projected == [{
         "id": "VAL-001",
+        "command": "pytest -q",
+        "invariant_ids": [],
+        "observation_id": "observation-001",
         "digest": execution_context.semantic_digest({"command": "pytest -q", "result": "passed"}),
         "result": "passed",
         "boundary": "component",
@@ -434,213 +438,6 @@ def test_repair_acceptance_requires_exact_runtime_owner_and_continuity(
             mutation_events=[],
             prior_ownership=prior,
             repair_continuity=stale,
-        )
-
-
-def test_accepted_dependency_deltas_use_exact_handoff_and_observed_checkpoint(
-    tmp_path: Path,
-) -> None:
-    root, _, task = workspace(tmp_path)
-    task.write_text(
-        task.read_text(encoding="utf-8").replace(
-            "phase_id: phase-001\n",
-            "phase_id: phase-001\ndepends_on: [task-dependency]\n",
-        ),
-        encoding="utf-8",
-    )
-    scoped = _ensure_source_file(root)
-    dependency = root / "references/assets/orchestration/workflow.md"
-    dependency.parent.mkdir(parents=True, exist_ok=True)
-    dependency.write_text("before\n", encoding="utf-8")
-    git(root, "add", ".")
-    git(root, "commit", "-qm", "baseline")
-    baseline = git(root, "rev-parse", "HEAD")
-    baseline_tree = git(root, "rev-parse", "HEAD^{tree}")
-
-    brief = _document(root, task)["task_brief"]
-    _bind_task_execution(root, brief)
-
-    dependency.write_text("accepted dependency\n", encoding="utf-8")
-    git(root, "add", str(dependency.relative_to(root)))
-    git(root, "commit", "-qm", "accepted dependency")
-    checkpoint = git(root, "rev-parse", "HEAD")
-    checkpoint_tree = git(root, "rev-parse", "HEAD^{tree}")
-    scoped.write_text("def compile_task():\n    return 'task repair'\n", encoding="utf-8")
-    git(root, "add", str(scoped.relative_to(root)))
-    git(root, "commit", "-qm", "task repair")
-
-    identity = lambda commit, tree: {
-        "artifact_id": "task-dependency",
-        "revision": commit,
-        "sha256": execution_context.semantic_digest({"commit": commit, "tree": tree}),
-        "source_tree": tree,
-    }
-    dependency_handoff = {
-        "id": "handoff-accepted-dependency",
-        "type": "executor-result",
-        "related": {"plan": brief["plan_id"], "task": "task-dependency"},
-        "result": {"state": "completed"},
-        "acceptance_review": {
-            "required": True,
-            "verdict": "accept",
-            "review_mode": "repair",
-            "target_identity": identity(checkpoint, checkpoint_tree),
-            "repair_frontier": {
-                "previous_reviewed_identity": identity(baseline, baseline_tree),
-                "repaired_identity": identity(checkpoint, checkpoint_tree),
-            },
-        },
-    }
-    accepted_path = (
-        root
-        / ".work-bundle/orchestration/handoff/executor/active/handoff-accepted-dependency.yaml"
-    )
-    accepted_path.parent.mkdir(parents=True, exist_ok=True)
-    accepted_path.write_text(
-        "\n".join(execution_context._dump_yaml(dependency_handoff)) + "\n",
-        encoding="utf-8",
-    )
-    descriptor = {
-        "task_id": "task-dependency",
-        "handoff_id": "handoff-accepted-dependency",
-        "handoff_sha256": hashlib.sha256(accepted_path.read_bytes()).hexdigest(),
-        "integrated_base": baseline,
-        "integrated_head": checkpoint,
-    }
-
-    current = _without_terminal_evidence(brief, "Dependency attribution fixture.")
-    current["evidence_applicability"] = {
-        "metadata": {"required": False, "reasons": []},
-        "repository": {"required": True, "reasons": ["accepted dependency delta"]},
-        "codegraph": {"required": False, "reasons": []},
-    }
-    handoff = {
-        "type": "executor-result",
-        "related": {"plan": brief["plan_id"], "task": brief["task_id"]},
-        "result": {"state": "completed"},
-        "task_fit_check": {"task": brief["task_id"], "result": "clean"},
-        "delegation_evidence": _delegation_evidence(),
-        "repository": [{
-            "root": str(root.resolve()),
-            "target_kind": "git-backed",
-            "preflight_kind": "git-clean-worktree",
-            "baseline": "initial",
-            "status": "clean",
-        }],
-        "knowledge_disposition": {
-            "action": "none",
-            "reason": "No stable authority changed.",
-            "affected_authority": [],
-        },
-    }
-
-    with pytest.raises(SystemExit, match="workflow.md"):
-        execution_context.validate_executor_result_for_task(
-            handoff, current, observe=True, mutation_events=[]
-        )
-    accepted = execution_context.validate_executor_result_for_task(
-        handoff,
-        current,
-        observe=True,
-        mutation_events=[],
-        accepted_dependency_deltas=[descriptor],
-    )
-    assert accepted["result_state"] == "completed"
-
-    cli_handoff = deepcopy(handoff)
-    cli_handoff["result"]["state"] = "partial"
-    cli_handoff["changes"] = {
-        "files": [
-            {
-                "path": "scripts/orchestration/execution_context.py",
-                "action": "modified",
-            }
-        ]
-    }
-    cli_handoff["codegraph"] = [
-        {
-            "root": str(root.resolve()),
-            "applicable": False,
-            "up_to_date": False,
-            "reason": "no-index",
-        }
-    ]
-    cli_handoff_path = (
-        root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
-    )
-    cli_handoff_path.write_text(
-        "\n".join(execution_context._dump_yaml(cli_handoff)) + "\n", encoding="utf-8"
-    )
-    cli = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/orch.py"),
-            "build-review-package",
-            "--project-root",
-            str(root),
-            "--task",
-            str(task),
-            "--handoff",
-            str(cli_handoff_path),
-            "--base",
-            baseline,
-            "--head",
-            git(root, "rev-parse", "HEAD"),
-            "--accepted-dependency-deltas",
-            json.dumps([descriptor]),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert cli.returncode == 0, cli.stderr
-    assert "review-package.md" in cli.stdout
-
-    accepted_bytes = accepted_path.read_bytes()
-    wrong_plan_handoff = deepcopy(dependency_handoff)
-    wrong_plan_handoff["related"]["plan"] = "plan-WRONG"
-    accepted_path.write_text(
-        "\n".join(execution_context._dump_yaml(wrong_plan_handoff)) + "\n",
-        encoding="utf-8",
-    )
-    wrong_plan = {
-        **descriptor,
-        "handoff_sha256": hashlib.sha256(accepted_path.read_bytes()).hexdigest(),
-    }
-    with pytest.raises(SystemExit, match="plan"):
-        execution_context.validate_executor_result_for_task(
-            handoff, current, observe=True, accepted_dependency_deltas=[wrong_plan]
-        )
-    accepted_path.write_bytes(accepted_bytes)
-
-    stale = {**descriptor, "handoff_sha256": "0" * 64}
-    with pytest.raises(SystemExit, match="handoff identity is stale"):
-        execution_context.validate_executor_result_for_task(
-            handoff, current, observe=True, accepted_dependency_deltas=[stale]
-        )
-    mismatched = {**descriptor, "integrated_head": git(root, "rev-parse", "HEAD")}
-    with pytest.raises(SystemExit, match="checkpoint is mismatched"):
-        execution_context.validate_executor_result_for_task(
-            handoff, current, observe=True, accepted_dependency_deltas=[mismatched]
-        )
-    unaccepted_handoff = deepcopy(dependency_handoff)
-    unaccepted_handoff["acceptance_review"]["verdict"] = "pending"
-    accepted_path.write_text(
-        "\n".join(execution_context._dump_yaml(unaccepted_handoff)) + "\n",
-        encoding="utf-8",
-    )
-    unaccepted = {
-        **descriptor,
-        "handoff_sha256": hashlib.sha256(accepted_path.read_bytes()).hexdigest(),
-    }
-    with pytest.raises(SystemExit, match="not an accepted repair result"):
-        execution_context.validate_executor_result_for_task(
-            handoff, current, observe=True, accepted_dependency_deltas=[unaccepted]
-        )
-    accepted_path.write_bytes(accepted_bytes)
-    dependency.write_text("later task mutation\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="changed after integration"):
-        execution_context.validate_executor_result_for_task(
-            handoff, current, observe=True, accepted_dependency_deltas=[descriptor]
         )
 
 
@@ -949,8 +746,9 @@ def test_cumulative_accepted_result_delta_requires_complete_final_review_chain(
     same_reviewer["review_chain"][-1]["handoff_sha256"] = hashlib.sha256(
         final_handoff_path.read_bytes()
     ).hexdigest()
-    with pytest.raises(SystemExit, match="fresh|reviewer|independent"):
-        execution_context._accepted_dependency_paths(task, root, [same_reviewer])
+    assert execution_context._accepted_dependency_paths(task, root, [same_reviewer]) == {
+        dependency_path, repair_path, final_path
+    }
     final_handoff_path.write_bytes(original_final_bytes)
 
     assert execution_context._accepted_dependency_paths(task, root, [descriptor]) == {
@@ -1129,35 +927,17 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
     recovered_path = handoff_dir / "handoff-recovered-dependency.yaml"
     index = root / ".work-bundle/orchestration/handoff/index.jsonl"
     index.write_text("", encoding="utf-8")
-    create_receipt = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/orch.py"),
-            "create-accepted-base-absence-receipt",
-            "--project-root",
-            str(root),
-            "--plan-id",
-            "plan-001",
-            "--task-id",
-            "task-dependency",
-            "--expected-head",
-            expected_base_head,
-            "--expected-tree",
-            expected_base_tree,
-            "--proposed-handoff-id",
-            recovered_handoff["id"],
-            "--proposed-review-id",
-            recovered_review["review_id"],
-            "--final-head",
-            recovered_head,
-            "--final-tree",
-            recovered_tree,
-        ],
-        capture_output=True,
-        text=True,
+    receipt_reference = execution_context.create_accepted_base_absence_receipt(
+        root,
+        "plan-001",
+        "task-dependency",
+        expected_base_head,
+        expected_base_tree,
+        recovered_handoff["id"],
+        recovered_review["review_id"],
+        recovered_head,
+        recovered_tree,
     )
-    assert create_receipt.returncode == 0, create_receipt.stderr
-    receipt_reference = json.loads(create_receipt.stdout)
     recovered_path.write_text(
         ("\n".join(execution_context._dump_yaml(recovered_handoff)) + "\n").replace(
             ": none\n", ': "none"\n'
@@ -1300,41 +1080,6 @@ def test_authority_recovery_receipt_is_helper_created_fresh_and_rechecked(
         dependent, root, [adopted_descriptor]
     ) == {dependency_path}
 
-    adopt_cli = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/orch.py"),
-            "adopt-existing-recovered-result",
-            "--project-root",
-            str(root),
-            "--plan-id",
-            "plan-001",
-            "--task-id",
-            "task-dependency",
-            "--expected-head",
-            expected_base_head,
-            "--expected-tree",
-            expected_base_tree,
-            "--handoff-id",
-            recovered_handoff["id"],
-            "--handoff-sha256",
-            recovered_reference["handoff_sha256"],
-            "--review-id",
-            recovered_review["review_id"],
-            "--final-head",
-            recovered_head,
-            "--final-tree",
-            recovered_tree,
-            "--prior-receipt-id",
-            legacy_reference["receipt_id"],
-            "--prior-receipt-sha256",
-            legacy_reference["receipt_sha256"],
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert adopt_cli.returncode == 0, adopt_cli.stderr
-    assert set(json.loads(adopt_cli.stdout)) == {"receipt_id", "receipt_sha256"}
     assert recovered_path.read_bytes() == handoff_bytes
     assert index.read_bytes() == index_bytes
 

@@ -22,6 +22,30 @@ class OwnershipBlocker(RuntimeError):
         super().__init__(f"{code}: {reason}")
 
 
+def canonical_relative_path(path: str, *, allow_tree_pattern: bool = False) -> str:
+    """Return one safe POSIX-relative meaning for a path or narrow tree scope."""
+
+    text = str(path).strip()
+    tree_pattern = allow_tree_pattern and text.endswith("/**")
+    if tree_pattern:
+        text = text[:-3]
+    if (
+        not text
+        or text in {".", "./"}
+        or text.startswith("/")
+        or "\\" in text
+        or any(character in text for character in "*?[]")
+    ):
+        raise OwnershipBlocker("workspace-blocked", "scope path is empty or unsafe")
+    parsed = PurePosixPath(text)
+    if parsed.is_absolute() or ".." in parsed.parts:
+        raise OwnershipBlocker("workspace-blocked", "scope path is unsafe")
+    normalized = parsed.as_posix()
+    if not normalized or normalized == ".":
+        raise OwnershipBlocker("workspace-blocked", "scope path is empty or unsafe")
+    return f"{normalized}/**" if tree_pattern else normalized
+
+
 @dataclass(frozen=True)
 class TaskCandidate:
     task_id: str
@@ -41,6 +65,8 @@ class TaskCandidate:
             raise ValueError("write_scope must contain explicit paths")
         if not self.execution_workspace.strip():
             raise ValueError("execution_workspace must be non-empty")
+        for path in self.write_scope:
+            canonical_relative_path(path)
 
 
 @dataclass(frozen=True)
@@ -121,8 +147,8 @@ def normalize_subagent_provenance(
 
 
 def _scope_matches(path: str, scope: str) -> bool:
-    left = path.strip().removeprefix("./").rstrip("/")
-    right = scope.strip().removeprefix("./").rstrip("/")
+    left = canonical_relative_path(path)
+    right = canonical_relative_path(scope, allow_tree_pattern=True).removesuffix("/**")
     return left == right or left.startswith(right + "/") or right.startswith(left + "/")
 
 
@@ -154,13 +180,10 @@ def validate_task_acceptance_ownership(
         for path in paths:
             if not isinstance(path, str):
                 raise OwnershipBlocker("review-blocked", "mutation event paths must contain strings")
-            normalized = path.strip().removeprefix("./")
-            parsed = PurePosixPath(normalized)
-            if (not normalized or parsed.is_absolute() or ".." in parsed.parts
-                    or normalized in {".", "./"} or "\\" in normalized
-                    or any(character in normalized for character in "*?[]")):
-                raise OwnershipBlocker("review-blocked", "mutation event path is unsafe")
-            changed.append(parsed.as_posix())
+            try:
+                changed.append(canonical_relative_path(path))
+            except OwnershipBlocker as error:
+                raise OwnershipBlocker("review-blocked", "mutation event path is unsafe") from error
         if actor_kind != "controller":
             continue
         if _scopes_overlap(changed, write_scope):

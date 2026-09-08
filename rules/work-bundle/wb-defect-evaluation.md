@@ -22,6 +22,8 @@ Classify observed problems during WorkBundle-guided work early enough to preserv
 - Use the active workflow chain only as a bounded first-principles aid when visible evidence does not already establish WorkBundle relatedness.
 - Stop tracing as soon as visible evidence establishes that the problem is related to a WorkBundle toolkit artifact or workflow contract; do not continue searching for a deeper root cause before acting.
 - Classify the observed problem as exactly one of `work-bundle-scoped`, `project-scoped`, `mixed`, or `undetermined`.
+- Determine the causal class before responding to a failed evaluator, review, validation, or lifecycle gate by reading the exact failing assertion and current authority, then route repair to the first owning layer: implementation, task/decomposition plan, specification/authority, evidence harness, knowledge, repository, or workspace.
+- Preserve current accepted authority and review evidence when the causal class is observation-only or the failure belongs to infrastructure; a gate result or evaluator expectation cannot itself create a source requirement.
 - Use `work-bundle-scoped` when visible evidence shows a WorkBundle toolkit artifact or workflow contract caused or materially contributed to the problem.
 - Use `project-scoped` when the problem is limited to project business logic, project implementation, project data, or project-specific requirements with no visible WorkBundle process cause.
 - Use `mixed` when both WorkBundle toolkit behavior and project-specific behavior materially contribute to the problem.
@@ -42,6 +44,7 @@ Classify observed problems during WorkBundle-guided work early enough to preserv
 - Do not create a new defect evidence file when evaluation returns `same-scope specification-owned` handling for exact current WorkBundle specification work.
 - Do not use `same-scope specification-owned` handling for unrelated WorkBundle defects, historical issues outside the active specification scope, or project-specific implementation defects.
 - Do not expand evaluation into unrelated repository browsing, historical reconstruction, durable knowledge retrieval, or broad contract exploration.
+- Do not reslice a plan, reset review, rerun validation, or mutate historical evidence before the causal class identifies that layer as the first owning layer.
 - Do not store raw chat logs, private reasoning, or executor-result forbidden advice fields as the evaluation or evidence surface.
 - Do not silently continue when an `undetermined` classification affects authority, target scope, validation, or continuation.
 

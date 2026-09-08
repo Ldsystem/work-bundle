@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -35,6 +36,28 @@ def accepted_stage_boundary_for_legacy_archive_unit_tests(monkeypatch):
 
 def read(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def load_orchestration_dispatcher():
+    previous_core = sys.modules.get("core")
+    core_spec = importlib.util.spec_from_file_location("core", ORCH_ROOT / "core.py")
+    assert core_spec is not None and core_spec.loader is not None
+    core_module = importlib.util.module_from_spec(core_spec)
+    sys.modules["core"] = core_module
+    try:
+        core_spec.loader.exec_module(core_module)
+        dispatcher_spec = importlib.util.spec_from_file_location(
+            "orchestration_workflow_contracts_dispatcher", ORCH_ROOT / "dispatcher.py"
+        )
+        assert dispatcher_spec is not None and dispatcher_spec.loader is not None
+        dispatcher = importlib.util.module_from_spec(dispatcher_spec)
+        dispatcher_spec.loader.exec_module(dispatcher)
+        return dispatcher
+    finally:
+        if previous_core is None:
+            sys.modules.pop("core", None)
+        else:
+            sys.modules["core"] = previous_core
 
 
 def evals() -> list[dict[str, object]]:
@@ -489,9 +512,7 @@ def test_archive_plan_completed_handoff_rejects_missing_harness_mutation_evidenc
 
 
 def test_archive_plan_cli_accepts_explicit_harness_mutation_evidence() -> None:
-    from dispatcher import build_parser
-
-    parsed = build_parser().parse_args(
+    parsed = load_orchestration_dispatcher().build_parser().parse_args(
         [
             "archive-plan",
             "--id",
@@ -906,6 +927,20 @@ def test_task_contract_compiles_methodology_capability_and_review() -> None:
         assert token in contract
 
 
+def test_task_contract_defines_material_review_freshness_without_identity_rotation() -> None:
+    contract = read("references/assets/orchestration/contract/task-v1.md")
+
+    for token in [
+        "`review_reset` bound to the prior review, classified reason, and current target and evidence",
+        "may reuse the same agent identity",
+        "judgment-capable",
+        "authorship/repair/decision/deliberation participation",
+        "review provenance",
+    ]:
+        assert token in contract
+    assert "may not reuse the repair reviewer identity" not in contract
+
+
 def test_executor_result_contract_carries_acceptance_review() -> None:
     contract = read("references/assets/orchestration/contract/handoff-executor-result-v1.md")
     for token in [
@@ -944,7 +979,7 @@ def test_workflow_separates_durable_artifacts_from_runtime_packets() -> None:
         "earliest ordinary task",
         "knowledge disposition",
         "review owns approved persistence",
-        "minimum orchestration overhead",
+        "expected total orchestration cost",
         "accepted task dispositions",
     ]:
         assert token in workflow
@@ -953,18 +988,38 @@ def test_workflow_separates_durable_artifacts_from_runtime_packets() -> None:
 def test_workflow_assigns_review_ownership_and_repair_loop() -> None:
     workflow = read("references/assets/orchestration/workflow.md")
     for token in [
-        "Reviewers own acceptance judgment",
+        "Product reviewers judge accepted product requirements",
         "Schedulers own dependencies",
         "they do not perform code-quality review",
         "requires a subagent owner for every task",
         "fails closed before task mutation",
         "dispatch before any wait",
-        "After two failed low-cost repair rounds",
+        "one scoped rereview",
         "A task becomes `Completed` only when",
         "`Completed` does not require `verdict: accept` unless review was required",
         "optional task review when acceptance_review.required: true",
         "accepted Truth Basis",
-        "test oracle",
+        "normalized validation observations",
+    ]:
+        assert token in workflow
+
+
+def test_workflow_uses_accepted_results_without_lifecycle_replay() -> None:
+    workflow = read("references/assets/orchestration/workflow.md")
+    for token in [
+        "acceptance once",
+        "compact accepted result",
+        "historical handoff chains",
+        "transient acceptance evidence",
+        "current harness observation",
+        "reviewer infrastructure or provider failure",
+        "same immutable review package",
+        "previous finding/evidence frontier",
+        "status-only or append-only evidence",
+        "causal class",
+        "first owning layer",
+        "exact baseline and endpoint",
+        "issue-run artifacts",
     ]:
         assert token in workflow
 
@@ -972,11 +1027,11 @@ def test_workflow_assigns_review_ownership_and_repair_loop() -> None:
 def test_review_rule_uses_typed_resume_routing() -> None:
     rule = read("rules/orchestration/orch-review-completion.md")
     for token in [
-        "review-blocked",
         "knowledge-blocked",
         "repository-blocked",
         "workspace-blocked",
-        "resume the owning execution step",
+        "Route missing evidence to its first owner",
+        "publication-only/control resume",
         "plan repair only for a decomposition defect",
         "specification repair only for a requirement, design, or authority defect",
         "Do not create a repair specification for every failed review gate",
@@ -1248,7 +1303,7 @@ def test_archive_plan_accepts_mapped_invariant_handoff_with_harness_observation(
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
 
-def test_archive_plan_forwards_execution_binding_into_task_revalidation(tmp_path: Path) -> None:
+def test_archive_plan_does_not_replay_task_validation_from_execution_binding(tmp_path: Path) -> None:
     from plans import cmd_archive_plan
 
     root, binding, command = _mapped_archive_workspace(tmp_path)
@@ -1268,18 +1323,17 @@ def test_archive_plan_forwards_execution_binding_into_task_revalidation(tmp_path
     restored = tmp_path / "restored-mapped"
     restored.mkdir()
     restored_root, restored_binding, _command = _mapped_archive_workspace(restored)
-    with pytest.raises(SystemExit, match=rf"acceptance-blocked: declared plan-level acceptance {command} is missing"):
-        cmd_archive_plan(
-            archive_args(
-                restored_root,
-                "plan-001",
-                workspace_id="wrong-workspace",
-                execution_id=restored_binding["execution_id"],
-                repository_id=restored_binding["repository_id"],
-                execution_runtime_root=restored_binding["runtime_root"],
-            )
+    cmd_archive_plan(
+        archive_args(
+            restored_root,
+            "plan-001",
+            workspace_id="wrong-workspace",
+            execution_id=restored_binding["execution_id"],
+            repository_id=restored_binding["repository_id"],
+            execution_runtime_root=restored_binding["runtime_root"],
         )
-    assert (restored_root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
+    )
+    assert (restored_root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
 
 def test_passing_declared_plan_acceptance_allows_archive_without_second_reviewer(tmp_path: Path) -> None:
@@ -1498,7 +1552,7 @@ def test_stale_plan_acceptance_after_later_material_task_blocks_archive(tmp_path
         actual_commit=later,
     )
 
-    with pytest.raises(SystemExit, match="acceptance-blocked:.*is stale"):
+    with pytest.raises(SystemExit, match="acceptance-blocked:.*is failed"):
         cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
@@ -1604,7 +1658,7 @@ def test_same_day_out_of_id_order_stale_plan_acceptance_blocks_archive(tmp_path:
         actual_commit=later,
     )
 
-    with pytest.raises(SystemExit, match="acceptance-blocked:.*is stale"):
+    with pytest.raises(SystemExit, match="acceptance-blocked:.*is failed"):
         cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()

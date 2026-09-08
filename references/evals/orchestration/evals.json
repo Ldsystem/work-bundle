@@ -522,6 +522,60 @@
       "prompt": "A planner allocates source_ids: [EXC-001] for a deferred excellence proposal while compiling an implementation plan.",
       "expected_output": "Rejects EXC-* proposal IDs as non-authoritative; planning and the compiled brief use only the stable requirement, constraint, interface, acceptance-criterion, or validation-target IDs that an accepted proposal projected to.",
       "files": []
+    },
+    {
+      "id": "PD-01",
+      "prompt": "Plan a change whose production seams support six tasks, while a reviewer proposes a three-task target to make the plan shorter.",
+      "expected_output": "Rejects the task-count target and does not optimize task or phase cardinality; it uses the six evidenced ownership, dependency, validation, review, and repair seams when they bound expected total orchestration cost.",
+      "files": []
+    },
+    {
+      "id": "PD-02",
+      "prompt": "A plan allocates tests and a helper refactor but leaves the authoritative production path with no implementation owner.",
+      "expected_output": "Rejects helper-only allocation until every authoritative production path has a production owner and the production change, validation, and repair responsibility are explicitly allocated.",
+      "files": []
+    },
+    {
+      "id": "PD-03",
+      "prompt": "A planner groups two changes that have different owners, validation oracles, and independently routable repair outcomes.",
+      "expected_output": "Splits at the evidenced ownership, oracle, and repair frontier so a failure returns to the smallest affected plan region without widening unrelated accepted work.",
+      "files": []
+    },
+    {
+      "id": "PD-04",
+      "prompt": "A planner proposes splitting one production edit, its direct contract test, and its local documentation merely because three files are involved.",
+      "expected_output": "Keeps the coherent mechanical increment together under one production owner, oracle, and repair frontier; file count is not a decomposition seam.",
+      "files": []
+    },
+    {
+      "id": "PD-05",
+      "prompt": "A plan creates a new phase for each lifecycle label even though no dependency barrier or convergence boundary separates the work.",
+      "expected_output": "Rejects lifecycle-label phases and creates a phase only for an actual barrier or convergence boundary with concrete readiness and ownership evidence.",
+      "files": []
+    },
+    {
+      "id": "PD-06",
+      "prompt": "A specification is shortened by deleting a unique validation target and compatibility constraint while retaining repeated summary prose.",
+      "expected_output": "Restores a complete, nonredundant authority set: preserves every load-bearing field required downstream and removes duplicate prose rather than unique authority.",
+      "files": []
+    },
+    {
+      "id": "PD-07",
+      "prompt": "Execution proves one task materially under-decomposed after its repair frontier separates into two independently owned regions.",
+      "expected_output": "Stops repeatedly enlarging the task, requires a return to the plan, and reslices only the affected region while preserving the original binding, baseline, accepted unaffected regions, and typed repair route.",
+      "files": []
+    },
+    {
+      "id": "PD-09",
+      "prompt": "A planner proposes separate hardening, compatibility, and recovery tasks without current authority, repository, dependency, validation, or acceptance evidence for them.",
+      "expected_output": "Rejects speculative fragmentation and adds no tasks until a current material seam proves the scope; it does not create a second review, retry, or recovery subsystem.",
+      "files": []
+    },
+    {
+      "id": "PD-10",
+      "prompt": "One module exposes two entry points, but current repository evidence shows they share one production owner, oracle, and repair path.",
+      "expected_output": "Does not split by symbol count; independently owned entry points become separate tasks only when current repository evidence proves distinct production or repair seams.",
+      "files": []
     }
   ],
   "v4_evals": [

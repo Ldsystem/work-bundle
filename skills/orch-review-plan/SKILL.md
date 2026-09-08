@@ -29,6 +29,9 @@ Verify:
 - the resulting final Knowledge Base Update disposition is `completed` or `not-needed` before archive;
 - approved `ks-*` return evidence exists when durable knowledge was required;
 - allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh completed or are explicitly not applicable.
+- dependency, finalization, resume, and archive decisions consume compact accepted results and current harness observations without replaying transient evidence or historical handoff chains.
+- required task and stage verdicts are admitted from immutable review-store references with native reviewer-run receipts and still-current targets; bare output, unattached receipts, and bare findings are not lifecycle authority.
+- product findings concern accepted product requirements/boundaries, exact product source/diff, normalized harness observations, and unresolved product concerns; handoff, knowledge disposition, reviewer history, and publication/status/archive bookkeeping stay with controller audit.
 
 ## Evidence capability correspondence
 
@@ -57,8 +60,12 @@ Use project files only for bounded identity and finalization evidence. Do not br
 ## Typed routing
 
 ```text
-missing handoff/status/validation/review evidence
-  -> review-blocked -> resume owning execution step
+missing initial executor handoff
+  -> review-blocked -> resume initial result owner
+accepted-task source repair
+  -> existing task owner -> claim-relevant validation -> scoped rereview
+publication/status/archive control failure
+  -> controller owner -> reuse compact accepted result and completed review
 knowledge work or return evidence incomplete
   -> knowledge-blocked -> resume approved ks-* delegate-return path
 metadata/index/repository finalization incomplete

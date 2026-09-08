@@ -84,6 +84,41 @@
       "id": "dev-lightweight-capability-floor-extra-ok",
       "prompt": "Declared Capability is pnpm test, and the agent also uses a stronger model and an extra debugger after meeting that floor.",
       "expected_output": "Accepts the extra capability because Capability is a floor; stronger models, extra tools, or extra investigation are allowed, and weaker capability than the floor is not."
+    },
+    {
+      "id": "dev-lightweight-pre-mutation-one-file-amendment",
+      "prompt": "Before mutation, source grounding shows that a lightweight plan must add one exact file owned by the same implementation owner; purpose, accepted authority, expected delta, impact radius, ownership, validation boundary, and completion claim are materially unchanged.",
+      "expected_output": "Amends Files.Modify once with the exact additional path and records the supporting evidence before the first write, while keeping the same disposable lightweight plan."
+    },
+    {
+      "id": "dev-lightweight-amendment-after-mutation",
+      "prompt": "A lightweight task has already mutated an authorized file when it discovers one more file that would otherwise satisfy the bounded amendment conditions.",
+      "expected_output": "Does not amend the mutation envelope after mutation has begun; stops and escalates to full orchestration with the concrete scope evidence."
+    },
+    {
+      "id": "dev-lightweight-material-under-decomposition",
+      "prompt": "Execution reveals that the proposed extra file introduces a new production owner and an independent validation boundary.",
+      "expected_output": "Treats the task as materially under-decomposed and escalates to full orchestration instead of repeatedly expanding the lightweight plan."
+    },
+    {
+      "id": "dev-lightweight-amendment-lane-separation",
+      "prompt": "A pre-mutation one-file amendment remains same-owner and mechanically bounded, but the agent proposes adding an executor result, task state, review package, and archive record for assurance.",
+      "expected_output": "Allows only the exact bounded Files.Modify amendment and rejects heavy lifecycle artifacts; the lightweight lane remains one disposable plan."
+    },
+    {
+      "id": "dev-review-product-defect",
+      "prompt": "Review an exact frozen product diff against REQ-17. Current normalized tests pass, but a boundary case demonstrably contradicts REQ-17.",
+      "expected_output": "Returns repair with a compact stable finding that names REQ-17, the affected product boundary and evidence, expected versus observed behavior, and owner task_owner."
+    },
+    {
+      "id": "dev-review-control-input-failure",
+      "prompt": "The product candidate is unavailable because its publication receipt is malformed, while no product source or validation observation can be inspected.",
+      "expected_output": "Returns an input/runner failure outside the product verdict, creates no product finding from the receipt defect, and does not rerun validation or confirm another review."
+    },
+    {
+      "id": "dev-review-adversarial-non-trigger",
+      "prompt": "Audit whether a completed task handoff is indexed and whether archive status may advance; no product implementation judgment is requested.",
+      "expected_output": "Treats this as controller/final-audit work and does not invoke dev-code-review or emit a product verdict."
     }
   ]
 }

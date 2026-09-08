@@ -16,7 +16,11 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 
 ## Must
 
-- Confirm each required task review compared the accepted Truth Basis, implementation, test oracle, and task-local knowledge disposition before accepting the task.
+- Confirm each required task review judged the accepted product requirements/boundaries, exact product source/diff, normalized validation observations, and unresolved product concerns before accepting the task.
+- Admit a task-or-stage verdict or route a finding only from its immutable review-store reference after native reviewer-run receipt and exact current-target validation. Treat bare reviewer output, unattached receipts, and bare findings as observations only.
+- Keep product review candidates limited to accepted product requirements/boundaries, exact source/diff identity, harness-owned normalized observations, and unresolved product concerns. Handoff, knowledge, reviewer-history, and publication/archive bookkeeping remain controller audit concerns and cannot become review inputs. Controller/orchestration code remains reviewable product when allocated by the task.
+- On reviewer infrastructure or provider failure, preserve the immutable candidate and repair the first broken preparation/provider owner. A still-independent capable reviewer may be reused; infrastructure failure does not itself require identity rotation, source change, validation rerun, or another product review after a completed judgment.
+- For a finding-scoped repair review under unchanged authority, carry exactly the previous finding/evidence frontier and review only the repaired identity and affected boundaries. Reset to an initial frontier only after a material authority, scope, acceptance, decomposition, or validation-allocation change.
 - Check that declared completion evidence corresponds to the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints.
 - Before archive or completion, confirm every accepted validation-bearing invariant has a compiled `evidence_capability` entry and capable, current, correctly bounded harness-observed evidence under its allocated INV/VAL identities. Treat incapable green, contradiction, staleness, wrong-boundary, failure, missing, or unexecuted evidence as negative acceptance evidence, not closure.
 - Use `no_validation_bearing_obligation + reason` only when no accepted validation-bearing obligation or design decision exists. Do not infer an empty evidence-capability map from a WOR-61 `none_relevant` impact result.
@@ -30,7 +34,7 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Verify declared dependency, barrier, and convergence gates from recorded evidence.
 - Use declared plan-level/integration acceptance from recorded validation; do not start another implementation-review agent to produce plan-level acceptance.
 - Aggregate only accepted task dispositions. Any accepted `update`, `supersede`, or `reclassify` promotes final durable closure to `required` even when the upstream specification says `not-needed`; accepted `none` and rejected dispositions do not trigger closure.
-- Route missing handoff, status, validation, or review evidence to `review-blocked` and resume the owning execution step.
+- Route missing evidence to its first owner: an initial executor result may require its handoff; an accepted-task source repair resumes the existing task owner with claim-relevant validation and a scoped rereview; publication-only/control resume uses the compact accepted result and retries control publication/finalization without executor redispatch, handoff rewrite, validation rerun, or review rerun.
 - Route incomplete durable knowledge work to `knowledge-blocked` and resume the approved `ks-*` delegate-return path.
 - Route incomplete repository metadata, index, workspace, or archive mechanics to `repository-blocked` or `workspace-blocked` and use bounded deterministic helpers.
 - Require the execution-evidence-driven final Knowledge Base Update disposition to be `completed` or `not-needed` before archive; archive remains blocked while promoted closure lacks validated keep-summarizing return evidence.
@@ -51,6 +55,7 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Do not start another implementation-review agent for plan-level acceptance.
 - Do not repair implementation or test code during final review.
 - Do not substitute project-file inspection for accepted task-review evidence on tasks that explicitly required review.
+- Do not replan, change source, rerun validation, or reconstruct review history solely because reviewer infrastructure or provider failure requires replacement.
 - Do not create a repair specification for every failed review gate.
 - Do not archive while required knowledge, validation, review, repository, or workspace evidence is unresolved.
 - Do not close an invariant on a green oracle that cannot observe it or that contradicts accepted authority.

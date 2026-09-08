@@ -28,6 +28,29 @@ REVIEW_TARGET_KINDS = frozenset({"task", "stage"})
 MATERIAL_CHANGE_CLASSES = frozenset(
     {"material_redesign", "authority", "scope", "acceptance", "decomposition", "validation_allocation"}
 )
+EVIDENCE_CAUSAL_CLASSES = frozenset(
+    {
+        "claim_relevant_drift",
+        "implementation_defect",
+        "authority_plan_gap",
+        "evaluator_control_defect",
+        "non_claim_relevant",
+    }
+)
+EVIDENCE_CAUSAL_ROUTES: dict[str, tuple[str, str]] = {
+    "claim_relevant_drift": ("revalidate_claim", "route_current_owner"),
+    "implementation_defect": ("repair_task", "route_current_owner"),
+    "authority_plan_gap": ("repair_authority_plan", "route_current_owner"),
+    "evaluator_control_defect": ("repair_evaluator_control", "route_evaluator_control_owner"),
+    "non_claim_relevant": ("none", "diagnostic_only"),
+}
+EVIDENCE_CAUSAL_COMPARISONS = {
+    "claim_relevant_drift": "claim_relevant",
+    "implementation_defect": "claim_relevant",
+    "authority_plan_gap": "claim_relevant",
+    "evaluator_control_defect": "evaluator_only",
+    "non_claim_relevant": "unrelated",
+}
 PARTICIPATION_FIELDS = (
     "authorship",
     "repair_participation",
@@ -61,7 +84,39 @@ FINDING_KEYS = frozenset(
     }
 )
 TARGET_KEYS = frozenset({"artifact_id", "revision", "sha256", "source_tree"})
+AFFECTED_REGION_KEYS = frozenset({"task_ids", "paths", "interfaces", "validation_oracles"})
+BINDING_IDENTITY_KEYS = frozenset({"binding_id", "sha256"})
+BASELINE_IDENTITY_KEYS = frozenset({"head", "tree"})
+PLAN_RETURN_KEYS = frozenset(
+    {
+        "finding_id",
+        "first_broken_artifact",
+        "return_to",
+        "action",
+        "execution_state",
+        "affected_region",
+        "returned_authority_identity",
+        "preserved_evidence_identities",
+        "resume_requires",
+        "original_binding_identity",
+        "original_baseline_identity",
+        "preserve_valid_work_and_evidence",
+        "silent_expansion_allowed",
+    }
+)
 EVIDENCE_ITEM_KEYS = frozenset({"kind", "locator", "digest_or_identity", "observation"})
+EVIDENCE_CAUSAL_CLASSIFICATION_KEYS = frozenset(
+    {
+        "observation_reference",
+        "accepted_authority_comparison",
+        "causal_class",
+        "affected_claim",
+        "affected_owner",
+        "authorized_lifecycle_action",
+        "disposition",
+    }
+)
+ACCEPTED_AUTHORITY_COMPARISON_KEYS = frozenset({"authority_identity", "result", "basis"})
 STAGE_REVIEW_KEYS = frozenset(
     {"review_id", "review_mode", "review_target_kind", "repair_frontier", "review_reset", "stage", "target_identity", "reviewer", "evidence", "verdict", "findings", "started_at", "completed_at", "staleness"}
 )
@@ -102,7 +157,117 @@ def stage_target_identity(root: Path, stage: str, path: Path, *, source_root: Pa
     return identity
 
 
-def stage_evidence_requirements(root: Path, stage: str, target: Path) -> tuple[dict[str, str], list[str]]:
+_ACCEPTED_RESULT_FIELDS = {
+    "schema", "plan_id", "task_id", "binding_id", "baseline_identity",
+    "accepted_source", "authority_projection", "executor_result_digest",
+    "validation_evidence_ids", "review_id", "owner_identity", "accepted_at",
+    "invalidation",
+}
+_ACCEPTED_AUTHORITY_FIELDS = {
+    "task_digest", "binding_digest", "scope_digest", "validation_obligations_digest",
+    "required_review_digest", "ownership_digest",
+}
+
+
+def accepted_result_state_digest(accepted: Mapping[str, Any]) -> str:
+    """Recompute the compact accepted-result identity without importing execution runtime."""
+
+    source = _mapping(accepted.get("accepted_source"), "accepted task result source")
+    state = {
+        "plan_id": accepted.get("plan_id"), "task_id": accepted.get("task_id"),
+        "binding_id": accepted.get("binding_id"),
+        "baseline_identity": dict(_mapping(accepted.get("baseline_identity"), "accepted baseline")),
+        "accepted_source": {"head": source.get("head"), "tree": source.get("tree")},
+        "authority_projection": dict(_mapping(accepted.get("authority_projection"), "accepted authority")),
+    }
+    if "knowledge_disposition" in accepted:
+        state["knowledge_disposition"] = dict(
+            _mapping(accepted.get("knowledge_disposition"), "accepted knowledge disposition")
+        )
+    return hashlib.sha256(
+        json.dumps(state, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+
+
+def _accepted_task_stage_evidence(
+    root: Path,
+    plan_id: str,
+    task_id: str,
+    task_path: Path,
+    *,
+    validate_native_receipt: bool,
+) -> tuple[Path | None, Path | None, str | None]:
+    binding = root / ".work-bundle/runtime/execution" / plan_id / task_id / "execution-binding.json"
+    if binding.is_symlink() or not binding.is_file() or not binding.resolve().is_relative_to(root.resolve()):
+        return None, None, f"accepted_task_result_missing:{task_id}"
+    try:
+        from execution_context import assert_accepted_task_result_current, compile_task_authority
+
+        payload = _mapping(json.loads(binding.read_text()), "task execution binding")
+        accepted = _mapping(payload.get("accepted_result"), "accepted task result")
+        fields = set(accepted)
+        if frozenset(fields) not in {
+            frozenset(_ACCEPTED_RESULT_FIELDS),
+            frozenset(_ACCEPTED_RESULT_FIELDS | {"knowledge_disposition"}),
+        }:
+            raise ReviewContractError("accepted task result shape is not closed")
+        source = _mapping(accepted.get("accepted_source"), "accepted task result source")
+        authority = _mapping(accepted.get("authority_projection"), "accepted task result authority")
+        ownership = _mapping(payload.get("ownership"), "task execution ownership")
+        observations = accepted.get("validation_evidence_ids")
+        if (
+            accepted.get("schema") != "accepted-task-result-v1"
+            or accepted.get("plan_id") != plan_id or accepted.get("task_id") != task_id
+            or accepted.get("binding_id") != ownership.get("binding_id")
+            or payload.get("plan_id") != plan_id or payload.get("task_id") != task_id
+            or accepted.get("invalidation") is not None
+            or set(source) != {"head", "tree", "state_digest"}
+            or set(authority) != _ACCEPTED_AUTHORITY_FIELDS
+            or not isinstance(observations, list) or not observations
+            or any(not isinstance(item, str) or not item for item in observations)
+            or len(observations) != len(set(observations))
+            or source.get("state_digest") != accepted_result_state_digest(accepted)
+        ):
+            raise ReviewContractError("accepted task result binding or evidence is invalid")
+        if validate_native_receipt:
+            try:
+                current_task = compile_task_authority(root, task_path)
+            except SystemExit as error:
+                raise ReviewContractError(str(error)) from error
+            try:
+                assert_accepted_task_result_current(current_task, payload, accepted)
+            except SystemExit as error:
+                raise ReviewContractError(str(error)) from error
+        review_path = None
+        if accepted.get("review_id"):
+            review_path = _review_store_path(root, str(accepted["review_id"]))
+            if review_path.exists():
+                if review_path.is_symlink() or review_path.stat().st_mode & 0o222:
+                    raise ReviewContractError("stored current task review is mutable")
+                review = _mapping(json.loads(review_path.read_text()), "stored current task review")
+                validated = _validated_review_envelope(review)
+                if (
+                    validated.review_id != accepted["review_id"]
+                    or review.get("review_target_kind") != "task"
+                    or validated.verdict != "accepted"
+                    or validated.target_identity.get("artifact_id") != task_id
+                    or validated.target_identity.get("revision") != source.get("head")
+                    or validated.target_identity.get("source_tree") != source.get("tree")
+                ):
+                    raise ReviewContractError("stored current task review does not bind accepted source")
+                if validate_native_receipt:
+                    _validate_reviewer_run(root, review)
+            else:
+                # Accepted tasks predating native publication remain authoritative.
+                review_path = None
+        return binding, review_path, None
+    except (OSError, ValueError, TypeError, ReviewContractError):
+        return binding, None, f"accepted_task_result_invalid:{task_id}"
+
+
+def stage_evidence_requirements(
+    root: Path, stage: str, target: Path, *, validate_native_receipts: bool = True
+) -> tuple[dict[str, str], list[str]]:
     """Derive the stage's evidence closure, not a caller-selected context projection.
 
     Carried knowledge constraints are authority in the specification itself. Their
@@ -163,31 +328,18 @@ def stage_evidence_requirements(root: Path, stage: str, target: Path) -> tuple[d
             item, _ = _read_structured(member)
             if not item.get("validation"):
                 continue
-            found = False
-            for handoff in sorted((root / ".work-bundle/orchestration/handoff/executor").rglob("*")):
-                if handoff.suffix not in {".yaml", ".yml", ".json"} or not handoff.is_file():
-                    continue
-                handoff = _input_path(handoff, root, root / ".work-bundle/orchestration/handoff/executor", "stage validation evidence")
-                value = json.loads(handoff.read_text()) if handoff.suffix == ".json" else _read_structured(handoff)[0]
-                related = value.get("related", {})
-                validation = value.get("validation", {})
-                if not isinstance(related, dict) or not isinstance(validation, dict):
-                    continue
-                records = [record for record in _as_list(validation.get("commands")) if isinstance(record, dict)]
-                checks = _as_list(item["validation"])
-                def covered(check: Any) -> bool:
-                    check = {"command": check} if isinstance(check, str) else check
-                    if not isinstance(check, dict):
-                        return False
-                    command = check.get("command")
-                    check_id = check.get("id")
-                    return any((command and record.get("command") == command)
-                               or (not command and check_id and record.get("id") == check_id) for record in records)
-                if related.get("plan") == data.get("id") and related.get("task") == item.get("id") and all(covered(check) for check in checks):
-                    control(handoff, "validation_evidence")
-                    found = True
-            if not found:
-                missing.append("validation_evidence:" + str(item.get("id")))
+            task_id = str(item.get("id") or "")
+            binding, review, failure = _accepted_task_stage_evidence(
+                root, str(data.get("id") or ""), task_id, member,
+                validate_native_receipt=validate_native_receipts,
+            )
+            if failure:
+                missing.append(failure)
+                continue
+            assert binding is not None
+            control(binding, "accepted_task_result")
+            if review is not None:
+                control(review, "accepted_task_review")
         # Preserve native identities/receipts; do not invent a parallel validation store.
         path = root / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json"
         if path.is_file():
@@ -296,7 +448,9 @@ def validate_stage_evidence(root: Path, context: Mapping[str, Any], packet: Mapp
             raise ReviewContractError("repair stage evidence does not bind frozen evidence")
         required, missing = {target: "target"}, []
     else:
-        required, missing = stage_evidence_requirements(root, str(context["stage"]), root / target[8:])
+        required, missing = stage_evidence_requirements(
+            root, str(context["stage"]), root / target[8:], validate_native_receipts=False
+        )
     source = manifest.get("source_tree", [])
     if context["stage"] == "integrated_implementation" and context.get("review_mode", "initial") == "initial":
         if snapshot_tree_identity(source) != context["target_identity"]["source_tree"]:
@@ -341,6 +495,23 @@ def _known_execution_ids(root: Path, stage: str, identity: Mapping[str, Any]) ->
     return ids
 
 
+def _known_task_execution_ids(root: Path, task_id: str) -> set[str]:
+    ids: set[str] = set()
+    runtime = root / ".work-bundle/runtime/execution"
+    for path in runtime.glob(f"*/{task_id}/execution-binding.json"):
+        if not path.resolve().is_relative_to(runtime.resolve()):
+            raise ReviewContractError("task review provenance binding path escapes store")
+        binding = json.loads(path.read_text())
+        for field in ("execution_id",):
+            if binding.get(field):
+                ids.add(str(binding[field]))
+        ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
+        for field in ("run_id", "agent_id"):
+            if ownership.get(field):
+                ids.add(str(ownership[field]))
+    return ids
+
+
 def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     reference = review.get("reviewer_run")
     if not isinstance(reference, dict) or set(reference) != {"run_id", "sha256"}:
@@ -367,7 +538,9 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     def canonical(value: Any) -> str:
         return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     result = {key: value for key, value in review.items() if key != "reviewer_run"}
-    context = _mapping(receipt.get("stage_review_context", {}), "reviewer-run provenance context")
+    kind = str(review.get("review_target_kind") or "stage")
+    context_key = "task_review_context" if kind == "task" else "stage_review_context"
+    context = _mapping(receipt.get(context_key, {}), "reviewer-run provenance context")
     mode = "direct_source" if review["evidence"]["mode"] == "direct" else review["evidence"]["mode"]
     review_context = {
         "review_mode": review.get("review_mode", "initial"),
@@ -384,8 +557,9 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     if (receipt.get("schema") != "reviewer-process-receipt-v1" or receipt.get("run_id") != run_id
             or receipt.get("review_id") != review["review_id"] or receipt.get("status") != "passed"
             or receipt.get("exit_code") != 0 or receipt.get("review_result_sha256") != canonical(result)
-            or receipt.get("packet_sha256") != canonical(packet) or packet.get("stage_review_context") != context
-            or context.get("target_identity") != review["target_identity"] or context.get("stage") != review["stage"]
+            or receipt.get("packet_sha256") != canonical(packet) or packet.get(context_key) != context
+            or context.get("target_identity") != review["target_identity"]
+            or (kind == "stage" and context.get("stage") != review["stage"])
             or context.get("agent_id") != review["reviewer"]["agent_id"]
             or context.get("evidence_mode") != review["reviewer"]["context_origin"]
             or context.get("capability") != review["reviewer"]["capability"] or context.get("evidence_mode") != mode
@@ -395,8 +569,13 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
             or receipt.get("sandbox_profile_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".profile.sb"))).hexdigest()
             or receipt.get("event_log_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".events.jsonl"))).hexdigest()):
         raise ReviewContractError("reviewer-run provenance does not bind this accepted review")
-    known = _known_execution_ids(root, str(review["stage"]), review["target_identity"])
-    validate_stage_evidence(root, context, packet)
+    known = (
+        _known_task_execution_ids(root, str(review["target_identity"]["artifact_id"]))
+        if kind == "task"
+        else _known_execution_ids(root, str(review["stage"]), review["target_identity"])
+    )
+    if kind == "stage":
+        validate_stage_evidence(root, context, packet)
     if run_id in known or context["execution_id"] in known:
         raise ReviewContractError("reviewer-run provenance overlaps author/repair execution")
 
@@ -420,6 +599,114 @@ def artifact_review_identity(path: Path, *, content: str | None = None) -> dict[
     payload = json.dumps([semantic, body], sort_keys=True, default=str, separators=(",", ":"))
     return {"artifact_id": str(metadata["id"]), "revision": str(metadata.get("version", "1")),
             "sha256": hashlib.sha256(payload.encode()).hexdigest(), "source_tree": None}
+
+
+PLAN_APPEND_ONLY_FIELDS = frozenset(
+    {
+        "accepted_result",
+        "accepted_results",
+        "accepted_result_reference",
+        "accepted_result_references",
+        "evidence_reference",
+        "evidence_references",
+        "review_id",
+        "target_identity",
+        "review_mode",
+        "repair_frontier",
+        "review_reset",
+    }
+)
+
+
+def _semantic_plan_value(value: Any, *, top_level: bool = False) -> Any:
+    if isinstance(value, dict):
+        projected: dict[str, Any] = {}
+        created = value.get("date_created")
+        for key, child in sorted(value.items()):
+            if key in PLAN_APPEND_ONLY_FIELDS:
+                continue
+            if top_level and key in {"status", "last_updated", "updated_at"}:
+                continue
+            if key == "status":
+                projected[key] = "Planned"
+            elif key in {"last_updated", "updated_at"} and created is not None:
+                projected[key] = _semantic_plan_value(created)
+            elif key == "verdict":
+                projected[key] = "pending"
+            elif key == "reviewed_head":
+                projected[key] = ""
+            elif key == "findings":
+                projected[key] = []
+            else:
+                projected[key] = _semantic_plan_value(child)
+        return projected
+    if isinstance(value, list):
+        return [_semantic_plan_value(child) for child in value]
+    return value
+
+
+def _semantic_plan_artifact(path: Path, *, content: str | None = None) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8") if content is None else content.rstrip() + "\n"
+    if not text.startswith("---\n") or "\n---\n" not in text[4:]:
+        raise SystemExit(f"stage review: missing artifact front matter: {path}")
+    raw, body = text[4:].split("\n---\n", 1)
+    metadata = parse_yaml_subset(raw)
+    if not isinstance(metadata, dict) or not metadata.get("id"):
+        raise SystemExit(f"stage review: missing artifact identity: {path}")
+    return {"metadata": _semantic_plan_value(metadata, top_level=True), "body": body}
+
+
+def _semantic_plan_artifact_digest(projection: Mapping[str, Any]) -> str:
+    payload = json.dumps(
+        [projection["metadata"], projection["body"]],
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _semantic_plan_member_key(plan_root: Path, path: Path) -> str:
+    parts = list(path.relative_to(plan_root).parts)
+    if parts and parts[0] == "archived":
+        parts[0] = "active"
+    return Path(*parts).as_posix()
+
+
+def semantic_plan_projection(
+    root: Path, plan_path: Path, *, content: str | None = None
+) -> dict[str, Any]:
+    """Return the canonical executable projection used by plan review freshness."""
+
+    plan_root = root / ".work-bundle/orchestration/plan"
+    if not plan_path.resolve().is_relative_to(plan_root.resolve()):
+        raise SystemExit("stage review: root plan escapes plan store")
+    root_projection = _semantic_plan_artifact(plan_path, content=content)
+    plan_data = root_projection["metadata"]
+    plan_id = str(plan_data["id"])
+    members = {
+        _semantic_plan_member_key(plan_root, plan_path): _semantic_plan_artifact_digest(
+            root_projection
+        )
+    }
+    for path in sorted(plan_root.rglob("*.md")):
+        if path == plan_path:
+            continue
+        if not path.resolve().is_relative_to(plan_root.resolve()):
+            raise SystemExit("stage review: plan member escapes plan store")
+        data, _ = _read_structured(path)
+        if str(data.get("plan_id", "")) != plan_id:
+            continue
+        members[_semantic_plan_member_key(plan_root, path)] = _semantic_plan_artifact_digest(
+            _semantic_plan_artifact(path)
+        )
+    specifications = [
+        artifact_review_identity(path) for path in _resolve_spec_paths(root, {}, plan_data)
+    ]
+    return {
+        "members": members,
+        "specifications": specifications,
+    }
 
 
 def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any]) -> None:
@@ -491,25 +778,10 @@ def require_specification_review(root: Path, path: Path, *, content: str | None 
 
 
 def plan_review_identity(root: Path, plan_path: Path, *, content: str | None = None) -> dict[str, Any]:
-    plan_root = root / ".work-bundle/orchestration/plan"
-    if not plan_path.resolve().is_relative_to(plan_root.resolve()):
-        raise SystemExit("stage review: root plan escapes plan store")
+    projection = semantic_plan_projection(root, plan_path, content=content)
     identity = artifact_review_identity(plan_path, content=content)
-    members = {str(plan_path.relative_to(plan_root)): identity["sha256"]}
-    for path in sorted(plan_root.rglob("*.md")):
-        if path == plan_path:
-            continue
-        if not path.resolve().is_relative_to(plan_root.resolve()):
-            raise SystemExit("stage review: plan member escapes plan store")
-        data, _ = _read_structured(path)
-        if str(data.get("plan_id", "")) != identity["artifact_id"]:
-            continue
-        members[str(path.relative_to(plan_root))] = artifact_review_identity(path)["sha256"]
-    plan_data = (_read_structured(plan_path)[0] if content is None
-                 else parse_yaml_subset(content.split("---", 2)[1]))
-    specifications = [artifact_review_identity(path) for path in _resolve_spec_paths(root, {}, plan_data)]
-    payload = {"members": members, "specifications": specifications}
-    identity["sha256"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    payload = json.dumps(projection, sort_keys=True, default=str)
+    identity["sha256"] = hashlib.sha256(payload.encode()).hexdigest()
     return identity
 
 
@@ -520,6 +792,8 @@ def require_plan_reviews(root: Path, plan_path: Path, *, source_root: Path | Non
     for spec in _resolve_spec_paths(root, {}, data):
         require_specification_review(root, spec)
     identity = plan_review_identity(root, plan_path, content=content)
+    from execution_context import static_plan_task_admission
+    static_plan_task_admission(root, plan_path, content=content)
     _require_current_review(root, "plan", identity)
     if source_root is not None:
         def git(*args: str) -> str:
@@ -545,6 +819,19 @@ class ReviewFindingV1:
     target_identity: Mapping[str, Any]
     summary: str
     recommended_owner: str
+    disposition: str
+
+
+@dataclass(frozen=True)
+class EvidenceCausalClassificationV1:
+    """Agent-authored causal judgment required before evidence can route action."""
+
+    observation_reference: str
+    accepted_authority_comparison: Mapping[str, str]
+    causal_class: str
+    affected_claim: str
+    affected_owner: str
+    authorized_lifecycle_action: str
     disposition: str
 
 
@@ -674,6 +961,103 @@ def classify_first_broken_owner(finding_class: str) -> tuple[str, str, str]:
         raise ReviewContractError(f"class is not classified: {finding_class}") from error
 
 
+def validate_evidence_causal_classification(
+    value: Mapping[str, Any],
+) -> EvidenceCausalClassificationV1:
+    """Validate an agent's classification; this helper never infers a semantic class."""
+
+    record = _mapping(value, "evidence causal classification")
+    _closed(record, EVIDENCE_CAUSAL_CLASSIFICATION_KEYS, "evidence causal classification")
+    observation = _nonempty(record["observation_reference"], "observation_reference")
+    comparison = _mapping(record["accepted_authority_comparison"], "accepted_authority_comparison")
+    _closed(comparison, ACCEPTED_AUTHORITY_COMPARISON_KEYS, "accepted_authority_comparison")
+    authority_identity = _nonempty(
+        comparison["authority_identity"], "accepted_authority_comparison.authority_identity"
+    )
+    basis = _nonempty(comparison["basis"], "accepted_authority_comparison.basis")
+    causal_class = _enum(record["causal_class"], EVIDENCE_CAUSAL_CLASSES, "causal_class")
+    expected_comparison = EVIDENCE_CAUSAL_COMPARISONS[causal_class]
+    if comparison["result"] != expected_comparison:
+        raise ReviewContractError("accepted authority comparison does not support the causal class")
+    affected_claim = _nonempty(record["affected_claim"], "affected_claim")
+    affected_owner = _nonempty(record["affected_owner"], "affected_owner")
+    expected_action, expected_disposition = EVIDENCE_CAUSAL_ROUTES[causal_class]
+    if record["authorized_lifecycle_action"] != expected_action:
+        raise ReviewContractError("authorized lifecycle action does not match the causal class")
+    if record["disposition"] != expected_disposition:
+        raise ReviewContractError("classification disposition does not match the causal class")
+    return EvidenceCausalClassificationV1(
+        observation_reference=observation,
+        accepted_authority_comparison={
+            "authority_identity": authority_identity,
+            "result": expected_comparison,
+            "basis": basis,
+        },
+        causal_class=causal_class,
+        affected_claim=affected_claim,
+        affected_owner=affected_owner,
+        authorized_lifecycle_action=expected_action,
+        disposition=expected_disposition,
+    )
+
+
+def review_remains_current_after_observation(
+    classification: Mapping[str, Any], *, reviewed_claim: str
+) -> bool:
+    """Apply a classification to one review claim without treating raw evidence as authority."""
+
+    record = validate_evidence_causal_classification(classification)
+    claim = _nonempty(reviewed_claim, "reviewed_claim")
+    return not (
+        record.causal_class
+        in {"claim_relevant_drift", "implementation_defect", "authority_plan_gap"}
+        and record.affected_claim == claim
+    )
+
+
+def _affected_region(value: Any) -> dict[str, list[str]]:
+    region = _mapping(value, "affected region")
+    _closed(region, AFFECTED_REGION_KEYS, "affected region")
+    result: dict[str, list[str]] = {}
+    for field in ("task_ids", "interfaces", "validation_oracles"):
+        items = _string_list(region[field], f"affected region.{field}")
+        if len(items) != len(set(items)) or any(not ID_RE.fullmatch(item) for item in items):
+            raise ReviewContractError(f"affected region.{field} must contain unique valid ids")
+        result[field] = list(items)
+    if not result["task_ids"]:
+        raise ReviewContractError("affected region.task_ids must be non-empty")
+    paths = _string_list(region["paths"], "affected region.paths")
+    if len(paths) != len(set(paths)):
+        raise ReviewContractError("affected region.paths must be unique")
+    for item in paths:
+        path = Path(item)
+        if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+            raise ReviewContractError("affected region.paths must be canonical relative paths")
+    result["paths"] = list(paths)
+    return {field: result[field] for field in ("task_ids", "paths", "interfaces", "validation_oracles")}
+
+
+def _binding_identity(value: Any) -> dict[str, str]:
+    identity = _mapping(value, "binding identity")
+    _closed(identity, BINDING_IDENTITY_KEYS, "binding identity")
+    binding_id = _identifier(identity["binding_id"], "binding identity.binding_id")
+    digest = identity["sha256"]
+    if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+        raise ReviewContractError("binding identity.sha256 must be a lowercase SHA-256")
+    return {"binding_id": binding_id, "sha256": digest}
+
+
+def _baseline_identity(value: Any) -> dict[str, str]:
+    identity = _mapping(value, "baseline identity")
+    _closed(identity, BASELINE_IDENTITY_KEYS, "baseline identity")
+    if any(
+        not isinstance(identity[field], str) or not GIT_OID_RE.fullmatch(identity[field])
+        for field in BASELINE_IDENTITY_KEYS
+    ):
+        raise ReviewContractError("baseline identity must contain exact Git head and tree ids")
+    return {"head": str(identity["head"]), "tree": str(identity["tree"])}
+
+
 def validate_review_finding(value: Mapping[str, Any]) -> ReviewFindingV1:
     record = _mapping(value, "review_finding_v1")
     _closed(record, FINDING_KEYS, "review_finding_v1")
@@ -722,8 +1106,12 @@ def validate_review_finding(value: Mapping[str, Any]) -> ReviewFindingV1:
     )
 
 
-def route_review_verdict(
-    value: Mapping[str, Any], *, previous_scope_expansions: int = 0
+def _route_review_finding(
+    value: Mapping[str, Any], *, previous_scope_expansions: int = 0,
+    affected_region: Mapping[str, Any] | None = None,
+    unaffected_evidence_identities: Sequence[Mapping[str, Any]] = (),
+    original_binding_identity: Mapping[str, Any] | None = None,
+    original_baseline_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     finding = validate_review_finding(value)
     expected_action = ROUTES[finding.finding_class][2]
@@ -731,16 +1119,264 @@ def route_review_verdict(
         raise ReviewContractError("terminal adjudicator disposition cannot authorize repair mutation")
     if finding.disposition != expected_action:
         raise ReviewContractError("review finding routing disposition is invalid")
-    repeated_reslice = expected_action == "reslice_plan" and previous_scope_expansions > 0
-    return {
+    if (
+        not isinstance(previous_scope_expansions, int)
+        or isinstance(previous_scope_expansions, bool)
+        or previous_scope_expansions < 0
+    ):
+        raise ReviewContractError("previous_scope_expansions must be a non-negative integer")
+    result = {
         "finding_id": finding.finding_id,
         "first_broken_artifact": finding.first_broken_artifact,
         "return_to": finding.recommended_owner,
         "action": expected_action,
-        "execution_state": "paused_for_reslice" if repeated_reslice else "returned_for_repair",
+        "execution_state": (
+            "paused_for_reslice" if expected_action == "reslice_plan" else "returned_for_repair"
+        ),
         "preserve_valid_work_and_evidence": True,
         "silent_expansion_allowed": False,
     }
+    if expected_action != "reslice_plan":
+        if (
+            affected_region is not None
+            or unaffected_evidence_identities
+            or original_binding_identity is not None
+            or original_baseline_identity is not None
+        ):
+            raise ReviewContractError("affected region applies only to a plan reslice")
+        return result
+
+    region = _affected_region(affected_region)
+    binding = _binding_identity(original_binding_identity)
+    baseline = _baseline_identity(original_baseline_identity)
+    preserved = [
+        dict(_target_identity(item, "unaffected_evidence_identity"))
+        for item in unaffected_evidence_identities
+    ]
+    preserved_ids = [item["artifact_id"] for item in preserved]
+    if len(preserved_ids) != len(set(preserved_ids)) or set(region["task_ids"]).intersection(preserved_ids):
+        raise ReviewContractError("affected region and unaffected evidence must be disjoint and unambiguous")
+    result.update(
+        {
+            "affected_region": region,
+            "returned_authority_identity": dict(finding.target_identity),
+            "preserved_evidence_identities": preserved,
+            "resume_requires": "accepted_repaired_plan_authority",
+            "original_binding_identity": binding,
+            "original_baseline_identity": baseline,
+        }
+    )
+    return result
+
+
+def _validated_review_envelope(value: Mapping[str, Any]) -> StageReviewV1:
+    """Validate one bounded task-or-stage review without walking older history."""
+
+    if value.get("review_target_kind") == "task":
+        return validate_task_acceptance_review(value)
+    current = validate_stage_review(value)
+    previous = value.get("previous_review")
+    if current.review_mode == "repair":
+        if not isinstance(previous, Mapping) or "previous_review" in previous:
+            raise ReviewContractError("stage repair review requires exactly one previous_review")
+        return validate_review_sequence(value, previous_review=previous)
+    if current.review_reset is not None:
+        if not isinstance(previous, Mapping) or "previous_review" in previous:
+            raise ReviewContractError("stage reset review requires exactly one previous_review")
+        return validate_review_sequence(
+            value,
+            previous_review=previous,
+            material_change=str(current.review_reset["reason_class"]),
+        )
+    return validate_review_sequence(value)
+
+
+def _review_store_path(root: Path, review_id: str) -> Path:
+    store = root.expanduser().resolve() / ".work-bundle/orchestration/reviews"
+    path = (store / f"{_identifier(review_id, 'review_id')}.json").resolve(strict=False)
+    if not path.is_relative_to(store.resolve()):
+        raise ReviewContractError("stored review path escapes review store")
+    return path
+
+
+def publish_review(
+    root: Path,
+    review: Mapping[str, Any],
+    *,
+    current_target_identity: Mapping[str, Any],
+) -> dict[str, str]:
+    """Publish a natively receipted current task-or-stage review exactly once."""
+
+    record = dict(_mapping(review, "review publication"))
+    validated = _validated_review_envelope(record)
+    current = dict(_target_identity(current_target_identity, "current_target_identity"))
+    if validated.target_identity != current:
+        raise ReviewContractError("review publication target is not current")
+    _validate_reviewer_run(root.expanduser().resolve(), record)
+    path = _review_store_path(root, validated.review_id)
+    content = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    digest = hashlib.sha256(content).hexdigest()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        if path.is_symlink() or path.read_bytes() != content:
+            raise ReviewContractError("stored review identity collision")
+    else:
+        with path.open("xb") as stream:
+            stream.write(content)
+        path.chmod(0o444)
+    return {"review_id": validated.review_id, "sha256": digest}
+
+
+def load_stored_review(
+    root: Path,
+    reference: Mapping[str, Any],
+    *,
+    current_target_identity: Mapping[str, Any],
+) -> tuple[dict[str, Any], StageReviewV1]:
+    """Load stored review authority and revalidate its receipt and current target."""
+
+    if not isinstance(reference, Mapping) or set(reference) != {"review_id", "sha256"}:
+        raise ReviewContractError("stored review reference is required")
+    path = _review_store_path(root, str(reference.get("review_id") or ""))
+    if (
+        path.is_symlink()
+        or not path.is_file()
+        or path.stat().st_mode & 0o222
+    ):
+        raise ReviewContractError("stored review is missing or mutable")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != reference.get("sha256"):
+        raise ReviewContractError("stored review digest mismatch")
+    record = dict(_mapping(json.loads(raw), "stored review"))
+    validated = _validated_review_envelope(record)
+    current = dict(_target_identity(current_target_identity, "current_target_identity"))
+    if validated.target_identity != current:
+        raise ReviewContractError("stored review target is not current")
+    _validate_reviewer_run(root.expanduser().resolve(), record)
+    return record, validated
+
+
+def stored_review_target_identity(
+    root: Path, reference: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Read only a digest-bound target hint; this does not admit review authority."""
+
+    if not isinstance(reference, Mapping) or set(reference) != {"review_id", "sha256"}:
+        raise ReviewContractError("stored review reference is required")
+    path = _review_store_path(root, str(reference.get("review_id") or ""))
+    if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o222:
+        raise ReviewContractError("stored review is missing or mutable")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != reference.get("sha256"):
+        raise ReviewContractError("stored review digest mismatch")
+    record = _mapping(json.loads(raw), "stored review")
+    return dict(_target_identity(record.get("target_identity"), "stored review target_identity"))
+
+
+def route_stored_review_verdict(
+    root: Path,
+    review_reference: Mapping[str, Any],
+    *,
+    current_target_identity: Mapping[str, Any],
+    finding_id: str | None = None,
+    previous_scope_expansions: int = 0,
+    affected_region: Mapping[str, Any] | None = None,
+    unaffected_evidence_identities: Sequence[Mapping[str, Any]] = (),
+    original_binding_identity: Mapping[str, Any] | None = None,
+    original_baseline_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Expose a verdict or route one finding only from stored current authority."""
+
+    record, validated = load_stored_review(
+        root, review_reference, current_target_identity=current_target_identity
+    )
+    if finding_id is None:
+        return {
+            "review_id": validated.review_id,
+            "verdict": validated.verdict,
+            "target_identity": dict(validated.target_identity),
+        }
+    matches = [
+        item for item in record.get("findings", [])
+        if isinstance(item, Mapping) and item.get("finding_id") == finding_id
+    ]
+    if len(matches) != 1:
+        raise ReviewContractError("stored review does not contain exactly one selected finding")
+    return _route_review_finding(
+        matches[0],
+        previous_scope_expansions=previous_scope_expansions,
+        affected_region=affected_region,
+        unaffected_evidence_identities=unaffected_evidence_identities,
+        original_binding_identity=original_binding_identity,
+        original_baseline_identity=original_baseline_identity,
+    )
+
+
+# The public legacy name now enforces stored authority too. Pure classification tests
+# use the explicitly private helper and cannot be mistaken for lifecycle routing.
+route_review_verdict = route_stored_review_verdict
+
+
+def resume_plan_return(
+    value: Mapping[str, Any], *,
+    workspace_root: Path,
+    plan_path: Path,
+    current_binding_identity: Mapping[str, Any],
+    current_baseline_identity: Mapping[str, Any],
+    current_unaffected_evidence_identities: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Admit a paused affected region only from repaired authority and unchanged evidence."""
+
+    record = _mapping(value, "plan_return")
+    _closed(record, PLAN_RETURN_KEYS, "plan_return")
+    _identifier(record["finding_id"], "plan_return.finding_id")
+    if (
+        record["first_broken_artifact"] != "plan"
+        or record["return_to"] != "plan_owner"
+        or record["action"] != "reslice_plan"
+        or record["execution_state"] != "paused_for_reslice"
+        or record["resume_requires"] != "accepted_repaired_plan_authority"
+        or record["preserve_valid_work_and_evidence"] is not True
+        or record["silent_expansion_allowed"] is not False
+    ):
+        raise ReviewContractError("plan return is not a paused bounded reslice")
+    region = _affected_region(record["affected_region"])
+    original_binding = _binding_identity(record["original_binding_identity"])
+    original_baseline = _baseline_identity(record["original_baseline_identity"])
+    if _binding_identity(current_binding_identity) != original_binding:
+        raise ReviewContractError("original binding identity changed during bounded reslice")
+    if _baseline_identity(current_baseline_identity) != original_baseline:
+        raise ReviewContractError("original baseline identity changed during bounded reslice")
+    returned = dict(
+        _target_identity(record["returned_authority_identity"], "returned_authority_identity")
+    )
+    try:
+        repaired = dict(plan_review_identity(Path(workspace_root), Path(plan_path)))
+        _require_current_review(Path(workspace_root), "plan", repaired)
+    except (OSError, SystemExit, ValueError) as error:
+        raise ReviewContractError(
+            "resume requires current accepted repaired plan-review authority"
+        ) from error
+    if repaired["artifact_id"] != returned["artifact_id"] or repaired == returned:
+        raise ReviewContractError("resume requires new accepted repaired authority")
+
+    preserved = [
+        dict(_target_identity(item, "preserved_evidence_identity"))
+        for item in record["preserved_evidence_identities"]
+    ]
+    preserved_ids = [item["artifact_id"] for item in preserved]
+    if len(preserved_ids) != len(set(preserved_ids)) or set(region["task_ids"]).intersection(preserved_ids):
+        raise ReviewContractError("affected region and unaffected evidence must be disjoint and unambiguous")
+    current = [
+        dict(_target_identity(item, "current_unaffected_evidence_identity"))
+        for item in current_unaffected_evidence_identities
+    ]
+    if current != preserved:
+        raise ReviewContractError("unaffected evidence identities changed during bounded reslice")
+    resumed = dict(record)
+    resumed["execution_state"] = "ready_from_repaired_authority"
+    resumed["returned_authority_identity"] = repaired
+    return resumed
 
 
 def transition_review_finding(
@@ -891,6 +1527,7 @@ def validate_stage_review(
 def validate_review_sequence(
     value: Mapping[str, Any], *, previous_review: Mapping[str, Any] | None = None,
     material_change: str | None = None,
+    _task_owned_finding_subset: bool = False,
 ) -> StageReviewV1:
     """Bind a re-review to its exact predecessor without replaying history."""
     current = validate_stage_review(value)
@@ -909,8 +1546,24 @@ def validate_review_sequence(
             raise ReviewContractError("repair frontier must bind the exact prior repair review")
         if frontier["previous_reviewed_identity"] != previous.target_identity:
             raise ReviewContractError("repair frontier previous reviewed identity does not match prior review")
-        expected_findings = {item.finding_id for item in previous.findings if item.severity == "blocking"}
-        if set(frontier["blocking_finding_ids"]) != expected_findings:
+        blocking_findings = {
+            item.finding_id: item for item in previous.findings if item.severity == "blocking"
+        }
+        selected_findings = set(frontier["blocking_finding_ids"])
+        if _task_owned_finding_subset:
+            if not selected_findings.issubset(blocking_findings):
+                raise ReviewContractError(
+                    "task repair frontier contains unknown blocking finding IDs"
+                )
+            if any(
+                blocking_findings[finding_id].recommended_owner != "task_owner"
+                or blocking_findings[finding_id].disposition != "repair_task"
+                for finding_id in selected_findings
+            ):
+                raise ReviewContractError(
+                    "task repair frontier may select only task-owned blocking findings"
+                )
+        elif selected_findings != set(blocking_findings):
             raise ReviewContractError("repair frontier blocking finding IDs do not match prior review")
         if frontier["frozen_evidence_reference"] != review_evidence_identity(previous_review):
             raise ReviewContractError("repair frontier frozen evidence reference does not match prior review")
@@ -921,8 +1574,8 @@ def validate_review_sequence(
         if (reset is None or reset["prior_review_id"] != previous.review_id
                 or reset["reason_class"] != material_change):
             raise ReviewContractError("material change requires a recorded fresh initial review reset")
-        if current.reviewer["agent_id"] == previous.reviewer["agent_id"] or current.reviewer["capability"] != "judgment":
-            raise ReviewContractError("reset requires a fresh capable independent reviewer identity")
+        if current.reviewer["capability"] != "judgment":
+            raise ReviewContractError("reset requires a capable independent judgment reviewer")
     elif current.review_reset is not None:
         raise ReviewContractError("review_reset requires a classified material change")
     return current
@@ -965,6 +1618,17 @@ def validate_task_acceptance_review(value: Mapping[str, Any]) -> StageReviewV1:
             raise ReviewContractError("task repair review requires its exact previous_review")
         if "previous_review" in previous:
             raise ReviewContractError("task repair review may carry exactly one previous_review; older history stays lazy")
+        if previous.get("review_target_kind") == "stage":
+            validated_previous = validate_stage_review(previous)
+            if validated_previous.stage != "integrated_implementation":
+                raise ReviewContractError(
+                    "task repair review stage predecessor must be integrated_implementation"
+                )
+            return validate_review_sequence(
+                _task_review_as_stage(record),
+                previous_review=previous,
+                _task_owned_finding_subset=True,
+            )
         validate_task_review_record(previous)
         return validate_review_sequence(_task_review_as_stage(record), previous_review=_task_review_as_stage(previous))
     if record.get("review_reset") is not None:

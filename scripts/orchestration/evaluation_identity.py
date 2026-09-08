@@ -293,6 +293,61 @@ def _product_identity(root: Path) -> Mapping[str, Any]:
     )
 
 
+def validation_interval_identity(
+    root: Path,
+    *,
+    baseline_revision: str,
+    endpoint_revision: str,
+    endpoint_mode: str,
+    manifest_path: Path,
+) -> dict[str, Any]:
+    """Bind validation to an immutable historical interval or an explicit current HEAD.
+
+    `endpoint_mode="frozen"` requires an exact commit id, so later repository growth
+    cannot expand historical authority. `endpoint_mode="current"` is the explicit
+    current-state contract and therefore requires the symbolic `HEAD` endpoint.
+    """
+
+    repository = root.expanduser().resolve()
+    if endpoint_mode not in {"frozen", "current"}:
+        raise EvaluationIdentityError("endpoint_mode must be frozen or current")
+    baseline = _git_oid(baseline_revision, "baseline_revision")
+    if endpoint_mode == "frozen":
+        if endpoint_revision == "HEAD":
+            raise EvaluationIdentityError("live HEAD requires an explicit current validation contract")
+        endpoint_requested = _git_oid(endpoint_revision, "endpoint_revision")
+    else:
+        if endpoint_revision != "HEAD":
+            raise EvaluationIdentityError("current validation contract must explicitly target HEAD")
+        endpoint_requested = "HEAD"
+
+    baseline_commit = _git(repository, "rev-parse", f"{baseline}^{{commit}}")
+    endpoint_commit = _git(repository, "rev-parse", f"{endpoint_requested}^{{commit}}")
+    ancestry = subprocess.run(
+        ["git", "-C", str(repository), "merge-base", "--is-ancestor", baseline_commit, endpoint_commit],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if ancestry.returncode != 0:
+        raise EvaluationIdentityError("validation baseline must be an ancestor of its endpoint")
+    manifest = manifest_path.expanduser().resolve()
+    return {
+        "schema": "validation-interval-identity-v1",
+        "repository": str(repository),
+        "endpoint_mode": endpoint_mode,
+        "baseline": {
+            "revision": baseline_commit,
+            "tree": _git(repository, "rev-parse", f"{baseline_commit}^{{tree}}"),
+        },
+        "endpoint": {
+            "revision": endpoint_commit,
+            "tree": _git(repository, "rev-parse", f"{endpoint_commit}^{{tree}}"),
+        },
+        "manifest": {"path": str(manifest), "sha256": _file_digest(manifest, "validation manifest")},
+    }
+
+
 # Generated evidence is packaging, not product input. Other output locations
 # must be declared explicitly; never guess from a filename such as "result.json".
 OBSERVATION_ARTIFACT_ROOTS = (

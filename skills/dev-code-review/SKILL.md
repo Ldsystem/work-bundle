@@ -1,33 +1,39 @@
 ---
 name: dev-code-review
-description: Use for an independent review of a completed implementation task before acceptance, integration, or downstream reliance on its result.
+description: Use for an independent product review of a completed implementation task before acceptance, integration, or downstream reliance on its result.
 ---
 
-# Code Review
+# Product Code Review
 
-Review against the accepted task and the exact tree or commit identity. Independence means the reviewer did not author the change; if that is false, disclose it and do not present the review as independent.
+Judge one frozen candidate against only accepted product requirements and boundaries, the exact product source/diff identity, normalized validation observations, and unresolved product concerns.
 
-Check:
+Controller or orchestration runtime code is product source when the accepted task allocates it. Review that code normally. The exclusion below concerns bookkeeping supplied as review input, not words or APIs that occur in product code.
 
-1. **grounded intent** — purpose, as-is source evidence, accepted decision authority, expected delta, and conflict status agree.
-2. **task fit** — the change implements the grounded scope and avoids unrelated behavior.
-3. **rules and methodology** — applicable repository rules and required development methods were followed.
-4. **correctness and edge cases** — normal, boundary, failure, compatibility, and lifecycle paths behave correctly.
-5. **test oracle and validation evidence** — the oracle follows grounded intent, RED failed for the intended reason when TDD applied, and fresh checks support the claim.
-6. **knowledge disposition** — `none`, `update`, `supersede`, or `reclassify` is supported by task-local evidence and does not instruct persistence.
-7. **unnecessary complexity** — no speculative abstraction, redundant path, or avoidable change radius was introduced.
+## Excluded controller inputs
 
-Return exactly this compact shape; omit no keys:
+Do not receive or judge handoff or provenance records, receipt or publication bookkeeping, the review store, task or plan status/archive/history, knowledge persistence or knowledge disposition, reviewer history or identity rotation, or controller/evaluator mechanics. Repository rules are review constraints only when accepted product requirements incorporate them.
+
+Do not rerun validation. Do not confirm another review. The controller owns input integrity, execution isolation, reviewer independence, evidence publication, and lifecycle transitions. If required input is missing, inconsistent, or inaccessible, return an input/runner failure outside the product verdict; do not turn an infrastructure or control-input defect into a product finding or `blocked` verdict.
+
+Check task fit, correctness and edge cases (including failure, compatibility, and lifecycle behavior), support from normalized observations, and unnecessary complexity or unrelated change radius.
+
+Perform one review per one frozen candidate. After a product repair, perform one scoped rereview of the affected frontier. The same independent reviewer may be reused; independence is about participation and provenance, not identity rotation.
+
+Return exactly this compact product judgment. The controller supplies the native review envelope:
 
 ```yaml
 task_review:
-  reviewer_independent: true | false
-  verdict: accept | repair | blocked
-  reviewed_head: <commit-or-tree-identity>
+  reviewed_head: <exact-product-source-identity>
+  verdict: accept | repair
   findings:
-    - severity: blocking | advisory
-      scope: specification | correctness | quality | validation | rule
-      finding: <compact evidence-backed text>
+    - finding_id: <stable-id>
+      severity: blocking | advisory
+      requirement_id: <accepted-requirement-id>
+      boundary: <product-file-symbol-or-interface>
+      evidence: <compact-source-or-validation-evidence>
+      expected: <required-product-behavior>
+      observed: <observed-product-behavior>
+      owner: task_owner
 ```
 
-Use `findings: []` when there are no findings. Green tests do not override a contradiction in intent, decision authority, or test oracle. Choose `repair` for an actionable defect and `blocked` when authoritative scope, source identity, conflict resolution, or capable evidence is unavailable.
+Use `findings: []` when there are no findings. A blocking finding requires an accepted requirement or boundary, exact evidence, expected and observed behavior, and the task owner. Green observations do not override a product contradiction.

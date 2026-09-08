@@ -13,15 +13,21 @@ from reviewer_run_fixtures import bind_review_receipt
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATION = REPO_ROOT / "scripts" / "orchestration"
 sys.path.insert(0, str(ORCHESTRATION))
+import review_runtime  # noqa: E402
 
 from review_runtime import (  # noqa: E402
     ReviewContractError,
     classify_first_broken_owner,
-    route_review_verdict,
+    publish_review,
+    review_evidence_identity,
+    route_stored_review_verdict,
+    _route_review_finding as route_review_verdict,
     transition_review_finding,
     validate_contract_instance,
+    validate_review_sequence,
     validate_stage_review,
     validate_stage_reviews,
+    validate_task_acceptance_review,
 )
 
 
@@ -92,6 +98,140 @@ def stage_review(stage: str) -> dict[str, object]:
     }
 
 
+def test_task_repair_review_binds_authoritative_integrated_stage_predecessor() -> None:
+    previous = stage_review("integrated_implementation")
+    previous.update(
+        review_id="review-integrated-finding",
+        review_mode="initial",
+        review_target_kind="stage",
+        repair_frontier=None,
+        review_reset=None,
+        verdict="repair",
+    )
+    previous["target_identity"] = {
+        "artifact_id": "task-005",
+        "revision": "a" * 40,
+        "sha256": "1" * 64,
+        "source_tree": "b" * 40,
+    }
+    blocking = finding()
+    blocking["finding_id"] = "WOR112-T005-INT-001"
+    blocking["target_identity"] = previous["target_identity"]
+    evaluator_control = finding("validation_oracle_defect")
+    evaluator_control["finding_id"] = "WOR112-EVALUATOR-CONTROL-001"
+    evaluator_control["target_identity"] = previous["target_identity"]
+    previous["findings"] = [blocking, evaluator_control]
+    repaired_identity = {
+        "artifact_id": "task-005",
+        "revision": "c" * 40,
+        "sha256": "2" * 64,
+        "source_tree": "d" * 40,
+    }
+    current = {
+        **stage_review("plan"),
+        "required": True,
+        "reviewer_independent": True,
+        "review_id": "review-task-repair",
+        "reviewed_head": repaired_identity["revision"],
+        "review_mode": "repair",
+        "review_target_kind": "task",
+        "repair_frontier": {
+            "prior_review_id": "review-integrated-finding",
+            "blocking_finding_ids": ["WOR112-T005-INT-001"],
+            "previous_reviewed_identity": previous["target_identity"],
+            "repaired_identity": repaired_identity,
+            "affected_boundaries": ["scripts/orchestration/review_runtime.py"],
+            "frozen_evidence_reference": review_evidence_identity(previous),
+        },
+        "review_reset": None,
+        "target_identity": repaired_identity,
+        "verdict": "accept",
+        "findings": [],
+        "previous_review": previous,
+    }
+
+    validated = validate_task_acceptance_review(current)
+
+    assert validated.review_id == "review-task-repair"
+    assert validated.repair_frontier["prior_review_id"] == "review-integrated-finding"
+
+    for finding_ids, message in (
+        (["UNKNOWN-FINDING"], "unknown blocking finding IDs"),
+        (["WOR112-EVALUATOR-CONTROL-001"], "only task-owned blocking findings"),
+        ([], "must be non-empty"),
+    ):
+        invalid = deepcopy(current)
+        invalid["repair_frontier"]["blocking_finding_ids"] = finding_ids
+        with pytest.raises(ReviewContractError, match=message):
+            validate_task_acceptance_review(invalid)
+
+
+def test_material_change_reset_allows_same_independent_judgment_reviewer() -> None:
+    previous = stage_review("plan")
+    previous.update(
+        review_mode="initial",
+        review_target_kind="stage",
+        repair_frontier=None,
+        review_reset=None,
+    )
+    current = deepcopy(previous)
+    current["review_id"] = "review-plan-current"
+    current["target_identity"] = {
+        **previous["target_identity"],
+        "revision": "2",
+        "sha256": "2" * 64,
+    }
+    current["review_reset"] = {
+        "prior_review_id": previous["review_id"],
+        "reason_class": "scope",
+        "reason": "The accepted plan scope materially changed.",
+    }
+
+    validated = validate_review_sequence(
+        current, previous_review=previous, material_change="scope"
+    )
+
+    assert validated.reviewer["agent_id"] == previous["reviewer"]["agent_id"]
+    assert validated.review_reset["prior_review_id"] == previous["review_id"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("authorship", "present", "accepted review requires reviewer.authorship"),
+        ("capability", "standard", "judgment reviewer"),
+    ],
+)
+def test_material_change_reset_still_rejects_nonindependent_or_nonjudgment_reviewer(
+    field: str, value: str, message: str
+) -> None:
+    previous = stage_review("plan")
+    previous.update(
+        review_mode="initial",
+        review_target_kind="stage",
+        repair_frontier=None,
+        review_reset=None,
+    )
+    current = deepcopy(previous)
+    current["review_id"] = "review-plan-current"
+    current["target_identity"] = {
+        **previous["target_identity"],
+        "revision": "2",
+        "sha256": "2" * 64,
+    }
+    current["review_reset"] = {
+        "prior_review_id": previous["review_id"],
+        "reason_class": "scope",
+        "reason": "The accepted plan scope materially changed.",
+    }
+    current["reviewer"][field] = value
+
+    with pytest.raises(ReviewContractError, match=message):
+        validate_review_sequence(
+            current, previous_review=previous, material_change="scope"
+        )
+
+
 @pytest.mark.parametrize(
     ("finding_class", "expected"),
     [
@@ -114,7 +254,61 @@ def test_api_001_routes_every_class_to_first_broken_owner(
         record["obligation_basis"] = "none"
     validated = validate_contract_instance("reviewFinding", record)
     assert validated.finding_class == finding_class
-    assert route_review_verdict(record)["return_to"] == expected[1]
+    route_context = {}
+    if finding_class == "allocation_gap":
+        route_context = {
+            "affected_region": {
+                "task_ids": ["task-b01"],
+                "paths": [],
+                "interfaces": [],
+                "validation_oracles": [],
+            },
+            "original_binding_identity": {"binding_id": "binding-b01", "sha256": "1" * 64},
+            "original_baseline_identity": {"head": ZERO_TREE, "tree": ZERO_TREE},
+        }
+    assert route_review_verdict(record, **route_context)["return_to"] == expected[1]
+
+
+def test_review_store_is_required_before_public_finding_routing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = stage_review("integrated_implementation")
+    record.update(
+        review_id="review-task-publication",
+        review_mode="initial",
+        review_target_kind="stage",
+        repair_frontier=None,
+        review_reset=None,
+        verdict="repair",
+    )
+    item = finding()
+    item["target_identity"] = record["target_identity"]
+    record["findings"] = [item]
+    record["reviewer_run"] = {
+        "run_id": "reviewer-run-00000000-0000-0000-0000-000000000001",
+        "sha256": ZERO_SHA,
+    }
+    monkeypatch.setattr(review_runtime, "_validate_reviewer_run", lambda *_: None)
+
+    with pytest.raises(ReviewContractError, match="stored review"):
+        route_stored_review_verdict(
+            tmp_path, item, current_target_identity=record["target_identity"]
+        )
+    with pytest.raises(ReviewContractError, match="stored review"):
+        review_runtime.route_review_verdict(
+            tmp_path, item, current_target_identity=record["target_identity"]
+        )
+
+    reference = publish_review(
+        tmp_path, record, current_target_identity=record["target_identity"]
+    )
+    routed = route_stored_review_verdict(
+        tmp_path,
+        reference,
+        current_target_identity=record["target_identity"],
+        finding_id=item["finding_id"],
+    )
+    assert routed["return_to"] == "task_owner"
 
 
 @pytest.mark.parametrize("field", ["capabilities", "unavailable_evidence"])
@@ -172,13 +366,40 @@ def test_api_001_rejects_unclassified_wrong_layer_and_unauthorized_blocking_advi
 
 
 def test_api_001_reslice_pauses_repeated_expansion_and_preserves_evidence() -> None:
-    routed = route_review_verdict(finding("allocation_gap"), previous_scope_expansions=1)
+    routed = route_review_verdict(
+        finding("allocation_gap"),
+        previous_scope_expansions=1,
+        affected_region={
+            "task_ids": ["task-b01"],
+            "paths": [],
+            "interfaces": [],
+            "validation_oracles": [],
+        },
+        original_binding_identity={"binding_id": "binding-b01", "sha256": "1" * 64},
+        original_baseline_identity={"head": ZERO_TREE, "tree": ZERO_TREE},
+    )
     assert routed == {
         "finding_id": "finding-allocation_gap",
         "first_broken_artifact": "plan",
         "return_to": "plan_owner",
         "action": "reslice_plan",
         "execution_state": "paused_for_reslice",
+        "affected_region": {
+            "task_ids": ["task-b01"],
+            "paths": [],
+            "interfaces": [],
+            "validation_oracles": [],
+        },
+        "returned_authority_identity": {
+            "artifact_id": "task-b01",
+            "revision": "1",
+            "sha256": ZERO_SHA,
+            "source_tree": ZERO_TREE,
+        },
+        "preserved_evidence_identities": [],
+        "resume_requires": "accepted_repaired_plan_authority",
+        "original_binding_identity": {"binding_id": "binding-b01", "sha256": "1" * 64},
+        "original_baseline_identity": {"head": ZERO_TREE, "tree": ZERO_TREE},
         "preserve_valid_work_and_evidence": True,
         "silent_expansion_allowed": False,
     }
@@ -252,12 +473,21 @@ def test_lifecycle_gate_reads_current_artifact_not_claimed_staleness(tmp_path):
 def _reviewed_plan_fixture(root, *, provenance=True):
     import review_runtime
     orch = root / ".work-bundle/orchestration"
+    metadata = root / ".work-bundle/project.yaml"
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    metadata.write_text(
+        f"metadata_version: 3\nworkspace_root: {root}\nworkspace_mode: single-repository\n"
+    )
     spec = orch / "spec/active/spec.md"
     plan = orch / "plan/active/plan.md"
-    for path, text in ((spec, "id: spec-test\nstatus: verified"),
+    for path, text in ((spec, "id: spec-test\nstatus: verified\nrequirements: [{id: REQ-001, requirement: Preserve accepted stage authority.}]"),
                        (plan, "id: plan-test\nstatus: Planned\nsource_spec: [spec-test]")):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"---\n{text}\n---\nOriginal body\n")
+        body = (
+            "- **REQ-001**: Preserve accepted stage authority.\nOriginal body\n"
+            if path == spec else "Original body\n"
+        )
+        path.write_text(f"---\n{text}\n---\n{body}")
     reviews = orch / "reviews"
     reviews.mkdir()
     for stage, identity in (("specification", review_runtime.artifact_review_identity(spec)),
@@ -268,6 +498,26 @@ def _reviewed_plan_fixture(root, *, provenance=True):
             review = bind_review_receipt(root, review)
         (reviews / f"{stage}.json").write_text(json.dumps(review))
     return spec, plan, reviews
+
+
+def _write_stage_task(plan: Path, *, review_required: bool = False, command: str = "check-claim") -> Path:
+    task = plan.parent / "task.md"
+    task.write_text(
+        "---\n"
+        "id: task-test\nplan_id: plan-test\nphase_id: phase-test\ndepends_on: []\n"
+        "goal: Preserve accepted stage authority.\n"
+        "source_ids: [REQ-001]\n"
+        "truth_basis: {purpose: Preserve authority, as_is_evidence: [source.txt], decision_authority: [none-relevant], expected_delta: [stage authority], conflict_status: clear}\n"
+        "files: {read: [source.txt], write: [], forbidden: [credentials/**]}\n"
+        "methodology: {primary: tdd, skills: [dev-test-driven-development]}\n"
+        "allocated_rules: []\n"
+        "executor_profile: {capability: standard, context_mode: compiled-brief}\n"
+        f"acceptance_review: {{required: {str(review_required).lower()}}}\n"
+        "evidence_capability: {result: mapped, reason: Direct command proves the stage claim, invariants: [{id: INV-STAGE, source_ids: [REQ-001], invariant: Accepted authority remains current, boundary: component, oracle: VAL-1, capability_reason: Direct command can falsify drift, freshness: current_task_batch, task_id: task-test, evidence_ids: [VAL-1], closure_result: pending}]}\n"
+        f"validation: [{{id: VAL-1, kind: process, command: {json.dumps(command)}, invariant_ids: [INV-STAGE], capability_reason: Direct command can falsify drift, proves: REQ-001, expected: passed}}]\n"
+        "---\nTask\n"
+    )
+    return task
 
 
 @pytest.mark.parametrize("stage", ["plan", "integrated_implementation"])
@@ -300,16 +550,16 @@ def test_target_only_packet_cannot_declare_direct_source(tmp_path, stage):
         review_runtime.validate_stage_evidence(tmp_path, packet["stage_review_context"], packet)
 
 
-@pytest.mark.parametrize("removed", [None, "target", "plan_member", "verified_specification", "source_tree", "validation_evidence"])
+@pytest.mark.parametrize("removed", [None, "target", "plan_member", "verified_specification", "source_tree", "accepted_task_result"])
 def test_complete_snapshot_gate_rechecks_membership_after_receipt_rehash(tmp_path, removed):
     import hashlib
     import review_runtime
     _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
-    task = plan.parent / "task.md"
-    task.write_text("---\nid: task-test\nplan_id: plan-test\nvalidation: [{kind: process, command: test -f source.txt, expected: exit 0}]\n---\nTask\n")
+    task = _write_stage_task(plan, command="test -f source.txt")
     handoff = tmp_path / ".work-bundle/orchestration/handoff/executor/active/result.yaml"
     handoff.parent.mkdir(parents=True)
     handoff.write_text("related: {plan: plan-test, task: task-test}\nvalidation: {commands: [{command: test -f source.txt, result: passed}]}\n")
+    _write_compact_accepted_result(tmp_path)
     for args in (["init", "-q"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.com"]):
         subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
     (tmp_path / ".gitignore").write_text(".work-bundle/\n")
@@ -360,13 +610,133 @@ def test_plan_snapshot_requires_verified_linked_specification(tmp_path):
 def test_integrated_snapshot_requires_evidence_for_each_declared_check(tmp_path):
     import review_runtime
     _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
-    task = plan.parent / "task.md"
-    task.write_text("---\nid: task-test\nplan_id: plan-test\nvalidation: [{command: check-claim}]\n---\nTask\n")
+    task = _write_stage_task(plan)
     handoff = tmp_path / ".work-bundle/orchestration/handoff/executor/active/result.yaml"
     handoff.parent.mkdir(parents=True)
     handoff.write_text("related: {plan: plan-test, task: task-test}\nvalidation: {commands: [{command: unrelated-check, result: passed}]}\n")
     _, missing = review_runtime.stage_evidence_requirements(tmp_path, "integrated_implementation", plan)
-    assert "validation_evidence:task-test" in missing
+    assert "accepted_task_result_missing:task-test" in missing
+
+
+def _write_compact_accepted_result(
+    root: Path, *, task: Path | None = None, review_id: str | None = None
+) -> Path:
+    import execution_context
+
+    task = task or _write_stage_task(root / ".work-bundle/orchestration/plan/active/plan.md")
+    compiled_task = execution_context.static_task_brief(root, task)
+    binding = root / ".work-bundle/runtime/execution/plan-test/task-test/execution-binding.json"
+    binding.parent.mkdir(parents=True, exist_ok=True)
+    baseline = {"head": "a" * 40, "tree": "b" * 40}
+    owner = {"delegated": True, "owner_kind": "subagent", "agent_id": "/root/task", "run_id": "run-1", "mechanism": "host-native"}
+    binding_payload = {
+        "plan_id": "plan-test", "task_id": "task-test",
+        "workspace_id": "workspace-test", "execution_id": "execution-test",
+        "repository_id": "repository-test", "execution_path": str(root.resolve()),
+        "git_identity": {}, "baseline": baseline,
+        "ownership": {"binding_id": "binding:plan-test:task-test", "original_owner": "task-test"},
+    }
+    accepted_review = {
+        "required": review_id is not None, "review_id": review_id,
+        "verdict": "accept" if review_id is not None else None,
+    }
+    authority = execution_context._accepted_authority_projection(
+        compiled_task, binding_payload, accepted_review=accepted_review, owner_identity=owner
+    )
+    knowledge = {"action": "none", "reason": "No durable knowledge delta.", "affected_authority": []}
+    accepted = {
+        "schema": "accepted-task-result-v1", "plan_id": "plan-test", "task_id": "task-test",
+        "binding_id": "binding:plan-test:task-test", "baseline_identity": baseline,
+        "accepted_source": {"head": "c" * 40, "tree": "d" * 40},
+        "authority_projection": authority, "executor_result_digest": "7" * 64,
+        "validation_evidence_ids": ["observation-val-1"], "review_id": review_id,
+        "owner_identity": owner,
+        "knowledge_disposition": knowledge, "accepted_at": "2026-09-08T00:00:00Z", "invalidation": None,
+    }
+    accepted["accepted_source"]["state_digest"] = review_runtime.accepted_result_state_digest(accepted)
+    binding_payload["accepted_result"] = accepted
+    binding.write_text(json.dumps(binding_payload))
+    task_brief = binding.with_name("task-brief.yaml")
+    task_brief.write_text(
+        "\n".join(execution_context._dump_yaml({"task_brief": compiled_task})) + "\n"
+    )
+    return binding
+
+
+def test_integrated_snapshot_uses_compact_acceptance_not_handoff_history(tmp_path):
+    _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    task = _write_stage_task(plan)
+    binding = _write_compact_accepted_result(tmp_path, task=task)
+    misleading = tmp_path / ".work-bundle/orchestration/handoff/executor/active/broken.yaml"
+    misleading.parent.mkdir(parents=True)
+    misleading.write_text("invalid:\n   badly indented\n  historical: true\n")
+
+    required, missing = review_runtime.stage_evidence_requirements(
+        tmp_path, "integrated_implementation", plan
+    )
+
+    assert missing == []
+    assert required["control:" + binding.relative_to(tmp_path).as_posix()] == "accepted_task_result"
+    assert not any("handoff" in locator for locator in required)
+
+
+def test_integrated_snapshot_includes_native_review_when_present_and_rejects_invalid_compact_authority(tmp_path, monkeypatch):
+    _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    task = _write_stage_task(plan, review_required=True)
+    binding = _write_compact_accepted_result(tmp_path, task=task, review_id="review-task-current")
+    accepted = json.loads(binding.read_text())["accepted_result"]
+    review = {
+        **stage_review("plan"), "required": True, "reviewer_independent": True,
+        "review_id": "review-task-current", "reviewed_head": accepted["accepted_source"]["head"],
+        "review_mode": "initial", "review_target_kind": "task", "repair_frontier": None,
+        "review_reset": None, "target_identity": {
+            "artifact_id": "task-test", "revision": accepted["accepted_source"]["head"],
+            "sha256": "8" * 64, "source_tree": accepted["accepted_source"]["tree"],
+        }, "verdict": "accept",
+    }
+    review_path = tmp_path / ".work-bundle/orchestration/reviews/review-task-current.json"
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.write_text(json.dumps(review))
+    review_path.chmod(0o444)
+    monkeypatch.setattr(review_runtime, "_validate_reviewer_run", lambda *_: None)
+    required, missing = review_runtime.stage_evidence_requirements(tmp_path, "integrated_implementation", plan)
+    assert missing == []
+    assert required["control:" + review_path.relative_to(tmp_path).as_posix()] == "accepted_task_review"
+
+    payload = json.loads(binding.read_text())
+    payload["accepted_result"]["accepted_source"]["state_digest"] = "0" * 64
+    binding.write_text(json.dumps(payload))
+    _, missing = review_runtime.stage_evidence_requirements(tmp_path, "integrated_implementation", plan)
+    assert "accepted_task_result_invalid:task-test" in missing
+
+
+@pytest.mark.parametrize("mutation", ["task", "scope", "validation", "binding"])
+def test_integrated_snapshot_rejects_self_consistent_accepted_result_after_current_authority_drift(
+    tmp_path: Path, mutation: str
+) -> None:
+    _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    task = _write_stage_task(plan)
+    binding = _write_compact_accepted_result(tmp_path, task=task)
+    accepted_before = json.loads(binding.read_text())["accepted_result"]
+    assert accepted_before["accepted_source"]["state_digest"] == review_runtime.accepted_result_state_digest(
+        accepted_before
+    )
+
+    if mutation == "task":
+        task.write_text(task.read_text().replace("depends_on: []", "depends_on: [task-prior]"))
+    elif mutation == "scope":
+        task.write_text(task.read_text().replace("read: [source.txt]", "read: [source.txt, other.txt]"))
+    elif mutation == "validation":
+        task.write_text(task.read_text().replace("command: \"check-claim\"", "command: \"changed-check\""))
+    else:
+        payload = json.loads(binding.read_text())
+        payload["workspace_id"] = "workspace-changed"
+        binding.write_text(json.dumps(payload))
+
+    _, missing = review_runtime.stage_evidence_requirements(
+        tmp_path, "integrated_implementation", plan
+    )
+    assert "accepted_task_result_invalid:task-test" in missing
 
 
 def test_manually_authored_accepted_review_cannot_advance_lifecycle(tmp_path):

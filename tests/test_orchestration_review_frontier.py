@@ -130,12 +130,27 @@ def test_rf_04_material_change_requires_fresh_initial_review(reason_class: str) 
     assert review_runtime.validate_review_sequence(reset, previous_review=prior, material_change=reason_class).review_mode == "initial"
 
 
-def test_rf_05_reset_rejects_reused_repair_reviewer_identity() -> None:
+def test_rf_05_reset_allows_same_independent_reviewer_and_keeps_safeguards() -> None:
     prior, repair = repair_pair()
     reset = review(target=repair["target_identity"], agent=prior["reviewer"]["agent_id"])
     reset["review_reset"] = {"prior_review_id": prior["review_id"], "reason_class": "scope", "reason": "scope changed"}
-    with pytest.raises(review_runtime.ReviewContractError, match="fresh capable independent reviewer"):
-        review_runtime.validate_review_sequence(reset, previous_review=prior, material_change="scope")
+    assert review_runtime.validate_review_sequence(
+        reset, previous_review=prior, material_change="scope"
+    ).reviewer["agent_id"] == prior["reviewer"]["agent_id"]
+
+    participating = deepcopy(reset)
+    participating["reviewer"]["repair_participation"] = "present"
+    with pytest.raises(review_runtime.ReviewContractError, match="repair_participation"):
+        review_runtime.validate_review_sequence(
+            participating, previous_review=prior, material_change="scope"
+        )
+
+    nonjudgment = deepcopy(reset)
+    nonjudgment["reviewer"]["capability"] = "standard"
+    with pytest.raises(review_runtime.ReviewContractError, match="judgment reviewer"):
+        review_runtime.validate_review_sequence(
+            nonjudgment, previous_review=prior, material_change="scope"
+        )
 
 
 def test_rf_06_repair_rejects_stale_or_relabelled_identity() -> None:
@@ -243,7 +258,7 @@ def test_rf_03_capable_untouched_invariant_stays_blocking_during_narrow_repair(
     }]
     narrow.update(verdict="repair", findings=[safety])
     assert review_runtime.validate_review_sequence(narrow, previous_review=prior).verdict == "repair"
-    routed = review_runtime.route_review_verdict(safety)
+    routed = review_runtime._route_review_finding(safety)
     assert routed["first_broken_artifact"] == first_broken
     assert routed["preserve_valid_work_and_evidence"] is True
 
@@ -294,4 +309,4 @@ def test_rf_06_final_broad_integrated_review_rediscovers_and_classifies_latent_b
         "observation": "Final broad review rediscovered deferred non-load-bearing B.",
     }]
     assert review_runtime.validate_review_finding(latent_finding).finding_id == "RF-LATENT-B"
-    assert review_runtime.route_review_verdict(latent_finding)["return_to"] == "backlog_owner"
+    assert review_runtime._route_review_finding(latent_finding)["return_to"] == "backlog_owner"

@@ -544,7 +544,13 @@ def reuse_observation(
                 if all(raw[field] == request[field] for field in OBSERVATION_IDENTITY_FIELDS) and (
                     _utc(raw["freshness_deadline"], "freshness_deadline") >= observed_at
                 ):
-                    _validate_result(raw["result"])
+                    try:
+                        _validate_result(raw["result"])
+                    except (KeyError, TypeError, CompletionProvenanceError):
+                        # A store-owned record can establish harness lineage
+                        # without remaining capable positive evidence. Do not
+                        # repair or replay it; obtain one fresh observation.
+                        break
                     return ObservationIdentityV1(**{**raw,
                         "invocation_id": request["invocation_id"], "reuse_of": raw["observation_id"],
                         "consumed_by_finalization": state["consumptions"].get(raw["observation_id"]),
@@ -634,6 +640,10 @@ def observe_validation(
     binding: Mapping[str, Any], task: Mapping[str, Any], item: Mapping[str, Any],
     evidence: Mapping[str, Any], execute: Callable[[dict[str, Any]], dict[str, Any]],
     capture: Callable[[], Mapping[str, Any]],
+    *,
+    finalization_id: str | None = None,
+    stage_event_workspace: str | Path | None = None,
+    stage_event: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project validation onto the existing source/evidence and observation identities."""
     from evaluation_identity import EvaluationIdentityError, validation_source_identity
@@ -705,6 +715,14 @@ def observe_validation(
         return observed
     if source_identity() != source or validation_environment_identity(root, policy) != environment:
         raise SystemExit("validation-blocked: inputs changed while obtaining evidence")
+    if finalization_id is not None:
+        record = _claim_reused_observation(
+            store,
+            record,
+            finalization_id=finalization_id,
+            stage_event_workspace=stage_event_workspace,
+            stage_event=stage_event,
+        )
     if observed is None:
         observed = {key: item.get(key) for key in ("command", "kind", "id", "invariant_ids")}
         if item.get("kind") == "inspection":
@@ -726,6 +744,25 @@ def claim_observation_identity(
     """Reuse or execute one exact observation and bind it to one finalization."""
 
     observation = reuse_observation(store, request, execute, now=now)
+    return _claim_reused_observation(
+        store,
+        observation,
+        finalization_id=finalization_id,
+        stage_event_workspace=stage_event_workspace,
+        stage_event=stage_event,
+    )
+
+
+def _claim_reused_observation(
+    store: ManagedProvenanceStore,
+    observation: ObservationIdentityV1,
+    *,
+    finalization_id: str,
+    stage_event_workspace: str | Path | None = None,
+    stage_event: Mapping[str, Any] | None = None,
+) -> ObservationIdentityV1:
+    """Persist one downstream consumer and its reuse event for an observation."""
+
     consume_observation(store, observation.observation_id, finalization_id)
     claimed = load_observation(store, observation.observation_id)
     if observation.reuse_of is not None:

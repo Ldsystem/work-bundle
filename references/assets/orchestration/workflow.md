@@ -37,7 +37,9 @@ execution_workspace:
 
 Specification creation decides policy only; it does not provision a worktree. Planning carries that policy into executable tasks.
 
-Plans keep durable artifacts normalized and DRY. Every executable task cites source IDs, the accepted Truth Basis, exact file scope, dependencies, validation, methodology, allocated rules/skills, a provider-neutral executor profile, and acceptance-review requirements. Decomposition uses minimum orchestration overhead while preserving Truth Basis continuity, independently falsifiable and testable increments, short evidence loops, dependencies, disjoint write scopes, validation ownership, bounded failure radius, and review boundaries; one sound mechanical increment is not split merely to minimize size. When simplification depends on a consequential assumption, the earliest ordinary task cheaply falsifies it before broad edits; do not add a checkpoint phase or risk-score lifecycle. Contract-decoupled parallel tasks share a stable contract group, validate only against that contract plus accepted handoffs and task-local files, reach a named barrier, and defer joint checks to the convergence owner.
+Plans keep durable artifacts normalized and DRY. Every executable task cites source IDs, the accepted Truth Basis, exact file scope, dependencies, validation, methodology, allocated rules/skills, a provider-neutral executor profile, and acceptance-review requirements. Decomposition does not optimize task or phase cardinality: it bounds expected total orchestration cost with concrete independently owned production, dependency, validation, review, and repair seams while preserving exact dependencies and disjoint write scopes. Every authoritative production path has a production owner; helper-only allocation cannot leave the path unowned. A coherent mechanical increment with one owner, oracle, and repair frontier stays together. A phase exists only for an actual barrier or convergence boundary, and speculative splits unsupported by current authority, repository, dependency, ownership, validation, or acceptance evidence are rejected. When simplification depends on a consequential assumption, the earliest ordinary task cheaply falsifies it before broad edits; do not add a checkpoint phase or risk-score lifecycle. Contract-decoupled parallel tasks share a stable contract group, validate only against that contract plus accepted handoffs and task-local files, reach a named barrier, and defer joint checks to the convergence owner.
+
+When execution proves a task materially under-decomposed, return to the plan and reslice only the affected region at the newly evidenced seam. Preserve the original binding, baseline, and accepted unaffected regions; do not repeatedly enlarge the task or create a parallel retry lifecycle.
 
 Generated specifications and plans record compact semantic convergence evidence:
 
@@ -107,9 +109,13 @@ not lifecycle admission. The gate resolves the controller-owned store through
 `reviewer_runtime_root(workspace_root)` under `~/.work-bundle/reviewer-runtime/workspaces/`;
 the envelope cannot select an arbitrary receipt path or store.
 
-Before workspace creation, the controller adds `stage_review_context` to the direct
+Before workspace creation, the controller adds `stage_review_context` to a stage direct
 evidence packet: `stage`, `target_identity`, `target_locator` (a copied control
 artifact), `agent_id`, `capability`, `execution_id`, and `evidence_mode`.
+For task review it instead adds native `task_review_context`, binding the task target,
+review mode/frontier or reset, reviewer identity/capability, execution identity, and
+evidence mode. Workspace creation admits it only when the source checkout is clean and
+its exact HEAD/tree still equal that task target.
 The current sandbox denies live source/control access, so its packet builder derives
 `evidence_mode`; requesting `direct_source` does not grant it. A mechanically complete
 `stage-evidence-manifest-v1` yields `reproducible_snapshot`; missing evidence yields
@@ -123,10 +129,10 @@ and semantic authority identities. Its closure is derived from the current artif
 - Plan: the root, every phase/task declaring its plan ID, and every linked verified
   specification (including member-specific links and their required authority).
 - Integrated implementation: the same authority closure, the complete clean Git source
-  tree, and executor handoffs containing evidence for each declared validation command
-  or inspection ID. The existing native completion-provenance file is included when
-  present. This is evidence availability, not a replacement validation-result verdict;
-  existing freshness, binding, authorization, and platform acceptance gates still apply.
+  tree, and each validation-bearing member's current compact accepted result from its
+  execution binding. Include its stored native task review when present; an older accepted
+  representation remains valid without format migration. Historical executor handoffs are
+  never scanned. The existing completion-provenance file is included when present.
 
 For integrated snapshots, Git file modes/blob IDs reconstruct the exact target tree;
 copied bytes are checked against those blobs before workspace creation. Symlinks,
@@ -139,11 +145,16 @@ stage membership and verifies the complete source-tree identity. Removing entrie
 recomputing packet/receipt hashes cannot turn partial evidence into complete evidence.
 
 `stage_target_identity` computes the target from current source artifacts, and
-workspace creation checks it again. Run the worker with `reviewer-process-run` using
-that runtime root. Its stdout must be exactly one stage-review JSON object, without
-`reviewer_run`; the native publisher verifies it against the frozen context and
-binds its canonical digest into the receipt. The controller then attaches the run
-ID and SHA-256 of the immutable receipt bytes to that exact result.
+workspace creation checks it again. Complete stage evidence is checked before any
+reviewer process launch. Run the worker with `reviewer-process-run` using that runtime
+root. Specification and plan workers retain the stage-review contract; task and
+integrated-implementation product workers return the compact `task_review` judgment
+defined by `dev-code-review`. The controller constructs the native envelope from frozen target, independence, and evidence context,
+then binds its canonical digest into the receipt. The controller then attaches the run
+ID and SHA-256 of the immutable receipt bytes to that exact result and publishes the
+task-or-stage envelope as a read-only review-store record. Verdict admission and
+named-finding routing resolve only that stored reference and recheck its receipt and
+current target; bare stdout, unattached receipts, and bare findings remain observations.
 
 The lifecycle gate verifies review ID, exact result/target/profile, successful
 completion, sandbox/network/write boundary, and immutable packet/profile/event
@@ -168,6 +179,25 @@ remain single-flight. Publication rejects an intervening mutation epoch or expir
 freshness. Reservation lock files are retained to avoid splitting concurrent waiters;
 they are runtime artifacts, not source inputs or a separate cache subsystem.
 
+Task code review consumes one product candidate compiled from accepted product
+requirements/boundaries, exact product source/diff identity, normalized harness
+observations, and unresolved product concerns. Handoff, knowledge, reviewer-history,
+receipt/publication, status, and archive bookkeeping remain controller inputs and do
+not enter product judgment. Controller/orchestration code is product when allocated
+by the accepted task.
+
+The **acceptance once** lifecycle rule makes the harness strongly verify binding,
+source/scope, subagent ownership, validation, and required review, then persists one
+compact accepted result. Dependency release, finalization, resume, and archive consume
+that result plus a current harness observation while its identity and freshness hold;
+they do not replay transient acceptance evidence or historical handoff chains. A
+status-only or append-only evidence change neither invalidates the canonical semantic
+plan projection nor causes a terminal rerun.
+A later stored task repair review recomposes this compact result through the existing
+materializer while preserving executor-result, validation, owner, baseline, and
+knowledge authority; it performs no executor redispatch, handoff rewrite, validation
+rerun, or review-history embedding.
+
 Capability context projects trusted intent/evaluation seeds through the existing
 typed-relation traversal (`light`: 1 hop, `standard`: 2, `deep`: 4), bounded by
 `max_nodes`. Stale/non-authoritative nodes cannot be transit nodes; frontier and
@@ -191,11 +221,24 @@ scheduler selects executable task
   -> Completed
 ```
 
-Subagent executors own every implementation and repair mutation, task-local verification, and executor-result evidence, including a task-local knowledge disposition of `none`, `update`, `supersede`, or `reclassify`. They never invoke persistence or read knowledge. Reviewers own acceptance judgment for the accepted Truth Basis, requirement fit, correctness, edge cases, test oracle, disposition, unnecessary complexity, allocated obligations, and validation sufficiency. Schedulers own dependencies, barriers, context compilation, neutral subagent binding, validation routing, and evidence shape; they do not perform code-quality review or mutate task write scope.
+Subagent executors own every implementation and repair mutation, task-local verification, and executor-result evidence, including a task-local knowledge disposition of `none`, `update`, `supersede`, or `reclassify`. They never invoke persistence or read knowledge. Product reviewers judge accepted product requirements/boundaries, exact source/diff, correctness, edge cases, normalized validation observations, unresolved product concerns, and unnecessary complexity. Controllers own disposition, handoff, provenance, publication, and lifecycle mechanics. Schedulers own dependencies, barriers, context compilation, neutral subagent binding, validation routing, and evidence shape; they do not perform code-quality review or mutate task write scope.
 
 Selecting `orch-execute-plan` requires a subagent owner for every task without a separate user opt-in. The production `TaskOwnershipScheduler` admission entry consumes either a host-native or Execution-Flow adapter; evidence records only the minimum agent/run identity and mechanism. If none is available, execution fails closed before task mutation. Independent disjoint tasks in distinct execution workspaces dispatch before any wait; dependent, overlapping, or same-workspace tasks serialize. Acceptance uses the same scheduler entry to reject controller mutation, and repair dispatch uses `operation: repair` through the same adapter path.
 
-On `repair`, return blocking findings with the same brief and current diff to the task-owning subagent. It makes the smallest repair, reruns claim-relevant validation, regenerates the package from the original base, and reviews again. If no subagent is available, fail closed before repair mutation. After two failed low-cost repair rounds, escalate the capability tier; if evidence indicates a plan or specification defect, stop the retry loop and route the typed blocker.
+On `repair`, return blocking findings to the existing task owner, repair from the exact
+previously reviewed source, rerun only claim-relevant invalidated validation, and
+perform one scoped rereview. Preserve unaffected accepted executor/validation authority.
+Initial acceptance uses one executor-result handoff; accepted-task source repair consumes
+the compact accepted result; publication-only/control resume reuses the completed
+judgment and never redispatches, rewrites a handoff, or reruns validation/review.
+
+On reviewer infrastructure or provider failure, repair the first broken runner/provider
+against the same immutable review package; a capable independent reviewer may be reused,
+and completed judgment publication is idempotent. Source identity, validation evidence,
+plan decomposition, and review frontier remain unchanged. A finding-scoped repair under unchanged authority
+carries the previous finding/evidence frontier and reviews only repaired boundaries.
+Only a material authority, scope, acceptance, decomposition, or validation-allocation
+change resets review to an initial frontier.
 
 A task becomes `Completed` only when implementation criteria, fresh validation, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan status derive from accepted children plus declared dependency and barrier gates.
 
@@ -214,6 +257,13 @@ workspace-blocked     execution workspace preparation, hydration, ownership, or 
 ```
 
 Resume the step that owns the failure. Repair a task for rejected implementation, a plan for decomposition defects, and a specification only for requirement, design, or authority defects.
+
+Before responding to any evaluator, review, validation, or lifecycle failure, classify
+the exact failing assertion into a causal class and route it to the first owning layer.
+An evaluator expectation cannot create source authority. Historical validation uses an
+exact baseline and endpoint rather than an open-ended live HEAD, and issue-run artifacts
+remain in the workspace control plane; proven historical cleanup does not turn old
+accepted manifests into a live source inventory.
 
 ## Final workflow audit
 

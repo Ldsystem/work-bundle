@@ -1,4 +1,3 @@
-import hashlib
 import subprocess
 from datetime import datetime, timezone
 
@@ -12,13 +11,23 @@ from execution_context import (
     unique_explicit_handoff_plan_id,
     validate_executor_result_for_task,
     _compile_task_brief,
+    _observe_validation_item,
     _observation_kwargs,
     _parse_scalar,
     _execution_workspace_module,
     _persist_binding,
+    has_persisted_accepted_task_result,
     load_task_execution_binding,
+    load_current_accepted_task_result,
+    semantic_digest,
 )
-from completion_provenance import ManagedProvenanceStore, release_completion_binding
+from completion_provenance import (
+    CompletionProvenanceError,
+    ManagedProvenanceStore,
+    load_observation,
+    observe_validation,
+    release_completion_binding,
+)
 from handoffs import _read_compact_yaml_metadata
 from repository_preflight import capture_repository_evidence, task_caused_paths
 from specs import load_index, replace_front_matter_value
@@ -48,7 +57,25 @@ def _assert_archive_knowledge_gate(
     if upstream is None:
         raise SystemExit("knowledge-blocked: plan has no Knowledge Base Update disposition")
     closure_return = _plan_knowledge_field(body, "Closure return") or "missing"
-    handoffs = [handoff for handoff, _brief in validated]
+    legacy = [result for result, _brief in validated if "knowledge_disposition" not in result]
+    if legacy:
+        if upstream == "required" and closure_return == "completed":
+            return
+        raise SystemExit(
+            "knowledge-blocked: legacy accepted results require plan-level required/completed closure"
+        )
+    handoffs = [
+        {
+            "related": {"plan": plan_id, "task": result.get("task_id")},
+            "result": {"state": "completed"},
+            "acceptance_review": {
+                "required": brief.get("review_required") is True,
+                "verdict": "accept",
+            },
+            "knowledge_disposition": result.get("knowledge_disposition"),
+        }
+        for result, brief in validated
+    ]
     review_required_by_task = {
         str(brief.get("task_id") or ""): brief.get("review_required") is True for _handoff, brief in validated
     }
@@ -143,14 +170,14 @@ def _validated_plan_task_handoffs(
     return validated
 
 
-def _plan_section_table(body: str, name: str) -> list[list[str]]:
+def _plan_section_table_parts(body: str, name: str) -> tuple[list[str], list[list[str]]]:
     section = re.search(
         rf"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?{re.escape(name)}\s*$([\s\S]*?)(?=^##\s|\Z)",
         body,
         re.MULTILINE,
     )
     if not section:
-        return []
+        return [], []
     rows: list[list[str]] = []
     for line in section.group(1).splitlines():
         if not line.strip().startswith("|"):
@@ -159,18 +186,29 @@ def _plan_section_table(body: str, name: str) -> list[list[str]]:
         if not cells or all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
             continue
         rows.append(cells)
-    return rows[1:] if rows else []
+    return (rows[0], rows[1:]) if rows else ([], [])
+
+
+def _plan_section_table(body: str, name: str) -> list[list[str]]:
+    _header, rows = _plan_section_table_parts(body, name)
+    return rows
 
 
 def _declared_integration_commands(body: str) -> list[str]:
     commands: list[str] = []
-    for cells in _plan_section_table(body, "Tests"):
-        if len(cells) < 6:
+    header, rows = _plan_section_table_parts(body, "Tests")
+    normalized = [re.sub(r"\s+", " ", cell.strip().lower()) for cell in header]
+    if "test type" not in normalized or "command" not in normalized:
+        return []
+    test_type_index = normalized.index("test type")
+    command_index = normalized.index("command")
+    for cells in rows:
+        if max(test_type_index, command_index) >= len(cells):
             continue
-        test_type = cells[1].lower()
+        test_type = cells[test_type_index].lower()
         if "integration" not in test_type or "unit|integration" in test_type:
             continue
-        command = cells[5].strip().strip("`")
+        command = cells[command_index].strip().strip("`")
         if command and command not in {"-", "[command if applicable]"}:
             commands.append(command)
     return commands
@@ -400,6 +438,112 @@ def _assert_archive_command_state_neutral(command: str, workspace: Path) -> None
         )
 
 
+def _observe_archive_obligations(
+    control_root: Path,
+    command: str,
+    workspace: Path,
+    validated: list[tuple[dict[str, object], dict[str, object]]],
+) -> list[dict[str, object]]:
+    """Consume accepted task observations through the shared validation observer."""
+
+    store = ManagedProvenanceStore(
+        control_root / ".work-bundle/runtime/completion-provenance"
+    )
+    matches: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
+    for accepted, task in validated:
+        if accepted.get("schema") != "accepted-task-result-v1":
+            continue
+        for item in task.get("validation", []):
+            if isinstance(item, dict) and str(item.get("command") or "").strip() == command:
+                matches.append((accepted, task, item))
+    if not matches:
+        return []
+
+    observed: list[dict[str, object]] = []
+    for accepted, task, item in matches:
+        evidence_ids = accepted.get("validation_evidence_ids")
+        if not isinstance(evidence_ids, list) or not evidence_ids:
+            raise SystemExit(
+                "acceptance-blocked: accepted task result has no harness observation"
+            )
+        definition = {
+            key: item.get(key)
+            for key in (
+                "id", "kind", "command", "mechanism", "expected",
+                "acceptable_results", "invariant_ids", "digest", "proves",
+            )
+        }
+        expected_command_digest = semantic_digest(definition)
+        accepted_harness_observation = False
+        for evidence_id in evidence_ids:
+            try:
+                load_observation(store, str(evidence_id))
+            except CompletionProvenanceError:
+                continue
+            accepted_harness_observation = True
+            break
+        if not accepted_harness_observation:
+            raise SystemExit(
+                "acceptance-blocked: accepted task result does not reference an accepted harness observation"
+            )
+        binding = load_task_execution_binding(
+            control_root, str(task.get("plan_id") or ""), str(task.get("task_id") or "")
+        )
+        if Path(str(binding.get("execution_path") or "")).resolve() != workspace.resolve():
+            raise SystemExit(
+                "acceptance-blocked: accepted observation execution workspace mismatch"
+            )
+        try:
+            before = capture_repository_evidence(workspace)
+        except RuntimeError as error:
+            raise SystemExit(f"acceptance-blocked: {error}") from error
+        result = observe_validation(
+            binding,
+            task,
+            item,
+            before,
+            lambda receipt: _observe_validation_item(item, workspace, task, receipt),
+            lambda: capture_repository_evidence(workspace),
+            finalization_id=(
+                f"archive:{task.get('plan_id')}:{task.get('task_id')}:{item.get('id')}"
+            ),
+            stage_event_workspace=control_root,
+            stage_event={
+                "event_id": "event-template",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "process_id": "process-plan-archive",
+                "stage": "plan-archive",
+                "attempt_id": str(task.get("plan_id") or ""),
+                "event_type": "suite_started",
+                "enforcement_mode": "native",
+                "join_ids": {
+                    "specification_id": None,
+                    "plan_id": str(task.get("plan_id") or "") or None,
+                    "phase_id": str(task.get("phase_id") or "") or None,
+                    "task_id": str(task.get("task_id") or "") or None,
+                    "review_id": None,
+                    "evaluation_id": None,
+                },
+                "clocks": {"wall_ms": 0, "active_ms": 0, "billed_ms": None},
+                "finding_class": None,
+                "return_reason": "accepted terminal observation",
+                "owner": str(task.get("task_id") or "plan-archive"),
+                "identity": {
+                    "product_tree": _git_tree_id(workspace, "HEAD"),
+                    "artifact_digest": expected_command_digest,
+                    "mutation_epoch": 0,
+                },
+                "privacy": "operational_metadata_only",
+            },
+        )
+        if result.get("result") != "passed":
+            raise SystemExit(
+                f"acceptance-blocked: declared plan-level acceptance {command} is {result.get('result')}"
+            )
+        observed.append(result)
+    return observed
+
+
 def _assert_archive_plan_acceptance(
     args: argparse.Namespace,
     plan_id: str,
@@ -413,9 +557,21 @@ def _assert_archive_plan_acceptance(
     git_root = _material_repository_root(args, plan_id, validated, commands)
     terminal_tree = _git_tree_id(git_root, "HEAD")
     material = [pair for pair in validated if _handoff_has_material_changes(*pair)]
+    uses_accepted_results = any(
+        result.get("schema") == "accepted-task-result-v1" for result, _brief in validated
+    )
+    control_root = resolve_workspace_root(args) if uses_accepted_results else None
     for command in commands:
+        if control_root is not None:
+            observed = _observe_archive_obligations(
+                control_root, command, git_root, validated
+            )
+            if observed:
+                continue
+            raise SystemExit(
+                f"acceptance-blocked: no accepted validation obligation for {command}"
+            )
         terminal_results: set[str] = set()
-        other_results: set[str] = set()
         for handoff, _brief in validated:
             result = _handoff_command_result(handoff, command)
             if result is None:
@@ -423,22 +579,16 @@ def _assert_archive_plan_acceptance(
             tree = _verified_handoff_tree(git_root, handoff)
             if terminal_tree and tree == terminal_tree:
                 terminal_results.add(result)
-            else:
-                other_results.add(result)
-        judged = terminal_results or other_results
         if terminal_results:
             if terminal_results == {"passed"}:
                 continue
             raise SystemExit(
                 f"acceptance-blocked: declared plan-level acceptance {command} is {_acceptance_result_detail(terminal_results)}"
             )
-        if judged == {"passed"}:
-            if len(material) <= 1:
-                continue
-            raise SystemExit(f"acceptance-blocked: declared plan-level acceptance {command} is stale")
-        raise SystemExit(
-            f"acceptance-blocked: declared plan-level acceptance {command} is {_acceptance_result_detail(judged)}"
-        )
+        # Historical task evidence is not terminal plan authority. The archive
+        # gate obtains one fresh state-neutral observation below instead.
+    if control_root is not None:
+        return
     workspace = git_root if material else _resolve_final_plan_workspace(args)
     for command in commands:
         _assert_archive_command_state_neutral(command, workspace)
@@ -535,7 +685,117 @@ def cmd_list_plans(args: argparse.Namespace) -> None:
         print(json.dumps(row, ensure_ascii=False))
 
 
-def _assert_completed_task_handoff(args: argparse.Namespace, task_path: Path) -> None:
+def _load_current_task_acceptance(
+    args: argparse.Namespace, task_path: Path
+) -> tuple[dict[str, object], dict[str, object]]:
+    compile_args = argparse.Namespace(
+        project_root=getattr(args, "project_root", None),
+        workspace_root=getattr(args, "workspace_root", None),
+        task=str(task_path),
+        handoff=None,
+        base=None,
+        head=None,
+        **_observation_kwargs(args),
+    )
+    _, brief_document = _compile_task_brief(compile_args)
+    return load_current_accepted_task_result(
+        resolve_workspace_root(args), brief_document["task_brief"]
+    )
+
+
+def _task_brief_at(args: argparse.Namespace, task_path: Path) -> dict[str, object]:
+    compile_args = argparse.Namespace(
+        project_root=getattr(args, "project_root", None),
+        workspace_root=getattr(args, "workspace_root", None),
+        task=str(task_path),
+        handoff=None,
+        base=None,
+        head=None,
+        **_observation_kwargs(args),
+    )
+    _, brief_document = _compile_task_brief(compile_args)
+    return brief_document["task_brief"]
+
+
+def _assert_task_dependencies_current(args: argparse.Namespace, task_path: Path) -> None:
+    front_matter, _body = read_front_matter(task_path)
+    if not front_matter.get("depends_on"):
+        return
+    brief = _task_brief_at(args, task_path)
+    rows = index_plans(args)
+    for dependency_id in brief.get("depends_on", []):
+        matches = [
+            row for row in rows
+            if row.get("type") == "task"
+            and row.get("plan_id") == brief.get("plan_id")
+            and row.get("id") == dependency_id
+        ]
+        if len(matches) != 1 or matches[0].get("status") != "Completed":
+            raise SystemExit(f"dependency-blocked: {dependency_id} is not completed")
+        _load_current_task_acceptance(args, artifact_path_from_row(matches[0], args))
+
+
+def _accepted_plan_task_results(
+    args: argparse.Namespace, plan_id: str
+) -> list[tuple[dict[str, object], dict[str, object]]]:
+    accepted: list[tuple[dict[str, object], dict[str, object]]] = []
+    for row in index_plans(args):
+        if row.get("type") != "task" or row.get("plan_id") != plan_id:
+            continue
+        if row.get("status") != "Completed":
+            raise SystemExit(f"acceptance-blocked: task {row.get('id')} is not completed")
+        path = artifact_path_from_row(row, args)
+        _binding, result = _load_current_task_acceptance(args, path)
+        accepted.append((result, _task_brief_at(args, path)))
+    return accepted
+
+
+def _plan_uses_accepted_result_authority(args: argparse.Namespace, plan_id: str) -> bool:
+    control_root = resolve_workspace_root(args)
+    for row in index_plans(args):
+        if row.get("type") != "task" or row.get("plan_id") != plan_id:
+            continue
+        if has_persisted_accepted_task_result(
+            control_root, plan_id, str(row.get("id") or "")
+        ):
+            return True
+    return False
+
+
+def _assert_phase_tasks_accepted(args: argparse.Namespace, phase_id: str, plan_id: str) -> None:
+    rows = [
+        row for row in index_plans(args)
+        if row.get("type") == "task"
+        and row.get("plan_id") == plan_id
+        and row.get("phase_id") == phase_id
+    ]
+    for row in rows:
+        if row.get("status") != "Completed":
+            raise SystemExit(f"acceptance-blocked: task {row.get('id')} is not completed")
+        _load_current_task_acceptance(args, artifact_path_from_row(row, args))
+
+
+def _assert_completed_task_authority(
+    args: argparse.Namespace, task_path: Path
+) -> dict[str, object]:
+    try:
+        _binding, accepted = _load_current_task_acceptance(args, task_path)
+        return accepted
+    except SystemExit as error:
+        missing_initial_binding = str(error) == "Task execution binding is missing harness provenance"
+        if missing_initial_binding:
+            front_matter, _body = read_front_matter(task_path)
+            published = has_persisted_accepted_task_result(
+                resolve_workspace_root(args),
+                str(front_matter.get("plan_id") or ""),
+                str(front_matter.get("id") or ""),
+            )
+        else:
+            published = False
+        if str(error) != "accepted task result is missing" and not (
+            missing_initial_binding and not published
+        ):
+            raise
     handoff = getattr(args, "handoff", None)
     if not handoff:
         raise SystemExit("set-plan-status Completed for a task requires --handoff")
@@ -550,6 +810,8 @@ def _assert_completed_task_handoff(args: argparse.Namespace, task_path: Path) ->
             **_observation_kwargs(args),
         )
     )
+    _binding, accepted = _load_current_task_acceptance(args, task_path)
+    return accepted
 
 
 def _release_completed_task_binding(args: argparse.Namespace, row: dict[str, object]) -> dict[str, object]:
@@ -559,8 +821,8 @@ def _release_completed_task_binding(args: argparse.Namespace, row: dict[str, obj
     plan_id = str(row["plan_id"])
     task_id = str(row["id"])
     binding = load_task_execution_binding(control_root, plan_id, task_id)
-    handoff = Path(str(getattr(args, "handoff", "")))
-    artifact_digest = hashlib.sha256(handoff.read_bytes()).hexdigest() if handoff.is_file() else None
+    accepted = binding.get("accepted_result") if isinstance(binding.get("accepted_result"), dict) else {}
+    artifact_digest = semantic_digest(accepted) if accepted else None
     event = {
         "event_id": "event-template",
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -581,7 +843,11 @@ def _release_completed_task_binding(args: argparse.Namespace, row: dict[str, obj
         "finding_class": None,
         "return_reason": "validated completion",
         "owner": task_id,
-        "identity": {"product_tree": None, "artifact_digest": artifact_digest, "mutation_epoch": 0},
+        "identity": {
+            "product_tree": (accepted.get("accepted_source") or {}).get("tree"),
+            "artifact_digest": artifact_digest,
+            "mutation_epoch": 0,
+        },
         "privacy": "operational_metadata_only",
     }
     store = ManagedProvenanceStore(control_root / ".work-bundle/runtime/completion-provenance")
@@ -630,11 +896,17 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
         raise SystemExit(f"Multiple plan artifacts match {args.id}{guidance}")
     row = matches[0]
     path = artifact_path_from_row(row, args)
+    if row.get("type") == "task" and args.status in {"In progress", "Completed"}:
+        _assert_task_dependencies_current(args, path)
+    if row.get("type") == "phase" and args.status == "Completed":
+        _assert_phase_tasks_accepted(args, str(row["id"]), str(row["plan_id"]))
     if row.get("type") == "plan" and args.status in {"In progress", "Completed"}:
         require_plan_reviews(project_root(args), path,
                              source_root=_resolve_final_plan_workspace(args) if args.status == "Completed" else None)
+        if args.status == "Completed":
+            _accepted_plan_task_results(args, str(row["id"]))
     if args.status == "Completed" and row.get("type") == "task":
-        _assert_completed_task_handoff(args, path)
+        _assert_completed_task_authority(args, path)
         _release_completed_task_binding(args, row)
     replace_front_matter_value(path, "status", args.status)
     if args.status == "Deprecated":
@@ -658,7 +930,12 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
 
     root_path = artifact_path_from_row(root_match, args)
     require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))
-    validated = _validated_plan_task_handoffs(args, args.id)
+    if _plan_uses_accepted_result_authority(args, args.id):
+        validated = _accepted_plan_task_results(args, args.id)
+    else:
+        # Pre-accepted-result plans retain a bounded migration path. New plans
+        # switch irreversibly once any task publishes durable accepted authority.
+        validated = _validated_plan_task_handoffs(args, args.id)
     _assert_archive_knowledge_gate(args, args.id, root_path, validated)
     _assert_archive_plan_acceptance(args, args.id, root_path, validated)
     require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))
