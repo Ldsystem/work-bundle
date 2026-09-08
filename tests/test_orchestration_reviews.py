@@ -113,7 +113,10 @@ def test_task_repair_review_binds_authoritative_integrated_stage_predecessor() -
     blocking = finding()
     blocking["finding_id"] = "WOR112-T005-INT-001"
     blocking["target_identity"] = previous["target_identity"]
-    previous["findings"] = [blocking]
+    evaluator_control = finding("validation_oracle_defect")
+    evaluator_control["finding_id"] = "WOR112-EVALUATOR-CONTROL-001"
+    evaluator_control["target_identity"] = previous["target_identity"]
+    previous["findings"] = [blocking, evaluator_control]
     repaired_identity = {
         "artifact_id": "task-005",
         "revision": "c" * 40,
@@ -147,6 +150,16 @@ def test_task_repair_review_binds_authoritative_integrated_stage_predecessor() -
 
     assert validated.review_id == "review-task-repair"
     assert validated.repair_frontier["prior_review_id"] == "review-integrated-finding"
+
+    for finding_ids, message in (
+        (["UNKNOWN-FINDING"], "unknown blocking finding IDs"),
+        (["WOR112-EVALUATOR-CONTROL-001"], "only task-owned blocking findings"),
+        ([], "must be non-empty"),
+    ):
+        invalid = deepcopy(current)
+        invalid["repair_frontier"]["blocking_finding_ids"] = finding_ids
+        with pytest.raises(ReviewContractError, match=message):
+            validate_task_acceptance_review(invalid)
 
 
 @pytest.mark.parametrize(

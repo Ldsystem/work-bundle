@@ -1255,6 +1255,7 @@ def validate_stage_review(
 def validate_review_sequence(
     value: Mapping[str, Any], *, previous_review: Mapping[str, Any] | None = None,
     material_change: str | None = None,
+    _task_owned_finding_subset: bool = False,
 ) -> StageReviewV1:
     """Bind a re-review to its exact predecessor without replaying history."""
     current = validate_stage_review(value)
@@ -1273,8 +1274,24 @@ def validate_review_sequence(
             raise ReviewContractError("repair frontier must bind the exact prior repair review")
         if frontier["previous_reviewed_identity"] != previous.target_identity:
             raise ReviewContractError("repair frontier previous reviewed identity does not match prior review")
-        expected_findings = {item.finding_id for item in previous.findings if item.severity == "blocking"}
-        if set(frontier["blocking_finding_ids"]) != expected_findings:
+        blocking_findings = {
+            item.finding_id: item for item in previous.findings if item.severity == "blocking"
+        }
+        selected_findings = set(frontier["blocking_finding_ids"])
+        if _task_owned_finding_subset:
+            if not selected_findings.issubset(blocking_findings):
+                raise ReviewContractError(
+                    "task repair frontier contains unknown blocking finding IDs"
+                )
+            if any(
+                blocking_findings[finding_id].recommended_owner != "task_owner"
+                or blocking_findings[finding_id].disposition != "repair_task"
+                for finding_id in selected_findings
+            ):
+                raise ReviewContractError(
+                    "task repair frontier may select only task-owned blocking findings"
+                )
+        elif selected_findings != set(blocking_findings):
             raise ReviewContractError("repair frontier blocking finding IDs do not match prior review")
         if frontier["frozen_evidence_reference"] != review_evidence_identity(previous_review):
             raise ReviewContractError("repair frontier frozen evidence reference does not match prior review")
@@ -1336,7 +1353,9 @@ def validate_task_acceptance_review(value: Mapping[str, Any]) -> StageReviewV1:
                     "task repair review stage predecessor must be integrated_implementation"
                 )
             return validate_review_sequence(
-                _task_review_as_stage(record), previous_review=previous
+                _task_review_as_stage(record),
+                previous_review=previous,
+                _task_owned_finding_subset=True,
             )
         validate_task_review_record(previous)
         return validate_review_sequence(_task_review_as_stage(record), previous_review=_task_review_as_stage(previous))
