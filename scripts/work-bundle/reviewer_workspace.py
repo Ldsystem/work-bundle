@@ -152,8 +152,14 @@ def run_native_reviewer(workspace: Path, executable: Path, *, model: str, review
     packet, _ = _load_workspace(workspace)
     if not ("stage_review_context" in packet or "task_review_context" in packet):
         raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_CONTEXT_REQUIRED")
-    evidence = [{**item, "content": _evidence_path(workspace, item["locator"]).read_text(encoding="utf-8")}
-                for item in packet["artifacts"]]
+    evidence = []
+    for item in packet["artifacts"]:
+        # Text-mode reads normalize CRLF. The model input must preserve the exact
+        # frozen bytes whose digest will be revalidated during publication.
+        content = _evidence_path(workspace, item["locator"]).read_bytes().decode("utf-8")
+        if _sha256_bytes(content.encode("utf-8")) != item["sha256"]:
+            raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
+        evidence.append({**item, "content": content})
     request = {"instructions": review_instructions, "review_input": _native_review_input(packet), "evidence": evidence}
     argv = _native_reviewer_argv(executable, workspace, model)
     return _run_reviewer(workspace, argv, native_request=request)

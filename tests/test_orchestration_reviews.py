@@ -846,12 +846,22 @@ def test_old_packet_bytes_cannot_be_relabelled_as_current_target(tmp_path):
         reviewer_workspace.create_reviewer_workspace(runtime, "relabelled", packet)
 
 
-def _native_spec_receipt(tmp_path, monkeypatch, *, observed_events=None):
+def _native_spec_receipt(tmp_path, monkeypatch, *, observed_events=None, crlf=False):
     import reviewer_workspace
     spec, _, reviews = _reviewed_plan_fixture(tmp_path)
     record = json.loads((reviews / "specification.json").read_text())
     record.pop("reviewer_run")
     workspace = review_runtime.reviewer_runtime_root(tmp_path) / "reviews" / record["review_id"]
+    if crlf:
+        spec.write_bytes(spec.read_bytes().replace(b"\n", b"\r\n"))
+        previous_packet = json.loads((workspace / "packet.json").read_text())
+        packet = reviewer_workspace.build_direct_evidence_packet(
+            source_root=tmp_path, control_root=tmp_path, protected_roots=[tmp_path / ".work-bundle/protected-test"],
+            artifacts=[item["locator"] for item in previous_packet["artifacts"]], search_roots=[], validators=[],
+            sentinels=[], network_state="denied", stage_review_context=previous_packet["stage_review_context"])
+        record["review_id"] += "-crlf"
+        created = reviewer_workspace.create_reviewer_workspace(review_runtime.reviewer_runtime_root(tmp_path), record["review_id"], packet)
+        workspace = Path(created["workspace_path"])
     host_id = "01a0821d-f359-7d60-a9bd-90dd0e006166"
     events = [
         {"type": "thread.started", "thread_id": host_id}, {"type": "turn.started"},
@@ -867,6 +877,19 @@ def _native_spec_receipt(tmp_path, monkeypatch, *, observed_events=None):
                                                      review_instructions="Assess supplied specification and return its stage judgment.")
     result = {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]}
     return spec, receipt, result
+
+
+def test_native_crlf_evidence_preserves_exact_bytes_through_publication(tmp_path, monkeypatch):
+    spec, receipt, result = _native_spec_receipt(tmp_path, monkeypatch, crlf=True)
+    assert b"\r\n" in spec.read_bytes()
+    request = json.loads(Path(receipt["receipt_path"]).with_suffix(".request.json").read_text())
+    locator = "control:" + spec.relative_to(tmp_path).as_posix()
+    supplied = next(item for item in request["evidence"] if item["locator"] == locator)
+    assert supplied["content"].encode("utf-8") == spec.read_bytes()
+    current = review_runtime.artifact_review_identity(spec)
+    reference = publish_review(tmp_path, result, current_target_identity=current)
+    loaded, accepted = review_runtime.load_stored_review(tmp_path, reference, current_target_identity=current)
+    assert loaded == result and accepted.verdict == "accepted"
 
 
 def test_failed_native_admission_retains_actual_unadmitted_diagnostics(tmp_path, monkeypatch):
