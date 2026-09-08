@@ -4135,7 +4135,23 @@ def _assert_no_source_local_execution_artifacts(task: dict[str, Any], task_path:
             path = canonical_relative_path(str(value))
         except OwnershipBlocker:
             continue
-        if path == "orchestration/executions" or path.startswith("orchestration/executions/"):
+        parts = Path(path).parts
+        issue_eval = (
+            len(parts) >= 2
+            and parts[0] == "evals"
+            and re.fullmatch(r"(?:wor|issue)[-_]?\d+", parts[1], re.IGNORECASE)
+        )
+        issue_test = (
+            len(parts) == 2
+            and parts[0] == "tests"
+            and re.match(r"test_(?:wor|issue)[-_]?\d+(?:_|\.py)", parts[1], re.IGNORECASE)
+        )
+        if (
+            path == "orchestration/executions"
+            or path.startswith("orchestration/executions/")
+            or issue_eval
+            or issue_test
+        ):
             raise SystemExit(
                 f"Task write scope uses a source-local execution artifact path: {task_path}: {path}"
             )

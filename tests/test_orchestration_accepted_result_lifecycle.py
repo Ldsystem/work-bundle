@@ -328,20 +328,3 @@ def test_recovery_commands_are_not_public_dispatcher_actions() -> None:
     assert "adopt-existing-recovered-result" not in dispatcher.RECOGNIZED_COMMANDS
     with pytest.raises(SystemExit):
         dispatcher.build_parser().parse_args(["create-accepted-base-absence-receipt"])
-
-
-def test_wor105_historical_identity_and_release_anchor_are_separate() -> None:
-    import yaml
-
-    record = yaml.safe_load(
-        (REPO_ROOT / "evals/wor105/components/native-transition-record.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-
-    assert record["accepted_commit"] == "9dce5df221485174d6179f713e8b179bbc20567a"
-    assert record["accepted_tree"] == "5a1f38355eae8068bab528923e807ce54e6f6fe5"
-    assert record["release_anchor"] == {
-        "commit": "cfa089f0d2ed211b98d049eb37bfcdccb8091516",
-        "tree": "12e4a696c3caf991654f0b9ac9ef40594699c8d4",
-    }

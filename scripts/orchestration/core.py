@@ -220,6 +220,38 @@ def orchestration_root(args: argparse.Namespace) -> Path:
     return work_bundle(args) / "orchestration"
 
 
+def resolve_execution_artifact_path(
+    workspace_root: Path,
+    *,
+    execution_id: str,
+    artifact_path: str,
+    source_members: list[Path],
+) -> Path:
+    """Resolve run-owned output under the containing workspace, never a source member."""
+
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", execution_id):
+        raise SystemExit("Execution artifact path requires a valid execution id")
+    relative = Path(artifact_path)
+    if (
+        not artifact_path.strip()
+        or relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise SystemExit("Execution artifact path must be a canonical relative path")
+    target = (
+        workspace_root.expanduser().resolve()
+        / "orchestration"
+        / "executions"
+        / execution_id
+        / relative
+    ).resolve()
+    for source_member in source_members:
+        if is_relative_to(target, source_member.expanduser().resolve()):
+            raise SystemExit("Execution artifact path resolves inside a source member")
+    return target
+
+
 def ensure_under_orchestration(path: Path, args: argparse.Namespace) -> Path:
     resolved = path.resolve()
     allowed = orchestration_root(args).resolve()

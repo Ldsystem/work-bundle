@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import runpy
+import re
 import subprocess
 from pathlib import Path
 
@@ -44,7 +45,7 @@ def test_release_gate_continues_after_early_module_failure() -> None:
     assert "WB_CI_MODULE PASS tests/test_c.py" in output
 
 
-def test_release_gate_inputs_are_tracked_and_control_plane_independent() -> None:
+def test_release_gate_inputs_are_tracked_and_execution_independent() -> None:
     tracked = subprocess.run(
         ["git", "ls-files", "tests/test_*.py"],
         cwd=REPO_ROOT,
@@ -55,12 +56,7 @@ def test_release_gate_inputs_are_tracked_and_control_plane_independent() -> None
     discovered = sorted(path.relative_to(REPO_ROOT).as_posix() for path in (REPO_ROOT / "tests").glob("test_*.py"))
 
     assert tracked == discovered
-    for path in [
-        CI_ENTRY,
-        REPO_ROOT / "bin" / "work-bundle-skill",
-        REPO_ROOT / ".github" / "workflows" / "ci.yml",
-        REPO_ROOT / "evals" / "wor105" / "components" / "native-transition-record.yaml",
-    ]:
+    for path in [CI_ENTRY, REPO_ROOT / "bin" / "work-bundle-skill", REPO_ROOT / ".github" / "workflows" / "ci.yml"]:
         subprocess.run(
             ["git", "ls-files", "--error-unmatch", path.relative_to(REPO_ROOT).as_posix()],
             cwd=REPO_ROOT,
@@ -69,16 +65,15 @@ def test_release_gate_inputs_are_tracked_and_control_plane_independent() -> None
             text=True,
         )
     assert ".work-bundle" not in CI_ENTRY.read_text(encoding="utf-8")
+    assert not (REPO_ROOT / "evals" / "wor105").exists()
+    assert not (REPO_ROOT / "evals" / "wor108").exists()
+    assert not any(re.match(r"test_(?:wor|issue)[-_]?\d+", Path(path).stem) for path in discovered)
 
 
-def test_release_oracles_reject_developer_only_control_evidence() -> None:
-    transition_source = (REPO_ROOT / "tests" / "test_wor105_native_transition.py").read_text(encoding="utf-8")
-
-    assert 'TRANSITION_RECORD = REPO_ROOT / "evals" / "wor105" / "components"' in transition_source
-    assert "WORKSPACE_ROOT = REPO_ROOT.parent" not in transition_source
-    assert "ORCHESTRATION =" not in transition_source
-    assert '"handoff" / "executor"' not in transition_source
-    assert "review_path.read_bytes" not in transition_source
+def test_release_gate_does_not_read_workspace_execution_evidence() -> None:
+    source = CI_ENTRY.read_text(encoding="utf-8")
+    assert "orchestration/executions" not in source
+    assert "evals/wor" not in source
 
 
 def test_release_gate_collects_test_and_skill_failures() -> None:
@@ -133,10 +128,10 @@ def test_workflow_delegates_to_canonical_release_gate() -> None:
         assert pin in entry
 
 
-def test_workflow_fetches_full_history_for_historical_transition_identity() -> None:
+def test_workflow_uses_default_checkout_history_for_current_project_tests() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["deterministic"]["steps"]
     checkout = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
 
     assert len(checkout) == 1
-    assert checkout[0].get("with", {}).get("fetch-depth") == 0
+    assert "with" not in checkout[0]
