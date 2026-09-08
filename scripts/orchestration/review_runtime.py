@@ -507,6 +507,13 @@ def _semantic_plan_artifact_digest(projection: Mapping[str, Any]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _semantic_plan_member_key(plan_root: Path, path: Path) -> str:
+    parts = list(path.relative_to(plan_root).parts)
+    if parts and parts[0] == "archived":
+        parts[0] = "active"
+    return Path(*parts).as_posix()
+
+
 def semantic_plan_projection(
     root: Path, plan_path: Path, *, content: str | None = None
 ) -> dict[str, Any]:
@@ -519,7 +526,9 @@ def semantic_plan_projection(
     plan_data = root_projection["metadata"]
     plan_id = str(plan_data["id"])
     members = {
-        str(plan_path.relative_to(plan_root)): _semantic_plan_artifact_digest(root_projection)
+        _semantic_plan_member_key(plan_root, plan_path): _semantic_plan_artifact_digest(
+            root_projection
+        )
     }
     for path in sorted(plan_root.rglob("*.md")):
         if path == plan_path:
@@ -529,7 +538,7 @@ def semantic_plan_projection(
         data, _ = _read_structured(path)
         if str(data.get("plan_id", "")) != plan_id:
             continue
-        members[str(path.relative_to(plan_root))] = _semantic_plan_artifact_digest(
+        members[_semantic_plan_member_key(plan_root, path)] = _semantic_plan_artifact_digest(
             _semantic_plan_artifact(path)
         )
     specifications = [

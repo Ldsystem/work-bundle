@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -81,6 +82,20 @@ def test_semantic_projector_preserves_accepted_legacy_baseline_identity(tmp_path
     plan, _phase, _task = _plan_graph(tmp_path)
 
     assert review_runtime.plan_review_identity(tmp_path, plan) == _legacy_plan_identity(tmp_path, plan)
+
+
+def test_active_to_archived_rotation_preserves_semantic_plan_identity(tmp_path: Path) -> None:
+    plan, _phase, _task = _plan_graph(tmp_path)
+    original = review_runtime.plan_review_identity(tmp_path, plan)
+    archived = plan.parents[1] / "archived"
+    archived.mkdir()
+    archived_plan = archived / plan.name
+    archived_graph = archived / plan.stem
+
+    shutil.move(str(plan), archived_plan)
+    shutil.move(str(plan.with_suffix("")), archived_graph)
+
+    assert review_runtime.plan_review_identity(tmp_path, archived_plan) == original
 
 
 def test_progress_and_append_only_evidence_do_not_change_semantic_plan_identity(tmp_path: Path) -> None:
