@@ -1302,8 +1302,8 @@ def validate_review_sequence(
         if (reset is None or reset["prior_review_id"] != previous.review_id
                 or reset["reason_class"] != material_change):
             raise ReviewContractError("material change requires a recorded fresh initial review reset")
-        if current.reviewer["agent_id"] == previous.reviewer["agent_id"] or current.reviewer["capability"] != "judgment":
-            raise ReviewContractError("reset requires a fresh capable independent reviewer identity")
+        if current.reviewer["capability"] != "judgment":
+            raise ReviewContractError("reset requires a capable independent judgment reviewer")
     elif current.review_reset is not None:
         raise ReviewContractError("review_reset requires a classified material change")
     return current

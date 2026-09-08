@@ -21,6 +21,7 @@ from review_runtime import (  # noqa: E402
     route_review_verdict,
     transition_review_finding,
     validate_contract_instance,
+    validate_review_sequence,
     validate_stage_review,
     validate_stage_reviews,
     validate_task_acceptance_review,
@@ -160,6 +161,72 @@ def test_task_repair_review_binds_authoritative_integrated_stage_predecessor() -
         invalid["repair_frontier"]["blocking_finding_ids"] = finding_ids
         with pytest.raises(ReviewContractError, match=message):
             validate_task_acceptance_review(invalid)
+
+
+def test_material_change_reset_allows_same_independent_judgment_reviewer() -> None:
+    previous = stage_review("plan")
+    previous.update(
+        review_mode="initial",
+        review_target_kind="stage",
+        repair_frontier=None,
+        review_reset=None,
+    )
+    current = deepcopy(previous)
+    current["review_id"] = "review-plan-current"
+    current["target_identity"] = {
+        **previous["target_identity"],
+        "revision": "2",
+        "sha256": "2" * 64,
+    }
+    current["review_reset"] = {
+        "prior_review_id": previous["review_id"],
+        "reason_class": "scope",
+        "reason": "The accepted plan scope materially changed.",
+    }
+
+    validated = validate_review_sequence(
+        current, previous_review=previous, material_change="scope"
+    )
+
+    assert validated.reviewer["agent_id"] == previous["reviewer"]["agent_id"]
+    assert validated.review_reset["prior_review_id"] == previous["review_id"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("authorship", "present", "accepted review requires reviewer.authorship"),
+        ("capability", "standard", "judgment reviewer"),
+    ],
+)
+def test_material_change_reset_still_rejects_nonindependent_or_nonjudgment_reviewer(
+    field: str, value: str, message: str
+) -> None:
+    previous = stage_review("plan")
+    previous.update(
+        review_mode="initial",
+        review_target_kind="stage",
+        repair_frontier=None,
+        review_reset=None,
+    )
+    current = deepcopy(previous)
+    current["review_id"] = "review-plan-current"
+    current["target_identity"] = {
+        **previous["target_identity"],
+        "revision": "2",
+        "sha256": "2" * 64,
+    }
+    current["review_reset"] = {
+        "prior_review_id": previous["review_id"],
+        "reason_class": "scope",
+        "reason": "The accepted plan scope materially changed.",
+    }
+    current["reviewer"][field] = value
+
+    with pytest.raises(ReviewContractError, match=message):
+        validate_review_sequence(
+            current, previous_review=previous, material_change="scope"
+        )
 
 
 @pytest.mark.parametrize(
