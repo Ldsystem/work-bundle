@@ -13,6 +13,7 @@ sys.path.insert(0, str(ORCHESTRATION))
 
 import execution_context  # noqa: E402
 from core import resolve_execution_artifact_path  # noqa: E402
+from test_orchestration_execution_context import git, workspace  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -72,6 +73,39 @@ def test_static_admission_allows_only_proven_historical_cleanup_targets(
         execution_context._assert_no_source_local_execution_artifacts(
             task, Path("task.md"), cleanup_baselines={source: accepted_baseline}
         )
+
+
+def test_static_task_admits_prebinding_cleanup_of_current_tracked_artifact(
+    tmp_path: Path,
+) -> None:
+    root, _spec, task_path = workspace(tmp_path)
+    historical = root / "tests/test_wor108_context_projection.py"
+    historical.parent.mkdir(parents=True)
+    historical.write_text("def test_historical(): pass\n", encoding="utf-8")
+    task_path.write_text(
+        task_path.read_text(encoding="utf-8")
+        .replace(
+            "goal: Compile a bounded executor packet.\n",
+            "goal: Remove execution-only source residue.\n"
+            "completion_criteria: [Listed execution-only wrappers are absent from source.]\n",
+        )
+        .replace(
+            "purpose: Compile a bounded executor packet.",
+            "purpose: Remove execution-only source residue.",
+        )
+        .replace(
+            "write: [scripts/orchestration/execution_context.py]",
+            "write: [tests/test_wor108_context_projection.py]",
+        ),
+        encoding="utf-8",
+    )
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "tracked historical cleanup target")
+
+    brief = execution_context.static_task_brief(root, task_path)
+
+    assert brief["files"]["write"] == ["tests/test_wor108_context_projection.py"]
+    assert not (root / ".work-bundle/runtime").exists()
 
 
 def test_execution_artifacts_resolve_to_workspace_root_outside_source_member(tmp_path: Path) -> None:

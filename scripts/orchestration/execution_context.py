@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from typing import Any, Iterable, Mapping
 from datetime import datetime, timezone
 
 
-from core import is_relative_to, read_front_matter, resolve_workspace_root
+from core import _member_roots, is_relative_to, read_front_matter, resolve_workspace_root
 from artifact_inputs import (_split_top_level, _split_key_value, _parse_scalar, parse_yaml_subset,
                              _read_structured, _as_list, _input_path, _resolve_spec_paths)
 from repository_preflight import capture_repository_evidence, task_caused_paths
@@ -4128,12 +4129,26 @@ def _assert_static_task_fields(task: dict[str, Any], task_path: Path) -> None:
 
 
 def _is_proven_historical_cleanup_target(
-    task: dict[str, Any], path: str, cleanup_baselines: Mapping[Path, str]
+    task: dict[str, Any],
+    path: str,
+    cleanup_baselines: Mapping[Path, str],
+    planning_sources: Iterable[Path],
 ) -> bool:
     truth_basis = task.get("truth_basis") if isinstance(task.get("truth_basis"), dict) else {}
     purpose = str(truth_basis.get("purpose") or "").lower()
     criteria = " ".join(str(value).lower() for value in _as_list(task.get("completion_criteria")))
     if "remove" not in purpose or "absent from source" not in criteria:
+        return False
+    if not cleanup_baselines:
+        for source_member in planning_sources:
+            at_plan_head = subprocess.run(
+                ["git", "-C", str(source_member), "cat-file", "-e", f"HEAD:{path}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if at_plan_head.returncode == 0 and os.path.lexists(source_member / path):
+                return True
         return False
     for source_member, baseline in cleanup_baselines.items():
         at_baseline = subprocess.run(
@@ -4148,15 +4163,19 @@ def _is_proven_historical_cleanup_target(
             text=True,
             check=False,
         )
-        if at_baseline.returncode == 0 and at_result.returncode != 0 and not (
+        if at_baseline.returncode == 0 and at_result.returncode != 0 and not os.path.lexists(
             source_member / path
-        ).exists():
+        ):
             return True
     return False
 
 
 def _assert_no_source_local_execution_artifacts(
-    task: dict[str, Any], task_path: Path, *, cleanup_baselines: Mapping[Path, str] | None = None
+    task: dict[str, Any],
+    task_path: Path,
+    *,
+    cleanup_baselines: Mapping[Path, str] | None = None,
+    planning_sources: Iterable[Path] = (),
 ) -> None:
     files = task.get("files") if isinstance(task.get("files"), dict) else {}
     write_paths = _as_list(files.get("write")) or _as_list(task.get("target_files"))
@@ -4180,7 +4199,7 @@ def _assert_no_source_local_execution_artifacts(
             "orchestration/executions/"
         )
         historical_cleanup = (issue_eval or issue_test) and _is_proven_historical_cleanup_target(
-            task, path, cleanup_baselines or {}
+            task, path, cleanup_baselines or {}, planning_sources
         )
         if workspace_execution or ((issue_eval or issue_test) and not historical_cleanup):
             raise SystemExit(
@@ -4209,8 +4228,14 @@ def static_task_brief(root: Path, task_path: Path) -> dict[str, Any]:
             and baseline_head
         ):
             cleanup_baselines[Path(execution_path).expanduser().resolve()] = baseline_head
+    planning_sources = _member_roots(root) if (root / ".work-bundle/project.yaml").is_file() else []
+    if not planning_sources and (root / ".git").exists():
+        planning_sources = [root]
     _assert_no_source_local_execution_artifacts(
-        task, task_path, cleanup_baselines=cleanup_baselines
+        task,
+        task_path,
+        cleanup_baselines=cleanup_baselines,
+        planning_sources=planning_sources,
     )
     compile_args = argparse.Namespace(
         project_root=str(root),
