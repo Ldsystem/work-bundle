@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -442,13 +443,118 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         wrong_plan["previous_review"]["target_identity"] = wrong_identity
         wrong_plan["previous_review"]["findings"][0]["target_identity"] = wrong_identity
         wrong_plan["repair_frontier"]["previous_reviewed_identity"] = wrong_identity
-        with pytest.raises(SystemExit, match="exact task and repair frontier"):
+        with pytest.raises(SystemExit, match="exact current task and predecessor owner"):
             execution_context.materialize_accepted_task_repair_review(tmp_path, task, wrong_plan)
 
         wrong_stage = deepcopy(repair_review)
         wrong_stage["previous_review"]["stage"] = "plan"
         with pytest.raises(SystemExit, match="stage predecessor must be integrated_implementation"):
             execution_context.materialize_accepted_task_repair_review(tmp_path, task, wrong_stage)
+
+
+def test_standalone_review_recomposes_changed_task_authority_without_executor_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_task = _task(tmp_path)
+    binding = _binding(tmp_path)
+    monkeypatch.setattr(
+        execution_context,
+        "capture_repository_evidence",
+        lambda _root: {"head": OID_A, "tree": OID_B, "status": "clean", "entries": {}},
+    )
+    prior = execution_context.build_accepted_task_result(
+        old_task, binding, _handoff(), _validated(), accepted_at="2026-09-08T02:00:00Z"
+    )
+    binding["accepted_result"] = prior
+    current_task = deepcopy(old_task)
+    current_task["files"]["write"] = ["src/a.py", "src/b.py"]
+    current_task["validation"][0]["command"] = "pytest -q tests/current"
+    previous_identity = {
+        "artifact_id": "task-001", "revision": OID_A,
+        "sha256": "1" * 64, "source_tree": OID_B,
+    }
+    current_identity = {
+        "artifact_id": "task-001", "revision": OID_C,
+        "sha256": "2" * 64, "source_tree": OID_D,
+    }
+    review = {
+        "required": True,
+        "reviewer_independent": True,
+        "review_id": "review-current-authority",
+        "reviewed_head": OID_C,
+        "review_mode": "initial",
+        "review_target_kind": "task",
+        "repair_frontier": None,
+        "review_reset": {
+            "prior_review_id": "review-001",
+            "reason_class": "scope",
+            "reason": "Current task scope authority changed.",
+        },
+        "target_identity": current_identity,
+        "reviewer": {"agent_id": "reviewer-current"},
+        "verdict": "accept",
+        "previous_review": {
+            "review_id": "review-001",
+            "review_target_kind": "task",
+            "target_identity": previous_identity,
+        },
+    }
+    validated_review = SimpleNamespace(
+        review_id="review-current-authority",
+        review_mode="initial",
+        verdict="accepted",
+        target_identity=current_identity,
+        repair_frontier=None,
+        review_reset=review["review_reset"],
+        reviewer={"agent_id": "reviewer-current"},
+    )
+    monkeypatch.setattr(execution_context, "load_task_execution_binding", lambda *_: binding)
+    monkeypatch.setattr(review_runtime, "validate_task_acceptance_review", lambda _review: validated_review)
+    monkeypatch.setattr(
+        execution_context,
+        "capture_repository_evidence",
+        lambda _root: {"head": OID_C, "tree": OID_D, "status": "clean", "entries": {}},
+    )
+
+    def git_result(arguments, **_kwargs):
+        if "merge-base" in arguments:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        value = OID_D if str(arguments[-1]).endswith("^{tree}") else OID_C
+        return SimpleNamespace(returncode=0, stdout=value + "\n", stderr="")
+
+    monkeypatch.setattr(execution_context.subprocess, "run", git_result)
+    persisted: dict[str, object] = {}
+    monkeypatch.setattr(execution_context, "_persist_binding", lambda value, _root: persisted.update(value))
+    monkeypatch.setattr(
+        execution_context,
+        "build_accepted_task_result",
+        lambda *_args, **_kwargs: pytest.fail("executor result replayed"),
+    )
+
+    accepted = execution_context.materialize_accepted_task_review(
+        tmp_path,
+        current_task,
+        review,
+        {
+            "causal_class": "claim_relevant_drift",
+            "affected_task": "task-001",
+            "authorized_lifecycle_action": "rematerialize_accepted_result",
+        },
+    )
+
+    for field in (
+        "baseline_identity", "executor_result_digest", "validation_evidence_ids",
+        "owner_identity", "knowledge_disposition",
+    ):
+        assert accepted[field] == prior[field]
+    assert accepted["accepted_source"]["head"] == OID_C
+    assert accepted["accepted_source"]["tree"] == OID_D
+    assert accepted["authority_projection"] == execution_context._accepted_authority_projection(
+        current_task, binding, accepted_review=review, owner_identity=prior["owner_identity"]
+    )
+    assert persisted["accepted_result"] == accepted
+    assert "previous_review" not in repr(accepted)
+    assert "causal_class" not in repr(accepted)
 
 
 def test_legacy_accepted_result_without_disposition_remains_current_for_nonknowledge_consumers(

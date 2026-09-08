@@ -1777,17 +1777,77 @@ def load_current_accepted_task_result(
     return binding, dict(accepted)
 
 
-def materialize_accepted_task_repair_review(
+def _load_materialized_accepted_task_result(
+    root: Path, task: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load and authenticate compact acceptance without requiring old authority to be current."""
+
+    binding = load_task_execution_binding(
+        root, str(task.get("plan_id") or ""), str(task.get("task_id") or "")
+    )
+    prior = binding.get("accepted_result")
+    if not isinstance(prior, Mapping):
+        raise SystemExit("accepted task result is missing")
+    fields = frozenset(prior)
+    if prior.get("schema") != ACCEPTED_TASK_RESULT_SCHEMA or fields not in {
+        frozenset(LEGACY_ACCEPTED_TASK_RESULT_FIELDS), frozenset(ACCEPTED_TASK_RESULT_FIELDS)
+    }:
+        raise SystemExit("materialized accepted task result shape is invalid")
+    ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
+    source = prior.get("accepted_source")
+    projection = prior.get("authority_projection")
+    disposition = prior.get("knowledge_disposition")
+    if (
+        prior.get("plan_id") != str(task.get("plan_id") or "")
+        or prior.get("task_id") != str(task.get("task_id") or "")
+        or prior.get("binding_id") != ownership.get("binding_id")
+        or prior.get("baseline_identity") != _accepted_baseline_identity(binding)
+        or prior.get("invalidation") is not None
+        or not isinstance(source, Mapping)
+        or set(source) != {"head", "tree", "state_digest"}
+        or not isinstance(projection, Mapping)
+        or set(projection) != ACCEPTED_AUTHORITY_PROJECTION_FIELDS
+        or not isinstance(prior.get("owner_identity"), Mapping)
+        or ("knowledge_disposition" in prior and not isinstance(disposition, Mapping))
+    ):
+        raise SystemExit("materialized accepted task result identity is invalid")
+    expected_state = _accepted_source_state_digest(
+        plan_id=str(prior["plan_id"]), task_id=str(prior["task_id"]),
+        binding_id=str(prior["binding_id"]), baseline_identity=prior["baseline_identity"],
+        head=source.get("head"), tree=source.get("tree"), authority_projection=projection,
+        knowledge_disposition=disposition if isinstance(disposition, Mapping) else None,
+    )
+    if source.get("state_digest") != expected_state:
+        raise SystemExit("materialized accepted task result compact authority is invalid")
+    return binding, dict(prior)
+
+
+def materialize_accepted_task_review(
     control_root: Path,
     task: Mapping[str, Any],
     review: Mapping[str, Any],
+    causal_classification: Mapping[str, Any],
     *,
     accepted_at: str | None = None,
 ) -> dict[str, Any]:
-    """Advance compact accepted authority from one standalone task repair review."""
+    """Compose prior executor authority with one standalone current review."""
 
     root = control_root.expanduser().resolve()
-    binding, prior = load_current_accepted_task_result(root, task)
+    expected_classification = {
+        "causal_class", "affected_task", "authorized_lifecycle_action",
+    }
+    if (
+        not isinstance(causal_classification, Mapping)
+        or set(causal_classification) != expected_classification
+        or causal_classification.get("causal_class") not in {
+            "claim_relevant_drift", "implementation_defect",
+        }
+        or causal_classification.get("affected_task") != str(task.get("task_id") or "")
+        or causal_classification.get("authorized_lifecycle_action")
+        != "rematerialize_accepted_result"
+    ):
+        raise SystemExit("accepted task review requires an exact controller causal classification")
+    binding, prior = _load_materialized_accepted_task_result(root, task)
     if task.get("review_required") is not True:
         raise SystemExit("accepted task repair review requires mandatory task review authority")
     try:
@@ -1799,17 +1859,19 @@ def materialize_accepted_task_repair_review(
     task_id = str(task.get("task_id") or "")
     plan_id = str(task.get("plan_id") or "")
     frontier = validated_review.repair_frontier
+    reset = validated_review.review_reset
     previous_review = review.get("previous_review")
     previous_kind = (
         previous_review.get("review_target_kind")
         if isinstance(previous_review, Mapping)
         else None
     )
-    previous_artifact = (
-        frontier["previous_reviewed_identity"].get("artifact_id")
-        if frontier is not None
-        else None
+    previous_identity = (
+        frontier["previous_reviewed_identity"] if frontier is not None
+        else previous_review.get("target_identity") if isinstance(previous_review, Mapping)
+        else {}
     )
+    previous_artifact = previous_identity.get("artifact_id")
     previous_owner_matches = (
         previous_kind == "task" and previous_artifact == task_id
     ) or (
@@ -1818,14 +1880,20 @@ def materialize_accepted_task_repair_review(
         and previous_artifact == plan_id
     )
     if (
-        validated_review.review_mode != "repair"
-        or validated_review.verdict != "accepted"
-        or frontier is None
+        validated_review.verdict != "accepted"
         or validated_review.target_identity.get("artifact_id") != task_id
-        or frontier["repaired_identity"].get("artifact_id") != task_id
         or not previous_owner_matches
     ):
-        raise SystemExit("accepted task repair review must bind the exact task and repair frontier")
+        raise SystemExit("accepted task review must bind the exact current task and predecessor owner")
+    if validated_review.review_mode == "repair":
+        if frontier is None or frontier["repaired_identity"].get("artifact_id") != task_id:
+            raise SystemExit("accepted task repair review must bind the exact repair frontier")
+    elif (
+        reset is None
+        or reset.get("reason_class") not in {"scope", "validation_allocation"}
+        or reset.get("prior_review_id") != prior.get("review_id")
+    ):
+        raise SystemExit("accepted task initial review must reset exact prior scope or validation authority")
     reviewer = validated_review.reviewer
     owner = prior.get("owner_identity") if isinstance(prior.get("owner_identity"), Mapping) else {}
     if reviewer.get("agent_id") == owner.get("agent_id"):
@@ -1874,9 +1942,8 @@ def materialize_accepted_task_repair_review(
     if ancestor.returncode != 0:
         raise SystemExit("accepted task repair review target is not an ancestor of current HEAD")
 
-    authority_projection = dict(prior["authority_projection"])
-    authority_projection["required_review_digest"] = semantic_digest(
-        _accepted_review_projection(review)
+    authority_projection = _accepted_authority_projection(
+        task, binding, accepted_review=review, owner_identity=prior["owner_identity"]
     )
     accepted_source = {"head": reviewed_head, "tree": reviewed_tree.stdout.strip()}
     knowledge_disposition = prior.get("knowledge_disposition")
@@ -1903,6 +1970,28 @@ def materialize_accepted_task_repair_review(
     updated["accepted_result"] = accepted
     _persist_binding(updated, root)
     return accepted
+
+
+def materialize_accepted_task_repair_review(
+    control_root: Path,
+    task: Mapping[str, Any],
+    review: Mapping[str, Any],
+    *,
+    accepted_at: str | None = None,
+) -> dict[str, Any]:
+    """Compatibility wrapper for unchanged-authority standalone task repair review."""
+
+    return materialize_accepted_task_review(
+        control_root,
+        task,
+        review,
+        {
+            "causal_class": "implementation_defect",
+            "affected_task": str(task.get("task_id") or ""),
+            "authorized_lifecycle_action": "rematerialize_accepted_result",
+        },
+        accepted_at=accepted_at,
+    )
 
 
 def has_persisted_accepted_task_result(
