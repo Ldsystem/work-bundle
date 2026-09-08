@@ -932,6 +932,9 @@ def project_validation_evidence(
         observation = observed_by_id.get(evidence_id, {})
         projected.append({
             "id": evidence_id,
+            "command": item.get("command"),
+            "invariant_ids": list(_as_list(item.get("invariant_ids"))),
+            "observation_id": observation.get("observation_id"),
             "digest": semantic_digest({"command": item.get("command"), "result": result}),
             "result": result,
             "boundary": invariant.get("boundary", "component"),
@@ -1822,6 +1825,69 @@ def _load_materialized_accepted_task_result(
     return binding, dict(prior)
 
 
+def _claim_bound_validation_observations(
+    binding: Mapping[str, Any],
+    task: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    observation_ids: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Resolve existing observations against current validation claim identities without replay."""
+
+    ids = list(observation_ids)
+    validation_items = [item for item in _as_list(task.get("validation")) if isinstance(item, Mapping)]
+    if (
+        len(ids) != len(set(ids))
+        or len(ids) != len(validation_items)
+        or any(not isinstance(item, str) or not item for item in ids)
+    ):
+        raise SystemExit("validation evidence is missing, duplicate, or extra")
+
+    class _ObservationUnavailable(RuntimeError):
+        pass
+
+    def no_validation_replay(_: dict[str, Any]) -> dict[str, Any]:
+        raise _ObservationUnavailable
+
+    execution_path = Path(str(binding.get("execution_path") or "")).expanduser().resolve()
+    store = _completion_provenance_module().ManagedProvenanceStore(
+        Path(str(binding.get("control_root") or task.get("workspace", {}).get("root") or ""))
+        / ".work-bundle/runtime/completion-provenance"
+    )
+    matched: list[dict[str, Any]] = []
+    for position, item in enumerate(validation_items, start=1):
+        try:
+            observation = _completion_provenance_module().observe_validation(
+                binding,
+                task,
+                item,
+                evidence,
+                no_validation_replay,
+                lambda: capture_repository_evidence(execution_path),
+            )
+            record = _completion_provenance_module().load_observation(
+                store, str(observation.get("observation_id") or "")
+            ).to_dict()
+        except (_ObservationUnavailable, _completion_provenance_module().CompletionProvenanceError) as error:
+            raise SystemExit(
+                "an existing current claim-bound validation observation is required"
+            ) from error
+        if record["result"]["exit_code"] != 0:
+            raise SystemExit("validation evidence is not a passing observation")
+        matched.append(
+            {
+                "id": item.get("id") or f"validation-{position:03d}",
+                "command": item.get("command"),
+                "invariant_ids": list(_as_list(item.get("invariant_ids"))),
+                "observation_id": observation["observation_id"],
+                "result": "passed",
+                "product_tree": record["product_tree"],
+            }
+        )
+    if set(ids) != {item["observation_id"] for item in matched}:
+        raise SystemExit("validation evidence does not bind current task claims")
+    return matched
+
+
 def materialize_accepted_task_review(
     control_root: Path,
     task: Mapping[str, Any],
@@ -1829,6 +1895,7 @@ def materialize_accepted_task_review(
     causal_classification: Mapping[str, Any],
     *,
     accepted_at: str | None = None,
+    validation_evidence_ids: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Compose prior executor authority with one standalone current review."""
 
@@ -1951,6 +2018,22 @@ def materialize_accepted_task_review(
     if ancestor.returncode != 0:
         raise SystemExit("accepted task repair review target is not an ancestor of current HEAD")
 
+    prior_validation_digest = prior["authority_projection"]["validation_obligations_digest"]
+    current_validation_digest = semantic_digest(_accepted_validation_projection(task))
+    accepted_source_changed = reviewed_head != prior["accepted_source"]["head"]
+    if validation_evidence_ids is None and not accepted_source_changed and (
+        prior_validation_digest == current_validation_digest
+    ):
+        current_validation_ids = list(prior["validation_evidence_ids"])
+    else:
+        matched_validation = _claim_bound_validation_observations(
+            binding,
+            task,
+            evidence,
+            validation_evidence_ids or prior["validation_evidence_ids"],
+        )
+        current_validation_ids = sorted(item["observation_id"] for item in matched_validation)
+
     authority_projection = _accepted_authority_projection(
         task, binding, accepted_review=review, owner_identity=prior["owner_identity"]
     )
@@ -1974,6 +2057,7 @@ def materialize_accepted_task_review(
         authority_projection=authority_projection,
         review_id=validated_review.review_id,
         accepted_at=accepted_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        validation_evidence_ids=current_validation_ids,
     )
     updated = dict(binding)
     updated["accepted_result"] = accepted
@@ -1987,6 +2071,7 @@ def materialize_accepted_task_repair_review(
     review: Mapping[str, Any],
     *,
     accepted_at: str | None = None,
+    validation_evidence_ids: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Compatibility wrapper for unchanged-authority standalone task repair review."""
 
@@ -2000,6 +2085,7 @@ def materialize_accepted_task_repair_review(
             "authorized_lifecycle_action": "rematerialize_accepted_result",
         },
         accepted_at=accepted_at,
+        validation_evidence_ids=validation_evidence_ids,
     )
 
 
@@ -3796,6 +3882,7 @@ def validate_executor_result_for_task(
     prior_ownership: Mapping[str, Mapping[str, object]] | None = None,
     repair_continuity: Mapping[str, Mapping[str, object] | RepairContinuity] | None = None,
     authorized_replacements: Iterable[str] | None = None,
+    preparing_review: bool = False,
 ) -> dict[str, Any]:
     if handoff.get("type") != "executor-result":
         raise SystemExit("Handoff is not executor-result")
@@ -3828,7 +3915,13 @@ def validate_executor_result_for_task(
     if state in {"completed", "partial"}:
         _assert_task_fit_check(handoff, task_id, state)
         _assert_changed_paths_in_write_scope(handoff, task_files)
-    acceptance_review_sequence = _assert_handoff_review_matches_task(handoff, task, state)
+    if preparing_review:
+        review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
+        if (task.get("review_required") is True) != (review.get("required") is True):
+            raise SystemExit("Executor result acceptance_review.required must match compiled review_required")
+        acceptance_review_sequence = None
+    else:
+        acceptance_review_sequence = _assert_handoff_review_matches_task(handoff, task, state)
     required_items = [
         item
         for item in _as_list(task.get("validation"))
@@ -4841,7 +4934,7 @@ def build_product_review_candidate(
     changed_files: Sequence[str],
     changed_symbols: Sequence[str],
     validation_observations: Sequence[Mapping[str, Any]],
-    knowledge_disposition: Mapping[str, Any],
+    knowledge_disposition: Mapping[str, Any] | None = None,
     unresolved: Sequence[Any] = (),
 ) -> dict[str, Any]:
     """Build the sole semantic task-review input, excluding transport bookkeeping."""
@@ -4853,23 +4946,20 @@ def build_product_review_candidate(
             "goal": task.get("goal"),
             "requirements": list(_as_list(task.get("requirements"))),
             "constraints": list(_as_list(task.get("constraints"))),
-            "truth_basis": task.get("truth_basis", {}),
-            "semantic_authority": task.get("semantic_authority", {}),
-            "evidence_capability": task.get("evidence_capability", {}),
+            "accepted_boundaries": list(_as_list(
+                (task.get("truth_basis") or {}).get("decision_authority")
+                if isinstance(task.get("truth_basis"), Mapping) else []
+            )),
             "files": task.get("files", {}),
             "interfaces": task.get("interfaces", {}),
-            "allocated_rules": list(_as_list(task.get("allocated_rules"))),
-            "methodology": task.get("methodology", {}),
         },
         "source": {
             "base": base,
             "head": head,
             "diff": diff,
             "changed_files": list(changed_files),
-            "changed_symbols": list(changed_symbols),
         },
         "validation_observations": [dict(item) for item in validation_observations],
-        "knowledge_disposition": dict(knowledge_disposition),
         "unresolved": list(unresolved),
     }
     forbidden = {"handoff", "acceptance_review", "publication", "reviewer_run"}
@@ -4880,8 +4970,8 @@ def build_product_review_candidate(
 
 
 def build_review_package(args: argparse.Namespace) -> Path:
-    if not args.handoff or not args.base or not args.head:
-        raise SystemExit("build-review-package requires --handoff, --base, and --head")
+    if not args.base or not args.head:
+        raise SystemExit("build-review-package requires --base and --head")
     target, brief_document = _compile_task_brief(args)
     root = resolve_workspace_root(args)
     task = brief_document["task_brief"]
@@ -4889,17 +4979,37 @@ def build_review_package(args: argparse.Namespace) -> Path:
     plan_id = str(task.get("plan_id") or "")
     if not plan_id:
         raise SystemExit(f"Task brief is missing plan_id for {task_id}")
-    handoff_root = root / ".work-bundle/orchestration/handoff"
-    handoff_path = _input_path(args.handoff, root, handoff_root, "handoff")
-    handoff, _ = _read_structured(handoff_path)
-    validated = validate_executor_result_for_task(handoff, task, observe=True, **_observation_kwargs(args))
-    knowledge_disposition = validated["knowledge_disposition"]
-    review_request = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
-    review_mode = str(review_request.get("review_mode") or "initial")
+    handoff: dict[str, Any] = {}
+    validated: dict[str, Any] = {}
+    accepted: dict[str, Any] | None = None
+    binding_path = _binding_path(root, plan_id, task_id)
+    raw_binding = _read_binding_file(binding_path) if binding_path.is_file() else {}
+    if isinstance(raw_binding.get("accepted_result"), Mapping):
+        binding = load_task_execution_binding(root, plan_id, task_id)
+        _, accepted = _load_materialized_accepted_task_result(root, task)
+        accepted_source = accepted["accepted_source"]
+        if not isinstance(accepted_source, Mapping):
+            raise SystemExit("review-blocked: accepted source identity is invalid")
+        execution_root = Path(str(binding["execution_path"])).resolve()
+        if _resolve_commit(execution_root, str(args.base)) != accepted_source["head"]:
+            raise SystemExit("review-blocked: accepted-task repair base must be the accepted source")
+        review_request = {}
+        review_mode = "repair"
+    elif args.handoff:
+        handoff_root = root / ".work-bundle/orchestration/handoff"
+        handoff_path = _input_path(args.handoff, root, handoff_root, "handoff")
+        handoff, _ = _read_structured(handoff_path)
+        validated = validate_executor_result_for_task(
+            handoff, task, observe=True, preparing_review=True, **_observation_kwargs(args)
+        )
+        review_request = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
+        review_mode = str(review_request.get("review_mode") or "initial")
+    else:
+        raise SystemExit("build-review-package requires an initial executor handoff or accepted task result")
     if review_mode not in {"initial", "repair"}:
         raise SystemExit("review-blocked: review_mode must be initial or repair")
     repair_frontier: dict[str, Any] | None = None
-    if review_mode == "repair":
+    if review_mode == "repair" and accepted is None:
         try:
             from review_runtime import ReviewContractError, _repair_frontier
             repair_frontier = dict(_repair_frontier(review_request.get("repair_frontier")))
@@ -4907,7 +5017,8 @@ def build_review_package(args: argparse.Namespace) -> Path:
             raise SystemExit(f"review-blocked: invalid repair frontier: {error}") from error
     elif review_request.get("repair_frontier") not in (None, {}):
         raise SystemExit("review-blocked: initial review cannot carry repair_frontier")
-    binding = load_task_execution_binding(root, plan_id, task_id)
+    if accepted is None:
+        binding = load_task_execution_binding(root, plan_id, task_id)
     execution_root = Path(str(binding["execution_path"])).resolve()
 
     base = _resolve_commit(execution_root, str(args.base))
@@ -4970,13 +5081,32 @@ def build_review_package(args: argparse.Namespace) -> Path:
         if isinstance(item, dict)
     }
     normalized_validation = []
-    for position, item in enumerate(validation_commands, start=1):
-        compiled = compiled_validation.get(str(item.get("command") or ""), {})
-        normalized_validation.append({**item, "id": item.get("id") or compiled.get("id") or f"validation-{position:03d}"})
+    if accepted is not None:
+        observation_ids = list(getattr(args, "validation_observation_id", None) or [])
+        if not observation_ids:
+            raise SystemExit(
+                "review-blocked: accepted-task source repair requires explicit current validation observations"
+            )
+        try:
+            repository_evidence = capture_repository_evidence(execution_root)
+        except RuntimeError as error:
+            raise SystemExit(f"review-blocked: repository identity is unavailable: {error}") from error
+        if repository_evidence.get("head") != head:
+            raise SystemExit("review-blocked: validation observations require the exact clean review head")
+        try:
+            normalized_validation = _claim_bound_validation_observations(
+                binding, task, repository_evidence, observation_ids
+            )
+        except SystemExit as error:
+            raise SystemExit(f"review-blocked: {error}") from error
+    else:
+        for position, item in enumerate(validation_commands, start=1):
+            compiled = compiled_validation.get(str(item.get("command") or ""), {})
+            normalized_validation.append({**item, "id": item.get("id") or compiled.get("id") or f"validation-{position:03d}"})
     evidence_projection = project_validation_evidence(
         normalized_validation,
         evidence_capability=task.get("evidence_capability") if isinstance(task.get("evidence_capability"), dict) else {},
-        observed=validated.get("observed_validation"),
+        observed=(normalized_validation if accepted is not None else validated.get("observed_validation")),
         expansion_reason=("failed_validation" if any(item.get("result") == "failed" for item in normalized_validation) else None),
     )
     unresolved = _as_list(handoff.get("unresolved"))
@@ -4985,7 +5115,6 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "changed_symbols": symbols,
         "validation": evidence_projection,
         "unresolved": unresolved,
-        "knowledge_disposition": knowledge_disposition,
     }
     _assert_no_credential_values(evidence, "review evidence")
 
@@ -4997,21 +5126,19 @@ def build_review_package(args: argparse.Namespace) -> Path:
         changed_files=name_status,
         changed_symbols=symbols,
         validation_observations=evidence_projection,
-        knowledge_disposition=knowledge_disposition,
         unresolved=unresolved,
     )
     authority = candidate["task_authority"]
     source = candidate["source"]
 
-    required = [f"Goal: {authority.get('goal')}", *authority.get("requirements", []), *authority.get("constraints", [])]
+    required = [
+        f"Goal: {authority.get('goal')}", *authority.get("requirements", []),
+        *authority.get("constraints", []), *authority.get("accepted_boundaries", []),
+    ]
     interfaces = authority.get("interfaces", {})
     if isinstance(interfaces, dict):
         required.extend(_as_list(interfaces.get("consumes")))
         required.extend(_as_list(interfaces.get("produces")))
-    assertions = [
-        *[f"rule {item['id']}: {item['requirement']}" for item in authority.get("allocated_rules", [])],
-        f"methodology {authority['methodology'].get('primary')}: skills {', '.join(map(str, authority['methodology'].get('skills', []))) or 'none'}",
-    ]
     allowed_scope = list(dict.fromkeys([*authority.get("files", {}).get("write", []), *authority.get("files", {}).get("read", [])]))
     lines = [
         "# Task Review Package",
@@ -5024,34 +5151,16 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "## Required behavior",
         *_markdown_items(required),
         "",
-        "## Accepted Truth Basis",
-        *_markdown_items([authority.get("truth_basis", {})]),
-        "",
-        "## Semantic authority",
-        *_markdown_items([authority.get("semantic_authority", {})]),
-        "",
-        "## Evidence capability",
-        *_markdown_items([authority.get("evidence_capability", {})]),
-        "",
         "## Allowed scope",
         *_markdown_items(allowed_scope),
         "",
         "## Changed files",
         *_markdown_items(source["changed_files"]),
         "",
-        "## Changed symbols",
-        *_markdown_items(source["changed_symbols"]),
-        "",
         "## Validation reported",
         *_markdown_items(candidate["validation_observations"]),
         "",
-        "## Knowledge disposition",
-        *_markdown_items([candidate["knowledge_disposition"]]),
-        "",
-        "## Allocated rule and methodology assertions",
-        *_markdown_items(assertions),
-        "",
-        "## Unresolved concerns",
+        "## Unresolved product concerns",
         *_markdown_items(candidate["unresolved"]),
         "",
         "## Diff",
@@ -5059,23 +5168,6 @@ def build_review_package(args: argparse.Namespace) -> Path:
         source["diff"].rstrip(),
         "```",
     ]
-    if repair_frontier is not None:
-        lines.extend(
-            [
-                "",
-                "## Repair frontier",
-                *_markdown_items(
-                    [{
-                        "prior_review_id": repair_frontier["prior_review_id"],
-                        "blocking_finding_ids": repair_frontier["blocking_finding_ids"],
-                        "previous_reviewed_identity": repair_frontier["previous_reviewed_identity"],
-                        "repaired_identity": repair_frontier["repaired_identity"],
-                        "affected_boundaries": repair_frontier["affected_boundaries"],
-                        "frozen_evidence_reference": repair_frontier["frozen_evidence_reference"],
-                    }]
-                ),
-            ]
-        )
     if out_of_scope:
         lines.extend(
             [
@@ -5090,11 +5182,9 @@ def build_review_package(args: argparse.Namespace) -> Path:
             "## Review rubric",
             "1. Required behavior is satisfied.",
             "2. Listed out-of-scope diagnostics are expected sibling or prior changes, not a defect in this task.",
-            "3. Methodology and allocated-rule obligations are satisfied.",
-            "4. Accepted purpose, source evidence, decision authority, expected delta, and test oracle agree.",
-            "5. Knowledge disposition is task-local, evidence-backed, and grants no persistence authority.",
-            "6. Validation evidence is sufficient and task-scoped.",
-            "7. Code quality has no blocking defect.",
+            "3. Accepted product requirements, exact product source/diff, and test oracle agree.",
+            "4. Validation observations are sufficient and task-scoped.",
+            "5. Correctness, edge cases, compatibility, and code quality have no blocking defect.",
         ]
     )
     package = "\n".join(lines).rstrip() + "\n"

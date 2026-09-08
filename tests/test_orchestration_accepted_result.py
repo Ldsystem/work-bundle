@@ -90,6 +90,7 @@ def _binding(root: Path) -> dict[str, object]:
         "execution_id": "exec-001",
         "repository_id": "repo-001",
         "execution_path": str(root),
+        "control_root": str(root),
         "git_identity": {"branch_ref": "refs/heads/main"},
         "baseline": {"head": OID_A, "tree": OID_B},
         "ownership": {
@@ -99,6 +100,37 @@ def _binding(root: Path) -> dict[str, object]:
             "history": [{"event": "created"}],
         },
     }
+
+
+def _record_validation_observation(
+    root: Path, binding: dict[str, object], task: dict[str, object]
+) -> str:
+    item = task["validation"][0]
+    assert isinstance(item, dict)
+    item["evidence_reuse"] = {
+        "mode": "deterministic", "max_age_seconds": 3600,
+        "environment_inputs": [], "include_head": False,
+    }
+    evidence = execution_context.capture_repository_evidence(root)
+
+    def observe(receipt: dict[str, object]) -> dict[str, object]:
+        receipt.update({
+            "exit_code": 0,
+            "stdout_digest": "1" * 64,
+            "stderr_digest": "2" * 64,
+            "started_at": "2026-09-08T01:00:00Z",
+            "completed_at": "2026-09-08T01:00:01Z",
+        })
+        return {
+            "id": item.get("id"), "command": item.get("command"),
+            "invariant_ids": item.get("invariant_ids", []), "result": "passed",
+        }
+
+    observed = execution_context._completion_provenance_module().observe_validation(
+        binding, task, item, evidence, observe,
+        lambda: execution_context.capture_repository_evidence(root),
+    )
+    return str(observed["observation_id"])
 
 
 def _handoff() -> dict[str, object]:
@@ -395,17 +427,18 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
     review_reference = review_runtime.publish_review(
         tmp_path, repair_review, current_target_identity=repaired_identity
     )
+    observation_id = _record_validation_observation(tmp_path, binding, task)
     repaired = execution_context.materialize_accepted_task_repair_review(
         tmp_path,
         task,
         review_reference,
         accepted_at="2026-09-08T01:05:00Z",
+        validation_evidence_ids=[observation_id],
     )
 
     for field in (
         "baseline_identity",
         "executor_result_digest",
-        "validation_evidence_ids",
         "owner_identity",
         "knowledge_disposition",
     ):
@@ -413,6 +446,7 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
     assert repaired["accepted_source"]["head"] == reviewed_head
     assert repaired["accepted_source"]["tree"] == reviewed_tree
     assert repaired["review_id"] == "review-repair-001"
+    assert repaired["validation_evidence_ids"] == [observation_id]
     assert repaired["authority_projection"]["required_review_digest"] == execution_context.semantic_digest(
         execution_context._accepted_review_projection(repair_review)
     )
@@ -555,6 +589,11 @@ def test_standalone_review_recomposes_changed_task_authority_without_executor_re
         "build_accepted_task_result",
         lambda *_args, **_kwargs: pytest.fail("executor result replayed"),
     )
+    monkeypatch.setattr(
+        execution_context,
+        "_claim_bound_validation_observations",
+        lambda *_args: [{"observation_id": "obs-current"}],
+    )
 
     accepted = execution_context.materialize_accepted_task_review(
         tmp_path,
@@ -565,13 +604,15 @@ def test_standalone_review_recomposes_changed_task_authority_without_executor_re
             "affected_task": "task-001",
             "authorized_lifecycle_action": "rematerialize_accepted_result",
         },
+        validation_evidence_ids=["obs-current"],
     )
 
     for field in (
-        "baseline_identity", "executor_result_digest", "validation_evidence_ids",
+        "baseline_identity", "executor_result_digest",
         "owner_identity", "knowledge_disposition",
     ):
         assert accepted[field] == prior[field]
+    assert accepted["validation_evidence_ids"] == ["obs-current"]
     assert accepted["accepted_source"]["head"] == OID_C
     assert accepted["accepted_source"]["tree"] == OID_D
     assert accepted["authority_projection"] == execution_context._accepted_authority_projection(

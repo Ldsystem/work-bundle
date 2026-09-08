@@ -61,7 +61,7 @@ Always include identity, related artifacts, result state, and concise summary. I
 - Do not store handoffs under `.work-bundle/knowledge/`.
 - Do not create new active `handoff-orch-*` artifacts or offer orchestration handoff creation as an active workflow path.
 - Do not implement source changes, edit application/test files, run migrations, apply patches, or execute plan tasks while creating a handoff.
-- If the user also asks for implementation, finish the handoff artifact first, then stop and require an explicit `execute-plan` request.
+- Create the handoff only for the initial executor result. If execution is already authorized, resume the owning workflow after that handoff without demanding repeated permission. Already accepted tasks consume their compact accepted result and do not create another handoff merely to acquire review, publication, or finalization facts.
 - Do not include raw chat logs, private reasoning, or unrelated history.
 - Do not include durable-knowledge recommendations, orchestration review recommendations, executor advice fields, or strategy advice in executor-result handoffs.
 - Stop if source artifact paths or current state are unknown.

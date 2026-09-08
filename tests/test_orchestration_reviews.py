@@ -521,7 +521,7 @@ def test_target_only_packet_cannot_declare_direct_source(tmp_path, stage):
         review_runtime.validate_stage_evidence(tmp_path, packet["stage_review_context"], packet)
 
 
-@pytest.mark.parametrize("removed", [None, "target", "plan_member", "verified_specification", "source_tree", "validation_evidence"])
+@pytest.mark.parametrize("removed", [None, "target", "plan_member", "verified_specification", "source_tree", "accepted_task_result"])
 def test_complete_snapshot_gate_rechecks_membership_after_receipt_rehash(tmp_path, removed):
     import hashlib
     import review_runtime
@@ -531,6 +531,7 @@ def test_complete_snapshot_gate_rechecks_membership_after_receipt_rehash(tmp_pat
     handoff = tmp_path / ".work-bundle/orchestration/handoff/executor/active/result.yaml"
     handoff.parent.mkdir(parents=True)
     handoff.write_text("related: {plan: plan-test, task: task-test}\nvalidation: {commands: [{command: test -f source.txt, result: passed}]}\n")
+    _write_compact_accepted_result(tmp_path)
     for args in (["init", "-q"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.com"]):
         subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
     (tmp_path / ".gitignore").write_text(".work-bundle/\n")
@@ -587,7 +588,84 @@ def test_integrated_snapshot_requires_evidence_for_each_declared_check(tmp_path)
     handoff.parent.mkdir(parents=True)
     handoff.write_text("related: {plan: plan-test, task: task-test}\nvalidation: {commands: [{command: unrelated-check, result: passed}]}\n")
     _, missing = review_runtime.stage_evidence_requirements(tmp_path, "integrated_implementation", plan)
-    assert "validation_evidence:task-test" in missing
+    assert "accepted_task_result_missing:task-test" in missing
+
+
+def _write_compact_accepted_result(root: Path, *, review_id: str | None = None) -> Path:
+    binding = root / ".work-bundle/runtime/execution/plan-test/task-test/execution-binding.json"
+    binding.parent.mkdir(parents=True, exist_ok=True)
+    authority = {
+        "task_digest": "1" * 64, "binding_digest": "2" * 64,
+        "scope_digest": "3" * 64, "validation_obligations_digest": "4" * 64,
+        "required_review_digest": "5" * 64, "ownership_digest": "6" * 64,
+    }
+    baseline = {"head": "a" * 40, "tree": "b" * 40}
+    knowledge = {"disposition": "none", "reason": "No durable knowledge delta."}
+    accepted = {
+        "schema": "accepted-task-result-v1", "plan_id": "plan-test", "task_id": "task-test",
+        "binding_id": "binding:plan-test:task-test", "baseline_identity": baseline,
+        "accepted_source": {"head": "c" * 40, "tree": "d" * 40},
+        "authority_projection": authority, "executor_result_digest": "7" * 64,
+        "validation_evidence_ids": ["observation-val-1"], "review_id": review_id,
+        "owner_identity": {"delegated": True, "owner_kind": "subagent", "agent_id": "/root/task", "run_id": "run-1", "mechanism": "host-native"},
+        "knowledge_disposition": knowledge, "accepted_at": "2026-09-08T00:00:00Z", "invalidation": None,
+    }
+    accepted["accepted_source"]["state_digest"] = review_runtime.accepted_result_state_digest(accepted)
+    binding.write_text(json.dumps({
+        "plan_id": "plan-test", "task_id": "task-test",
+        "ownership": {"binding_id": "binding:plan-test:task-test"},
+        "accepted_result": accepted,
+    }))
+    return binding
+
+
+def test_integrated_snapshot_uses_compact_acceptance_not_handoff_history(tmp_path):
+    _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    task = plan.parent / "task.md"
+    task.write_text("---\nid: task-test\nplan_id: plan-test\nvalidation: [{id: VAL-1, command: check-claim}]\n---\nTask\n")
+    binding = _write_compact_accepted_result(tmp_path)
+    misleading = tmp_path / ".work-bundle/orchestration/handoff/executor/active/broken.yaml"
+    misleading.parent.mkdir(parents=True)
+    misleading.write_text("invalid:\n   badly indented\n  historical: true\n")
+
+    required, missing = review_runtime.stage_evidence_requirements(
+        tmp_path, "integrated_implementation", plan
+    )
+
+    assert missing == []
+    assert required["control:" + binding.relative_to(tmp_path).as_posix()] == "accepted_task_result"
+    assert not any("handoff" in locator for locator in required)
+
+
+def test_integrated_snapshot_includes_native_review_when_present_and_rejects_invalid_compact_authority(tmp_path, monkeypatch):
+    _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    task = plan.parent / "task.md"
+    task.write_text("---\nid: task-test\nplan_id: plan-test\nvalidation: [{id: VAL-1, command: check-claim}]\n---\nTask\n")
+    binding = _write_compact_accepted_result(tmp_path, review_id="review-task-current")
+    accepted = json.loads(binding.read_text())["accepted_result"]
+    review = {
+        **stage_review("plan"), "required": True, "reviewer_independent": True,
+        "review_id": "review-task-current", "reviewed_head": accepted["accepted_source"]["head"],
+        "review_mode": "initial", "review_target_kind": "task", "repair_frontier": None,
+        "review_reset": None, "target_identity": {
+            "artifact_id": "task-test", "revision": accepted["accepted_source"]["head"],
+            "sha256": "8" * 64, "source_tree": accepted["accepted_source"]["tree"],
+        }, "verdict": "accept",
+    }
+    review_path = tmp_path / ".work-bundle/orchestration/reviews/review-task-current.json"
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.write_text(json.dumps(review))
+    review_path.chmod(0o444)
+    monkeypatch.setattr(review_runtime, "_validate_reviewer_run", lambda *_: None)
+    required, missing = review_runtime.stage_evidence_requirements(tmp_path, "integrated_implementation", plan)
+    assert missing == []
+    assert required["control:" + review_path.relative_to(tmp_path).as_posix()] == "accepted_task_review"
+
+    payload = json.loads(binding.read_text())
+    payload["accepted_result"]["accepted_source"]["state_digest"] = "0" * 64
+    binding.write_text(json.dumps(payload))
+    _, missing = review_runtime.stage_evidence_requirements(tmp_path, "integrated_implementation", plan)
+    assert "accepted_task_result_invalid:task-test" in missing
 
 
 def test_manually_authored_accepted_review_cannot_advance_lifecycle(tmp_path):

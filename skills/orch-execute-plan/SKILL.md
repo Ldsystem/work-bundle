@@ -47,7 +47,7 @@ python3 scripts/orch.py validate-executor-result --task <task-path> --handoff <h
 
 ## Independent task review
 
-When `acceptance_review.required: true` or `review_required: true`, first validate the executor handoff as a controller precondition, then build the product candidate only from compiled task authority, exact base/current source and diff identity, harness-owned validation observations, unresolved product concerns, and the task-local knowledge disposition. Handoff shape, receipt attachment, publication, status, and archive bookkeeping are not product-review inputs or findings. Skip this hop when review is not required.
+When `acceptance_review.required: true` or `review_required: true`, validate initial executor facts without demanding the future review verdict, then build the product candidate only from accepted product requirements/boundaries, exact base/current product source and diff identity, harness-owned normalized validation observations, and unresolved product concerns. Handoff, knowledge, reviewer-history, receipt/publication, status, and archive bookkeeping are not product-review inputs or findings. Controller/orchestration code is still product when the task allocates it. Skip this hop when review is not required.
 
 ```bash
 python3 scripts/orch.py build-review-package \
@@ -56,11 +56,11 @@ python3 scripts/orch.py build-review-package \
 
 Use `--head worktree` for pre-commit review; the compiler includes tracked, staged, unstaged, and untracked changes, assigns a stable worktree identity, and withholds protected-path content.
 
-The reviewer uses only that bounded product candidate and `dev-code-review`. It compares the accepted Truth Basis, implementation, test oracle, and knowledge disposition, then returns `accept`, `repair`, or `blocked` with the reviewed tree identity and compact evidence-backed findings. A task or stage verdict becomes lifecycle authority only after the exact result and native immutable reviewer-run receipt are published together in the review store and revalidated against the current target. Bare output, an unattached receipt, or a bare finding never authorizes routing.
+The reviewer uses only that bounded product candidate and `dev-code-review`, returning compact `accept|repair` product judgment. Invalid or incomplete input is a controller input/runner failure outside the product verdict. The controller composes the native envelope, verifies independent provenance, and publishes it. A task or stage verdict becomes lifecycle authority only after exact result and native immutable reviewer-run receipt are stored and validated against controller-authorized target identity.
 
-If reviewer infrastructure or provider failure prevents a verdict, replace only the reviewer against the same immutable review package. Preserve package/source identity, validation evidence, plan decomposition, and the existing frontier; do not change source, rerun validation, or reslice for reviewer availability.
+If reviewer infrastructure or provider failure prevents a verdict, preserve the immutable package and repair the first broken runner/provider owner. A capable independent reviewer may be reused. Do not change source, rerun validation, reslice, or require identity rotation for provider availability. Publication retry after a completed judgment reuses the exact result and receipt.
 
-On `repair`, return blocking findings to the task-owning subagent with the same brief and current diff. That subagent makes the smallest repair, reruns fresh task validation, regenerates the package from the original task base, and re-reviews. A finding-scoped repair under unchanged authority carries exactly the previous finding/evidence frontier and limits review to the repaired identity and affected boundaries. Only a material authority, scope, acceptance, decomposition, or validation-allocation change resets review to an initial frontier. If subagent execution becomes unavailable, fail closed before repair mutation. After two failed repair rounds, raise capability one tier when available. Repeated evidence of a decomposition or requirement defect stops retries and routes to plan or specification repair.
+On `repair`, return blocking findings to the existing task owner. Repair from the exact previously reviewed source, rerun only claim-relevant validation invalidated by the repair, and perform one scoped rereview of the affected frontier. Reuse unaffected executor and validation authority. Only a material authority, scope, acceptance, decomposition, or validation-allocation change resets to an initial frontier. Publication-only/control resume never redispatches the executor or reruns validation/review.
 
 ## Completion semantics
 

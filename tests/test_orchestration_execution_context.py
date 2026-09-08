@@ -40,10 +40,12 @@ def test_product_review_candidate_excludes_handoff_and_publication_bookkeeping()
         diff="diff --git a/src/a.py b/src/a.py\n", changed_files=["M\tsrc/a.py"],
         changed_symbols=["run"],
         validation_observations=[{"id": "VAL-006", "result": "passed"}],
-        knowledge_disposition={"status": "none", "reason": "task local"},
     )
     encoded = json.dumps(candidate, sort_keys=True)
-    assert all(term not in encoded for term in ("handoff", "acceptance_review", "reviewer_run"))
+    assert all(term not in encoded for term in (
+        "handoff", "acceptance_review", "reviewer_run", "knowledge_disposition",
+        "methodology", "allocated_rules", "semantic_authority", "evidence_capability",
+    ))
     assert candidate["task_authority"]["task_id"] == "task-006"
 
 
@@ -1497,19 +1499,111 @@ def test_build_review_package_contains_only_bounded_task_diff_and_evidence(tmp_p
     assert "password: <redacted>" in package
     assert "result: passed" in package
     assert "Confirm retry timing with the caller." in package
-    assert "scoped-rule" in package
-    assert "dev-test-driven-development" in package
     assert "## Review rubric" in package
-    assert "## Accepted Truth Basis" in package
-    assert "## Evidence capability" in package
-    assert "INV-001" in package
-    assert "VAL-001" in package
-    assert "closure_result" in package
-    assert "pending" in package
-    assert "## Knowledge disposition" in package
-    assert "No stable authority changed." in package
+    assert "## Knowledge disposition" not in package
     assert "SHOULD-NOT-APPEAR" not in package
     assert ".work-bundle/knowledge/notes" not in package
+
+
+def test_initial_completed_result_can_prepare_required_review_without_future_verdict(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    task.write_text(task.read_text().replace(
+        "acceptance_review:\n  required: false\n",
+        "acceptance_review:\n  required: true\n",
+    ))
+    base = committed_review_base(root)
+    handoff = write_executor_handoff(
+        root, "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n"
+    )
+    handoff.write_text(handoff.read_text().replace(
+        "result: {state: completed}\n",
+        "result: {state: completed}\nacceptance_review: {required: true, verdict: pending}\n",
+    ))
+    _enable_passing_observation(root, task, handoff)
+
+    package = build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
+    assert package.is_file()
+    with pytest.raises(SystemExit, match="cannot complete without"):
+        _validate_observed(_read_handoff(handoff), _compiled_brief(root, task))
+
+
+def test_postacceptance_review_package_ignores_stale_handoff_and_requires_current_observation(tmp_path: Path) -> None:
+    root, _, task = workspace(tmp_path)
+    base = committed_review_base(root)
+    handoff = write_executor_handoff(
+        root, "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n"
+    )
+    _set_process_validation(
+        task, PASSING_PROCESS,
+        evidence_reuse={
+            "mode": "deterministic", "max_age_seconds": 3600,
+            "environment_inputs": ["PYTHONHASHSEED"], "include_head": False,
+        },
+    )
+    brief = _compiled_brief(root, task)
+    assert brief["validation"][0]["evidence_reuse"]["max_age_seconds"] == 3600
+    _bind_task_execution(root, brief)
+    handoff.write_text(
+        handoff.read_text().replace(TASK_VALIDATION_COMMAND, json.dumps(PASSING_PROCESS))
+    )
+    validated = _validate_observed(_read_handoff(handoff), brief)
+    execution_context.materialize_accepted_task_result(root, brief, _read_handoff(handoff), validated)
+
+    source = root / WRITE_SCOPE_FILE
+    source.write_text(source.read_text() + "\n# reviewed repair\n")
+    git(root, "add", WRITE_SCOPE_FILE)
+    git(root, "commit", "-qm", "repair")
+    binding = execution_context.load_task_execution_binding(root, "plan-001", "task-004")
+    repository_evidence = execution_context.capture_repository_evidence(root)
+    observed = execution_context._completion_provenance_module().observe_validation(
+        binding, brief, brief["validation"][0], repository_evidence,
+        lambda receipt: execution_context._observe_validation_item(
+            brief["validation"][0], root, brief, receipt
+        ),
+        lambda: execution_context.capture_repository_evidence(root),
+    )
+    observation_id = observed["observation_id"]
+
+    controller_resume = root / ".work-bundle/runtime/controller-resume.json"
+    controller_resume.parent.mkdir(parents=True, exist_ok=True)
+    controller_resume.write_text('{"publication": "retry"}\n')
+    head = git(root, "rev-parse", "HEAD")
+
+    unrelated_check = {**brief["validation"][0], "id": "VAL-UNRELATED", "command": "true"}
+    unrelated_observed = execution_context._completion_provenance_module().observe_validation(
+        binding, brief, unrelated_check, execution_context.capture_repository_evidence(root),
+        lambda receipt: execution_context._observe_validation_item(
+            unrelated_check, root, brief, receipt
+        ),
+        lambda: execution_context.capture_repository_evidence(root),
+    )
+    handoff.write_text("this: [is: stale")
+
+    with pytest.raises(SystemExit, match="claim-bound|does not bind current task claims"):
+        build_review_package(args(
+            root, task, handoff=str(handoff), base=base, head=head,
+            validation_observation_id=[unrelated_observed["observation_id"]],
+        ))
+
+    package = build_review_package(args(
+        root, task, handoff=str(handoff), base=base, head=head,
+        validation_observation_id=[observation_id],
+    )).read_text()
+    assert "reviewed repair" in package
+    assert observation_id in package
+    assert PASSING_PROCESS in package
+    assert "invariant_ids" in package
+
+    material_source = root / "unrelated.txt"
+    material_source.write_text("new material source\n")
+    git(root, "add", "unrelated.txt")
+    git(root, "commit", "-qm", "material source change")
+    with pytest.raises(SystemExit, match="claim-bound"):
+        build_review_package(args(
+            root, task, handoff=str(handoff), base=base,
+            head=git(root, "rev-parse", "HEAD"),
+            validation_observation_id=[observation_id],
+        ))
 
 
 def test_build_review_package_resolves_git_refs_in_bound_execution_repository(
@@ -1724,8 +1818,8 @@ def test_build_review_package_receives_same_resolved_auth_semantics(tmp_path: Pa
     assert COMPILED_AUTHORITY in brief
     assert COMPILED_AUTHORITY in package
     assert ACCEPTED_CONSTRAINT in package
-    assert "## Accepted Truth Basis" in package
-    assert ACCEPTED_AUTHORITY_PATH not in package.split("## Accepted Truth Basis", 1)[1].split("## Allowed scope", 1)[0]
+    assert "## Accepted Truth Basis" not in package
+    assert ACCEPTED_AUTHORITY_PATH not in package
     assert DECOY_KNOWLEDGE not in package
 
 
@@ -1776,9 +1870,10 @@ def test_build_review_package_accepts_allocated_auth_in_knowledge_disposition(
 
     assert COMPILED_AUTHORITY in package
     assert ACCEPTED_CONSTRAINT in package
-    assert f"action: {action}" in package
+    assert f"action: {action}" not in package
     assert ACCEPTED_AUTHORITY in package
-    assert ACCEPTED_AUTHORITY_PATH not in package.split("## Knowledge disposition", 1)[1].split("## Allocated", 1)[0]
+    assert "## Knowledge disposition" not in package
+    assert ACCEPTED_AUTHORITY_PATH not in package
 
 
 def test_build_review_package_rejects_unallocated_auth_in_knowledge_disposition(tmp_path: Path) -> None:
@@ -3251,7 +3346,7 @@ def _validate_observed(handoff: dict, brief: dict) -> dict:
 
 
 def _set_process_validation(task: Path, command: str, **fields: object) -> None:
-    extra = "".join(f", {key}: {value}" for key, value in fields.items())
+    extra = "".join(f", {key}: {json.dumps(value)}" for key, value in fields.items())
     _set_task_validation(
         task,
         "validation:\n"

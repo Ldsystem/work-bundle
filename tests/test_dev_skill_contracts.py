@@ -105,27 +105,55 @@ def test_tdd_contract_names_cycle_applicability_and_exemptions() -> None:
         assert token in text
 
 
-def test_code_review_contract_is_independent_and_emits_exact_shape() -> None:
+def test_code_review_contract_is_product_only_and_emits_actionable_findings() -> None:
     text = skill_text("dev-code-review")
 
     for token in [
-        "task fit",
-        "rules and methodology",
+        "accepted product requirements",
+        "exact product source/diff identity",
+        "normalized validation observations",
+        "unresolved product concerns",
         "correctness and edge cases",
         "unnecessary complexity",
-        "validation evidence",
-        "reviewer_independent: true | false",
-        "verdict: accept | repair | blocked",
-        "reviewed_head: <commit-or-tree-identity>",
-        "severity: blocking | advisory",
-        "scope: specification | correctness | quality | validation | rule",
-        "finding: <compact evidence-backed text>",
-        "grounded intent",
-        "decision authority",
-        "test oracle",
-        "knowledge disposition",
+        "verdict: accept | repair",
+        "reviewed_head: <exact-product-source-identity>",
+        "finding_id:",
+        "requirement_id:",
+        "boundary:",
+        "evidence:",
+        "expected:",
+        "observed:",
+        "owner: task_owner",
+        "input/runner failure",
+        "one frozen candidate",
+        "one scoped rereview",
+        "same independent reviewer",
     ]:
         assert token in text
+    exclusions = text.split("## Excluded controller inputs", 1)[1]
+    for token in [
+        "handoff", "receipt", "publication", "review store", "status", "archive",
+        "knowledge disposition", "identity rotation", "controller", "evaluator",
+    ]:
+        assert token in exclusions
+    assert "rerun validation" in text
+    assert "confirm another review" in text
+    assert "controller supplies the native review envelope" in text.lower()
+    assert "reviewer_independent" not in text
+    assert "verdict: accept | repair | blocked" not in text
+
+
+def test_code_review_pressure_scenarios_cover_control_defects_and_non_trigger() -> None:
+    evals = json.loads((REPO_ROOT / "references/evals/development/evals.json").read_text())["evals"]
+    by_id = {item["id"]: item for item in evals}
+    assert {
+        "dev-review-product-defect",
+        "dev-review-control-input-failure",
+        "dev-review-adversarial-non-trigger",
+    } <= set(by_id)
+    assert "task_owner" in by_id["dev-review-product-defect"]["expected_output"]
+    assert "outside the product verdict" in by_id["dev-review-control-input-failure"]["expected_output"]
+    assert "does not invoke dev-code-review" in by_id["dev-review-adversarial-non-trigger"]["expected_output"]
 
 
 def test_mechanical_task_plan_contract_escalates_and_uses_exact_sections() -> None:

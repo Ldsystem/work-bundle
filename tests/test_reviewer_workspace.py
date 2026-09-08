@@ -149,41 +149,135 @@ def test_task_review_worker_output_receives_native_bound_receipt(
         task_review_context=context,
     )
     created = create_reviewer_workspace(runtime, "review-task-native", direct)
-    review = {
-        "required": True,
-        "reviewer_independent": True,
-        "review_id": "review-task-native",
+    judgment = {"task_review": {
         "reviewed_head": head,
-        "review_mode": "initial",
-        "review_target_kind": "task",
-        "repair_frontier": None,
-        "review_reset": None,
-        "target_identity": identity,
-        "reviewer": {
-            "agent_id": "reviewer-task", "capability": "judgment",
-            "authorship": "none", "repair_participation": "none",
-            "decision_participation": "none", "deliberation_participation": "none",
-            "context_origin": "reproducible_snapshot",
-        },
-        "evidence": {
-            "mode": "reproducible_snapshot", "capabilities": ["frozen source"],
-            "unavailable_evidence": [], "commands": [],
-            "artifacts": [{"path": direct["artifacts"][0]["locator"], "sha256": direct["artifacts"][0]["sha256"]}],
-        },
         "verdict": "accept", "findings": [],
-        "started_at": "2026-09-08T00:00:00Z", "completed_at": "2026-09-08T00:01:00Z",
-        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
-    }
+    }}
     with patch.object(
         reviewer_workspace,
         "_run_sandboxed_process",
-        return_value=subprocess.CompletedProcess(["reviewer"], 0, json.dumps(review), ""),
+        return_value=subprocess.CompletedProcess(["reviewer"], 0, json.dumps(judgment), ""),
     ):
         receipt = reviewer_workspace.run_sandboxed_reviewer(Path(str(created["workspace_path"])), ["reviewer"])
 
     assert receipt["status"] == "passed"
     assert receipt["task_review_context"]["target_identity"] == identity
     assert set(receipt["reviewer_run"]) == {"run_id", "sha256"}
+    assert receipt["review_result"]["reviewer"]["agent_id"] == "reviewer-task"
+    assert receipt["review_result"]["verdict"] == "accept"
+
+
+def test_compact_task_judgment_composes_repair_and_reset_predecessors() -> None:
+    runtime = reviewer_workspace
+    old_identity = {"artifact_id": "task-006", "revision": "a" * 40, "sha256": "1" * 64, "source_tree": "b" * 40}
+    base_context = {
+        "target_identity": old_identity, "agent_id": "reviewer-task", "capability": "judgment",
+        "execution_id": "review-execution-task", "evidence_mode": "direct_source",
+        "review_mode": "initial", "review_target_kind": "task", "repair_frontier": None,
+        "review_reset": None,
+    }
+    blocking = {"task_review": {"reviewed_head": old_identity["revision"], "verdict": "repair", "findings": [{
+        "finding_id": "finding-product", "severity": "blocking", "requirement_id": "REQ-1",
+        "boundary": "src/product.py:run", "evidence": "return value differs", "expected": "one",
+        "observed": "zero", "owner": "task_owner",
+    }]}}
+    previous = runtime._task_product_judgment_review(
+        blocking, review_id="review-prior", context=base_context, packet={"artifacts": []},
+        started_at="2026-09-08T00:00:00Z", completed_at="2026-09-08T00:01:00Z",
+    )
+    new_identity = {"artifact_id": "task-006", "revision": "c" * 40, "sha256": "2" * 64, "source_tree": "d" * 40}
+    repair_context = {**base_context, "target_identity": new_identity, "review_mode": "repair", "repair_frontier": {
+        "prior_review_id": "review-prior", "blocking_finding_ids": ["finding-product"],
+        "previous_reviewed_identity": old_identity, "repaired_identity": new_identity,
+        "affected_boundaries": ["src/product.py:run"],
+        "frozen_evidence_reference": reviewer_workspace._review_runtime().review_evidence_identity(previous),
+    }}
+    repaired = runtime._task_product_judgment_review(
+        {"task_review": {"reviewed_head": new_identity["revision"], "verdict": "accept", "findings": []}},
+        review_id="review-repaired", context=repair_context, packet={"artifacts": []},
+        started_at="2026-09-08T00:02:00Z", completed_at="2026-09-08T00:03:00Z",
+        previous_review=previous,
+    )
+    assert reviewer_workspace._review_runtime().validate_task_acceptance_review(repaired).verdict == "accepted"
+
+    reset_context = {
+        **base_context, "target_identity": new_identity,
+        "review_reset": {"prior_review_id": "review-prior", "reason_class": "scope", "reason": "Accepted scope changed."},
+    }
+    reset = runtime._task_product_judgment_review(
+        {"task_review": {"reviewed_head": new_identity["revision"], "verdict": "accept", "findings": []}},
+        review_id="review-reset", context=reset_context, packet={"artifacts": []},
+        started_at="2026-09-08T00:02:00Z", completed_at="2026-09-08T00:03:00Z",
+        previous_review=previous,
+    )
+    assert reviewer_workspace._review_runtime().validate_task_acceptance_review(reset).verdict == "accepted"
+
+
+def test_compact_integrated_product_judgment_gets_controller_owned_stage_envelope() -> None:
+    identity = {"artifact_id": "plan-006", "revision": "6", "sha256": "1" * 64, "source_tree": "b" * 40}
+    context = {
+        "stage": "integrated_implementation", "target_identity": identity,
+        "target_locator": "control:.work-bundle/orchestration/plan/active/plan.md",
+        "agent_id": "reviewer-integrated", "capability": "judgment",
+        "execution_id": "review-execution-integrated", "evidence_mode": "direct_source",
+    }
+    review = reviewer_workspace._task_product_judgment_review(
+        {"task_review": {"reviewed_head": identity["source_tree"], "verdict": "accept", "findings": []}},
+        review_id="review-integrated", context=context, packet={"artifacts": []},
+        started_at="2026-09-08T00:00:00Z", completed_at="2026-09-08T00:01:00Z",
+        integrated_stage=True,
+    )
+    validated = reviewer_workspace._review_runtime().validate_stage_review(review)
+    assert validated.stage == "integrated_implementation"
+    assert validated.verdict == "accepted"
+
+
+def test_incomplete_stage_snapshot_fails_before_reviewer_process_launch(
+    review_roots: tuple[Path, Path, Path]
+) -> None:
+    source, control, runtime = review_roots
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "src/target.py", ".wor105-review-sentinel"], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"],
+        check=True,
+    )
+    plan = control / ".work-bundle/orchestration/plan/active/plan.md"
+    plan.parent.mkdir(parents=True)
+    spec = control / ".work-bundle/orchestration/spec/active/spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("---\nid: spec-preflight\nstatus: verified\n---\nSpec\n", encoding="utf-8")
+    plan.write_text("---\nid: plan-preflight\nstatus: Planned\nsource_spec: [spec-preflight]\n---\nPlan\n", encoding="utf-8")
+    task = plan.parent / "task.md"
+    task.write_text(
+        "---\nid: task-preflight\nplan_id: plan-preflight\nvalidation: [{id: VAL-1, command: true}]\n---\nTask\n",
+        encoding="utf-8",
+    )
+    locator = "control:" + plan.relative_to(control).as_posix()
+    context = {
+        "stage": "integrated_implementation",
+        "target_identity": reviewer_workspace._review_runtime().stage_target_identity(
+            control, "integrated_implementation", plan, source_root=source
+        ),
+        "target_locator": locator,
+        "agent_id": "reviewer-preflight",
+        "capability": "judgment",
+        "execution_id": "reviewer-preflight-run",
+        "evidence_mode": "direct_source",
+    }
+    incomplete = build_direct_evidence_packet(
+        source_root=source, control_root=control,
+        protected_roots=[control / "credentials"], artifacts=[locator], search_roots=[],
+        validators=[], sentinels=[], network_state="denied", stage_review_context=context,
+    )
+    assert incomplete["stage_evidence_manifest"]["missing"]
+    created = create_reviewer_workspace(runtime, "review-preflight", incomplete)
+    with patch.object(reviewer_workspace, "_run_sandboxed_process") as launch:
+        with pytest.raises(ReviewerWorkspaceError, match="STAGE_EVIDENCE_INCOMPLETE"):
+            reviewer_workspace.run_sandboxed_reviewer(
+                Path(str(created["workspace_path"])), ["reviewer"]
+            )
+    launch.assert_not_called()
 
 
 def test_bounded_read_search_and_validators_are_allowed(review_roots: tuple[Path, Path, Path]) -> None:

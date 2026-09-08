@@ -31,7 +31,8 @@ Orchestration artifacts are derived working material under `.work-bundle/orchest
 | **Phase** | Bounded milestone grouping related tasks with only the spec IDs, decisions, files, and tests those tasks need |
 | **Task** | One executable unit with exact source files, target files, symbols, steps, validation, completion criteria, and handoff requirements |
 | **Handoff** | Executor or orchestration continuation evidence before advancing status |
-| **Review** | Final verification, repair-spec creation on failure, and archival on success |
+| **Product review** | Independent judgment of one frozen product candidate against accepted product requirements and normalized observations |
+| **Controller finalization** | Evidence admission, first-owner routing, lifecycle completion, and archive mechanics |
 
 - Reference spec IDs in downstream plans, phases, and tasks instead of duplicating full requirement prose.
 - Carry only task-specific execution detail in task files after citing stable spec IDs.

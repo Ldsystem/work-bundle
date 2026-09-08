@@ -157,7 +157,101 @@ def stage_target_identity(root: Path, stage: str, path: Path, *, source_root: Pa
     return identity
 
 
-def stage_evidence_requirements(root: Path, stage: str, target: Path) -> tuple[dict[str, str], list[str]]:
+_ACCEPTED_RESULT_FIELDS = {
+    "schema", "plan_id", "task_id", "binding_id", "baseline_identity",
+    "accepted_source", "authority_projection", "executor_result_digest",
+    "validation_evidence_ids", "review_id", "owner_identity", "accepted_at",
+    "invalidation",
+}
+_ACCEPTED_AUTHORITY_FIELDS = {
+    "task_digest", "binding_digest", "scope_digest", "validation_obligations_digest",
+    "required_review_digest", "ownership_digest",
+}
+
+
+def accepted_result_state_digest(accepted: Mapping[str, Any]) -> str:
+    """Recompute the compact accepted-result identity without importing execution runtime."""
+
+    source = _mapping(accepted.get("accepted_source"), "accepted task result source")
+    state = {
+        "plan_id": accepted.get("plan_id"), "task_id": accepted.get("task_id"),
+        "binding_id": accepted.get("binding_id"),
+        "baseline_identity": dict(_mapping(accepted.get("baseline_identity"), "accepted baseline")),
+        "accepted_source": {"head": source.get("head"), "tree": source.get("tree")},
+        "authority_projection": dict(_mapping(accepted.get("authority_projection"), "accepted authority")),
+    }
+    if "knowledge_disposition" in accepted:
+        state["knowledge_disposition"] = dict(
+            _mapping(accepted.get("knowledge_disposition"), "accepted knowledge disposition")
+        )
+    return hashlib.sha256(
+        json.dumps(state, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+
+
+def _accepted_task_stage_evidence(
+    root: Path, plan_id: str, task_id: str, *, validate_native_receipt: bool
+) -> tuple[Path | None, Path | None, str | None]:
+    binding = root / ".work-bundle/runtime/execution" / plan_id / task_id / "execution-binding.json"
+    if binding.is_symlink() or not binding.is_file() or not binding.resolve().is_relative_to(root.resolve()):
+        return None, None, f"accepted_task_result_missing:{task_id}"
+    try:
+        payload = _mapping(json.loads(binding.read_text()), "task execution binding")
+        accepted = _mapping(payload.get("accepted_result"), "accepted task result")
+        fields = set(accepted)
+        if frozenset(fields) not in {
+            frozenset(_ACCEPTED_RESULT_FIELDS),
+            frozenset(_ACCEPTED_RESULT_FIELDS | {"knowledge_disposition"}),
+        }:
+            raise ReviewContractError("accepted task result shape is not closed")
+        source = _mapping(accepted.get("accepted_source"), "accepted task result source")
+        authority = _mapping(accepted.get("authority_projection"), "accepted task result authority")
+        ownership = _mapping(payload.get("ownership"), "task execution ownership")
+        observations = accepted.get("validation_evidence_ids")
+        if (
+            accepted.get("schema") != "accepted-task-result-v1"
+            or accepted.get("plan_id") != plan_id or accepted.get("task_id") != task_id
+            or accepted.get("binding_id") != ownership.get("binding_id")
+            or payload.get("plan_id") != plan_id or payload.get("task_id") != task_id
+            or accepted.get("invalidation") is not None
+            or set(source) != {"head", "tree", "state_digest"}
+            or set(authority) != _ACCEPTED_AUTHORITY_FIELDS
+            or not isinstance(observations, list) or not observations
+            or any(not isinstance(item, str) or not item for item in observations)
+            or len(observations) != len(set(observations))
+            or source.get("state_digest") != accepted_result_state_digest(accepted)
+        ):
+            raise ReviewContractError("accepted task result binding or evidence is invalid")
+        review_path = None
+        if accepted.get("review_id"):
+            review_path = _review_store_path(root, str(accepted["review_id"]))
+            if review_path.exists():
+                if review_path.is_symlink() or review_path.stat().st_mode & 0o222:
+                    raise ReviewContractError("stored current task review is mutable")
+                review = _mapping(json.loads(review_path.read_text()), "stored current task review")
+                validated = _validated_review_envelope(review)
+                if (
+                    validated.review_id != accepted["review_id"]
+                    or review.get("review_target_kind") != "task"
+                    or validated.verdict != "accepted"
+                    or validated.target_identity.get("artifact_id") != task_id
+                    or validated.target_identity.get("revision") != source.get("head")
+                    or validated.target_identity.get("source_tree") != source.get("tree")
+                ):
+                    raise ReviewContractError("stored current task review does not bind accepted source")
+                if validate_native_receipt:
+                    _validate_reviewer_run(root, review)
+            else:
+                # Accepted tasks predating native publication remain authoritative.
+                review_path = None
+        return binding, review_path, None
+    except (OSError, ValueError, TypeError, ReviewContractError):
+        return binding, None, f"accepted_task_result_invalid:{task_id}"
+
+
+def stage_evidence_requirements(
+    root: Path, stage: str, target: Path, *, validate_native_receipts: bool = True
+) -> tuple[dict[str, str], list[str]]:
     """Derive the stage's evidence closure, not a caller-selected context projection.
 
     Carried knowledge constraints are authority in the specification itself. Their
@@ -218,31 +312,18 @@ def stage_evidence_requirements(root: Path, stage: str, target: Path) -> tuple[d
             item, _ = _read_structured(member)
             if not item.get("validation"):
                 continue
-            found = False
-            for handoff in sorted((root / ".work-bundle/orchestration/handoff/executor").rglob("*")):
-                if handoff.suffix not in {".yaml", ".yml", ".json"} or not handoff.is_file():
-                    continue
-                handoff = _input_path(handoff, root, root / ".work-bundle/orchestration/handoff/executor", "stage validation evidence")
-                value = json.loads(handoff.read_text()) if handoff.suffix == ".json" else _read_structured(handoff)[0]
-                related = value.get("related", {})
-                validation = value.get("validation", {})
-                if not isinstance(related, dict) or not isinstance(validation, dict):
-                    continue
-                records = [record for record in _as_list(validation.get("commands")) if isinstance(record, dict)]
-                checks = _as_list(item["validation"])
-                def covered(check: Any) -> bool:
-                    check = {"command": check} if isinstance(check, str) else check
-                    if not isinstance(check, dict):
-                        return False
-                    command = check.get("command")
-                    check_id = check.get("id")
-                    return any((command and record.get("command") == command)
-                               or (not command and check_id and record.get("id") == check_id) for record in records)
-                if related.get("plan") == data.get("id") and related.get("task") == item.get("id") and all(covered(check) for check in checks):
-                    control(handoff, "validation_evidence")
-                    found = True
-            if not found:
-                missing.append("validation_evidence:" + str(item.get("id")))
+            task_id = str(item.get("id") or "")
+            binding, review, failure = _accepted_task_stage_evidence(
+                root, str(data.get("id") or ""), task_id,
+                validate_native_receipt=validate_native_receipts,
+            )
+            if failure:
+                missing.append(failure)
+                continue
+            assert binding is not None
+            control(binding, "accepted_task_result")
+            if review is not None:
+                control(review, "accepted_task_review")
         # Preserve native identities/receipts; do not invent a parallel validation store.
         path = root / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json"
         if path.is_file():
@@ -351,7 +432,9 @@ def validate_stage_evidence(root: Path, context: Mapping[str, Any], packet: Mapp
             raise ReviewContractError("repair stage evidence does not bind frozen evidence")
         required, missing = {target: "target"}, []
     else:
-        required, missing = stage_evidence_requirements(root, str(context["stage"]), root / target[8:])
+        required, missing = stage_evidence_requirements(
+            root, str(context["stage"]), root / target[8:], validate_native_receipts=False
+        )
     source = manifest.get("source_tree", [])
     if context["stage"] == "integrated_implementation" and context.get("review_mode", "initial") == "initial":
         if snapshot_tree_identity(source) != context["target_identity"]["source_tree"]:

@@ -12,7 +12,7 @@ requires: []
 
 ## Purpose
 
-Require compact executor-result handoffs before reporting execution complete or blocked. Handoffs record only continuation and review evidence for the next agent; durable knowledge and orchestration strategy decisions stay outside executor-result handoffs.
+Require one compact executor-result handoff for an initial executor result before its first acceptance. After acceptance, continuation consumes the compact accepted result; acquiring, publishing, or retrying review/control facts does not rewrite or replay an executor handoff. Durable knowledge and orchestration strategy decisions stay outside executor-result handoffs.
 
 ## Must
 
@@ -71,4 +71,4 @@ Require compact executor-result handoffs before reporting execution complete or 
 
 ## On Violation
 
-Stop completion reporting, create or repair the missing compact executor-result handoff, remove forbidden advice fields, add missing task-fit, CodeGraph, repository, validation, contract-decoupling, barrier, convergence, violation-closure, or `delegation_evidence`, update indexes and statuses from the handoff evidence when supported, and only then resume the next executable action or review step. If active orchestration handoff creation is attempted, reject it and use active specs, plans, phases, tasks, indexes, and executor-result handoffs for continuation state.
+For an unaccepted initial executor result, stop completion reporting and create or repair its compact executor-result handoff. For an already accepted task, use its compact accepted result and route only the affected product, publication, or finalization owner; never redispatch execution merely because a handoff is absent from post-acceptance context. Remove forbidden advice fields and fill missing initial-result evidence only within that initial handoff. If active orchestration handoff creation is attempted, reject it and use active specs, plans, phases, tasks, indexes, and compact accepted results for continuation state.
