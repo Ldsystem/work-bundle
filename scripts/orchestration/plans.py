@@ -474,16 +474,15 @@ def _observe_archive_obligations(
             )
         }
         expected_command_digest = semantic_digest(definition)
-        capable = False
+        accepted_harness_observation = False
         for evidence_id in evidence_ids:
             try:
-                prior = load_observation(store, str(evidence_id))
+                load_observation(store, str(evidence_id))
             except CompletionProvenanceError:
                 continue
-            if prior.command_digest == expected_command_digest:
-                capable = True
-                break
-        if not capable:
+            accepted_harness_observation = True
+            break
+        if not accepted_harness_observation:
             raise SystemExit(
                 "acceptance-blocked: accepted task result does not reference an accepted harness observation"
             )
@@ -505,6 +504,37 @@ def _observe_archive_obligations(
             before,
             lambda receipt: _observe_validation_item(item, workspace, task, receipt),
             lambda: capture_repository_evidence(workspace),
+            finalization_id=(
+                f"archive:{task.get('plan_id')}:{task.get('task_id')}:{item.get('id')}"
+            ),
+            stage_event_workspace=control_root,
+            stage_event={
+                "event_id": "event-template",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "process_id": "process-plan-archive",
+                "stage": "plan-archive",
+                "attempt_id": str(task.get("plan_id") or ""),
+                "event_type": "suite_started",
+                "enforcement_mode": "native",
+                "join_ids": {
+                    "specification_id": None,
+                    "plan_id": str(task.get("plan_id") or "") or None,
+                    "phase_id": str(task.get("phase_id") or "") or None,
+                    "task_id": str(task.get("task_id") or "") or None,
+                    "review_id": None,
+                    "evaluation_id": None,
+                },
+                "clocks": {"wall_ms": 0, "active_ms": 0, "billed_ms": None},
+                "finding_class": None,
+                "return_reason": "accepted terminal observation",
+                "owner": str(task.get("task_id") or "plan-archive"),
+                "identity": {
+                    "product_tree": _git_tree_id(workspace, "HEAD"),
+                    "artifact_digest": expected_command_digest,
+                    "mutation_epoch": 0,
+                },
+                "privacy": "operational_metadata_only",
+            },
         )
         if result.get("result") != "passed":
             raise SystemExit(

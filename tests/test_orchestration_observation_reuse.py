@@ -106,6 +106,30 @@ def _archive(control_root: Path, root: Path, command: str, accepted: dict, task:
     )
 
 
+def _public_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    control_root: Path,
+    root: Path,
+    command: str,
+    accepted: dict,
+    task: dict,
+):
+    plan = tmp_path / "plan.md"
+    plan.write_text(
+        "## Tests\n\n| Test Type | Command |\n| --- | --- |\n"
+        f"| Integration | `{command}` |\n"
+    )
+    monkeypatch.setattr(plans, "_material_repository_root", lambda *_: root)
+    monkeypatch.setattr(plans, "resolve_workspace_root", lambda *_: control_root)
+    plans._assert_archive_plan_acceptance(
+        type("Args", (), {"project_root": str(control_root), "workspace_root": str(control_root)})(),
+        "plan-001",
+        plan,
+        [(accepted, task)],
+    )
+
+
 def test_task_level_reuse_policy_is_applied_to_each_validation_obligation():
     compiled = execution_context._compile_task_validation(
         {
@@ -129,11 +153,17 @@ def test_task_level_reuse_policy_is_applied_to_each_validation_obligation():
 def test_completion_then_archive_reuses_one_current_terminal_observation(tmp_path, monkeypatch):
     root, control, counter, accepted, task, command, first = _fixture(tmp_path, monkeypatch)
 
-    observed = _archive(control, root, command, accepted, task)
+    _public_archive(tmp_path, monkeypatch, control, root, command, accepted, task)
 
     assert counter.read_text() == "1"
-    assert observed[0]["observation_id"] == first["observation_id"]
-    assert observed[0]["reuse_of"] == first["observation_id"]
+    state = json.loads(
+        (control / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json").read_text()
+    )
+    assert state["consumptions"][first["observation_id"]] == (
+        "archive:plan-001:task-001:VAL-001"
+    )
+    events = completion_provenance._stage_events_module().query_stage_events(control)
+    assert [event.event_type for event in events] == ["suite_reused"]
 
 
 @pytest.mark.parametrize("change", ["source", "claim", "epoch"])
@@ -157,29 +187,38 @@ def test_archive_executes_once_for_each_exact_invalidation(tmp_path, monkeypatch
     assert observed[0]["reuse_of"] is None
 
 
-def test_changed_validation_allocation_requires_fresh_accepted_observation(tmp_path, monkeypatch):
+def test_changed_validation_allocation_executes_fresh_once_at_public_archive(tmp_path, monkeypatch):
     root, control, counter, accepted, task, command, first = _fixture(tmp_path, monkeypatch)
     changed = deepcopy(task)
     changed["validation"][0]["invariant_ids"] = ["INV-002"]
-    binding = plans.load_task_execution_binding(control, "plan-001", "task-001")
-    evidence = capture_repository_evidence(root)
-    replacement = completion_provenance.observe_validation(
-        binding,
-        changed,
-        changed["validation"][0],
-        evidence,
-        lambda receipt: execution_context._observe_validation_item(
-            changed["validation"][0], root, changed, receipt
-        ),
-        lambda: capture_repository_evidence(root),
-    )
-    accepted["validation_evidence_ids"] = [replacement["observation_id"]]
 
-    observed = _archive(control, root, command, accepted, changed)
+    _public_archive(tmp_path, monkeypatch, control, root, command, accepted, changed)
 
     assert counter.read_text() == "2"
+    state = json.loads(
+        (control / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json").read_text()
+    )
+    assert len(state["observations"]) == 2
+    replacement = state["observations"][-1]
     assert replacement["observation_id"] != first["observation_id"]
-    assert observed[0]["reuse_of"] == replacement["observation_id"]
+    assert state["consumptions"][replacement["observation_id"]] == (
+        "archive:plan-001:task-001:VAL-001"
+    )
+
+
+def test_stale_harness_observation_executes_fresh_once_at_public_archive(tmp_path, monkeypatch):
+    root, control, counter, accepted, task, command, first = _fixture(tmp_path, monkeypatch)
+    store_path = control / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json"
+    state = json.loads(store_path.read_text())
+    state["observations"][0]["freshness_deadline"] = "2000-01-01T00:00:00Z"
+    store_path.write_text(json.dumps(state))
+
+    _public_archive(tmp_path, monkeypatch, control, root, command, accepted, task)
+
+    assert counter.read_text() == "2"
+    repaired = json.loads(store_path.read_text())
+    assert len(repaired["observations"]) == 2
+    assert repaired["observations"][-1]["observation_id"] != first["observation_id"]
 
 
 def test_distinct_accepted_obligations_each_reuse_without_lifecycle_replay(tmp_path, monkeypatch):
@@ -234,7 +273,7 @@ def test_executor_authored_receipt_id_is_not_independent_archive_proof(tmp_path,
     accepted["validation_evidence_ids"] = ["executor-forged-observation"]
 
     with pytest.raises(SystemExit, match="accepted harness observation"):
-        _archive(control, root, command, accepted, task)
+        _public_archive(tmp_path, monkeypatch, control, root, command, accepted, task)
 
     assert counter.read_text() == "1"
 
