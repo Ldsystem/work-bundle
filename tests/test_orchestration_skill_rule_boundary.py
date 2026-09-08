@@ -256,6 +256,70 @@ def test_runtime_verification_classification_contract_routes_the_first_broken_ar
         assert "must not decide the semantic class" in text
 
 
+def test_durable_owners_state_current_acceptance_and_review_semantics() -> None:
+    required = {
+        "rules/lifecycle-authority.md": [
+            "compact accepted result",
+            "acceptance once",
+            "historical handoff chains",
+            "current harness observation",
+        ],
+        "rules/repository-boundary.md": [
+            "issue-run artifacts",
+            "workspace control plane",
+            "exact baseline and endpoint",
+            "live `HEAD`",
+            "historical cleanup",
+        ],
+        "rules/work-bundle/wb-defect-evaluation.md": [
+            "causal class",
+            "first owning layer",
+            "before responding",
+        ],
+        "rules/orchestration/orch-artifact-authoring.md": [
+            "canonical semantic plan projection",
+            "static task admission",
+            "status-only",
+        ],
+        "rules/orchestration/orch-orchestration-boundary.md": [
+            "compact accepted result",
+            "transient acceptance evidence",
+            "historical handoff chains",
+        ],
+        "rules/orchestration/orch-review-completion.md": [
+            "reviewer infrastructure or provider failure",
+            "same immutable review package",
+            "finding-scoped repair review",
+            "previous finding/evidence frontier",
+        ],
+        "skills/orch-create-implementation-plan/SKILL.md": [
+            "canonical semantic plan projection",
+            "static task admission",
+            "status-only or append-only evidence",
+        ],
+        "skills/orch-execute-plan/SKILL.md": [
+            "compact accepted result",
+            "acceptance once",
+            "same immutable review package",
+            "previous finding/evidence frontier",
+        ],
+        "skills/orch-review-plan/SKILL.md": [
+            "compact accepted results",
+            "historical handoff chains",
+            "current harness observations",
+        ],
+        "references/assets/orchestration/contract/plan-v1.md": [
+            "canonical semantic plan projection",
+            "static task admission",
+            "status-only or append-only evidence",
+        ],
+    }
+    for relative, tokens in required.items():
+        text = read(relative)
+        for token in tokens:
+            assert token in text, f"{relative}: {token}"
+
+
 def test_workflow_makes_task_review_optional_on_the_chain() -> None:
     text = read("references/assets/orchestration/workflow.md")
     for token in [

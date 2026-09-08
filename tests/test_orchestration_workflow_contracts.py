@@ -990,6 +990,26 @@ def test_workflow_assigns_review_ownership_and_repair_loop() -> None:
         assert token in workflow
 
 
+def test_workflow_uses_accepted_results_without_lifecycle_replay() -> None:
+    workflow = read("references/assets/orchestration/workflow.md")
+    for token in [
+        "acceptance once",
+        "compact accepted result",
+        "historical handoff chains",
+        "transient acceptance evidence",
+        "current harness observation",
+        "reviewer infrastructure or provider failure",
+        "same immutable review package",
+        "previous finding/evidence frontier",
+        "status-only or append-only evidence",
+        "causal class",
+        "first owning layer",
+        "exact baseline and endpoint",
+        "issue-run artifacts",
+    ]:
+        assert token in workflow
+
+
 def test_review_rule_uses_typed_resume_routing() -> None:
     rule = read("rules/orchestration/orch-review-completion.md")
     for token in [

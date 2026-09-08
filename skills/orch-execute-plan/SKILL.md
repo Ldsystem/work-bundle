@@ -58,11 +58,15 @@ Use `--head worktree` for pre-commit review; the compiler includes tracked, stag
 
 The reviewer uses only the bounded package and `dev-code-review`. It compares the accepted Truth Basis, implementation, test oracle, and knowledge disposition, then returns `accept`, `repair`, or `blocked` with the reviewed tree identity and compact evidence-backed findings.
 
-On `repair`, return blocking findings to the task-owning subagent with the same brief and current diff. That subagent makes the smallest repair, reruns fresh task validation, regenerates the package from the original task base, and re-reviews. If subagent execution becomes unavailable, fail closed before repair mutation. After two failed repair rounds, raise capability one tier when available. Repeated evidence of a decomposition or requirement defect stops retries and routes to plan or specification repair.
+If reviewer infrastructure or provider failure prevents a verdict, replace only the reviewer against the same immutable review package. Preserve package/source identity, validation evidence, plan decomposition, and the existing frontier; do not change source, rerun validation, or reslice for reviewer availability.
+
+On `repair`, return blocking findings to the task-owning subagent with the same brief and current diff. That subagent makes the smallest repair, reruns fresh task validation, regenerates the package from the original task base, and re-reviews. A finding-scoped repair under unchanged authority carries exactly the previous finding/evidence frontier and limits review to the repaired identity and affected boundaries. Only a material authority, scope, acceptance, decomposition, or validation-allocation change resets review to an initial frontier. If subagent execution becomes unavailable, fail closed before repair mutation. After two failed repair rounds, raise capability one tier when available. Repeated evidence of a decomposition or requirement defect stops retries and routes to plan or specification repair.
 
 ## Completion semantics
 
 A task becomes `Completed` only when implementation criteria, fresh validation, neutral subagent ownership provenance, no controller mutation of task write scope, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan completion derive from accepted children and declared dependency, barrier, and convergence gates.
+
+Enforce acceptance once: after the helper verifies binding, source/scope, subagent ownership, validation, and required review, persist one compact accepted result. Dependency release and later lifecycle steps consume that result plus current harness observations; they do not replay transient acceptance evidence or historical handoff chains.
 
 Use typed blockers:
 

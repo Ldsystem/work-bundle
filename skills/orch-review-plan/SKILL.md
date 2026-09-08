@@ -29,6 +29,7 @@ Verify:
 - the resulting final Knowledge Base Update disposition is `completed` or `not-needed` before archive;
 - approved `ks-*` return evidence exists when durable knowledge was required;
 - allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh completed or are explicitly not applicable.
+- dependency, finalization, resume, and archive decisions consume compact accepted results and current harness observations without replaying transient evidence or historical handoff chains.
 
 ## Evidence capability correspondence
 

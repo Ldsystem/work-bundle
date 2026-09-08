@@ -18,6 +18,7 @@ Prevent completion language from outrunning the evidence available for the exact
 - Name the exact claim before selecting evidence.
 - Use capable evidence: the check must be able to disprove the claim, not merely inspect an adjacent property.
 - Obtain fresh, claim-relevant evidence after the latest material change.
+- For a deterministic accepted validation identity, verify strongly once through the harness and persist the resulting compact observation. Later dependency, review, finalization, resume, and archive consumers reuse that current harness observation while its identity and freshness remain valid; lifecycle progression alone does not rerun it.
 - State only the status that evidence supports, including partial, failed, or blocked status.
 - For terminal, review, or archive claims, resolve the source artifact's `Knowledge Base Update` disposition to `completed` or `not-needed`, with supporting evidence.
 - Report the command, check, artifact, or observation that supports the claim.
@@ -25,6 +26,7 @@ Prevent completion language from outrunning the evidence available for the exact
 ## Must Not
 
 - Do not reuse stale evidence after a relevant change.
+- Do not replay executor assertions, transient acceptance evidence, or historical handoff chains in place of a current harness observation.
 - Do not extrapolate from partial evidence to a broader passing, clean, fixed, or complete claim.
 - Do not make a terminal or archive claim while required durable knowledge remains unresolved.
 - Do not treat absence of a visible error as proof of success.

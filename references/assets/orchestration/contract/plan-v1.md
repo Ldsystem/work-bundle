@@ -87,6 +87,8 @@ Plans do not optimize task or phase cardinality. Bound expected total orchestrat
 
 When execution proves a task materially under-decomposed, return to the plan and reslice only the affected region around the evidenced seam. Preserve the original binding, baseline, and accepted unaffected regions; do not repeatedly enlarge the task.
 
+Plan review identity uses the canonical semantic plan projection shared by all lifecycle consumers; status-only or append-only evidence changes do not request review or reslicing, while authority, scope, dependency, acceptance, decomposition, or validation-allocation changes do. Before acceptance, canonical static task admission compiles every task and rejects missing dependencies, inconsistent authority, unsafe scope, and source-local execution artifacts.
+
 Every executable task declares the same five-field Truth Basis. When a consequential simplification or compatibility assumption exists, make the earliest ordinary task cheaply falsify it before broad edits. Do not add a risk score, checkpoint phase, or parallel lifecycle.
 
 ## 4. Desired Files

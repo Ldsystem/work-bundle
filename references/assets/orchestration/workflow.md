@@ -170,6 +170,14 @@ remain single-flight. Publication rejects an intervening mutation epoch or expir
 freshness. Reservation lock files are retained to avoid splitting concurrent waiters;
 they are runtime artifacts, not source inputs or a separate cache subsystem.
 
+The **acceptance once** lifecycle rule makes the harness strongly verify binding,
+source/scope, subagent ownership, validation, and required review, then persists one
+compact accepted result. Dependency release, finalization, resume, and archive consume
+that result plus a current harness observation while its identity and freshness hold;
+they do not replay transient acceptance evidence or historical handoff chains. A
+status-only or append-only evidence change neither invalidates the canonical semantic
+plan projection nor causes a terminal rerun.
+
 Capability context projects trusted intent/evaluation seeds through the existing
 typed-relation traversal (`light`: 1 hop, `standard`: 2, `deep`: 4), bounded by
 `max_nodes`. Stale/non-authoritative nodes cannot be transit nodes; frontier and
@@ -199,6 +207,13 @@ Selecting `orch-execute-plan` requires a subagent owner for every task without a
 
 On `repair`, return blocking findings with the same brief and current diff to the task-owning subagent. It makes the smallest repair, reruns claim-relevant validation, regenerates the package from the original base, and reviews again. If no subagent is available, fail closed before repair mutation. After two failed low-cost repair rounds, escalate the capability tier; if evidence indicates a plan or specification defect, stop the retry loop and route the typed blocker.
 
+On reviewer infrastructure or provider failure, replace only the reviewer against the
+same immutable review package; source identity, validation evidence, plan decomposition,
+and review frontier remain unchanged. A finding-scoped repair under unchanged authority
+carries the previous finding/evidence frontier and reviews only repaired boundaries.
+Only a material authority, scope, acceptance, decomposition, or validation-allocation
+change resets review to an initial frontier.
+
 A task becomes `Completed` only when implementation criteria, fresh validation, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan status derive from accepted children plus declared dependency and barrier gates.
 
 ## Failure routing
@@ -216,6 +231,13 @@ workspace-blocked     execution workspace preparation, hydration, ownership, or 
 ```
 
 Resume the step that owns the failure. Repair a task for rejected implementation, a plan for decomposition defects, and a specification only for requirement, design, or authority defects.
+
+Before responding to any evaluator, review, validation, or lifecycle failure, classify
+the exact failing assertion into a causal class and route it to the first owning layer.
+An evaluator expectation cannot create source authority. Historical validation uses an
+exact baseline and endpoint rather than an open-ended live HEAD, and issue-run artifacts
+remain in the workspace control plane; proven historical cleanup does not turn old
+accepted manifests into a live source inventory.
 
 ## Final workflow audit
 

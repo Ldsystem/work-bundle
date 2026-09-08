@@ -30,6 +30,7 @@ Keep the WorkBundle defect workflow visible whenever the Work Bundle rule is vis
 - Use `defect-migrate-store` explicitly when the legacy store remains; the other defect commands must fail before creating or reading the destination until migration completes.
 - Use the `defect-ensure-store`, `defect-create-evidence`, `defect-build-index`, `defect-write-index`, and `defect-archive-evidence` script entry points when writing, indexing, or moving evidence files is required.
 - Keep the evaluation compact and stop once visible WorkBundle relatedness is established.
+- Record the causal class and first owning layer returned by `wb-defect-evaluation`; evidence preserves the observation but does not create implementation, plan, specification, or historical-evidence authority.
 - Treat project-scoped findings from `wb-defect-evaluation` as blockers reported to the user rather than work-bundle defect records.
 - Treat undetermined findings that affect authority, target scope, validation, or continuation as resolution blockers until evaluation can classify them.
 

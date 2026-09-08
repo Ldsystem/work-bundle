@@ -17,6 +17,8 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 ## Must
 
 - Confirm each required task review compared the accepted Truth Basis, implementation, test oracle, and task-local knowledge disposition before accepting the task.
+- On reviewer infrastructure or provider failure, replace only the reviewer against the same immutable review package; preserve source identity, validation evidence, plan decomposition, and review frontier.
+- For a finding-scoped repair review under unchanged authority, carry exactly the previous finding/evidence frontier and review only the repaired identity and affected boundaries. Reset to an initial frontier only after a material authority, scope, acceptance, decomposition, or validation-allocation change.
 - Check that declared completion evidence corresponds to the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints.
 - Before archive or completion, confirm every accepted validation-bearing invariant has a compiled `evidence_capability` entry and capable, current, correctly bounded harness-observed evidence under its allocated INV/VAL identities. Treat incapable green, contradiction, staleness, wrong-boundary, failure, missing, or unexecuted evidence as negative acceptance evidence, not closure.
 - Use `no_validation_bearing_obligation + reason` only when no accepted validation-bearing obligation or design decision exists. Do not infer an empty evidence-capability map from a WOR-61 `none_relevant` impact result.
@@ -51,6 +53,7 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Do not start another implementation-review agent for plan-level acceptance.
 - Do not repair implementation or test code during final review.
 - Do not substitute project-file inspection for accepted task-review evidence on tasks that explicitly required review.
+- Do not replan, change source, rerun validation, or reconstruct review history solely because reviewer infrastructure or provider failure requires replacement.
 - Do not create a repair specification for every failed review gate.
 - Do not archive while required knowledge, validation, review, repository, or workspace evidence is unresolved.
 - Do not close an invariant on a green oracle that cannot observe it or that contradicts accepted authority.

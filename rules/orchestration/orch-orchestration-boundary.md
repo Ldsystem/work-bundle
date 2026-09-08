@@ -35,6 +35,7 @@ Orchestration artifacts are derived working material under `.work-bundle/orchest
 
 - Reference spec IDs in downstream plans, phases, and tasks instead of duplicating full requirement prose.
 - Carry only task-specific execution detail in task files after citing stable spec IDs.
+- After acceptance, make downstream orchestration consume the compact accepted result and current harness observations; keep transient acceptance evidence and historical handoff chains out of dependency, finalization, resume, and archive context.
 
 ## Must Not
 
@@ -44,6 +45,7 @@ Orchestration artifacts are derived working material under `.work-bundle/orchest
 - Duplicate full specifications inside plans or turn tasks into mini-specifications.
 - Embed implementation plans inside specifications or make phase or task files read like new specifications.
 - Perform orchestration artifact work from under the knowledge tree.
+- Reconstruct accepted authority by replaying transient acceptance evidence or historical handoff chains after a compact accepted result is available.
 
 ## Validation
 

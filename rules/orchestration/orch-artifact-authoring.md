@@ -28,6 +28,8 @@ Keep orchestration artifacts human-readable, contract-compliant, and executable 
 - Assign every authoritative production path to a production owner. Reject helper-only allocation while a production path is unowned, and keep a coherent mechanical increment with one owner, oracle, and repair frontier together.
 - Create phases only for an actual barrier or convergence boundary. Reject speculative splits unsupported by current authority, repository, dependency, ownership, validation, or acceptance evidence.
 - When execution proves a task materially under-decomposed, return to the plan and reslice only the affected region while preserving the original binding, baseline, and accepted unaffected regions; do not repeatedly enlarge the task.
+- Bind review freshness to one canonical semantic plan projection shared by all consumers. Status-only lifecycle fields and append-only evidence references do not change that projection; requirements, scope, dependencies, validation allocation, acceptance, or authority changes do.
+- Run the compiler's canonical static task admission for every plan task before plan acceptance so missing dependencies, inconsistent authority, unsafe scope, and source-local execution artifacts fail before execution.
 - When plans contain contract-decoupled parallel tasks, include common contract groups, barrier participant maps, readiness criteria, release conditions, convergence owners, and task-level forbidden peer validation instructions.
 - Keep source-context, extra-evidence-loop, open-question, Knowledge Base Update, and body-level `Quality gate: verified|blocked` sections in specifications when required by the specification contract.
 - Summarize spec intent at most once in a root plan, then cite IDs for downstream detail.
@@ -51,6 +53,7 @@ Contract loading by artifact type:
 - Repeat full requirement prose in plans, phases, or tasks when a spec-ID reference suffices.
 - Omit source files, target files, target symbols, validation rules, or completion criteria from executable tasks.
 - Use broad globs such as `src/**` as the only source or target path without exact files or narrow symbol-level explanation.
+- Do not reslice a plan or request a fresh plan review for status-only or append-only evidence changes.
 - Split phases or tasks solely because of template habit, lifecycle labels, duplicated prose, a task-count target, or another cardinality preference when the coherent artifact remains complete and executable.
 - Encode sibling in-progress implementation files as dependencies for contract-decoupled parallel task validation; use common contracts, accepted prior handoffs, and post-barrier convergence instead.
 - Create phases or tasks whose target files are `.work-bundle/knowledge/**`.

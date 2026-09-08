@@ -19,6 +19,8 @@ Plan only from a verified active specification with converged semantics, resolve
 6. Require a compact `executor-result-v1` handoff. Default `acceptance_review.required: false`. Require task review only when the task sets `acceptance_review.required: true`. Do not infer that flag from soft applicability prose.
 7. When a consequential simplification or compatibility assumption exists, make the earliest ordinary task cheaply falsify it before broad edits. Do not add a risk score, checkpoint phase, or parallel lifecycle.
 8. When execution proves a task materially under-decomposed, return to the plan and reslice only the affected region around the newly evidenced seam. Preserve the original binding, baseline, and accepted unaffected regions; do not repeatedly enlarge the task.
+9. Use the canonical semantic plan projection for review identity and freshness; status-only or append-only evidence changes do not require plan review or reslicing, while authority, scope, dependency, acceptance, decomposition, or validation-allocation changes do.
+10. Before plan acceptance, invoke canonical static task admission for every task through the task compiler. Do not duplicate its admission predicates in the planner.
 
 ## Methodology allocation
 
