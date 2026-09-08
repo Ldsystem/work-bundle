@@ -1329,6 +1329,15 @@ def validate_task_acceptance_review(value: Mapping[str, Any]) -> StageReviewV1:
             raise ReviewContractError("task repair review requires its exact previous_review")
         if "previous_review" in previous:
             raise ReviewContractError("task repair review may carry exactly one previous_review; older history stays lazy")
+        if previous.get("review_target_kind") == "stage":
+            validated_previous = validate_stage_review(previous)
+            if validated_previous.stage != "integrated_implementation":
+                raise ReviewContractError(
+                    "task repair review stage predecessor must be integrated_implementation"
+                )
+            return validate_review_sequence(
+                _task_review_as_stage(record), previous_review=previous
+            )
         validate_task_review_record(previous)
         return validate_review_sequence(_task_review_as_stage(record), previous_review=_task_review_as_stage(previous))
     if record.get("review_reset") is not None:

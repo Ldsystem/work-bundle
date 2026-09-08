@@ -17,11 +17,13 @@ sys.path.insert(0, str(ORCHESTRATION))
 from review_runtime import (  # noqa: E402
     ReviewContractError,
     classify_first_broken_owner,
+    review_evidence_identity,
     route_review_verdict,
     transition_review_finding,
     validate_contract_instance,
     validate_stage_review,
     validate_stage_reviews,
+    validate_task_acceptance_review,
 )
 
 
@@ -90,6 +92,61 @@ def stage_review(stage: str) -> dict[str, object]:
         "completed_at": "2026-09-04T00:01:00Z",
         "staleness": {"is_stale": False, "reason": None, "supersedes": None},
     }
+
+
+def test_task_repair_review_binds_authoritative_integrated_stage_predecessor() -> None:
+    previous = stage_review("integrated_implementation")
+    previous.update(
+        review_id="review-integrated-finding",
+        review_mode="initial",
+        review_target_kind="stage",
+        repair_frontier=None,
+        review_reset=None,
+        verdict="repair",
+    )
+    previous["target_identity"] = {
+        "artifact_id": "task-005",
+        "revision": "a" * 40,
+        "sha256": "1" * 64,
+        "source_tree": "b" * 40,
+    }
+    blocking = finding()
+    blocking["finding_id"] = "WOR112-T005-INT-001"
+    blocking["target_identity"] = previous["target_identity"]
+    previous["findings"] = [blocking]
+    repaired_identity = {
+        "artifact_id": "task-005",
+        "revision": "c" * 40,
+        "sha256": "2" * 64,
+        "source_tree": "d" * 40,
+    }
+    current = {
+        **stage_review("plan"),
+        "required": True,
+        "reviewer_independent": True,
+        "review_id": "review-task-repair",
+        "reviewed_head": repaired_identity["revision"],
+        "review_mode": "repair",
+        "review_target_kind": "task",
+        "repair_frontier": {
+            "prior_review_id": "review-integrated-finding",
+            "blocking_finding_ids": ["WOR112-T005-INT-001"],
+            "previous_reviewed_identity": previous["target_identity"],
+            "repaired_identity": repaired_identity,
+            "affected_boundaries": ["scripts/orchestration/review_runtime.py"],
+            "frozen_evidence_reference": review_evidence_identity(previous),
+        },
+        "review_reset": None,
+        "target_identity": repaired_identity,
+        "verdict": "accept",
+        "findings": [],
+        "previous_review": previous,
+    }
+
+    validated = validate_task_acceptance_review(current)
+
+    assert validated.review_id == "review-task-repair"
+    assert validated.repair_frontier["prior_review_id"] == "review-integrated-finding"
 
 
 @pytest.mark.parametrize(
