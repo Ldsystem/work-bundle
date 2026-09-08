@@ -142,7 +142,8 @@ def test_ctx_01_repair_package_uses_frontier_without_reacquiring_review_history(
 
     assert "Review mode: repair" in package
     assert "RF-FINDING-1" in package
-    assert execution_context.semantic_digest("frozen") in package
+    assert "compile_task" in package
+    assert execution_context.semantic_digest("frozen") not in package
     assert "MUST-NOT-BE-PROJECTED" not in package
     assert f"Base: {base}" in package and f"Head: {head}" in package
 
@@ -194,6 +195,9 @@ def test_ctx_04_success_evidence_projects_compact_receipt_not_history_or_stdout(
 
     assert projected == [{
         "id": "VAL-001",
+        "command": "pytest -q",
+        "invariant_ids": [],
+        "observation_id": "observation-001",
         "digest": execution_context.semantic_digest({"command": "pytest -q", "result": "passed"}),
         "result": "passed",
         "boundary": "component",

@@ -988,18 +988,18 @@ def test_workflow_separates_durable_artifacts_from_runtime_packets() -> None:
 def test_workflow_assigns_review_ownership_and_repair_loop() -> None:
     workflow = read("references/assets/orchestration/workflow.md")
     for token in [
-        "Reviewers own acceptance judgment",
+        "Product reviewers judge accepted product requirements",
         "Schedulers own dependencies",
         "they do not perform code-quality review",
         "requires a subagent owner for every task",
         "fails closed before task mutation",
         "dispatch before any wait",
-        "After two failed low-cost repair rounds",
+        "one scoped rereview",
         "A task becomes `Completed` only when",
         "`Completed` does not require `verdict: accept` unless review was required",
         "optional task review when acceptance_review.required: true",
         "accepted Truth Basis",
-        "test oracle",
+        "normalized validation observations",
     ]:
         assert token in workflow
 
@@ -1027,11 +1027,11 @@ def test_workflow_uses_accepted_results_without_lifecycle_replay() -> None:
 def test_review_rule_uses_typed_resume_routing() -> None:
     rule = read("rules/orchestration/orch-review-completion.md")
     for token in [
-        "review-blocked",
         "knowledge-blocked",
         "repository-blocked",
         "workspace-blocked",
-        "resume the owning execution step",
+        "Route missing evidence to its first owner",
+        "publication-only/control resume",
         "plan repair only for a decomposition defect",
         "specification repair only for a requirement, design, or authority defect",
         "Do not create a repair specification for every failed review gate",

@@ -547,7 +547,8 @@ def test_orchestration_rules_require_contract_barrier_and_review_settlement_evid
     assert "universal task-review evidence" in review
     assert "implementation-review agent" in review
     assert "explicitly required" in review
-    assert "Route missing handoff, status, validation, or review evidence to `review-blocked`" in review
+    assert "Route missing evidence to its first owner" in review
+    assert "publication-only/control resume uses the compact accepted result" in review
     assert "Route incomplete durable knowledge work to `knowledge-blocked`" in review
     assert "Create or require plan repair only for a decomposition defect" in review
     assert "specification repair only for a requirement, design, or authority defect" in review

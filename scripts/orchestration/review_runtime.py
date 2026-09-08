@@ -190,12 +190,19 @@ def accepted_result_state_digest(accepted: Mapping[str, Any]) -> str:
 
 
 def _accepted_task_stage_evidence(
-    root: Path, plan_id: str, task_id: str, *, validate_native_receipt: bool
+    root: Path,
+    plan_id: str,
+    task_id: str,
+    task_path: Path,
+    *,
+    validate_native_receipt: bool,
 ) -> tuple[Path | None, Path | None, str | None]:
     binding = root / ".work-bundle/runtime/execution" / plan_id / task_id / "execution-binding.json"
     if binding.is_symlink() or not binding.is_file() or not binding.resolve().is_relative_to(root.resolve()):
         return None, None, f"accepted_task_result_missing:{task_id}"
     try:
+        from execution_context import assert_accepted_task_result_current, compile_task_authority
+
         payload = _mapping(json.loads(binding.read_text()), "task execution binding")
         accepted = _mapping(payload.get("accepted_result"), "accepted task result")
         fields = set(accepted)
@@ -222,6 +229,15 @@ def _accepted_task_stage_evidence(
             or source.get("state_digest") != accepted_result_state_digest(accepted)
         ):
             raise ReviewContractError("accepted task result binding or evidence is invalid")
+        if validate_native_receipt:
+            try:
+                current_task = compile_task_authority(root, task_path)
+            except SystemExit as error:
+                raise ReviewContractError(str(error)) from error
+            try:
+                assert_accepted_task_result_current(current_task, payload, accepted)
+            except SystemExit as error:
+                raise ReviewContractError(str(error)) from error
         review_path = None
         if accepted.get("review_id"):
             review_path = _review_store_path(root, str(accepted["review_id"]))
@@ -314,7 +330,7 @@ def stage_evidence_requirements(
                 continue
             task_id = str(item.get("id") or "")
             binding, review, failure = _accepted_task_stage_evidence(
-                root, str(data.get("id") or ""), task_id,
+                root, str(data.get("id") or ""), task_id, member,
                 validate_native_receipt=validate_native_receipts,
             )
             if failure:

@@ -473,12 +473,21 @@ def test_lifecycle_gate_reads_current_artifact_not_claimed_staleness(tmp_path):
 def _reviewed_plan_fixture(root, *, provenance=True):
     import review_runtime
     orch = root / ".work-bundle/orchestration"
+    metadata = root / ".work-bundle/project.yaml"
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    metadata.write_text(
+        f"metadata_version: 3\nworkspace_root: {root}\nworkspace_mode: single-repository\n"
+    )
     spec = orch / "spec/active/spec.md"
     plan = orch / "plan/active/plan.md"
-    for path, text in ((spec, "id: spec-test\nstatus: verified"),
+    for path, text in ((spec, "id: spec-test\nstatus: verified\nrequirements: [{id: REQ-001, requirement: Preserve accepted stage authority.}]"),
                        (plan, "id: plan-test\nstatus: Planned\nsource_spec: [spec-test]")):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"---\n{text}\n---\nOriginal body\n")
+        body = (
+            "- **REQ-001**: Preserve accepted stage authority.\nOriginal body\n"
+            if path == spec else "Original body\n"
+        )
+        path.write_text(f"---\n{text}\n---\n{body}")
     reviews = orch / "reviews"
     reviews.mkdir()
     for stage, identity in (("specification", review_runtime.artifact_review_identity(spec)),
@@ -489,6 +498,26 @@ def _reviewed_plan_fixture(root, *, provenance=True):
             review = bind_review_receipt(root, review)
         (reviews / f"{stage}.json").write_text(json.dumps(review))
     return spec, plan, reviews
+
+
+def _write_stage_task(plan: Path, *, review_required: bool = False, command: str = "check-claim") -> Path:
+    task = plan.parent / "task.md"
+    task.write_text(
+        "---\n"
+        "id: task-test\nplan_id: plan-test\nphase_id: phase-test\ndepends_on: []\n"
+        "goal: Preserve accepted stage authority.\n"
+        "source_ids: [REQ-001]\n"
+        "truth_basis: {purpose: Preserve authority, as_is_evidence: [source.txt], decision_authority: [none-relevant], expected_delta: [stage authority], conflict_status: clear}\n"
+        "files: {read: [source.txt], write: [], forbidden: [credentials/**]}\n"
+        "methodology: {primary: tdd, skills: [dev-test-driven-development]}\n"
+        "allocated_rules: []\n"
+        "executor_profile: {capability: standard, context_mode: compiled-brief}\n"
+        f"acceptance_review: {{required: {str(review_required).lower()}}}\n"
+        "evidence_capability: {result: mapped, reason: Direct command proves the stage claim, invariants: [{id: INV-STAGE, source_ids: [REQ-001], invariant: Accepted authority remains current, boundary: component, oracle: VAL-1, capability_reason: Direct command can falsify drift, freshness: current_task_batch, task_id: task-test, evidence_ids: [VAL-1], closure_result: pending}]}\n"
+        f"validation: [{{id: VAL-1, kind: process, command: {json.dumps(command)}, invariant_ids: [INV-STAGE], capability_reason: Direct command can falsify drift, proves: REQ-001, expected: passed}}]\n"
+        "---\nTask\n"
+    )
+    return task
 
 
 @pytest.mark.parametrize("stage", ["plan", "integrated_implementation"])
@@ -526,8 +555,7 @@ def test_complete_snapshot_gate_rechecks_membership_after_receipt_rehash(tmp_pat
     import hashlib
     import review_runtime
     _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
-    task = plan.parent / "task.md"
-    task.write_text("---\nid: task-test\nplan_id: plan-test\nvalidation: [{kind: process, command: test -f source.txt, expected: exit 0}]\n---\nTask\n")
+    task = _write_stage_task(plan, command="test -f source.txt")
     handoff = tmp_path / ".work-bundle/orchestration/handoff/executor/active/result.yaml"
     handoff.parent.mkdir(parents=True)
     handoff.write_text("related: {plan: plan-test, task: task-test}\nvalidation: {commands: [{command: test -f source.txt, result: passed}]}\n")
@@ -582,8 +610,7 @@ def test_plan_snapshot_requires_verified_linked_specification(tmp_path):
 def test_integrated_snapshot_requires_evidence_for_each_declared_check(tmp_path):
     import review_runtime
     _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
-    task = plan.parent / "task.md"
-    task.write_text("---\nid: task-test\nplan_id: plan-test\nvalidation: [{command: check-claim}]\n---\nTask\n")
+    task = _write_stage_task(plan)
     handoff = tmp_path / ".work-bundle/orchestration/handoff/executor/active/result.yaml"
     handoff.parent.mkdir(parents=True)
     handoff.write_text("related: {plan: plan-test, task: task-test}\nvalidation: {commands: [{command: unrelated-check, result: passed}]}\n")
@@ -591,39 +618,55 @@ def test_integrated_snapshot_requires_evidence_for_each_declared_check(tmp_path)
     assert "accepted_task_result_missing:task-test" in missing
 
 
-def _write_compact_accepted_result(root: Path, *, review_id: str | None = None) -> Path:
+def _write_compact_accepted_result(
+    root: Path, *, task: Path | None = None, review_id: str | None = None
+) -> Path:
+    import execution_context
+
+    task = task or _write_stage_task(root / ".work-bundle/orchestration/plan/active/plan.md")
+    compiled_task = execution_context.static_task_brief(root, task)
     binding = root / ".work-bundle/runtime/execution/plan-test/task-test/execution-binding.json"
     binding.parent.mkdir(parents=True, exist_ok=True)
-    authority = {
-        "task_digest": "1" * 64, "binding_digest": "2" * 64,
-        "scope_digest": "3" * 64, "validation_obligations_digest": "4" * 64,
-        "required_review_digest": "5" * 64, "ownership_digest": "6" * 64,
-    }
     baseline = {"head": "a" * 40, "tree": "b" * 40}
-    knowledge = {"disposition": "none", "reason": "No durable knowledge delta."}
+    owner = {"delegated": True, "owner_kind": "subagent", "agent_id": "/root/task", "run_id": "run-1", "mechanism": "host-native"}
+    binding_payload = {
+        "plan_id": "plan-test", "task_id": "task-test",
+        "workspace_id": "workspace-test", "execution_id": "execution-test",
+        "repository_id": "repository-test", "execution_path": str(root.resolve()),
+        "git_identity": {}, "baseline": baseline,
+        "ownership": {"binding_id": "binding:plan-test:task-test", "original_owner": "task-test"},
+    }
+    accepted_review = {
+        "required": review_id is not None, "review_id": review_id,
+        "verdict": "accept" if review_id is not None else None,
+    }
+    authority = execution_context._accepted_authority_projection(
+        compiled_task, binding_payload, accepted_review=accepted_review, owner_identity=owner
+    )
+    knowledge = {"action": "none", "reason": "No durable knowledge delta.", "affected_authority": []}
     accepted = {
         "schema": "accepted-task-result-v1", "plan_id": "plan-test", "task_id": "task-test",
         "binding_id": "binding:plan-test:task-test", "baseline_identity": baseline,
         "accepted_source": {"head": "c" * 40, "tree": "d" * 40},
         "authority_projection": authority, "executor_result_digest": "7" * 64,
         "validation_evidence_ids": ["observation-val-1"], "review_id": review_id,
-        "owner_identity": {"delegated": True, "owner_kind": "subagent", "agent_id": "/root/task", "run_id": "run-1", "mechanism": "host-native"},
+        "owner_identity": owner,
         "knowledge_disposition": knowledge, "accepted_at": "2026-09-08T00:00:00Z", "invalidation": None,
     }
     accepted["accepted_source"]["state_digest"] = review_runtime.accepted_result_state_digest(accepted)
-    binding.write_text(json.dumps({
-        "plan_id": "plan-test", "task_id": "task-test",
-        "ownership": {"binding_id": "binding:plan-test:task-test"},
-        "accepted_result": accepted,
-    }))
+    binding_payload["accepted_result"] = accepted
+    binding.write_text(json.dumps(binding_payload))
+    task_brief = binding.with_name("task-brief.yaml")
+    task_brief.write_text(
+        "\n".join(execution_context._dump_yaml({"task_brief": compiled_task})) + "\n"
+    )
     return binding
 
 
 def test_integrated_snapshot_uses_compact_acceptance_not_handoff_history(tmp_path):
     _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
-    task = plan.parent / "task.md"
-    task.write_text("---\nid: task-test\nplan_id: plan-test\nvalidation: [{id: VAL-1, command: check-claim}]\n---\nTask\n")
-    binding = _write_compact_accepted_result(tmp_path)
+    task = _write_stage_task(plan)
+    binding = _write_compact_accepted_result(tmp_path, task=task)
     misleading = tmp_path / ".work-bundle/orchestration/handoff/executor/active/broken.yaml"
     misleading.parent.mkdir(parents=True)
     misleading.write_text("invalid:\n   badly indented\n  historical: true\n")
@@ -639,9 +682,8 @@ def test_integrated_snapshot_uses_compact_acceptance_not_handoff_history(tmp_pat
 
 def test_integrated_snapshot_includes_native_review_when_present_and_rejects_invalid_compact_authority(tmp_path, monkeypatch):
     _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
-    task = plan.parent / "task.md"
-    task.write_text("---\nid: task-test\nplan_id: plan-test\nvalidation: [{id: VAL-1, command: check-claim}]\n---\nTask\n")
-    binding = _write_compact_accepted_result(tmp_path, review_id="review-task-current")
+    task = _write_stage_task(plan, review_required=True)
+    binding = _write_compact_accepted_result(tmp_path, task=task, review_id="review-task-current")
     accepted = json.loads(binding.read_text())["accepted_result"]
     review = {
         **stage_review("plan"), "required": True, "reviewer_independent": True,
@@ -665,6 +707,35 @@ def test_integrated_snapshot_includes_native_review_when_present_and_rejects_inv
     payload["accepted_result"]["accepted_source"]["state_digest"] = "0" * 64
     binding.write_text(json.dumps(payload))
     _, missing = review_runtime.stage_evidence_requirements(tmp_path, "integrated_implementation", plan)
+    assert "accepted_task_result_invalid:task-test" in missing
+
+
+@pytest.mark.parametrize("mutation", ["task", "scope", "validation", "binding"])
+def test_integrated_snapshot_rejects_self_consistent_accepted_result_after_current_authority_drift(
+    tmp_path: Path, mutation: str
+) -> None:
+    _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    task = _write_stage_task(plan)
+    binding = _write_compact_accepted_result(tmp_path, task=task)
+    accepted_before = json.loads(binding.read_text())["accepted_result"]
+    assert accepted_before["accepted_source"]["state_digest"] == review_runtime.accepted_result_state_digest(
+        accepted_before
+    )
+
+    if mutation == "task":
+        task.write_text(task.read_text().replace("depends_on: []", "depends_on: [task-prior]"))
+    elif mutation == "scope":
+        task.write_text(task.read_text().replace("read: [source.txt]", "read: [source.txt, other.txt]"))
+    elif mutation == "validation":
+        task.write_text(task.read_text().replace("command: \"check-claim\"", "command: \"changed-check\""))
+    else:
+        payload = json.loads(binding.read_text())
+        payload["workspace_id"] = "workspace-changed"
+        binding.write_text(json.dumps(payload))
+
+    _, missing = review_runtime.stage_evidence_requirements(
+        tmp_path, "integrated_implementation", plan
+    )
     assert "accepted_task_result_invalid:task-test" in missing
 
 

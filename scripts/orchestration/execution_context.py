@@ -4526,6 +4526,20 @@ def _assert_no_source_local_execution_artifacts(
             )
 
 
+def compile_task_authority(root: Path, task_path: Path) -> dict[str, Any]:
+    """Compile current task authority without materializing runtime artifacts."""
+
+    compile_args = argparse.Namespace(
+        project_root=str(root),
+        workspace_root=str(root),
+        task=str(task_path),
+        handoff=None,
+        base=None,
+        head=None,
+    )
+    return _compile_task_brief(compile_args)[1]["task_brief"]
+
+
 def static_task_brief(root: Path, task_path: Path) -> dict[str, Any]:
     """Compile one task's static authority without runtime bindings or dependency results."""
 
@@ -4556,15 +4570,7 @@ def static_task_brief(root: Path, task_path: Path) -> dict[str, Any]:
         cleanup_baselines=cleanup_baselines,
         planning_sources=planning_sources,
     )
-    compile_args = argparse.Namespace(
-        project_root=str(root),
-        workspace_root=str(root),
-        task=str(task_path),
-        handoff=None,
-        base=None,
-        head=None,
-    )
-    return _compile_task_brief(compile_args)[1]["task_brief"]
+    return compile_task_authority(root, task_path)
 
 
 def static_plan_task_admission(
@@ -4934,6 +4940,7 @@ def build_product_review_candidate(
     changed_files: Sequence[str],
     changed_symbols: Sequence[str],
     validation_observations: Sequence[Mapping[str, Any]],
+    repair_context: Mapping[str, Any] | None = None,
     knowledge_disposition: Mapping[str, Any] | None = None,
     unresolved: Sequence[Any] = (),
 ) -> dict[str, Any]:
@@ -4960,6 +4967,14 @@ def build_product_review_candidate(
             "changed_files": list(changed_files),
         },
         "validation_observations": [dict(item) for item in validation_observations],
+        "repair_context": (
+            {
+                "blocking_finding_ids": list(_as_list(repair_context.get("blocking_finding_ids"))),
+                "affected_boundaries": list(_as_list(repair_context.get("affected_boundaries"))),
+            }
+            if isinstance(repair_context, Mapping)
+            else None
+        ),
         "unresolved": list(unresolved),
     }
     forbidden = {"handoff", "acceptance_review", "publication", "reviewer_run"}
@@ -5126,6 +5141,7 @@ def build_review_package(args: argparse.Namespace) -> Path:
         changed_files=name_status,
         changed_symbols=symbols,
         validation_observations=evidence_projection,
+        repair_context=repair_frontier,
         unresolved=unresolved,
     )
     authority = candidate["task_authority"]
@@ -5159,6 +5175,11 @@ def build_review_package(args: argparse.Namespace) -> Path:
         "",
         "## Validation reported",
         *_markdown_items(candidate["validation_observations"]),
+        "",
+        "## Product repair context",
+        *_markdown_items(
+            [candidate["repair_context"]] if candidate["repair_context"] is not None else []
+        ),
         "",
         "## Unresolved product concerns",
         *_markdown_items(candidate["unresolved"]),

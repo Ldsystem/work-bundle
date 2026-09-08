@@ -127,7 +127,7 @@ def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> 
         "TaskOwnershipScheduler.validate_acceptance",
         "there is no controller or single-agent fallback",
         "must not implement or repair task write scope",
-        "After two failed repair rounds",
+        "one scoped rereview",
         "acceptance_review.required: true",
         "review_required: true",
         "does not require `verdict: accept`",
@@ -288,7 +288,7 @@ def test_durable_owners_state_current_acceptance_and_review_semantics() -> None:
         ],
         "rules/orchestration/orch-review-completion.md": [
             "reviewer infrastructure or provider failure",
-            "same immutable review package",
+            "publication-only/control resume",
             "finding-scoped repair review",
             "previous finding/evidence frontier",
         ],
@@ -300,8 +300,8 @@ def test_durable_owners_state_current_acceptance_and_review_semantics() -> None:
         "skills/orch-execute-plan/SKILL.md": [
             "compact accepted result",
             "acceptance once",
-            "same immutable review package",
-            "previous finding/evidence frontier",
+            "preserve the immutable package",
+            "affected frontier",
         ],
         "skills/orch-review-plan/SKILL.md": [
             "compact accepted results",
