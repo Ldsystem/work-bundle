@@ -846,6 +846,88 @@ def test_old_packet_bytes_cannot_be_relabelled_as_current_target(tmp_path):
         reviewer_workspace.create_reviewer_workspace(runtime, "relabelled", packet)
 
 
+def _native_spec_receipt(tmp_path, monkeypatch):
+    import reviewer_workspace
+    spec, _, reviews = _reviewed_plan_fixture(tmp_path)
+    record = json.loads((reviews / "specification.json").read_text())
+    record.pop("reviewer_run")
+    workspace = review_runtime.reviewer_runtime_root(tmp_path) / "reviews" / record["review_id"]
+    host_id = "01a0821d-f359-7d60-a9bd-90dd0e006166"
+    events = [
+        {"type": "thread.started", "thread_id": host_id}, {"type": "turn.started"},
+        {"type": "item.completed", "item": {"id": "1", "type": "agent_message", "text": json.dumps({
+            "stage_review": {key: record[key] for key in ("target_identity", "verdict", "findings")}})}},
+        {"type": "turn.completed", "usage": {}},
+    ]
+    monkeypatch.setattr(reviewer_workspace, "_run_native_process", lambda *_:
+        subprocess.CompletedProcess([], 0, "\n".join(json.dumps(event) for event in events), ""))
+    receipt = reviewer_workspace.run_native_reviewer(workspace, Path(sys.executable), model="test-model",
+                                                     review_instructions="Assess supplied specification and return its stage judgment.")
+    result = {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]}
+    return spec, receipt, result
+
+
+def test_plugin_absent_native_review_publishes_and_consumes_actual_host_identity(tmp_path, monkeypatch):
+    spec, receipt, result = _native_spec_receipt(tmp_path, monkeypatch)
+    assert result["reviewer"]["agent_id"] == receipt["host_run_id"]
+    assert receipt["isolation"]["mechanism"] == "native-host-read-only"
+    assert receipt["isolation"]["os_process_isolation"] is False
+    request = json.loads(Path(receipt["receipt_path"]).with_suffix(".request.json").read_text())
+    assert set(request["review_input"]) == {"stage", "target_identity", "artifacts"}
+    assert "execution_id" not in json.dumps(request["review_input"])
+    current = review_runtime.artifact_review_identity(spec)
+    reference = publish_review(tmp_path, result, current_target_identity=current)
+    loaded, accepted = review_runtime.load_stored_review(tmp_path, reference, current_target_identity=current)
+    assert loaded == result
+    assert accepted.verdict == "accepted"
+    spec.write_text(spec.read_text().replace("Original body", "Changed obligation"))
+    with pytest.raises(ReviewContractError, match="current"):
+        publish_review(tmp_path, result, current_target_identity=review_runtime.artifact_review_identity(spec))
+
+
+@pytest.mark.parametrize("change", ["isolation", "host_id", "result", "raw_result", "request", "stderr", "argv"])
+def test_native_receipt_rejects_resealed_false_provenance(tmp_path, monkeypatch, change):
+    import hashlib
+    _, receipt, result = _native_spec_receipt(tmp_path, monkeypatch)
+    path = Path(receipt["receipt_path"])
+    saved = json.loads(path.read_text())
+    if change == "isolation":
+        saved["isolation"] = {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
+    elif change == "host_id":
+        saved["host_run_id"] = "author-alias"
+    elif change == "result":
+        result["verdict"] = "blocked"
+        saved["review_result"] = {key: value for key, value in result.items() if key != "reviewer_run"}
+        saved["review_result_sha256"] = hashlib.sha256(json.dumps(saved["review_result"], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    else:
+        suffix = {"raw_result": ".stdout.jsonl", "request": ".request.json", "stderr": ".stderr.txt", "argv": ".launch.json"}[change]
+        proof = path.with_suffix(suffix)
+        proof.chmod(0o600)
+        if change == "raw_result":
+            proof.write_text(json.dumps({"verdict": "accepted"}))
+            saved["stdout_sha256"] = hashlib.sha256(proof.read_bytes()).hexdigest()
+        elif change == "request":
+            value = json.loads(proof.read_text())
+            value["evidence"][0]["content"] += "changed"
+            proof.write_text(json.dumps(value))
+            saved["request_sha256"] = hashlib.sha256(proof.read_bytes()).hexdigest()
+        elif change == "stderr":
+            proof.write_text("ERROR codex_core::tools::router: error=code-mode host is disabled\n")
+            saved["stderr_sha256"] = hashlib.sha256(proof.read_bytes()).hexdigest()
+        else:
+            value = json.loads(proof.read_text())
+            value["argv"].remove("--ignore-user-config")
+            proof.write_text(json.dumps(value))
+            saved["argv_sha256"] = hashlib.sha256(json.dumps(value["argv"], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+        proof.chmod(0o400)
+    path.chmod(0o600)
+    path.write_text(json.dumps(saved))
+    path.chmod(0o400)
+    result["reviewer_run"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ReviewContractError, match="provenance"):
+        review_runtime._validate_reviewer_run(tmp_path, result)
+
+
 @pytest.mark.parametrize("change", ["review_id", "target", "capability", "context_origin", "failed"])
 def test_launcher_does_not_publish_acceptance_for_unbound_worker_output(tmp_path, monkeypatch, change):
     import reviewer_workspace

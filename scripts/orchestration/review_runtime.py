@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -512,6 +514,70 @@ def _known_task_execution_ids(root: Path, task_id: str) -> set[str]:
     return ids
 
 
+def _native_reviewer_module():
+    path = Path(__file__).resolve().parents[1] / "work-bundle/reviewer_workspace.py"
+    existing = sys.modules.get("reviewer_workspace")
+    if existing is not None:
+        if Path(existing.__file__).resolve() != path:
+            raise ReviewContractError("native reviewer module collision")
+        return existing
+    spec = importlib.util.spec_from_file_location("reviewer_workspace", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _validate_native_run_proof(receipt, packet, result, path, immutable_file, canonical):
+    """Re-derive observed host identity/result from immutable actual run input/output."""
+    runtime = _native_reviewer_module()
+    try:
+        stdout = immutable_file(path.with_suffix(".stdout.jsonl"))
+        stderr = immutable_file(path.with_suffix(".stderr.txt"))
+        request_bytes = immutable_file(path.with_suffix(".request.json"))
+        request = json.loads(request_bytes)
+        launch = json.loads(immutable_file(path.with_suffix(".launch.json")))
+        argv = launch["argv"]
+        host_id, worker = runtime.parse_native_reviewer_transcript(stdout.decode(), stderr.decode())
+        if (receipt.get("host_run_id") != host_id or receipt.get("isolation") != runtime.NATIVE_ISOLATION
+                or receipt.get("stdout_sha256") != hashlib.sha256(stdout).hexdigest()
+                or receipt.get("stderr_sha256") != hashlib.sha256(stderr).hexdigest()
+                or receipt.get("request_sha256") != hashlib.sha256(request_bytes).hexdigest()
+                or receipt.get("argv_sha256") != canonical(argv)
+                or receipt.get("executable_sha256") != launch.get("executable_sha256")
+                or not SHA256_RE.fullmatch(str(receipt.get("executable_sha256", "")))
+                or not Path(argv[0]).is_absolute()
+                or argv != runtime._native_reviewer_argv(Path(argv[0]), Path(argv[9]), argv[11])
+                or set(request) != {"instructions", "review_input", "evidence"}
+                or request["review_input"] != runtime._native_review_input(packet) or not isinstance(request["instructions"], str)
+                or not request["instructions"].strip()):
+            raise ValueError("native launch/input mismatch")
+        artifacts = packet["artifacts"]
+        evidence = request["evidence"]
+        if len(evidence) != len(artifacts):
+            raise ValueError("native input evidence mismatch")
+        for expected, actual in zip(artifacts, evidence):
+            if (set(actual) != {*expected, "content"} or any(actual[key] != value for key, value in expected.items())
+                    or hashlib.sha256(actual["content"].encode()).hexdigest() != expected["sha256"]):
+                raise ValueError("native input evidence mismatch")
+        key = "task_review_context" if result.get("review_target_kind", "stage") == "task" else "stage_review_context"
+        context = {**packet[key], "agent_id": host_id, "execution_id": host_id}
+        compact = key == "task_review_context" or (context.get("stage") == "integrated_implementation" and "task_review" in worker)
+        if compact:
+            observed = runtime._task_product_judgment_review(
+                worker, review_id=receipt["review_id"], context=context, packet=packet,
+                started_at=receipt["started_at"], completed_at=receipt["completed_at"],
+                previous_review=result.get("previous_review"), integrated_stage=key == "stage_review_context")
+        else:
+            observed = runtime._stage_product_judgment_review(
+                worker, review_id=receipt["review_id"], context=context, packet=packet,
+                started_at=receipt["started_at"], completed_at=receipt["completed_at"])
+        if observed != result or receipt.get("review_result") != result or receipt.get(key) != context:
+            raise ValueError("native judgment/result mismatch")
+        return context
+    except (ValueError, TypeError, KeyError, IndexError, AttributeError, runtime.ReviewerWorkspaceError) as error:
+        raise ReviewContractError("native reviewer-run provenance does not bind this accepted review") from error
+
+
 def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     reference = review.get("reviewer_run")
     if not isinstance(reference, dict) or set(reference) != {"run_id", "sha256"}:
@@ -541,6 +607,10 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     kind = str(review.get("review_target_kind") or "stage")
     context_key = "task_review_context" if kind == "task" else "stage_review_context"
     context = _mapping(receipt.get(context_key, {}), "reviewer-run provenance context")
+    native = receipt.get("schema") == "reviewer-native-receipt-v1"
+    packet_context = packet.get(context_key)
+    if native:
+        packet_context = _validate_native_run_proof(receipt, packet, result, path, immutable_file, canonical)
     mode = "direct_source" if review["evidence"]["mode"] == "direct" else review["evidence"]["mode"]
     review_context = {
         "review_mode": review.get("review_mode", "initial"),
@@ -554,19 +624,19 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
         "repair_frontier": context.get("repair_frontier"),
         "review_reset": context.get("review_reset"),
     }
-    if (receipt.get("schema") != "reviewer-process-receipt-v1" or receipt.get("run_id") != run_id
+    if (receipt.get("schema") not in {"reviewer-process-receipt-v1", "reviewer-native-receipt-v1"} or receipt.get("run_id") != run_id
             or receipt.get("review_id") != review["review_id"] or receipt.get("status") != "passed"
             or receipt.get("exit_code") != 0 or receipt.get("review_result_sha256") != canonical(result)
-            or receipt.get("packet_sha256") != canonical(packet) or packet.get(context_key) != context
+            or receipt.get("packet_sha256") != canonical(packet) or packet_context != context
             or context.get("target_identity") != review["target_identity"]
             or (kind == "stage" and context.get("stage") != review["stage"])
             or context.get("agent_id") != review["reviewer"]["agent_id"]
             or context.get("evidence_mode") != review["reviewer"]["context_origin"]
             or context.get("capability") != review["reviewer"]["capability"] or context.get("evidence_mode") != mode
             or review_context != receipt_context
-            or receipt.get("isolation") != {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
+            or (not native and receipt.get("isolation") != {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"})
             or not context.get("execution_id")
-            or receipt.get("sandbox_profile_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".profile.sb"))).hexdigest()
+            or (not native and receipt.get("sandbox_profile_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".profile.sb"))).hexdigest())
             or receipt.get("event_log_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".events.jsonl"))).hexdigest()):
         raise ReviewContractError("reviewer-run provenance does not bind this accepted review")
     known = (

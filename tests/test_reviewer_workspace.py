@@ -28,6 +28,46 @@ from reviewer_workspace import (  # noqa: E402
 import reviewer_workspace  # noqa: E402
 
 
+def native_events(result, *, thread_id="01a0821d-f359-7d60-a9bd-90dd0e006166"):
+    return "\n".join(json.dumps(event) for event in [
+        {"type": "thread.started", "thread_id": thread_id},
+        {"type": "turn.started"},
+        {"type": "item.completed", "item": {"id": "item-1", "type": "agent_message", "text": json.dumps(result)}},
+        {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 10}},
+    ])
+
+
+def test_native_transcript_requires_one_actual_fresh_completed_judgment():
+    run, result = reviewer_workspace.parse_native_reviewer_transcript(native_events({"verdict": "repair"}))
+    assert run == "01a0821d-f359-7d60-a9bd-90dd0e006166"
+    assert result == {"verdict": "repair"}
+    for forged in [json.dumps({"verdict": "accept"}), native_events({}) + "\n" + native_events({}),
+                   native_events({}).rsplit("\n", 1)[0]]:
+        with pytest.raises(ReviewerWorkspaceError, match="NATIVE_TRANSCRIPT"):
+            reviewer_workspace.parse_native_reviewer_transcript(forged)
+
+
+@pytest.mark.parametrize("kind", ["command_execution", "mcp_tool_call", "collab_tool_call", "error", "file_change"])
+def test_native_transcript_rejects_all_observed_tool_or_failure_activity(kind):
+    events = native_events({}).splitlines()
+    events.insert(2, json.dumps({"type": "item.completed", "item": {"id": "tool", "type": kind}}))
+    with pytest.raises(ReviewerWorkspaceError, match="NATIVE_TRANSCRIPT"):
+        reviewer_workspace.parse_native_reviewer_transcript("\n".join(events))
+
+
+def test_native_process_does_not_inherit_author_transport_or_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "caller-transport")
+    monkeypatch.setenv("CODEX_THREAD_ID", "author-thread")
+    monkeypatch.setenv("CODEX_SESSION_ID", "author-session")
+    monkeypatch.setenv("BASH_ENV", "/host/instructions")
+    with patch.object(reviewer_workspace.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as launch:
+        reviewer_workspace._run_native_process(tmp_path, ["/bin/codex"], "bounded packet")
+    kwargs = launch.call_args.kwargs
+    assert set(kwargs["env"]) <= {"PATH", "HOME", "TMPDIR", "CODEX_HOME"}
+    assert kwargs["input"] == "bounded packet"
+    assert kwargs["timeout"] > 0
+
+
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -116,8 +156,9 @@ def test_workspace_contains_copied_direct_evidence_and_declares_network_denied(
     assert "control_root" not in json.dumps(state)
 
 
+@pytest.mark.parametrize("transport", ["sandbox", "native"])
 def test_task_review_worker_output_receives_native_bound_receipt(
-    review_roots: tuple[Path, Path, Path]
+    review_roots: tuple[Path, Path, Path], transport: str
 ) -> None:
     source, control, runtime = review_roots
     subprocess.run(["git", "init", "-q", str(source)], check=True)
@@ -153,17 +194,24 @@ def test_task_review_worker_output_receives_native_bound_receipt(
         "reviewed_head": head,
         "verdict": "accept", "findings": [],
     }}
-    with patch.object(
-        reviewer_workspace,
-        "_run_sandboxed_process",
-        return_value=subprocess.CompletedProcess(["reviewer"], 0, json.dumps(judgment), ""),
-    ):
-        receipt = reviewer_workspace.run_sandboxed_reviewer(Path(str(created["workspace_path"])), ["reviewer"])
+    if transport == "native":
+        with patch.object(reviewer_workspace, "_run_native_process",
+                          return_value=subprocess.CompletedProcess([], 0, native_events(judgment), "")):
+            receipt = reviewer_workspace.run_native_reviewer(Path(str(created["workspace_path"])), Path(sys.executable),
+                model="test-model", review_instructions="Assess the accepted product requirements against the source.")
+        request = json.loads(Path(receipt["receipt_path"]).with_suffix(".request.json").read_text())
+        assert set(request["review_input"]) == {"target_identity", "artifacts"}
+        assert "task_review_context" not in json.dumps(request)
+    else:
+        with patch.object(reviewer_workspace, "_run_sandboxed_process",
+                          return_value=subprocess.CompletedProcess(["reviewer"], 0, json.dumps(judgment), "")):
+            receipt = reviewer_workspace.run_sandboxed_reviewer(Path(str(created["workspace_path"])), ["reviewer"])
 
     assert receipt["status"] == "passed"
     assert receipt["task_review_context"]["target_identity"] == identity
     assert set(receipt["reviewer_run"]) == {"run_id", "sha256"}
-    assert receipt["review_result"]["reviewer"]["agent_id"] == "reviewer-task"
+    assert receipt["review_result"]["reviewer"]["agent_id"] == (
+        receipt["host_run_id"] if transport == "native" else "reviewer-task")
     assert receipt["review_result"]["verdict"] == "accept"
 
 
