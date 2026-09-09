@@ -301,6 +301,140 @@ def test_archive_knowledge_gate_consumes_plain_completed_closure(tmp_path: Path)
     )
 
 
+def _write_mixed_layout_plan(root: Path) -> tuple[Path, Path, Path, Path, Path]:
+    active = root / ".work-bundle/orchestration/plan/active"
+    plan = active / "plan-direct.md"
+    plan_dir = active / "plan-direct"
+    phase_direct = plan_dir / "phase-001.md"
+    task_direct = plan_dir / "task-001.md"
+    phase_nested = plan_dir / "phase-002.md"
+    task_nested = plan_dir / "phase-002/task-002.md"
+    task_nested.parent.mkdir(parents=True)
+    plan.write_text("---\nid: plan-direct\nstatus: Completed\n---\n", encoding="utf-8")
+    phase_direct.write_text(
+        "---\nid: phase-001\nplan_id: plan-direct\nstatus: Completed\n---\n",
+        encoding="utf-8",
+    )
+    phase_nested.write_text(
+        "---\nid: phase-002\nplan_id: plan-direct\nstatus: Completed\n---\n",
+        encoding="utf-8",
+    )
+    task_direct.write_text(
+        "---\nid: task-001\nplan_id: plan-direct\nphase_id: phase-001\n"
+        "status: Planned\ndepends_on: []\n---\n",
+        encoding="utf-8",
+    )
+    task_nested.write_text(
+        "---\nid: task-002\nplan_id: plan-direct\nphase_id: phase-002\n"
+        "status: Completed\ndepends_on: []\n---\n",
+        encoding="utf-8",
+    )
+    return plan, phase_direct, task_direct, phase_nested, task_nested
+
+
+def test_plan_index_and_status_support_direct_and_nested_task_layouts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan, _phase_direct, task_direct, _phase_nested, task_nested = _write_mixed_layout_plan(
+        tmp_path
+    )
+    args = argparse.Namespace(project_root=str(tmp_path))
+
+    rows = plans.index_plans(args)
+    tasks = [row for row in rows if row["type"] == "task"]
+
+    assert sorted((row["id"], row["plan_id"], row["phase_id"]) for row in tasks) == [
+        ("task-001", "plan-direct", "phase-001"),
+        ("task-002", "plan-direct", "phase-002"),
+    ]
+    assert {Path(str(row["path"])).name for row in tasks} == {
+        task_direct.name,
+        task_nested.name,
+    }
+    monkeypatch.setattr(plans, "_assert_task_dependencies_current", lambda *_args: None)
+    monkeypatch.setattr(plans, "_assert_completed_task_authority", lambda *_args: {})
+    monkeypatch.setattr(plans, "_release_completed_task_binding", lambda *_args: {})
+    plans.cmd_set_plan_status(
+        argparse.Namespace(
+            project_root=str(tmp_path),
+            id="task-001",
+            plan_id="plan-direct",
+            kind="task",
+            status="Completed",
+        )
+    )
+    assert "status: Completed" in task_direct.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "plan_id: other-plan\nphase_id: phase-001\n",
+        "plan_id: plan-direct\n",
+    ],
+)
+def test_direct_task_index_rejects_ambiguous_identity(tmp_path: Path, identity: str) -> None:
+    task = tmp_path / ".work-bundle/orchestration/plan/active/plan-direct/task-001.md"
+    task.parent.mkdir(parents=True)
+    task.write_text(f"---\nid: task-001\n{identity}---\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Invalid direct task identity"):
+        plans.index_plans(argparse.Namespace(project_root=str(tmp_path)))
+
+
+def test_phase_and_archive_consumers_include_direct_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan, _phase_direct, task_direct, _phase_nested, _task_nested = _write_mixed_layout_plan(
+        tmp_path
+    )
+    args = argparse.Namespace(project_root=str(tmp_path))
+    with pytest.raises(SystemExit, match="task task-001 is not completed"):
+        plans._assert_phase_tasks_accepted(args, "phase-001", "plan-direct")
+
+    task_direct.write_text(
+        task_direct.read_text(encoding="utf-8").replace("status: Planned", "status: Completed"),
+        encoding="utf-8",
+    )
+    accepted: list[str] = []
+    monkeypatch.setattr(
+        plans,
+        "_load_current_task_acceptance",
+        lambda _args, path: accepted.append(path.name) or ({}, {}),
+    )
+    plans._assert_phase_tasks_accepted(args, "phase-001", "plan-direct")
+    assert accepted == ["task-001.md"]
+
+    accepted.clear()
+    monkeypatch.setattr(
+        plans,
+        "_task_brief_at",
+        lambda _args, path: {"task_id": path.stem},
+    )
+    results = plans._accepted_plan_task_results(args, "plan-direct")
+    assert {brief["task_id"] for _result, brief in results} == {"task-001", "task-002"}
+    assert set(accepted) == {"task-001.md", "task-002.md"}
+
+    monkeypatch.setattr(plans, "require_plan_reviews", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plans, "_plan_uses_accepted_result_authority", lambda *_args: False)
+    monkeypatch.setattr(plans, "_validated_plan_task_handoffs", lambda *_args: [])
+    monkeypatch.setattr(plans, "_assert_archive_knowledge_gate", lambda *_args: None)
+    monkeypatch.setattr(plans, "_assert_archive_plan_acceptance", lambda *_args: None)
+    plans.cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-direct"))
+
+    archived_rows = plans.index_plans(args)
+    assert {
+        (row["id"], row["type"])
+        for row in archived_rows
+        if row.get("plan_id") == "plan-direct"
+    } == {
+        ("phase-001", "phase"),
+        ("phase-002", "phase"),
+        ("task-001", "task"),
+        ("task-002", "task"),
+    }
+
+
 def test_declared_integration_commands_follow_table_headers() -> None:
     five_columns = (
         "## 7. Tests\n\n"

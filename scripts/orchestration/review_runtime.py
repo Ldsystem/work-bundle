@@ -426,7 +426,10 @@ def stage_evidence_manifest(root: Path, source_root: Path, context: Mapping[str,
             continue
         entry = {"locator": key, "role": role, "sha256": available[key]["sha256"]}
         if role in {"target", "plan_member", "verified_specification"}:
-            entry["identity"] = artifact_review_identity(root / key[8:])
+            path = root / key[8:]
+            entry["identity"] = _stage_authority_identity(
+                path, stage=str(context["stage"]), role=role
+            )
         entries.append(entry)
     return {"schema": "stage-evidence-manifest-v1", "stage": context["stage"],
             "target_identity": context["target_identity"], "entries": entries,
@@ -435,7 +438,29 @@ def stage_evidence_manifest(root: Path, source_root: Path, context: Mapping[str,
                if context.get("review_mode") == "repair" else {})}
 
 
-def validate_stage_evidence(root: Path, context: Mapping[str, Any], packet: Mapping[str, Any]) -> None:
+def _stage_authority_identity(
+    path: Path,
+    *,
+    stage: str,
+    role: str,
+    content: str | None = None,
+) -> dict[str, Any]:
+    if stage != "specification" and role in {"target", "plan_member"}:
+        identity = artifact_review_identity(path, content=content)
+        identity["sha256"] = _semantic_plan_artifact_digest(
+            _semantic_plan_artifact(path, content=content)
+        )
+        return identity
+    return artifact_review_identity(path, content=content)
+
+
+def validate_stage_evidence(
+    root: Path,
+    context: Mapping[str, Any],
+    packet: Mapping[str, Any],
+    *,
+    frozen_control_evidence: Mapping[str, str] | None = None,
+) -> None:
     manifest = packet.get("stage_evidence_manifest")
     if (not isinstance(manifest, dict) or manifest.get("schema") != "stage-evidence-manifest-v1"
             or manifest.get("stage") != context["stage"] or manifest.get("target_identity") != context["target_identity"]
@@ -470,7 +495,31 @@ def validate_stage_evidence(root: Path, context: Mapping[str, Any], packet: Mapp
         if entry.get("role") != role or locator not in artifacts or entry.get("sha256") != artifacts[locator].get("sha256"):
             raise ReviewContractError("stage evidence artifact binding mismatch")
         if role in {"target", "plan_member", "verified_specification"}:
-            if entry.get("identity") != artifact_review_identity(root / locator[8:]):
+            path = root / locator[8:]
+            current_identity = _stage_authority_identity(
+                path, stage=str(context["stage"]), role=role
+            )
+            if entry.get("identity") == current_identity:
+                continue
+            frozen_content = (frozen_control_evidence or {}).get(locator)
+            if frozen_content is None:
+                raise ReviewContractError("stage evidence authority identity changed")
+            if (
+                hashlib.sha256(frozen_content.encode()).hexdigest()
+                != artifacts[locator].get("sha256")
+            ):
+                raise ReviewContractError("stage evidence artifact binding mismatch")
+            frozen_raw_identity = artifact_review_identity(path, content=frozen_content)
+            frozen_semantic_identity = _stage_authority_identity(
+                path,
+                stage=str(context["stage"]),
+                role=role,
+                content=frozen_content,
+            )
+            if (
+                entry.get("identity") != frozen_raw_identity
+                or frozen_semantic_identity != current_identity
+            ):
                 raise ReviewContractError("stage evidence authority identity changed")
 
 
@@ -637,8 +686,22 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     context = _mapping(receipt.get(context_key, {}), "reviewer-run provenance context")
     native = receipt.get("schema") == "reviewer-native-receipt-v1"
     packet_context = packet.get(context_key)
+    frozen_control_evidence: dict[str, str] = {}
     if native:
         packet_context = _validate_native_run_proof(receipt, packet, result, path, immutable_file, canonical)
+        controller_path = path.with_suffix(".controller.json")
+        if controller_path.exists():
+            controller_evidence = json.loads(immutable_file(controller_path))
+            if not isinstance(controller_evidence, list):
+                raise ReviewContractError("native reviewer-run controller evidence is invalid")
+            for item in controller_evidence:
+                if (
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("locator"), str)
+                    or not isinstance(item.get("content"), str)
+                ):
+                    raise ReviewContractError("native reviewer-run controller evidence is invalid")
+                frozen_control_evidence[item["locator"]] = item["content"]
     mode = "direct_source" if review["evidence"]["mode"] == "direct" else review["evidence"]["mode"]
     review_context = {
         "review_mode": review.get("review_mode", "initial"),
@@ -673,7 +736,12 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
         else _known_execution_ids(root, str(review["stage"]), review["target_identity"])
     )
     if kind == "stage":
-        validate_stage_evidence(root, context, packet)
+        validate_stage_evidence(
+            root,
+            context,
+            packet,
+            frozen_control_evidence=frozen_control_evidence,
+        )
     if run_id in known or context["execution_id"] in known:
         raise ReviewContractError("reviewer-run provenance overlaps author/repair execution")
 

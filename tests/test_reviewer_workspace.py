@@ -598,6 +598,130 @@ def test_incomplete_stage_snapshot_fails_before_reviewer_process_launch(
     launch.assert_not_called()
 
 
+def test_stage_evidence_survives_plan_lifecycle_markers_but_not_product_changes(
+    review_roots: tuple[Path, Path, Path]
+) -> None:
+    source, control, _runtime = review_roots
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(source), "-c", "user.name=Test",
+            "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture",
+        ],
+        check=True,
+    )
+    plan = control / ".work-bundle/orchestration/plan/active/plan-lifecycle.md"
+    task = control / ".work-bundle/orchestration/plan/active/plan-lifecycle/task-001.md"
+    spec = control / ".work-bundle/orchestration/spec/active/spec-lifecycle.md"
+    task.parent.mkdir(parents=True)
+    spec.parent.mkdir(parents=True)
+    spec.write_text(
+        "---\nid: spec-lifecycle\nstatus: verified\n---\n\n# Specification\n",
+        encoding="utf-8",
+    )
+    plan.write_text(
+        "---\nid: plan-lifecycle\nstatus: In progress\n"
+        "accepted_results: [result-task-001]\n"
+        "source_spec: [.work-bundle/orchestration/spec/active/spec-lifecycle.md]\n"
+        "---\n\n# Plan\n\n"
+        "## Knowledge Base Update Carry Forward\n\n"
+        "- Disposition: required\n- Closure return: missing\n"
+        "- Source: accepted specification\n- Review Gate: resolve before archive\n",
+        encoding="utf-8",
+    )
+    task.write_text(
+        "---\nid: task-001\nplan_id: plan-lifecycle\nphase_id: phase-001\n"
+        "status: In progress\n---\n\n# Task\n",
+        encoding="utf-8",
+    )
+    runtime = reviewer_workspace._review_runtime()
+    identity = runtime.stage_target_identity(
+        control, "integrated_implementation", plan, source_root=source
+    )
+    locator = "control:" + plan.relative_to(control).as_posix()
+    context = {
+        "stage": "integrated_implementation",
+        "target_identity": identity,
+        "target_locator": locator,
+        "agent_id": "reviewer-lifecycle",
+        "capability": "judgment",
+        "execution_id": "reviewer-lifecycle-run",
+        "evidence_mode": "direct_source",
+    }
+    required, missing = runtime.stage_evidence_requirements(
+        control, "integrated_implementation", plan
+    )
+    assert missing == []
+    required.update(
+        {item["locator"]: "source_tree" for item in runtime.source_snapshot_entries(source)}
+    )
+    packet = build_direct_evidence_packet(
+        source_root=source,
+        control_root=control,
+        protected_roots=[control / "credentials"],
+        artifacts=list(required),
+        search_roots=[],
+        validators=[],
+        sentinels=[],
+        network_state="denied",
+        stage_review_context=context,
+    )
+    frozen_control_evidence = {
+        item["locator"]: (control / item["locator"].removeprefix("control:")).read_text(
+            encoding="utf-8"
+        )
+        for item in packet["artifacts"]
+        if item["locator"].startswith("control:")
+    }
+    entries = packet["stage_evidence_manifest"]["entries"]
+    for entry in entries:
+        if entry["role"] in {"target", "plan_member"}:
+            entry["identity"] = runtime.artifact_review_identity(
+                control / entry["locator"].removeprefix("control:")
+            )
+    runtime.validate_stage_evidence(
+        control,
+        packet["stage_review_context"],
+        packet,
+        frozen_control_evidence=frozen_control_evidence,
+    )
+
+    plan.write_text(
+        plan.read_text(encoding="utf-8")
+        .replace("status: In progress", "status: Completed")
+        .replace("Closure return: missing", "Closure return: completed"),
+        encoding="utf-8",
+    )
+    task.write_text(
+        task.read_text(encoding="utf-8").replace("status: In progress", "status: Completed"),
+        encoding="utf-8",
+    )
+    assert runtime.stage_target_identity(
+        control, "integrated_implementation", plan, source_root=source
+    ) == identity
+    runtime.validate_stage_evidence(
+        control,
+        packet["stage_review_context"],
+        packet,
+        frozen_control_evidence=frozen_control_evidence,
+    )
+
+    plan.write_text(
+        plan.read_text(encoding="utf-8").replace(
+            "Review Gate: resolve before archive", "Review Gate: bypass product review"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(runtime.ReviewContractError, match="authority identity changed"):
+        runtime.validate_stage_evidence(
+            control,
+            packet["stage_review_context"],
+            packet,
+            frozen_control_evidence=frozen_control_evidence,
+        )
+
+
 def test_bounded_read_search_and_validators_are_allowed(review_roots: tuple[Path, Path, Path]) -> None:
     source, control, runtime = review_roots
     created = create_reviewer_workspace(runtime, "review-002", packet(source, control))

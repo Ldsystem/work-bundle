@@ -635,16 +635,29 @@ def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
                 "updated_at": fm.get("last_updated", ""),
             }
         )
-    for path in sorted(root.glob("active/*/phase-*/*.md")) + sorted(root.glob("archived/*/phase-*/*.md")):
+    nested_task_paths = list(root.glob("active/*/phase-*/*.md")) + list(
+        root.glob("archived/*/phase-*/*.md")
+    )
+    direct_task_paths = list(root.glob("active/*/task-*.md")) + list(
+        root.glob("archived/*/task-*.md")
+    )
+    for path in sorted({*nested_task_paths, *direct_task_paths}):
         fm, _ = read_front_matter(path)
         if not fm:
             continue
+        direct_layout = path.parent.parent.name in {"active", "archived"}
+        if direct_layout and (
+            fm.get("plan_id") != path.parent.name or not fm.get("phase_id")
+        ):
+            raise SystemExit(f"Invalid direct task identity: {rel(path, args)}")
+        inferred_plan_id = path.parent.name if direct_layout else path.parents[1].name
+        inferred_phase_id = "" if direct_layout else path.parent.name
         rows.append(
             {
                 "type": "task",
                 "id": fm.get("id", path.stem),
-                "plan_id": fm.get("plan_id", path.parents[1].name),
-                "phase_id": fm.get("phase_id", path.parent.name),
+                "plan_id": fm.get("plan_id", inferred_plan_id),
+                "phase_id": fm.get("phase_id", inferred_phase_id),
                 "title": fm.get("name", fm.get("title", path.stem)),
                 "status": fm.get("status", "Planned"),
                 "path": rel(path, args),
