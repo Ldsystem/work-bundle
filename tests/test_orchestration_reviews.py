@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import subprocess
 import sys
@@ -703,7 +705,7 @@ def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_ma
     baseline = subprocess.check_output(
         ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True
     ).strip()
-    (tmp_path / "source.txt").write_text("after\n", encoding="utf-8")
+    (tmp_path / "source.txt").write_text("after\n" * 100_000, encoding="utf-8")
     subprocess.run(["git", "-C", str(tmp_path), "add", "source.txt"], check=True)
     subprocess.run(
         ["git", "-C", str(tmp_path), "commit", "-qm", "claim change"], check=True
@@ -715,6 +717,13 @@ def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_ma
         ["git", "-C", str(tmp_path), "rev-parse", "HEAD^{tree}"], text=True
     ).strip()
     _write_compact_accepted_result(tmp_path, task=task)
+    exact_diff = tmp_path / ".work-bundle/runtime/integrated-source.diff"
+    exact_diff.parent.mkdir(parents=True, exist_ok=True)
+    exact_diff.write_bytes(
+        subprocess.check_output(
+            ["git", "-C", str(tmp_path), "diff", "--binary", baseline, endpoint]
+        )
+    )
     change_manifest = tmp_path / ".work-bundle/runtime/change-manifest.json"
     change_manifest.parent.mkdir(parents=True, exist_ok=True)
     change_manifest.write_text(
@@ -726,6 +735,11 @@ def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_ma
                     "command": f"git diff --name-status {baseline}..{endpoint}",
                     "path_count": 1,
                     "paths": [{"status": "modified", "path": "source.txt"}],
+                    "exact_diff": {
+                        "command": f"git diff --binary {baseline}..{endpoint}",
+                        "locator": "control:.work-bundle/runtime/integrated-source.diff",
+                        "sha256": hashlib.sha256(exact_diff.read_bytes()).hexdigest(),
+                    },
                 },
             }
         ),
@@ -743,6 +757,7 @@ def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_ma
         {entry["locator"]: "source_tree" for entry in review_runtime.source_snapshot_entries(tmp_path)}
     )
     required["control:" + change_manifest.relative_to(tmp_path).as_posix()] = "change_manifest"
+    required["control:" + exact_diff.relative_to(tmp_path).as_posix()] = "exact_diff"
     packet = reviewer_workspace.build_direct_evidence_packet(
         source_root=tmp_path,
         control_root=tmp_path,
@@ -762,6 +777,24 @@ def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_ma
             "evidence_mode": "direct_source",
         },
     )
+    exact_bytes = exact_diff.read_bytes()
+    tampered = deepcopy(packet)
+    tampered_bytes = b"controller supplied the wrong diff\n"
+    exact_diff.write_bytes(tampered_bytes)
+    tampered_artifact = next(
+        item
+        for item in tampered["artifacts"]
+        if item["locator"] == "control:.work-bundle/runtime/integrated-source.diff"
+    )
+    tampered_artifact["sha256"] = hashlib.sha256(tampered_bytes).hexdigest()
+    tampered_artifact["content_base64"] = base64.b64encode(tampered_bytes).decode("ascii")
+    with pytest.raises(
+        reviewer_workspace.ReviewerWorkspaceError, match="CHANGE_MANIFEST_INVALID"
+    ):
+        reviewer_workspace.create_reviewer_workspace(
+            review_runtime.reviewer_runtime_root(tmp_path), "review-wrong-diff", tampered
+        )
+    exact_diff.write_bytes(exact_bytes)
     created = reviewer_workspace.create_reviewer_workspace(
         review_runtime.reviewer_runtime_root(tmp_path), "review-large-tree", packet
     )
@@ -789,8 +822,15 @@ def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_ma
     request = json.loads(captured["request"])
     supplied = {item["locator"] for item in request["evidence"]}
     assert len(captured["request"]) <= reviewer_workspace.NATIVE_REVIEW_REQUEST_MAX_CHARS
-    assert "source:source.txt" in supplied
+    assert "source:source.txt" not in supplied
     assert "source:unchanged-large.txt" not in supplied
+    assert "control:.work-bundle/runtime/integrated-source.diff" in supplied
+    supplied_diff = next(
+        item["content"]
+        for item in request["evidence"]
+        if item["locator"] == "control:.work-bundle/runtime/integrated-source.diff"
+    )
+    assert supplied_diff.encode("utf-8") == exact_diff.read_bytes()
     assert request["review_input"]["target_identity"]["source_tree"] == tree
     assert any(
         item["locator"] == "source:unchanged-large.txt"

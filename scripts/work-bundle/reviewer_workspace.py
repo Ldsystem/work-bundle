@@ -49,13 +49,13 @@ def _structured_evidence(content: str) -> dict[str, object] | None:
 
 def _integrated_change_manifest(
     packet: dict[str, object], evidence: list[dict[str, object]],
-) -> tuple[dict[str, object], set[str]] | None:
+) -> tuple[dict[str, object], set[str], dict[str, str] | None] | None:
     context = packet.get("stage_review_context")
     if not isinstance(context, dict) or context.get("stage") != "integrated_implementation":
         return None
     target = context.get("target_identity")
     target_tree = target.get("source_tree") if isinstance(target, dict) else None
-    candidates: list[tuple[dict[str, object], set[str]]] = []
+    candidates: list[tuple[dict[str, object], set[str], dict[str, str] | None]] = []
     for item in evidence:
         if not str(item.get("locator") or "").startswith("control:"):
             continue
@@ -73,6 +73,22 @@ def _integrated_change_manifest(
         paths = comparison.get("paths")
         if endpoint.get("tree") != target_tree or not isinstance(paths, list):
             continue
+        exact_diff = comparison.get("exact_diff")
+        normalized_diff = None
+        if exact_diff is not None:
+            if (
+                not isinstance(exact_diff, dict)
+                or set(exact_diff) != {"command", "locator", "sha256"}
+                or not str(exact_diff.get("locator") or "").startswith("control:")
+                or not re.fullmatch(r"[0-9a-f]{64}", str(exact_diff.get("sha256") or ""))
+                or not isinstance(exact_diff.get("command"), str)
+            ):
+                raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
+            normalized_diff = {
+                "command": exact_diff["command"],
+                "locator": exact_diff["locator"],
+                "sha256": exact_diff["sha256"],
+            }
         locators: set[str] = set()
         valid = True
         for raw in paths:
@@ -91,7 +107,7 @@ def _integrated_change_manifest(
             if raw["status"] != "deleted":
                 locators.add("source:" + path.as_posix())
         if valid:
-            candidates.append((value, locators))
+            candidates.append((value, locators, normalized_diff))
     if len(candidates) > 1:
         raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_AMBIGUOUS")
     return candidates[0] if candidates else None
@@ -104,7 +120,16 @@ def _native_review_artifacts(
     artifacts = packet.get("artifacts")
     if not isinstance(artifacts, list) or manifest is None:
         return [item for item in artifacts or [] if isinstance(item, dict)]
-    _, changed = manifest
+    _, changed, exact_diff = manifest
+    if exact_diff is not None:
+        matching = [
+            item
+            for item in artifacts
+            if isinstance(item, dict) and item.get("locator") == exact_diff["locator"]
+        ]
+        if len(matching) != 1 or matching[0].get("sha256") != exact_diff["sha256"]:
+            raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
+        changed = set()
     return [
         item
         for item in artifacts
@@ -122,7 +147,7 @@ def _validate_integrated_change_manifest(
     selected = _integrated_change_manifest(packet, evidence)
     if selected is None:
         return
-    manifest, changed = selected
+    manifest, changed, exact_diff = selected
     baseline = manifest["baseline"]
     endpoint = manifest["endpoint"]
     comparison = manifest["comparison"]
@@ -148,6 +173,10 @@ def _validate_integrated_change_manifest(
         capture_output=True,
         text=True,
     )
+    binary_diff = subprocess.run(
+        ["git", "-C", str(source_root), "diff", "--binary", baseline_head, endpoint_head],
+        capture_output=True,
+    )
     status_names = {"A": "added", "M": "modified", "D": "deleted"}
     actual: list[dict[str, str]] = []
     if not diff.returncode:
@@ -162,6 +191,18 @@ def _validate_integrated_change_manifest(
         for item in packet.get("artifacts", [])
         if isinstance(item, dict)
     }
+    exact_diff_valid = True
+    if exact_diff is not None:
+        supplied = [item for item in evidence if item.get("locator") == exact_diff["locator"]]
+        expected_binary_command = f"git diff --binary {baseline_head}..{endpoint_head}"
+        exact_diff_valid = (
+            len(supplied) == 1
+            and exact_diff["command"] == expected_binary_command
+            and not binary_diff.returncode
+            and supplied[0].get("sha256") == exact_diff["sha256"]
+            and hashlib.sha256(binary_diff.stdout).hexdigest() == exact_diff["sha256"]
+            and str(supplied[0].get("content") or "").encode("utf-8") == binary_diff.stdout
+        )
     if (
         head.returncode
         or head.stdout.strip() != endpoint_head
@@ -172,6 +213,7 @@ def _validate_integrated_change_manifest(
         or comparison.get("path_count") != len(actual)
         or paths != actual
         or not changed.issubset(packet_locators)
+        or not exact_diff_valid
     ):
         raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
 
