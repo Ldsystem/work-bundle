@@ -551,8 +551,8 @@ def _validate_native_run_proof(receipt, packet, result, path, immutable_file, ca
                 or request["review_input"] != runtime._native_review_input(packet) or not isinstance(request["instructions"], str)
                 or not request["instructions"].strip()):
             raise ValueError("native launch/input mismatch")
-        artifacts = packet["artifacts"]
         evidence = request["evidence"]
+        artifacts = runtime._native_review_artifacts(packet, evidence)
         if len(evidence) != len(artifacts):
             raise ValueError("native input evidence mismatch")
         for expected, actual in zip(artifacts, evidence):

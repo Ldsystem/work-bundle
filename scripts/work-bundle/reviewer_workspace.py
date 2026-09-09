@@ -33,6 +33,147 @@ NATIVE_ISOLATION = {
     "host_skill_catalog": "may-be-present",
     "tools": "disabled-and-no-observed-activity", "os_process_isolation": False,
 }
+NATIVE_REVIEW_REQUEST_MAX_CHARS = 1_048_576
+
+
+def _structured_evidence(content: str) -> dict[str, object] | None:
+    try:
+        value = json.loads(content)
+    except json.JSONDecodeError:
+        try:
+            value = _review_runtime().parse_yaml_subset(content)
+        except (SystemExit, ValueError, TypeError):
+            return None
+    return value if isinstance(value, dict) else None
+
+
+def _integrated_change_manifest(
+    packet: dict[str, object], evidence: list[dict[str, object]],
+) -> tuple[dict[str, object], set[str]] | None:
+    context = packet.get("stage_review_context")
+    if not isinstance(context, dict) or context.get("stage") != "integrated_implementation":
+        return None
+    target = context.get("target_identity")
+    target_tree = target.get("source_tree") if isinstance(target, dict) else None
+    candidates: list[tuple[dict[str, object], set[str]]] = []
+    for item in evidence:
+        if not str(item.get("locator") or "").startswith("control:"):
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        value = _structured_evidence(content)
+        if not isinstance(value, dict):
+            continue
+        baseline = value.get("baseline")
+        endpoint = value.get("endpoint")
+        comparison = value.get("comparison")
+        if not all(isinstance(part, dict) for part in (baseline, endpoint, comparison)):
+            continue
+        paths = comparison.get("paths")
+        if endpoint.get("tree") != target_tree or not isinstance(paths, list):
+            continue
+        locators: set[str] = set()
+        valid = True
+        for raw in paths:
+            if not isinstance(raw, dict) or set(raw) != {"status", "path"}:
+                valid = False
+                break
+            path = Path(str(raw.get("path") or ""))
+            if (
+                raw.get("status") not in {"added", "modified", "deleted"}
+                or path.is_absolute()
+                or not path.parts
+                or ".." in path.parts
+            ):
+                valid = False
+                break
+            if raw["status"] != "deleted":
+                locators.add("source:" + path.as_posix())
+        if valid:
+            candidates.append((value, locators))
+    if len(candidates) > 1:
+        raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_AMBIGUOUS")
+    return candidates[0] if candidates else None
+
+
+def _native_review_artifacts(
+    packet: dict[str, object], evidence: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    manifest = _integrated_change_manifest(packet, evidence)
+    artifacts = packet.get("artifacts")
+    if not isinstance(artifacts, list) or manifest is None:
+        return [item for item in artifacts or [] if isinstance(item, dict)]
+    _, changed = manifest
+    return [
+        item
+        for item in artifacts
+        if isinstance(item, dict)
+        and (
+            not str(item.get("locator") or "").startswith("source:")
+            or item.get("locator") in changed
+        )
+    ]
+
+
+def _validate_integrated_change_manifest(
+    source_root: Path, packet: dict[str, object], evidence: list[dict[str, object]],
+) -> None:
+    selected = _integrated_change_manifest(packet, evidence)
+    if selected is None:
+        return
+    manifest, changed = selected
+    baseline = manifest["baseline"]
+    endpoint = manifest["endpoint"]
+    comparison = manifest["comparison"]
+    baseline_head = str(baseline.get("head") or "")
+    endpoint_head = str(endpoint.get("head") or "")
+    expected_command = f"git diff --name-status {baseline_head}..{endpoint_head}"
+    if comparison.get("command") != expected_command:
+        raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
+    head = subprocess.run(
+        ["git", "-C", str(source_root), "rev-parse", "HEAD"], capture_output=True, text=True
+    )
+    tree = subprocess.run(
+        ["git", "-C", str(source_root), "rev-parse", f"{endpoint_head}^{{tree}}"],
+        capture_output=True,
+        text=True,
+    )
+    ancestor = subprocess.run(
+        ["git", "-C", str(source_root), "merge-base", "--is-ancestor", baseline_head, endpoint_head],
+        capture_output=True,
+    )
+    diff = subprocess.run(
+        ["git", "-C", str(source_root), "diff", "--name-status", baseline_head, endpoint_head],
+        capture_output=True,
+        text=True,
+    )
+    status_names = {"A": "added", "M": "modified", "D": "deleted"}
+    actual: list[dict[str, str]] = []
+    if not diff.returncode:
+        for row in diff.stdout.splitlines():
+            columns = row.split("\t")
+            if len(columns) != 2 or columns[0] not in status_names:
+                raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
+            actual.append({"status": status_names[columns[0]], "path": columns[1]})
+    paths = comparison.get("paths")
+    packet_locators = {
+        str(item.get("locator") or "")
+        for item in packet.get("artifacts", [])
+        if isinstance(item, dict)
+    }
+    if (
+        head.returncode
+        or head.stdout.strip() != endpoint_head
+        or tree.returncode
+        or tree.stdout.strip() != endpoint.get("tree")
+        or ancestor.returncode
+        or diff.returncode
+        or comparison.get("path_count") != len(actual)
+        or paths != actual
+        or not changed.issubset(packet_locators)
+    ):
+        raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
 
 
 def parse_native_reviewer_transcript(raw: str, stderr: str = "") -> tuple[str, dict[str, object]]:
@@ -162,8 +303,14 @@ def run_native_reviewer(workspace: Path, executable: Path, *, model: str, review
     packet, _ = _load_workspace(workspace)
     if not ("stage_review_context" in packet or "task_review_context" in packet):
         raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_CONTEXT_REQUIRED")
-    evidence = []
+    control_evidence = []
     for item in packet["artifacts"]:
+        if str(item.get("locator") or "").startswith("control:"):
+            content = _evidence_path(workspace, item["locator"]).read_bytes().decode("utf-8")
+            control_evidence.append({**item, "content": content})
+    selected_artifacts = _native_review_artifacts(packet, control_evidence)
+    evidence = []
+    for item in selected_artifacts:
         # Text-mode reads normalize CRLF. The model input must preserve the exact
         # frozen bytes whose digest will be revalidated during publication.
         content = _evidence_path(workspace, item["locator"]).read_bytes().decode("utf-8")
@@ -171,6 +318,11 @@ def run_native_reviewer(workspace: Path, executable: Path, *, model: str, review
             raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
         evidence.append({**item, "content": content})
     request = {"instructions": review_instructions, "review_input": _native_review_input(packet), "evidence": evidence}
+    if len(json.dumps(request, sort_keys=True, ensure_ascii=False)) > NATIVE_REVIEW_REQUEST_MAX_CHARS:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_INPUT_TOO_LARGE",
+            {"max_chars": NATIVE_REVIEW_REQUEST_MAX_CHARS},
+        )
     argv = _native_reviewer_argv(executable, workspace, model)
     return _run_reviewer(workspace, argv, native_request=request)
 
@@ -626,6 +778,21 @@ def create_reviewer_workspace(
         mode = "packet_only" if manifest["missing"] else "reproducible_snapshot"
         if packet.get("stage_evidence_manifest") != manifest or context["evidence_mode"] != mode:
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_EVIDENCE_MISMATCH")
+        control_evidence = []
+        for raw in artifacts:
+            if not isinstance(raw, dict) or not str(raw.get("locator") or "").startswith("control:"):
+                continue
+            try:
+                content = base64.b64decode(str(raw.get("content_base64") or ""), validate=True).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                raise ReviewerWorkspaceError("WB_REVIEW_PACKET_INVALID") from None
+            control_evidence.append(
+                {
+                    **{key: value for key, value in raw.items() if key != "content_base64"},
+                    "content": content,
+                }
+            )
+        _validate_integrated_change_manifest(effective_source, public_packet, control_evidence)
     elif "task_review_context" in packet:
         context = _validate_task_context(packet["task_review_context"])
         _validate_task_source_identity(effective_source, context)

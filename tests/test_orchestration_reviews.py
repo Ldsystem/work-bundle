@@ -680,6 +680,128 @@ def test_integrated_snapshot_uses_compact_acceptance_not_handoff_history(tmp_pat
     assert not any("handoff" in locator for locator in required)
 
 
+def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_manifest(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import reviewer_workspace
+
+    _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    task = _write_stage_task(plan)
+    protected = tmp_path / ".work-bundle/protected-test"
+    protected.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".gitignore").write_text(".work-bundle/\n", encoding="utf-8")
+    (tmp_path / "unchanged-large.txt").write_text("x" * 1_100_000, encoding="utf-8")
+    (tmp_path / "source.txt").write_text("before\n", encoding="utf-8")
+    for arguments in (
+        ["init", "-q"],
+        ["config", "user.name", "Test"],
+        ["config", "user.email", "test@example.invalid"],
+        ["add", "."],
+        ["commit", "-qm", "baseline"],
+    ):
+        subprocess.run(["git", "-C", str(tmp_path), *arguments], check=True)
+    baseline = subprocess.check_output(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True
+    ).strip()
+    (tmp_path / "source.txt").write_text("after\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "source.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "-qm", "claim change"], check=True
+    )
+    endpoint = subprocess.check_output(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True
+    ).strip()
+    tree = subprocess.check_output(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    _write_compact_accepted_result(tmp_path, task=task)
+    change_manifest = tmp_path / ".work-bundle/runtime/change-manifest.json"
+    change_manifest.parent.mkdir(parents=True, exist_ok=True)
+    change_manifest.write_text(
+        json.dumps(
+            {
+                "baseline": {"head": baseline},
+                "endpoint": {"head": endpoint, "tree": tree},
+                "comparison": {
+                    "command": f"git diff --name-status {baseline}..{endpoint}",
+                    "path_count": 1,
+                    "paths": [{"status": "modified", "path": "source.txt"}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    identity = review_runtime.stage_target_identity(
+        tmp_path, "integrated_implementation", plan, source_root=tmp_path
+    )
+    locator = "control:" + plan.relative_to(tmp_path).as_posix()
+    required, missing = review_runtime.stage_evidence_requirements(
+        tmp_path, "integrated_implementation", plan
+    )
+    assert missing == []
+    required.update(
+        {entry["locator"]: "source_tree" for entry in review_runtime.source_snapshot_entries(tmp_path)}
+    )
+    required["control:" + change_manifest.relative_to(tmp_path).as_posix()] = "change_manifest"
+    packet = reviewer_workspace.build_direct_evidence_packet(
+        source_root=tmp_path,
+        control_root=tmp_path,
+        protected_roots=[protected],
+        artifacts=list(required),
+        search_roots=[],
+        validators=[],
+        sentinels=[],
+        network_state="denied",
+        stage_review_context={
+            "stage": "integrated_implementation",
+            "target_locator": locator,
+            "target_identity": identity,
+            "agent_id": "reviewer-large-tree",
+            "capability": "judgment",
+            "execution_id": "reviewer-large-tree-run",
+            "evidence_mode": "direct_source",
+        },
+    )
+    created = reviewer_workspace.create_reviewer_workspace(
+        review_runtime.reviewer_runtime_root(tmp_path), "review-large-tree", packet
+    )
+    captured: dict[str, str] = {}
+
+    def native_process(_workspace, _argv, request):
+        captured["request"] = request
+        events = [
+            {"type": "thread.started", "thread_id": "01a0821d-f359-7d60-a9bd-90dd0e006166"},
+            {"type": "turn.started"},
+            {"type": "item.completed", "item": {"id": "judgment", "type": "agent_message", "text": json.dumps({
+                "stage_review": {"target_identity": identity, "verdict": "accepted", "findings": []}
+            })}},
+            {"type": "turn.completed", "usage": {}},
+        ]
+        return subprocess.CompletedProcess([], 0, "\n".join(json.dumps(event) for event in events), "")
+
+    monkeypatch.setattr(reviewer_workspace, "_run_native_process", native_process)
+    receipt = reviewer_workspace.run_native_reviewer(
+        Path(str(created["workspace_path"])),
+        Path(sys.executable),
+        model="test-model",
+        review_instructions="Assess the accepted requirements and exact changed source.",
+    )
+    request = json.loads(captured["request"])
+    supplied = {item["locator"] for item in request["evidence"]}
+    assert len(captured["request"]) <= reviewer_workspace.NATIVE_REVIEW_REQUEST_MAX_CHARS
+    assert "source:source.txt" in supplied
+    assert "source:unchanged-large.txt" not in supplied
+    assert request["review_input"]["target_identity"]["source_tree"] == tree
+    assert any(
+        item["locator"] == "source:unchanged-large.txt"
+        for item in request["review_input"]["artifacts"]
+    )
+    review_runtime._validate_reviewer_run(
+        tmp_path,
+        {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]},
+    )
+
+
 def test_integrated_snapshot_includes_native_review_when_present_and_rejects_invalid_compact_authority(tmp_path, monkeypatch):
     _, plan, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
     task = _write_stage_task(plan, review_required=True)
