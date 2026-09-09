@@ -94,6 +94,108 @@ def test_observe_task_validation_records_before_handoff(tmp_path: Path, capsys) 
     assert counter.read_text() == "1"
 
 
+def test_live_validation_is_captured_once_by_atomic_initial_acceptance(
+    tmp_path: Path, capsys,
+) -> None:
+    root, task, brief, handoff, counter = _counted_validation(
+        tmp_path, reuse_seconds=0
+    )
+
+    with pytest.raises(SystemExit, match="non-reusable.*validate-executor-result"):
+        execution_context.cmd_observe_task_validation(args(root, task))
+    assert not counter.exists()
+
+    validated = _validate_observed(handoff, brief)
+    observed = validated["observed_validation"][0]
+    assert observed["result"] == "passed"
+    assert observed["observation_id"].startswith("observation-")
+    assert counter.read_text() == "1"
+    accepted = execution_context.materialize_accepted_task_result(
+        root, brief, handoff, validated
+    )
+    _, consumed = execution_context.load_current_accepted_task_result(root, brief)
+    assert consumed == accepted
+    assert accepted["validation_evidence_ids"] == [observed["observation_id"]]
+    assert counter.read_text() == "1"
+
+    store = root / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json"
+    provenance = json.loads(store.read_text())
+    saved = next(
+        item
+        for item in provenance["observations"]
+        if item["observation_id"] == observed["observation_id"]
+    )
+    assert set(saved["result"]) == {
+        "exit_code", "stdout_digest", "stderr_digest", "started_at", "completed_at"
+    }
+    assert provenance["consumptions"][observed["observation_id"]].startswith(
+        "initial-acceptance:"
+    )
+    with pytest.raises(SystemExit, match="already exists.*without rerunning"):
+        _validate_observed(handoff, brief)
+    assert counter.read_text() == "1"
+
+
+def test_live_validation_allows_one_continuity_checked_source_repair(
+    tmp_path: Path,
+) -> None:
+    root, _, brief, handoff, counter = _counted_validation(
+        tmp_path, reuse_seconds=0
+    )
+    validated = _validate_observed(handoff, brief)
+    execution_context.materialize_accepted_task_result(root, brief, handoff, validated)
+    execution_context.load_current_accepted_task_result(root, brief)
+    assert counter.read_text() == "1"
+
+    source = root / WRITE_SCOPE_FILE
+    source.write_text(source.read_text() + "\n# scoped repair\n")
+    repaired = deepcopy(handoff)
+    repaired["task_fit_check"]["result"] = "repaired"
+    repaired["acceptance_review"] = {
+        "required": False,
+        "repair_frontier": {
+            "prior_review_id": "review-prior",
+            "frozen_evidence_reference": "evidence-prior",
+        },
+    }
+    binding = execution_context.load_task_execution_binding(
+        root, str(brief["plan_id"]), str(brief["task_id"])
+    )
+    continuity = {
+        "binding_id": binding["ownership"]["binding_id"],
+        "baseline_identity": execution_context.semantic_digest(binding["baseline"]),
+        "evidence_identity": "evidence-prior",
+        "previous_review_identity": "review-prior",
+    }
+    with pytest.raises(
+        execution_context.AcceptanceOwnershipError, match="repair.*continuity"
+    ):
+        execution_context.validate_executor_result_for_task(
+            repaired,
+            brief,
+            observe=True,
+            mutation_events=[{"actor_kind": "subagent", "paths": [WRITE_SCOPE_FILE]}],
+            prior_ownership={str(brief["task_id"]): handoff["delegation_evidence"]},
+            repair_continuity=None,
+        )
+    assert counter.read_text() == "1"
+
+    repaired_result = execution_context.validate_executor_result_for_task(
+        repaired,
+        brief,
+        observe=True,
+        mutation_events=[{"actor_kind": "subagent", "paths": [WRITE_SCOPE_FILE]}],
+        prior_ownership={str(brief["task_id"]): handoff["delegation_evidence"]},
+        repair_continuity={str(brief["task_id"]): continuity},
+    )
+
+    assert repaired_result["result_state"] == "completed"
+    assert repaired_result["observed_validation"][0]["observation_id"] != validated[
+        "observed_validation"
+    ][0]["observation_id"]
+    assert counter.read_text() == "2"
+
+
 @pytest.mark.parametrize("change", ["source", "oracle", "environment"])
 def test_handoff_validation_invalidates_changed_inputs(tmp_path: Path, monkeypatch, change: str) -> None:
     root, _, brief, handoff, counter = _counted_validation(tmp_path)
@@ -109,11 +211,16 @@ def test_handoff_validation_invalidates_changed_inputs(tmp_path: Path, monkeypat
     assert counter.read_text() == "2"
 
 
-def test_handoff_validation_live_checks_do_not_reuse(tmp_path: Path) -> None:
+def test_handoff_validation_live_check_retry_consumes_same_initial_observation(
+    tmp_path: Path,
+) -> None:
     _, _, brief, handoff, counter = _counted_validation(tmp_path, reuse_seconds=0)
-    _validate_observed(handoff, brief)
-    _validate_observed(handoff, brief)
-    assert counter.read_text() == "2"
+    first = _validate_observed(handoff, brief)
+    second = _validate_observed(handoff, brief)
+    assert counter.read_text() == "1"
+    assert first["observed_validation"][0]["observation_id"] == second[
+        "observed_validation"
+    ][0]["reuse_of"]
 
 
 def test_handoff_validation_expiry_requires_new_observation(tmp_path: Path, monkeypatch) -> None:

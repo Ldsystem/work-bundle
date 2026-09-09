@@ -3687,6 +3687,14 @@ def _observe_completed_validation(
     from review_runtime import require_plan_reviews
     require_plan_reviews(control_root, _find_plan(control_root, str(task["plan_id"]))[0])
     binding = load_task_execution_binding(control_root, str(task["plan_id"]), str(task["task_id"]))
+    fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), Mapping) else {}
+    if (
+        isinstance(binding.get("accepted_result"), Mapping)
+        and fit.get("result") != "repaired"
+    ):
+        raise SystemExit(
+            "accepted task result already exists; consume it without rerunning validation"
+        )
     if workspace_id and str(binding.get("workspace_id") or "") != str(workspace_id):
         raise SystemExit("Task execution binding workspace_id mismatch")
     if execution_id and str(binding.get("execution_id") or "") != str(execution_id):
@@ -3714,10 +3722,36 @@ def _observe_completed_validation(
         accepted_dependency_paths=accepted_paths,
     )
     for item in required_items:
+        policy = _completion_provenance_module().validation_reuse_policy(item)
+        observed_item = item
+        finalization_id = None
+        if policy["max_age_seconds"] == 0:
+            # A live check cannot be reusable by later lifecycle consumers, but
+            # initial acceptance still needs one immutable producer-to-consumer
+            # observation. Keep it recoverable for the atomic acceptance call;
+            # the stable finalization claim and accepted-result guard prevent a
+            # later validation dispatch from treating it as reusable evidence.
+            observed_item = dict(item)
+            observed_item["evidence_reuse"] = {
+                **policy,
+                "max_age_seconds": 86400,
+            }
+            finalization_identity = semantic_digest(
+                {
+                    "command": str(item.get("command") or "").strip(),
+                    "repair": fit.get("result") == "repaired",
+                    "source": pre_batch,
+                }
+            )
+            finalization_id = (
+                f"initial-acceptance:{task['plan_id']}:{task['task_id']}:"
+                f"{finalization_identity}"
+            )
         observed = _completion_provenance_module().observe_validation(
-            binding, task, item, pre_batch,
+            binding, task, observed_item, pre_batch,
             lambda receipt: _observe_validation_item(item, execution_root, task, receipt),
             lambda: capture_repository_evidence(execution_root),
+            finalization_id=finalization_id,
         )
         command = str(item.get("command")).strip()
         reported_item = reported_commands[command] if reported_commands is not None else None
@@ -4072,6 +4106,45 @@ def validate_executor_result_for_task(
                 accepted_dependency_deltas=accepted_dependency_deltas,
             )
 
+    task_ownership = None
+    fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
+    if (
+        state == "completed"
+        and required_items
+        and observe
+        and fit.get("result") == "repaired"
+        and acceptance_review_sequence != "initial-reset"
+    ):
+        if mutation_events is None:
+            raise AcceptanceOwnershipError(
+                "review-blocked: completed task requires harness-owned mutation_events evidence"
+            )
+        runtime_mutation_events = list(mutation_events)
+        if any(not isinstance(event, Mapping) for event in runtime_mutation_events):
+            raise AcceptanceOwnershipError("Runtime mutation_events must contain mappings")
+        try:
+            task_ownership = validate_task_acceptance_ownership(
+                delegation_evidence=(
+                    handoff.get("delegation_evidence")
+                    if isinstance(handoff.get("delegation_evidence"), dict)
+                    else None
+                ),
+                mutation_events=runtime_mutation_events,
+                write_scope=_as_list(task_files.get("write")),
+                validations_passed=True,
+                operation="repair",
+            )
+            _validate_repair_acceptance_continuity(
+                task=task,
+                handoff=handoff,
+                current_ownership=task_ownership,
+                prior_ownership=prior_ownership,
+                repair_continuity=repair_continuity,
+                authorized_replacements=authorized_replacements,
+            )
+        except OwnershipBlocker as error:
+            raise AcceptanceOwnershipError(str(error)) from error
+
     if state == "completed" and required_items and observe:
         observed_validation = _observe_completed_validation(
             handoff,
@@ -4092,7 +4165,6 @@ def validate_executor_result_for_task(
             raise SystemExit(
                 "evidence-closure-blocked: completed mapped invariants require produced harness observations and passed evidence closure"
             )
-    task_ownership = None
     if state == "completed":
         if mutation_events is None:
             raise AcceptanceOwnershipError(
@@ -4101,7 +4173,6 @@ def validate_executor_result_for_task(
         runtime_mutation_events = list(mutation_events)
         if any(not isinstance(event, Mapping) for event in runtime_mutation_events):
             raise AcceptanceOwnershipError("Runtime mutation_events must contain mappings")
-        fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
         operation = "repair" if fit.get("result") == "repaired" else "implementation"
         try:
             task_ownership = validate_task_acceptance_ownership(
@@ -5329,6 +5400,13 @@ def cmd_build_review_package(args: argparse.Namespace) -> None:
 def cmd_observe_task_validation(args: argparse.Namespace) -> None:
     _, brief_document = _compile_task_brief(args)
     task = brief_document["task_brief"]
+    for item in task["validation"]:
+        policy = _completion_provenance_module().validation_reuse_policy(item)
+        if policy["max_age_seconds"] == 0:
+            raise SystemExit(
+                "non-reusable validation must use validate-executor-result so its "
+                "single observation is captured by initial acceptance"
+            )
     runtime = _observation_kwargs(args)
     observed = _observe_completed_validation(
         {},
