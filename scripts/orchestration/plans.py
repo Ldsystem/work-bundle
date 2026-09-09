@@ -29,7 +29,11 @@ from completion_provenance import (
     release_completion_binding,
 )
 from handoffs import _read_compact_yaml_metadata
-from repository_preflight import capture_repository_evidence, task_caused_paths
+from repository_preflight import (
+    _metadata_repository_entries,
+    capture_repository_evidence,
+    task_caused_paths,
+)
 from specs import load_index, replace_front_matter_value
 from review_runtime import require_plan_reviews
 
@@ -318,7 +322,7 @@ def _material_repository_root(
                 handoff_has_provenance = True
         if not handoff_has_provenance:
             try:
-                fallback = _resolve_final_plan_workspace(args)
+                fallback = _resolve_final_plan_workspace(args, plan_id)
             except SystemExit as error:
                 raise SystemExit(
                     "acceptance-blocked: material handoff repository provenance is unavailable"
@@ -398,15 +402,112 @@ def _handoff_has_material_changes(handoff: dict[str, object], brief: dict[str, o
     return bool(write) if isinstance(write, list) else False
 
 
-def _resolve_final_plan_workspace(args: argparse.Namespace) -> Path:
+def _accepted_plan_repository_bindings(
+    args: argparse.Namespace, plan_id: str
+) -> list[dict[str, object]]:
+    bindings: list[dict[str, object]] = []
+    control_root = resolve_workspace_root(args)
+    for row in index_plans(args):
+        if row.get("type") != "task" or row.get("plan_id") != plan_id:
+            continue
+        task_id = str(row.get("id") or "")
+        if not has_persisted_accepted_task_result(control_root, plan_id, task_id):
+            continue
+        binding, _accepted = _load_current_task_acceptance(
+            args, artifact_path_from_row(row, args)
+        )
+        bindings.append(binding)
+    return bindings
+
+
+def _registered_repository_roots(workspace: Path) -> dict[str, Path]:
+    member_roots = set(_member_roots(workspace))
+    registered: dict[str, Path] = {}
+    for entry in _metadata_repository_entries(workspace):
+        repository_id = str(entry.get("id") or "").strip()
+        raw_root = str(entry.get("project_root") or entry.get("path") or "").strip()
+        if not repository_id or not raw_root:
+            continue
+        candidate = Path(raw_root).expanduser()
+        candidate = (workspace / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+        # Only device/local member roots are eligible. Remote/origin locators never
+        # appear in this intersection.
+        if candidate not in member_roots:
+            continue
+        if repository_id in registered and registered[repository_id] != candidate:
+            raise SystemExit("acceptance-blocked: registered repository identity is ambiguous")
+        registered[repository_id] = candidate
+    return registered
+
+
+def _validate_final_workspace_selectors(
+    args: argparse.Namespace, bindings: list[dict[str, object]]
+) -> None:
+    selectors = {
+        "workspace_id": getattr(args, "workspace_id", None),
+        "execution_id": getattr(args, "execution_id", None),
+        "runtime_root": getattr(args, "execution_runtime_root", None),
+    }
+    for field, supplied in selectors.items():
+        if not supplied:
+            continue
+        if field == "runtime_root":
+            expected = Path(str(supplied)).expanduser().resolve()
+            matches = [
+                binding
+                for binding in bindings
+                if Path(str(binding.get(field) or "")).expanduser().resolve() == expected
+            ]
+        else:
+            matches = [binding for binding in bindings if str(binding.get(field) or "") == str(supplied)]
+        if not matches:
+            raise SystemExit(
+                f"acceptance-blocked: {field.replace('_', ' ')} selector conflicts with accepted task authority"
+            )
+
+
+def _resolve_final_plan_workspace(
+    args: argparse.Namespace, plan_id: str | None = None
+) -> Path:
     workspace = resolve_workspace_root(args)
     try:
         members = _member_roots(workspace)
     except OSError:
         members = []
-    if len(members) > 1:
+    if len(members) <= 1:
+        target = members[0] if members else workspace
+        if not target.is_dir():
+            raise SystemExit("acceptance-blocked: final plan workspace is missing")
+        return target
+
+    bindings = _accepted_plan_repository_bindings(args, plan_id) if plan_id else []
+    _validate_final_workspace_selectors(args, bindings)
+    accepted_repository_ids = {
+        str(binding.get("repository_id") or "").strip() for binding in bindings
+    }
+    if "" in accepted_repository_ids:
+        raise SystemExit("acceptance-blocked: accepted task repository authority is missing")
+    if len(accepted_repository_ids) > 1:
+        raise SystemExit("acceptance-blocked: accepted task repository authority disagrees")
+
+    explicit_repository_id = str(getattr(args, "repository_id", None) or "").strip()
+    accepted_repository_id = next(iter(accepted_repository_ids), "")
+    if (
+        explicit_repository_id
+        and accepted_repository_id
+        and explicit_repository_id != accepted_repository_id
+    ):
+        raise SystemExit(
+            "acceptance-blocked: repository selector conflicts with accepted task authority"
+        )
+    repository_id = explicit_repository_id or accepted_repository_id
+    if not repository_id:
         raise SystemExit("acceptance-blocked: final plan workspace is ambiguous")
-    target = members[0] if members else workspace
+    target = _registered_repository_roots(workspace).get(repository_id)
+    if target is None:
+        raise SystemExit(
+            "acceptance-blocked: authorized final plan repository is not a registered local member"
+        )
     if not target.is_dir():
         raise SystemExit("acceptance-blocked: final plan workspace is missing")
     return target
@@ -594,7 +695,7 @@ def _assert_archive_plan_acceptance(
         # gate obtains one fresh state-neutral observation below instead.
     if control_root is not None:
         return
-    workspace = git_root if material else _resolve_final_plan_workspace(args)
+    workspace = git_root if material else _resolve_final_plan_workspace(args, plan_id)
     for command in commands:
         _assert_archive_command_state_neutral(command, workspace)
 
@@ -713,7 +814,7 @@ def cmd_write_plan(args: argparse.Namespace) -> None:
     effective_status = parse_yaml_subset(content.split("---", 2)[1]).get("status")
     if effective_status in {"In progress", "Completed"} or args.status in {"In progress", "Completed"}:
         require_plan_reviews(project_root(args), target, content=content,
-                             source_root=_resolve_final_plan_workspace(args) if "Completed" in {effective_status, args.status} else None)
+                             source_root=_resolve_final_plan_workspace(args, pid) if "Completed" in {effective_status, args.status} else None)
     write_text_safely(target, content, args)
     index_plans(args)
     print(rel(target, args))
@@ -946,7 +1047,7 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
         _assert_phase_tasks_accepted(args, str(row["id"]), str(row["plan_id"]))
     if row.get("type") == "plan" and args.status in {"In progress", "Completed"}:
         require_plan_reviews(project_root(args), path,
-                             source_root=_resolve_final_plan_workspace(args) if args.status == "Completed" else None)
+                             source_root=_resolve_final_plan_workspace(args, str(row["id"])) if args.status == "Completed" else None)
         if args.status == "Completed":
             _accepted_plan_task_results(args, str(row["id"]))
     if args.status == "Completed" and row.get("type") == "task":
@@ -973,7 +1074,10 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
     moved = []
 
     root_path = artifact_path_from_row(root_match, args)
-    require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))
+    require_plan_reviews(
+        project_root(args), root_path,
+        source_root=_resolve_final_plan_workspace(args, args.id),
+    )
     if _plan_uses_accepted_result_authority(args, args.id):
         validated = _accepted_plan_task_results(args, args.id)
     else:
@@ -982,7 +1086,10 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
         validated = _validated_plan_task_handoffs(args, args.id)
     _assert_archive_knowledge_gate(args, args.id, root_path, validated)
     _assert_archive_plan_acceptance(args, args.id, root_path, validated)
-    require_plan_reviews(project_root(args), root_path, source_root=_resolve_final_plan_workspace(args))
+    require_plan_reviews(
+        project_root(args), root_path,
+        source_root=_resolve_final_plan_workspace(args, args.id),
+    )
     if is_relative_to(root_path, active_root):
         replace_front_matter_value(root_path, "status", "Completed")
         moved.append(move_to_archive(root_path, active_root, archived_root))
