@@ -836,21 +836,25 @@ def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any])
             # valid replacement review for the actual current artifact.
             if value["stage"] != stage or value.get("target_identity") != identity:
                 continue
-            record = validate_stage_review(value)
+            record = _validated_review_envelope(value)
             if record.review_mode == "repair":
                 frontier = record.repair_frontier
                 assert frontier is not None
                 prior = historical.get(str(frontier["prior_review_id"]))
                 if prior is None:
                     raise ReviewContractError("repair review predecessor is missing")
-                record = validate_review_sequence(value, previous_review=prior)
+                if value.get("previous_review") != prior:
+                    raise ReviewContractError(
+                        "repair review does not carry the exact stored predecessor"
+                    )
             elif record.review_reset is not None:
                 prior = historical.get(str(record.review_reset["prior_review_id"]))
                 if prior is None:
                     raise ReviewContractError("initial review reset predecessor is missing")
-                record = validate_review_sequence(
-                    value, previous_review=prior, material_change=str(record.review_reset["reason_class"])
-                )
+                if value.get("previous_review") != prior:
+                    raise ReviewContractError(
+                        "initial review reset does not carry the exact stored predecessor"
+                    )
             if record.review_id in review_ids:
                 raise ReviewContractError("stage review IDs must be globally unique")
             review_ids.add(record.review_id)

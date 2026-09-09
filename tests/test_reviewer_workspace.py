@@ -413,11 +413,28 @@ def test_native_compact_integrated_repair_keeps_exact_predecessor_controller_onl
     review = {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]}
     assert review["previous_review"] == previous
     assert review["repair_frontier"] == frontier
+    history = control / ".work-bundle" / "orchestration" / "reviews"
+    history.mkdir(parents=True, exist_ok=True)
+    (history / f"{previous['review_id']}.json").write_text(
+        json.dumps(previous), encoding="utf-8"
+    )
     reference = runtime.publish_review(control, review, current_target_identity=current_identity)
     stored, _ = runtime.load_stored_review(
         control, reference, current_target_identity=current_identity
     )
     assert stored["previous_review"] == previous
+    runtime._require_current_review(control, "integrated_implementation", current_identity)
+
+    malformed = {
+        **review,
+        "review_id": "review-integrated-extra-history",
+        "previous_review": {**previous, "previous_review": previous},
+    }
+    (history / "review-integrated-extra-history.json").write_text(
+        json.dumps(malformed), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit, match="exactly one previous_review"):
+        runtime._require_current_review(control, "integrated_implementation", current_identity)
 
 
 def test_incomplete_stage_snapshot_fails_before_reviewer_process_launch(
