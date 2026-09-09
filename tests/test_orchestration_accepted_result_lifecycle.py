@@ -270,6 +270,37 @@ def test_archive_knowledge_gate_aggregates_new_results_and_bounds_legacy_bridge(
     plans._assert_archive_knowledge_gate(args, "plan-001", plan, [(legacy, brief)])
 
 
+@pytest.mark.parametrize(
+    "section",
+    [
+        "## 2.1 Knowledge Base Update Carry Forward\n\n"
+        "- **Disposition**: required\n- **Closure return**: completed\n",
+        "## Knowledge Base Update Carry Forward\n\n"
+        "- Disposition: required\n- Closure return: completed\n",
+    ],
+)
+def test_plan_knowledge_fields_accept_settled_numbered_and_plain_syntax(section: str) -> None:
+    assert plans._plan_knowledge_field(section, "Disposition") == "required"
+    assert plans._plan_knowledge_field(section, "Closure return") == "completed"
+
+
+def test_archive_knowledge_gate_consumes_plain_completed_closure(tmp_path: Path) -> None:
+    plan = tmp_path / "plan.md"
+    plan.write_text(
+        "---\nid: plan-001\n---\n\n## Knowledge Base Update Carry Forward\n\n"
+        "- Disposition: required\n- Closure return: completed\n",
+        encoding="utf-8",
+    )
+    legacy = {"schema": "accepted-task-result-v1", "task_id": "task-001"}
+
+    plans._assert_archive_knowledge_gate(
+        argparse.Namespace(),
+        "plan-001",
+        plan,
+        [(legacy, {"task_id": "task-001", "review_required": True})],
+    )
+
+
 def test_declared_integration_commands_follow_table_headers() -> None:
     five_columns = (
         "## 7. Tests\n\n"

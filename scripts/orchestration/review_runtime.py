@@ -743,6 +743,28 @@ def _semantic_plan_value(value: Any, *, top_level: bool = False) -> Any:
     return value
 
 
+def _semantic_plan_body(body: str) -> str:
+    """Remove lifecycle closure state while retaining knowledge authority text."""
+
+    section_pattern = re.compile(
+        r"^##\s+(?:2\.1\s+)?Knowledge Base Update Carry Forward\s*$"
+        r"[\s\S]*?(?=^##\s|\Z)",
+        re.MULTILINE,
+    )
+    closure_pattern = re.compile(
+        r"^(?P<prefix>-\s+(?:\*\*Closure\ return\*\*|Closure\ return):[ \t]*)"
+        r"(?:missing|completed|not-needed|blocked)(?P<suffix>[ \t]*)$",
+        re.MULTILINE,
+    )
+
+    def normalize_closure(match: re.Match[str]) -> str:
+        return closure_pattern.sub(
+            r"\g<prefix>missing\g<suffix>", match.group(0)
+        )
+
+    return section_pattern.sub(normalize_closure, body)
+
+
 def _semantic_plan_artifact(path: Path, *, content: str | None = None) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8") if content is None else content.rstrip() + "\n"
     if not text.startswith("---\n") or "\n---\n" not in text[4:]:
@@ -751,7 +773,10 @@ def _semantic_plan_artifact(path: Path, *, content: str | None = None) -> dict[s
     metadata = parse_yaml_subset(raw)
     if not isinstance(metadata, dict) or not metadata.get("id"):
         raise SystemExit(f"stage review: missing artifact identity: {path}")
-    return {"metadata": _semantic_plan_value(metadata, top_level=True), "body": body}
+    return {
+        "metadata": _semantic_plan_value(metadata, top_level=True),
+        "body": _semantic_plan_body(body),
+    }
 
 
 def _semantic_plan_artifact_digest(projection: Mapping[str, Any]) -> str:

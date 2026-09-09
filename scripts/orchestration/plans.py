@@ -36,13 +36,18 @@ from review_runtime import require_plan_reviews
 
 def _plan_knowledge_field(body: str, label: str) -> str | None:
     section = re.search(
-        r"^##\s+2\.1\s+Knowledge Base Update Carry Forward\s*$([\s\S]*?)(?=^##\s|\Z)",
+        r"^##\s+(?:2\.1\s+)?Knowledge Base Update Carry Forward\s*$([\s\S]*?)(?=^##\s|\Z)",
         body,
         re.MULTILINE,
     )
     if not section:
         return None
-    match = re.search(rf"^-\s+\*\*{re.escape(label)}\*\*:\s*([^\s]+)\s*$", section.group(1), re.MULTILINE)
+    rendered_label = re.escape(label)
+    match = re.search(
+        rf"^-\s+(?:\*\*{rendered_label}\*\*|{rendered_label}):[ \t]*([^\s]+)[ \t]*$",
+        section.group(1),
+        re.MULTILINE,
+    )
     return match.group(1) if match else None
 
 
