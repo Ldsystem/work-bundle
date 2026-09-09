@@ -650,7 +650,16 @@ def _validate_native_run_proof(receipt, packet, result, path, immutable_file, ca
                 previous_review=result.get("previous_review"))
         if observed != result or receipt.get("review_result") != result or receipt.get(key) != context:
             raise ValueError("native judgment/result mismatch")
-        return context
+        frozen_control_evidence: dict[str, str] = {}
+        for item in combined_evidence:
+            locator = item.get("locator")
+            content = item.get("content")
+            if not isinstance(locator, str) or not locator.startswith("control:"):
+                continue
+            if not isinstance(content, str) or locator in frozen_control_evidence:
+                raise ValueError("native control evidence is invalid")
+            frozen_control_evidence[locator] = content
+        return context, frozen_control_evidence
     except (ValueError, TypeError, KeyError, IndexError, AttributeError, runtime.ReviewerWorkspaceError) as error:
         raise ReviewContractError("native reviewer-run provenance does not bind this accepted review") from error
 
@@ -688,20 +697,9 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     packet_context = packet.get(context_key)
     frozen_control_evidence: dict[str, str] = {}
     if native:
-        packet_context = _validate_native_run_proof(receipt, packet, result, path, immutable_file, canonical)
-        controller_path = path.with_suffix(".controller.json")
-        if controller_path.exists():
-            controller_evidence = json.loads(immutable_file(controller_path))
-            if not isinstance(controller_evidence, list):
-                raise ReviewContractError("native reviewer-run controller evidence is invalid")
-            for item in controller_evidence:
-                if (
-                    not isinstance(item, dict)
-                    or not isinstance(item.get("locator"), str)
-                    or not isinstance(item.get("content"), str)
-                ):
-                    raise ReviewContractError("native reviewer-run controller evidence is invalid")
-                frozen_control_evidence[item["locator"]] = item["content"]
+        packet_context, frozen_control_evidence = _validate_native_run_proof(
+            receipt, packet, result, path, immutable_file, canonical
+        )
     mode = "direct_source" if review["evidence"]["mode"] == "direct" else review["evidence"]["mode"]
     review_context = {
         "review_mode": review.get("review_mode", "initial"),

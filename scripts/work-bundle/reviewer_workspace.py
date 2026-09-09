@@ -1262,6 +1262,8 @@ def _task_product_judgment_review(
         or not isinstance(product["findings"], list)
     ):
         raise ReviewerWorkspaceError("WB_REVIEW_TASK_OUTPUT_INVALID")
+    if product["verdict"] == "repair" and not product["findings"]:
+        raise ReviewerWorkspaceError("WB_REVIEW_TASK_OUTPUT_INVALID")
     findings = []
     for item in product["findings"]:
         expected = {"finding_id", "severity", "requirement_id", "boundary", "evidence", "expected", "observed", "owner"}

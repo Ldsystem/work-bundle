@@ -177,7 +177,9 @@ def test_workspace_contains_copied_direct_evidence_and_declares_network_denied(
 def test_task_review_worker_output_receives_native_bound_receipt(
     review_roots: tuple[Path, Path, Path], transport: str
 ) -> None:
-    source, control, runtime = review_roots
+    source, control, _runtime = review_roots
+    review_runtime = reviewer_workspace._review_runtime()
+    runtime = review_runtime.reviewer_runtime_root(control)
     subprocess.run(["git", "init", "-q", str(source)], check=True)
     subprocess.run(["git", "-C", str(source), "add", "src/target.py", ".wor105-review-sentinel"], check=True)
     subprocess.run(
@@ -209,7 +211,17 @@ def test_task_review_worker_output_receives_native_bound_receipt(
     created = create_reviewer_workspace(runtime, "review-task-native", direct)
     judgment = {"task_review": {
         "reviewed_head": head,
-        "verdict": "accept", "findings": [],
+        "verdict": "repair",
+        "findings": [{
+            "finding_id": "finding-product-value",
+            "severity": "blocking",
+            "requirement_id": "REQ-VALUE",
+            "boundary": "src/target.py:target",
+            "evidence": "The returned value violates the requirement.",
+            "expected": "Return the accepted value.",
+            "observed": "A different value is returned.",
+            "owner": "task_owner",
+        }],
     }}
     if transport == "native":
         with patch.object(reviewer_workspace, "_run_native_process",
@@ -229,7 +241,35 @@ def test_task_review_worker_output_receives_native_bound_receipt(
     assert set(receipt["reviewer_run"]) == {"run_id", "sha256"}
     assert receipt["review_result"]["reviewer"]["agent_id"] == (
         receipt["host_run_id"] if transport == "native" else "reviewer-task")
-    assert receipt["review_result"]["verdict"] == "accept"
+    assert receipt["review_result"]["verdict"] == "repair"
+    finding = receipt["review_result"]["findings"][0]
+    assert finding["finding_id"] == "finding-product-value"
+    assert finding["evidence"][0]["locator"] == "src/target.py:target"
+    assert "The returned value violates the requirement." in finding["evidence"][0]["observation"]
+    reference = review_runtime.publish_review(
+        control, receipt["review_result"] | {"reviewer_run": receipt["reviewer_run"]},
+        current_target_identity=identity,
+    )
+    stored, validated = review_runtime.load_stored_review(
+        control, reference, current_target_identity=identity
+    )
+    assert stored["findings"] == receipt["review_result"]["findings"]
+    assert validated.findings[0].finding_id == "finding-product-value"
+
+    empty_repair = {"task_review": {
+        "reviewed_head": head,
+        "verdict": "repair",
+        "findings": [],
+    }}
+    with pytest.raises(ReviewerWorkspaceError, match="WB_REVIEW_TASK_OUTPUT_INVALID"):
+        reviewer_workspace._task_product_judgment_review(
+            empty_repair,
+            review_id="review-empty-repair",
+            context=context,
+            packet=direct,
+            started_at="2026-09-09T00:00:00Z",
+            completed_at="2026-09-09T00:01:00Z",
+        )
 
 
 def test_compact_task_judgment_composes_repair_and_reset_predecessors() -> None:
@@ -656,36 +696,52 @@ def test_stage_evidence_survives_plan_lifecycle_markers_but_not_product_changes(
     required.update(
         {item["locator"]: "source_tree" for item in runtime.source_snapshot_entries(source)}
     )
-    packet = build_direct_evidence_packet(
-        source_root=source,
-        control_root=control,
-        protected_roots=[control / "credentials"],
-        artifacts=list(required),
-        search_roots=[],
-        validators=[],
-        sentinels=[],
-        network_state="denied",
-        stage_review_context=context,
-    )
-    frozen_control_evidence = {
-        item["locator"]: (control / item["locator"].removeprefix("control:")).read_text(
-            encoding="utf-8"
+    def legacy_stage_identity(path: Path, **kwargs: object) -> dict[str, object]:
+        return runtime.artifact_review_identity(path, content=kwargs.get("content"))
+
+    with patch.object(runtime, "_stage_authority_identity", side_effect=legacy_stage_identity):
+        packet = build_direct_evidence_packet(
+            source_root=source,
+            control_root=control,
+            protected_roots=[control / "credentials"],
+            artifacts=list(required),
+            search_roots=[],
+            validators=[],
+            sentinels=[],
+            network_state="denied",
+            stage_review_context=context,
         )
-        for item in packet["artifacts"]
-        if item["locator"].startswith("control:")
-    }
-    entries = packet["stage_evidence_manifest"]["entries"]
-    for entry in entries:
-        if entry["role"] in {"target", "plan_member"}:
-            entry["identity"] = runtime.artifact_review_identity(
-                control / entry["locator"].removeprefix("control:")
+        created = create_reviewer_workspace(
+            runtime.reviewer_runtime_root(control), "review-lifecycle", packet
+        )
+        judgment = {
+            "task_review": {
+                "reviewed_head": identity["source_tree"],
+                "verdict": "accept",
+                "findings": [],
+            }
+        }
+        with patch.object(
+            reviewer_workspace,
+            "_run_native_process",
+            return_value=subprocess.CompletedProcess([], 0, native_events(judgment), ""),
+        ):
+            receipt = reviewer_workspace.run_native_reviewer(
+                Path(str(created["workspace_path"])),
+                Path(sys.executable),
+                model="test-model",
+                review_instructions="Review the frozen product evidence.",
             )
-    runtime.validate_stage_evidence(
-        control,
-        packet["stage_review_context"],
-        packet,
-        frozen_control_evidence=frozen_control_evidence,
+        review = {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]}
+        runtime.publish_review(control, review, current_target_identity=identity)
+
+    request = json.loads(
+        Path(receipt["receipt_path"]).with_suffix(".request.json").read_text()
     )
+    assert locator in {item["locator"] for item in request["evidence"]}
+    controller_path = Path(receipt["receipt_path"]).with_suffix(".controller.json")
+    controller_evidence = json.loads(controller_path.read_text())
+    assert locator not in {item["locator"] for item in controller_evidence}
 
     plan.write_text(
         plan.read_text(encoding="utf-8")
@@ -700,12 +756,7 @@ def test_stage_evidence_survives_plan_lifecycle_markers_but_not_product_changes(
     assert runtime.stage_target_identity(
         control, "integrated_implementation", plan, source_root=source
     ) == identity
-    runtime.validate_stage_evidence(
-        control,
-        packet["stage_review_context"],
-        packet,
-        frozen_control_evidence=frozen_control_evidence,
-    )
+    runtime._require_current_review(control, "integrated_implementation", identity)
 
     plan.write_text(
         plan.read_text(encoding="utf-8").replace(
@@ -713,13 +764,8 @@ def test_stage_evidence_survives_plan_lifecycle_markers_but_not_product_changes(
         ),
         encoding="utf-8",
     )
-    with pytest.raises(runtime.ReviewContractError, match="authority identity changed"):
-        runtime.validate_stage_evidence(
-            control,
-            packet["stage_review_context"],
-            packet,
-            frozen_control_evidence=frozen_control_evidence,
-        )
+    with pytest.raises(SystemExit, match="authority identity changed"):
+        runtime._require_current_review(control, "integrated_implementation", identity)
 
 
 def test_bounded_read_search_and_validators_are_allowed(review_roots: tuple[Path, Path, Path]) -> None:
