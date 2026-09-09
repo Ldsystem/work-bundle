@@ -836,25 +836,7 @@ def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any])
             # valid replacement review for the actual current artifact.
             if value["stage"] != stage or value.get("target_identity") != identity:
                 continue
-            record = _validated_review_envelope(value)
-            if record.review_mode == "repair":
-                frontier = record.repair_frontier
-                assert frontier is not None
-                prior = historical.get(str(frontier["prior_review_id"]))
-                if prior is None:
-                    raise ReviewContractError("repair review predecessor is missing")
-                if value.get("previous_review") != prior:
-                    raise ReviewContractError(
-                        "repair review does not carry the exact stored predecessor"
-                    )
-            elif record.review_reset is not None:
-                prior = historical.get(str(record.review_reset["prior_review_id"]))
-                if prior is None:
-                    raise ReviewContractError("initial review reset predecessor is missing")
-                if value.get("previous_review") != prior:
-                    raise ReviewContractError(
-                        "initial review reset does not carry the exact stored predecessor"
-                    )
+            record = _validate_stored_stage_chain(value, historical)
             if record.review_id in review_ids:
                 raise ReviewContractError("stage review IDs must be globally unique")
             review_ids.add(record.review_id)
@@ -1294,6 +1276,70 @@ def _validated_review_envelope(value: Mapping[str, Any]) -> StageReviewV1:
     return validate_review_sequence(envelope)
 
 
+def _bounded_stage_predecessor(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one stored predecessor without recursively embedding its history."""
+
+    return {key: item for key, item in value.items() if key != "previous_review"}
+
+
+def _stage_review_predecessor_id(record: StageReviewV1) -> str | None:
+    if record.review_mode == "repair":
+        assert record.repair_frontier is not None
+        return str(record.repair_frontier["prior_review_id"])
+    if record.review_reset is not None:
+        return str(record.review_reset["prior_review_id"])
+    return None
+
+
+def _validate_stored_stage_chain(
+    value: Mapping[str, Any],
+    historical: Mapping[str, Mapping[str, Any]],
+    *,
+    visiting: frozenset[str] = frozenset(),
+) -> StageReviewV1:
+    """Validate bounded predecessor projections against complete stored history."""
+
+    record = _validated_review_envelope(value)
+    review_id = record.review_id
+    if review_id in visiting:
+        raise ReviewContractError("stage review predecessor chain contains a cycle")
+    predecessor_id = _stage_review_predecessor_id(record)
+    if predecessor_id is None:
+        return record
+    predecessor = historical.get(predecessor_id)
+    if predecessor is None:
+        raise ReviewContractError("stage re-review predecessor is missing")
+    _validate_stored_stage_chain(
+        predecessor,
+        historical,
+        visiting=visiting | {review_id},
+    )
+    supplied = value.get("previous_review")
+    if supplied != _bounded_stage_predecessor(predecessor):
+        raise ReviewContractError(
+            "stage re-review predecessor projection does not match stored predecessor"
+        )
+    return record
+
+
+def _stored_stage_history(root: Path, stage: str) -> dict[str, Mapping[str, Any]]:
+    review_root = root.expanduser().resolve() / ".work-bundle/orchestration/reviews"
+    historical: dict[str, Mapping[str, Any]] = {}
+    for path in sorted(review_root.rglob("*")):
+        if path.suffix not in {".json", ".yaml", ".yml"} or not path.is_file():
+            continue
+        if not path.resolve().is_relative_to(review_root.resolve()):
+            raise ReviewContractError("review record escapes review store")
+        value = _read_document(path)
+        if not isinstance(value, dict) or value.get("stage") != stage or "review_id" not in value:
+            continue
+        review_id = str(value["review_id"])
+        if review_id in historical:
+            raise ReviewContractError("stage review IDs must be globally unique")
+        historical[review_id] = value
+    return historical
+
+
 def _review_store_path(root: Path, review_id: str) -> Path:
     store = root.expanduser().resolve() / ".work-bundle/orchestration/reviews"
     path = (store / f"{_identifier(review_id, 'review_id')}.json").resolve(strict=False)
@@ -1312,6 +1358,10 @@ def publish_review(
 
     record = dict(_mapping(review, "review publication"))
     validated = _validated_review_envelope(record)
+    if record.get("review_target_kind", "stage") == "stage" and _stage_review_predecessor_id(validated):
+        validated = _validate_stored_stage_chain(
+            record, _stored_stage_history(root, validated.stage)
+        )
     current = dict(_target_identity(current_target_identity, "current_target_identity"))
     if validated.target_identity != current:
         raise ReviewContractError("review publication target is not current")
@@ -1352,6 +1402,10 @@ def load_stored_review(
         raise ReviewContractError("stored review digest mismatch")
     record = dict(_mapping(json.loads(raw), "stored review"))
     validated = _validated_review_envelope(record)
+    if record.get("review_target_kind", "stage") == "stage" and _stage_review_predecessor_id(validated):
+        validated = _validate_stored_stage_chain(
+            record, _stored_stage_history(root, validated.stage)
+        )
     current = dict(_target_identity(current_target_identity, "current_target_identity"))
     if validated.target_identity != current:
         raise ReviewContractError("stored review target is not current")

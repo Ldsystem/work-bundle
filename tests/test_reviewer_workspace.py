@@ -425,16 +425,129 @@ def test_native_compact_integrated_repair_keeps_exact_predecessor_controller_onl
     assert stored["previous_review"] == previous
     runtime._require_current_review(control, "integrated_implementation", current_identity)
 
+    (source / "src" / "target.py").write_text(
+        "def target():\n    return 2\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(source), "-c", "user.name=Test",
+            "-c", "user.email=test@example.invalid", "commit", "-qm", "accepted reset",
+        ],
+        check=True,
+    )
+    reset_identity = runtime.stage_target_identity(
+        control, "integrated_implementation", target, source_root=source
+    )
+    reset_context = {
+        **previous_context,
+        "target_identity": reset_identity,
+        "agent_id": "reviewer-reset",
+        "execution_id": "reviewer-reset-run",
+        "review_mode": "initial",
+        "repair_frontier": None,
+        "review_reset": {
+            "prior_review_id": review["review_id"],
+            "reason_class": "acceptance",
+            "reason": "Accepted source identity changed.",
+        },
+        "previous_review": runtime._bounded_stage_predecessor(review),
+    }
+    nested_context = {**reset_context, "previous_review": review}
+    with pytest.raises(ReviewerWorkspaceError, match="STAGE_CONTEXT_INVALID"):
+        build_direct_evidence_packet(
+            source_root=source,
+            control_root=control,
+            protected_roots=[control / "credentials"],
+            artifacts=["control:.work-bundle/orchestration/plan/active/plan.md"],
+            search_roots=[], validators=[], sentinels=[], network_state="denied",
+            stage_review_context=nested_context,
+        )
+    required, missing = runtime.stage_evidence_requirements(
+        control, "integrated_implementation", target
+    )
+    assert missing == []
+    required.update({
+        item["locator"]: "source_tree"
+        for item in runtime.source_snapshot_entries(source)
+    })
+    reset_packet = build_direct_evidence_packet(
+        source_root=source,
+        control_root=control,
+        protected_roots=[control / "credentials"],
+        artifacts=list(required),
+        search_roots=[], validators=[], sentinels=[], network_state="denied",
+        stage_review_context=reset_context,
+    )
+    reset_created = create_reviewer_workspace(
+        runtime.reviewer_runtime_root(control), "review-integrated-reset", reset_packet
+    )
+    reset_judgment = {"task_review": {
+        "reviewed_head": reset_identity["source_tree"],
+        "verdict": "accept",
+        "findings": [],
+    }}
+    with patch.object(
+        reviewer_workspace,
+        "_run_native_process",
+        return_value=subprocess.CompletedProcess([], 0, native_events(reset_judgment), ""),
+    ):
+        reset_receipt = reviewer_workspace.run_native_reviewer(
+            Path(str(reset_created["workspace_path"])), Path(sys.executable),
+            model="test-model", review_instructions="Review the current accepted product evidence.",
+        )
+    reset_request = json.loads(
+        Path(reset_receipt["receipt_path"]).with_suffix(".request.json").read_text()
+    )
+    assert "previous_review" not in reset_request["review_input"]
+    reset_review = {
+        **reset_receipt["review_result"],
+        "reviewer_run": reset_receipt["reviewer_run"],
+    }
+    assert reset_review["previous_review"] == runtime._bounded_stage_predecessor(review)
+    reset_reference = runtime.publish_review(
+        control, reset_review, current_target_identity=reset_identity
+    )
+    runtime.load_stored_review(
+        control, reset_reference, current_target_identity=reset_identity
+    )
+    runtime._require_current_review(
+        control, "integrated_implementation", reset_identity
+    )
+
+    chain = {
+        previous["review_id"]: previous,
+        review["review_id"]: review,
+        reset_review["review_id"]: reset_review,
+    }
+    forged = json.loads(json.dumps(reset_review))
+    forged["previous_review"]["reviewer"]["agent_id"] = "forged-reviewer"
+    with pytest.raises(
+        runtime.ReviewContractError, match="projection does not match"
+    ):
+        runtime._validate_stored_stage_chain(forged, chain)
+    with pytest.raises(runtime.ReviewContractError, match="predecessor is missing"):
+        runtime._validate_stored_stage_chain(
+            reset_review, {previous["review_id"]: previous}
+        )
+    cyclic = json.loads(json.dumps(reset_review))
+    cyclic["review_reset"]["prior_review_id"] = cyclic["review_id"]
+    cyclic["previous_review"] = runtime._bounded_stage_predecessor(cyclic)
+    with pytest.raises(runtime.ReviewContractError, match="contains a cycle"):
+        runtime._validate_stored_stage_chain(
+            cyclic, {cyclic["review_id"]: cyclic}
+        )
+
     malformed = {
-        **review,
+        **reset_review,
         "review_id": "review-integrated-extra-history",
-        "previous_review": {**previous, "previous_review": previous},
+        "previous_review": {**review, "previous_review": previous},
     }
     (history / "review-integrated-extra-history.json").write_text(
         json.dumps(malformed), encoding="utf-8"
     )
     with pytest.raises(SystemExit, match="exactly one previous_review"):
-        runtime._require_current_review(control, "integrated_implementation", current_identity)
+        runtime._require_current_review(control, "integrated_implementation", reset_identity)
 
 
 def test_incomplete_stage_snapshot_fails_before_reviewer_process_launch(
