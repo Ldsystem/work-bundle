@@ -434,8 +434,8 @@ def _registered_repository_roots(workspace: Path) -> dict[str, Path]:
         # appear in this intersection.
         if candidate not in member_roots:
             continue
-        if repository_id in registered and registered[repository_id] != candidate:
-            raise SystemExit("acceptance-blocked: registered repository identity is ambiguous")
+        if repository_id in registered:
+            raise SystemExit("acceptance-blocked: registered repository identity is duplicated")
         registered[repository_id] = candidate
     return registered
 
@@ -448,22 +448,32 @@ def _validate_final_workspace_selectors(
         "execution_id": getattr(args, "execution_id", None),
         "runtime_root": getattr(args, "execution_runtime_root", None),
     }
-    for field, supplied in selectors.items():
-        if not supplied:
-            continue
-        if field == "runtime_root":
-            expected = Path(str(supplied)).expanduser().resolve()
-            matches = [
-                binding
-                for binding in bindings
-                if Path(str(binding.get(field) or "")).expanduser().resolve() == expected
-            ]
-        else:
-            matches = [binding for binding in bindings if str(binding.get(field) or "") == str(supplied)]
-        if not matches:
-            raise SystemExit(
-                f"acceptance-blocked: {field.replace('_', ' ')} selector conflicts with accepted task authority"
-            )
+    supplied = {field: value for field, value in selectors.items() if value}
+    if not supplied:
+        return
+
+    def matches(binding: dict[str, object]) -> bool:
+        for field, value in supplied.items():
+            actual = binding.get(field)
+            if field == "runtime_root":
+                if Path(str(actual or "")).expanduser().resolve() != Path(
+                    str(value)
+                ).expanduser().resolve():
+                    return False
+            elif str(actual or "") != str(value):
+                return False
+        return True
+
+    if any(matches(binding) for binding in bindings):
+        return
+    if len(supplied) == 1:
+        field = next(iter(supplied))
+        raise SystemExit(
+            f"acceptance-blocked: {field.replace('_', ' ')} selector conflicts with accepted task authority"
+        )
+    raise SystemExit(
+        "acceptance-blocked: selector tuple conflicts with accepted task authority"
+    )
 
 
 def _resolve_final_plan_workspace(

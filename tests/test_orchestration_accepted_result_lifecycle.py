@@ -373,6 +373,82 @@ def test_final_plan_workspace_rejects_conflict_or_missing_member(
         )
 
 
+def test_final_plan_workspace_rejects_selectors_split_across_accepted_bindings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    members = {
+        "work-bundle-main": tmp_path / "work-bundle-main",
+        "execution-flow": tmp_path / "execution-flow",
+        "work-bundle-mcp": tmp_path / "work-bundle-mcp",
+    }
+    _write_multi_repository_workspace(tmp_path, members)
+    rows = [
+        {
+            "type": "task",
+            "id": f"task-00{number}",
+            "plan_id": "plan-001",
+            "status": "Completed",
+            "path": f"task-00{number}.md",
+        }
+        for number in range(1, 3)
+    ]
+    monkeypatch.setattr(plans, "index_plans", lambda _args: rows)
+    monkeypatch.setattr(plans, "has_persisted_accepted_task_result", lambda *_args: True)
+    monkeypatch.setattr(
+        plans,
+        "artifact_path_from_row",
+        lambda row, _args: tmp_path / str(row["path"]),
+    )
+    monkeypatch.setattr(
+        plans,
+        "_load_current_task_acceptance",
+        lambda _args, path: (
+            {
+                "workspace_id": "workspace-A" if path.stem.endswith("1") else "workspace-B",
+                "execution_id": "execution-A" if path.stem.endswith("1") else "execution-B",
+                "repository_id": "work-bundle-main",
+                "runtime_root": str(
+                    tmp_path / ("runtime-A" if path.stem.endswith("1") else "runtime-B")
+                ),
+            },
+            {"schema": "accepted-task-result-v1"},
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="selector tuple conflicts"):
+        plans._resolve_final_plan_workspace(
+            argparse.Namespace(
+                project_root=str(tmp_path),
+                workspace_id="workspace-A",
+                execution_id="execution-B",
+                repository_id=None,
+                execution_runtime_root=str(tmp_path / "runtime-A"),
+            ),
+            "plan-001",
+        )
+
+
+def test_registered_repository_roots_rejects_duplicate_identity_at_same_root(
+    tmp_path: Path,
+) -> None:
+    shared = tmp_path / "work-bundle-main"
+    members = {
+        "work-bundle-main": shared,
+        "execution-flow": tmp_path / "execution-flow",
+    }
+    _write_multi_repository_workspace(tmp_path, members)
+    metadata = tmp_path / ".work-bundle/project.yaml"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8")
+        + "  - id: work-bundle-main\n"
+        + f"    project_root: {shared}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="registered repository identity is duplicated"):
+        plans._registered_repository_roots(tmp_path)
+
+
 def test_archive_knowledge_gate_aggregates_new_results_and_bounds_legacy_bridge(
     tmp_path: Path,
 ) -> None:
