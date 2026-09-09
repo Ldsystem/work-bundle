@@ -310,9 +310,11 @@ def _write_mixed_layout_plan(root: Path) -> tuple[Path, Path, Path, Path, Path]:
     phase_nested = plan_dir / "phase-002.md"
     task_nested = plan_dir / "phase-002/task-002.md"
     task_nested.parent.mkdir(parents=True)
-    plan.write_text("---\nid: plan-direct\nstatus: Completed\n---\n", encoding="utf-8")
+    plan.write_text(
+        '---\nid: "plan-direct"\nstatus: "Completed"\n---\n', encoding="utf-8"
+    )
     phase_direct.write_text(
-        "---\nid: phase-001\nplan_id: plan-direct\nstatus: Completed\n---\n",
+        "---\nid: 'phase-001'\nplan_id: \"plan-direct\"\nstatus: 'Completed'\n---\n",
         encoding="utf-8",
     )
     phase_nested.write_text(
@@ -320,13 +322,13 @@ def _write_mixed_layout_plan(root: Path) -> tuple[Path, Path, Path, Path, Path]:
         encoding="utf-8",
     )
     task_direct.write_text(
-        "---\nid: task-001\nplan_id: plan-direct\nphase_id: phase-001\n"
-        "status: Planned\ndepends_on: []\n---\n",
+        '---\nid: "task-001"\nplan_id: "plan-direct"\nphase_id: "phase-001"\n'
+        'status: "Planned"\ndepends_on: []\n---\n',
         encoding="utf-8",
     )
     task_nested.write_text(
-        "---\nid: task-002\nplan_id: plan-direct\nphase_id: phase-002\n"
-        "status: Completed\ndepends_on: []\n---\n",
+        "---\nid: 'task-002'\nplan_id: 'plan-direct'\nphase_id: 'phase-002'\n"
+        "status: 'Completed'\ndepends_on: []\n---\n",
         encoding="utf-8",
     )
     return plan, phase_direct, task_direct, phase_nested, task_nested
@@ -393,7 +395,9 @@ def test_phase_and_archive_consumers_include_direct_tasks(
         plans._assert_phase_tasks_accepted(args, "phase-001", "plan-direct")
 
     task_direct.write_text(
-        task_direct.read_text(encoding="utf-8").replace("status: Planned", "status: Completed"),
+        task_direct.read_text(encoding="utf-8").replace(
+            'status: "Planned"', 'status: "Completed"'
+        ),
         encoding="utf-8",
     )
     accepted: list[str] = []

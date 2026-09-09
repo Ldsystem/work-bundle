@@ -599,6 +599,29 @@ def _assert_archive_plan_acceptance(
         _assert_archive_command_state_neutral(command, workspace)
 
 
+def _index_front_matter_scalars(
+    front_matter: dict[str, object], path: Path, args: argparse.Namespace
+) -> dict[str, object]:
+    """Decode quoted scalar values only for the flat plan index projection."""
+
+    normalized = dict(front_matter)
+    for key, value in front_matter.items():
+        if (
+            not isinstance(value, str)
+            or len(value) < 2
+            or value[0] != value[-1]
+            or value[0] not in {"'", '"'}
+        ):
+            continue
+        parsed = _parse_scalar(value)
+        if not isinstance(parsed, str):
+            raise SystemExit(
+                f"Invalid quoted plan index scalar {key}: {rel(path, args)}"
+            )
+        normalized[key] = parsed
+    return normalized
+
+
 def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
     root = orchestration_root(args) / "plan"
     rows = []
@@ -606,6 +629,7 @@ def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
         fm, _ = read_front_matter(path)
         if not fm:
             continue
+        fm = _index_front_matter_scalars(fm, path, args)
         rows.append(
             {
                 "type": "plan",
@@ -623,6 +647,7 @@ def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
         fm, _ = read_front_matter(path)
         if not fm:
             continue
+        fm = _index_front_matter_scalars(fm, path, args)
         rows.append(
             {
                 "type": "phase",
@@ -645,6 +670,7 @@ def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
         fm, _ = read_front_matter(path)
         if not fm:
             continue
+        fm = _index_front_matter_scalars(fm, path, args)
         direct_layout = path.parent.parent.name in {"active", "archived"}
         if direct_layout and (
             fm.get("plan_id") != path.parent.name or not fm.get("phase_id")
