@@ -433,14 +433,24 @@ def _native_review_input(
             for item in artifacts
             if isinstance(item, dict) and item.get("locator") not in controller_only
         ]
-        return {
+        result = {
             "target_identity": context["target_identity"],
             "artifacts": artifacts,
             "product_evidence": _integrated_product_evidence(packet, evidence),
         }
+        if context.get("repair_frontier") is not None:
+            result["repair_frontier"] = context["repair_frontier"]
+        return result
     if key == "task_review_context" or context.get("stage") == "integrated_implementation":
         return {"target_identity": context["target_identity"], "artifacts": artifacts}
-    return {"stage": context["stage"], "target_identity": context["target_identity"], "artifacts": artifacts}
+    result = {
+        "stage": context["stage"],
+        "target_identity": context["target_identity"],
+        "artifacts": artifacts,
+    }
+    if context.get("repair_frontier") is not None:
+        result["repair_frontier"] = context["repair_frontier"]
+    return result
 
 
 def run_native_reviewer(workspace: Path, executable: Path, *, model: str, review_instructions: str) -> dict[str, object]:
@@ -524,10 +534,17 @@ def _review_runtime():
     return module
 
 
-def _validate_stage_context(context: object) -> dict[str, object]:
+def _validate_stage_context(
+    context: object, *, require_re_review_predecessor: bool = False,
+) -> dict[str, object]:
     fields = {"stage", "target_identity", "target_locator", "agent_id", "capability", "execution_id", "evidence_mode"}
     repair_fields = {"review_mode", "review_target_kind", "repair_frontier", "review_reset"}
-    if not isinstance(context, dict) or frozenset(context) not in {frozenset(fields), frozenset(fields | repair_fields)}:
+    allowed = {
+        frozenset(fields),
+        frozenset(fields | repair_fields),
+        frozenset(fields | repair_fields | {"previous_review"}),
+    }
+    if not isinstance(context, dict) or frozenset(context) not in allowed:
         raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID")
     if (context["stage"] not in {"specification", "plan", "integrated_implementation"}
             or context["capability"] not in {"standard", "judgment"}
@@ -545,6 +562,15 @@ def _validate_stage_context(context: object) -> dict[str, object]:
                     raise ValueError("repair reset")
             elif context["repair_frontier"] is not None:
                 raise ValueError("initial frontier")
+            re_review = mode == "repair" or context["review_reset"] is not None
+            if "previous_review" in context:
+                previous = context.get("previous_review")
+                if not isinstance(previous, dict) or "previous_review" in previous:
+                    raise ValueError("re-review predecessor")
+            if require_re_review_predecessor and re_review and "previous_review" not in context:
+                raise ValueError("missing re-review predecessor")
+            if not re_review and "previous_review" in context:
+                raise ValueError("unexpected predecessor")
         except (ValueError, TypeError):
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID") from None
     return context
@@ -755,7 +781,11 @@ def build_direct_evidence_packet(
         raise ReviewerWorkspaceError("WB_REVIEW_CONTEXT_AMBIGUOUS")
     stage_fields = {}
     if stage_review_context is not None:
-        context = dict(_validate_stage_context(stage_review_context))
+        context = dict(
+            _validate_stage_context(
+                stage_review_context, require_re_review_predecessor=True
+            )
+        )
         manifest = _review_runtime().stage_evidence_manifest(control_root, source_root, context, records)
         # This runtime denies live source access. Only a complete frozen closure
         # is a reproducible snapshot; a caller's direct-source label grants nothing.
@@ -803,11 +833,12 @@ def _public_packet(packet: dict[str, object]) -> dict[str, object]:
             if isinstance(item, dict)
         ],
     }
-    context = result.get("task_review_context")
-    if isinstance(context, dict) and "previous_review" in context:
-        result["task_review_context"] = {
-            key: value for key, value in context.items() if key != "previous_review"
-        }
+    for context_key in ("stage_review_context", "task_review_context"):
+        context = result.get(context_key)
+        if isinstance(context, dict) and "previous_review" in context:
+            result[context_key] = {
+                key: value for key, value in context.items() if key != "previous_review"
+            }
     return result
 
 
@@ -1005,6 +1036,14 @@ def create_reviewer_workspace(
         sentinel_digest = _sentinel_digest(
             effective_source, effective_control, effective_protected, list(public_packet.get("sentinels", []))
         )
+        previous_review_state = {}
+        for context_key, state_key in (
+            ("task_review_context", "task_review_previous_review"),
+            ("stage_review_context", "stage_review_previous_review"),
+        ):
+            context = packet.get(context_key)
+            if isinstance(context, dict) and "previous_review" in context:
+                previous_review_state[state_key] = context["previous_review"]
         state = {
             "schema": "reviewer-workspace-state-v1",
             "owner": "work-bundle",
@@ -1021,9 +1060,7 @@ def create_reviewer_workspace(
                 effective_source, effective_control, effective_protected
             ),
             "status": "active",
-            **({"task_review_previous_review": packet["task_review_context"]["previous_review"]}
-               if isinstance(packet.get("task_review_context"), dict)
-               and "previous_review" in packet["task_review_context"] else {}),
+            **previous_review_state,
         }
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1290,7 +1327,10 @@ def _task_product_judgment_review(
     return result
 
 
-def _stage_product_judgment_review(judgment, *, review_id, context, packet, started_at, completed_at):
+def _stage_product_judgment_review(
+    judgment, *, review_id, context, packet, started_at, completed_at,
+    previous_review=None,
+):
     """Compose native stage authority without asking the reviewer to invent it."""
     if not isinstance(judgment, dict) or set(judgment) != {"stage_review"}:
         raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_INVALID")
@@ -1299,7 +1339,7 @@ def _stage_product_judgment_review(judgment, *, review_id, context, packet, star
             or product["target_identity"] != context["target_identity"]
             or product["verdict"] not in TERMINAL_VERDICTS or not isinstance(product["findings"], list)):
         raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_INVALID")
-    return {
+    result = {
         "review_id": review_id, "stage": context["stage"], "target_identity": context["target_identity"],
         "review_mode": context.get("review_mode", "initial"), "review_target_kind": "stage",
         "repair_frontier": context.get("repair_frontier"), "review_reset": context.get("review_reset"),
@@ -1313,6 +1353,11 @@ def _stage_product_judgment_review(judgment, *, review_id, context, packet, star
         "started_at": started_at, "completed_at": completed_at,
         "staleness": {"is_stale": False, "reason": None, "supersedes": None},
     }
+    if context.get("review_mode", "initial") == "repair" or context.get("review_reset") is not None:
+        if not isinstance(previous_review, dict):
+            raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTROL_INPUT_INVALID")
+        result["previous_review"] = previous_review
+    return result
 
 
 def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object]:
@@ -1414,17 +1459,22 @@ def _run_reviewer(
                 _task_product_judgment_review(
                     worker_output, review_id=review_id, context=context, packet=packet,
                     started_at=started_at, completed_at=receipt["completed_at"],
-                    previous_review=state.get("task_review_previous_review"),
+                    previous_review=state.get(
+                        "task_review_previous_review"
+                        if context_key == "task_review_context"
+                        else "stage_review_previous_review"
+                    ),
                     integrated_stage=compact_integrated,
                 )
                 if context_key == "task_review_context" or compact_integrated
                 else (_stage_product_judgment_review(
                     worker_output, review_id=review_id, context=context, packet=packet,
-                    started_at=started_at, completed_at=receipt["completed_at"])
+                    started_at=started_at, completed_at=receipt["completed_at"],
+                    previous_review=state.get("stage_review_previous_review"))
                     if native else worker_output)
             )
             validated = (
-                _review_runtime().validate_stage_review(review)
+                _review_runtime()._validated_review_envelope(review)
                 if context_key == "stage_review_context"
                 else _review_runtime().validate_task_acceptance_review(review)
             )

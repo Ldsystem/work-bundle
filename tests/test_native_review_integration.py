@@ -5,11 +5,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
 
 import pytest
+from reviewer_run_fixtures import bind_review_receipt
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +84,124 @@ def _persist_production_binding(
     return execution_context.load_task_execution_binding(control, plan_id, task_id)
 
 
+def _establish_reviewed_plan_authority(control: Path, plan_id: str) -> None:
+    orchestration = control / ".work-bundle/orchestration"
+    metadata = control / ".work-bundle/project.yaml"
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    metadata.write_text(
+        f"metadata_version: 3\nworkspace_root: {control}\nworkspace_mode: single-repository\n",
+        encoding="utf-8",
+    )
+    specification = orchestration / "spec/active/spec.md"
+    plan = orchestration / "plan/active/plan.md"
+    specification.parent.mkdir(parents=True, exist_ok=True)
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    specification.write_text(
+        "---\nid: spec-native\nstatus: verified\n"
+        "requirements: [{id: REQ-NATIVE, requirement: product.py defines VALUE as 1.}]\n"
+        "---\n- **REQ-NATIVE**: product.py defines VALUE as 1.\n",
+        encoding="utf-8",
+    )
+    plan.write_text(
+        f"---\nid: {plan_id}\nstatus: Planned\nsource_spec: [spec-native]\n---\nNative test plan.\n",
+        encoding="utf-8",
+    )
+    reviews = orchestration / "reviews"
+    reviews.mkdir(parents=True, exist_ok=True)
+    for stage, identity in (
+        ("specification", review_runtime.artifact_review_identity(specification)),
+        ("plan", review_runtime.plan_review_identity(control, plan)),
+    ):
+        record = {
+            "review_id": f"review-{stage}-{plan_id}",
+            "stage": stage,
+            "target_identity": identity,
+            "review_mode": "initial",
+            "review_target_kind": "stage",
+            "repair_frontier": None,
+            "review_reset": None,
+            "reviewer": {
+                "agent_id": f"reviewer-{stage}", "capability": "judgment",
+                "authorship": "none", "repair_participation": "none",
+                "decision_participation": "none", "deliberation_participation": "none",
+                "context_origin": "direct_source",
+            },
+            "evidence": {
+                "mode": "direct", "capabilities": ["source inspection"],
+                "unavailable_evidence": [], "commands": [], "artifacts": [],
+            },
+            "verdict": "accepted", "findings": [],
+            "started_at": "2026-09-09T00:00:00Z",
+            "completed_at": "2026-09-09T00:01:00Z",
+            "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+        }
+        (reviews / f"{stage}.json").write_text(
+            json.dumps(bind_review_receipt(control, record)), encoding="utf-8"
+        )
+
+
+def _harness_validation(control: Path, source: Path) -> tuple[dict[str, object], Path]:
+    counter = control / "harness-validation-count.txt"
+    program = control / "validate-product.py"
+    program.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "counter = Path(sys.argv[2])\n"
+        "count = int(counter.read_text()) if counter.exists() else 0\n"
+        "counter.write_text(str(count + 1))\n"
+        "namespace = {}\n"
+        "exec(Path(sys.argv[1]).read_text(), namespace)\n"
+        "raise SystemExit(0 if namespace.get('VALUE') == 1 else 1)\n",
+        encoding="utf-8",
+    )
+    command = shlex.join(
+        [sys.executable, str(program), str(source / "product.py"), str(counter)]
+    )
+    return {
+        "id": "VAL-NATIVE",
+        "kind": "process",
+        "command": command,
+        "invariant_ids": ["INV-NATIVE"],
+        "capability_reason": "The harness process directly checks the required product value.",
+        "proves": "REQ-NATIVE",
+        "expected": "passed",
+        "evidence_reuse": {"mode": "deterministic", "max_age_seconds": 3600},
+    }, counter
+
+
+def _validation_capability(task_id: str) -> dict[str, object]:
+    return {
+        "result": "mapped",
+        "reason": "The harness command directly falsifies an incorrect product value.",
+        "invariants": [{
+            "id": "INV-NATIVE",
+            "source_ids": ["REQ-NATIVE"],
+            "invariant": "product.py defines VALUE as 1.",
+            "boundary": "product.py",
+            "oracle": "VAL-NATIVE",
+            "capability_reason": "The harness imports and checks the exact value.",
+            "freshness": "current_task_batch",
+            "task_id": task_id,
+            "evidence_ids": ["VAL-NATIVE"],
+            "closure_result": "pending",
+        }],
+    }
+
+
+def _invocation_counts(
+    executor_events: list[dict[str, object]], receipt: dict[str, object], counter: Path,
+) -> tuple[int, int, int]:
+    review_events = [
+        json.loads(line)
+        for line in Path(str(receipt["receipt_path"])).with_suffix(".stdout.jsonl").read_text().splitlines()
+    ]
+    return (
+        sum(event.get("type") == "thread.started" for event in executor_events),
+        sum(event.get("type") == "thread.started" for event in review_events),
+        int(counter.read_text(encoding="utf-8")),
+    )
+
+
 def _native_events(result: dict[str, object]) -> str:
     events = [
         {
@@ -124,41 +244,30 @@ def test_plugin_absent_native_review_publishes_once_then_materializes_initial_ac
     )
     head = _git(source, "rev-parse", "HEAD")
     tree = _git(source, "rev-parse", "HEAD^{tree}")
+    _establish_reviewed_plan_authority(control, "plan-native")
+    validation, validation_counter = _harness_validation(control, source)
 
     task = {
         "plan_id": "plan-native",
         "task_id": "task-native",
         "source_ids": ["REQ-NATIVE"],
+        "goal": "Create the requested product constant",
+        "requirements": ["product.py must define VALUE with the integer value 1."],
+        "constraints": ["The implementation must remain within product.py."],
         "truth_basis": {"decision_authority": []},
         "files": {"read": ["product.py"], "write": ["product.py"], "forbidden": []},
-        "validation": [
-            {
-                "id": "VAL-NATIVE",
-                "kind": "process",
-                "command": "python -m pytest tests/product.py -q",
-                "invariant_ids": ["INV-NATIVE"],
-            }
-        ],
+        "validation": [validation],
+        "evidence_capability": _validation_capability("task-native"),
         "review_required": True,
         "workspace": {"root": str(control)},
     }
-    binding = {
-        "plan_id": "plan-native",
-        "task_id": "task-native",
-        "workspace_id": "workspace-native",
-        "execution_id": "executor-run",
-        "repository_id": "repo-native",
-        "execution_path": str(source),
-        "control_root": str(control),
-        "git_identity": {"branch_ref": "refs/heads/main"},
-        "baseline": {"head": head, "tree": tree},
-        "ownership": {
-            "binding_id": "binding:plan-native:task-native",
-            "state": "active",
-            "current_owner": "task-native",
-            "history": [{"event": "created"}],
-        },
-    }
+    _persist_production_binding(
+        control,
+        source,
+        task,
+        execution_id="executor-run",
+        baseline={"head": head, "tree": tree},
+    )
     original_handoff = {
         "type": "executor-result",
         "related": {"plan": "plan-native", "task": "task-native"},
@@ -178,27 +287,48 @@ def test_plugin_absent_native_review_publishes_once_then_materializes_initial_ac
             "run_id": "executor-run",
             "mechanism": "host-native",
         },
+        "repository": [{
+            "root": str(source.resolve()),
+            "target_kind": "git-backed",
+            "preflight_kind": "git-clean-worktree",
+            "baseline": "initial",
+            "status": "clean",
+        }],
+        "codegraph": [{
+            "root": str(source.resolve()),
+            "applicable": False,
+            "up_to_date": False,
+            "reason": "no-index",
+        }],
+        "evidence_closure": {
+            "result": "passed",
+            "invariants": [{
+                "id": "INV-NATIVE",
+                "boundary": "product.py",
+                "freshness": "current_task_batch",
+                "evidence_ids": ["VAL-NATIVE"],
+                "closure_result": "passed",
+                "repair_owner": None,
+            }],
+        },
         "validation": {
             "commands": [
-                {
-                    "command": "python -m pytest tests/product.py -q",
-                    "result": "passed",
+                    {
+                        "id": "VAL-NATIVE",
+                        "command": validation["command"],
+                        "invariant_ids": ["INV-NATIVE"],
+                        "result": "passed",
                 }
             ]
         },
     }
-    validated = {
-        "result_state": "completed",
-        "knowledge_disposition": original_handoff["knowledge_disposition"],
-        "task_ownership": original_handoff["delegation_evidence"],
-        "observed_validation": [
-            {
-                "id": "VAL-NATIVE",
-                "observation_id": "observation-native",
-                "result": "passed",
-            }
-        ],
-    }
+    validated = execution_context.validate_executor_result_for_task(
+        original_handoff,
+        task,
+        observe=True,
+        mutation_events=[{"actor_kind": "subagent", "paths": ["product.py"]}],
+        preparing_review=True,
+    )
     handoff_before_review = deepcopy(original_handoff)
     target_identity = {
         "artifact_id": "task-native",
@@ -219,11 +349,17 @@ def test_plugin_absent_native_review_publishes_once_then_materializes_initial_ac
     }
     protected = control / ".protected"
     protected.mkdir()
+    authority = control / "task-authority.json"
+    authority.write_text(json.dumps(task, sort_keys=True), encoding="utf-8")
     packet = reviewer_workspace.build_direct_evidence_packet(
         source_root=source,
         control_root=control,
         protected_roots=[protected],
-        artifacts=["source:product.py"],
+        artifacts=[
+            "source:product.py",
+            "control:task-authority.json",
+            "control:.work-bundle/runtime/completion-provenance/completion-provenance-v1.json",
+        ],
         search_roots=[],
         validators=[],
         sentinels=[],
@@ -244,42 +380,29 @@ def test_plugin_absent_native_review_publishes_once_then_materializes_initial_ac
         return subprocess.CompletedProcess([], 0, _native_events(judgment), "")
 
     monkeypatch.setattr(reviewer_workspace, "_run_native_process", run_native)
-    monkeypatch.setattr(
-        execution_context,
-        "load_task_execution_binding",
-        lambda *_args: binding,
-    )
-    persisted: dict[str, object] = {}
-
-    def persist(value, _root):
-        persisted.update(value)
-        binding.clear()
-        binding.update(value)
-
-    monkeypatch.setattr(
-        execution_context,
-        "_persist_binding",
-        persist,
-    )
 
     receipt = reviewer_workspace.run_native_reviewer(
         Path(str(created["workspace_path"])),
         Path(sys.executable),
         model="test-model",
-        review_instructions="Review the supplied task source and return a task judgment.",
+        review_instructions=(
+            "Judge the task authority, source, and harness-owned validation evidence. Return repair "
+            "for unmet requirements; otherwise return accept."
+        ),
     )
     review = {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]}
     reference = review_runtime.publish_review(
         control, review, current_target_identity=target_identity
     )
+    fixture_executor_events = [{"type": "thread.started", "thread_id": "executor-run"}]
+    counts_after_publication = _invocation_counts(
+        fixture_executor_events, receipt, validation_counter
+    )
     assert review_runtime.publish_review(
         control, review, current_target_identity=target_identity
     ) == reference
-
-    monkeypatch.setattr(
-        execution_context,
-        "_claim_bound_validation_observations",
-        lambda *_args, **_kwargs: pytest.fail("current validation must not be replayed"),
+    counts_after_publication_retry = _invocation_counts(
+        fixture_executor_events, receipt, validation_counter
     )
     accepted = execution_context.materialize_accepted_task_review(
         control,
@@ -294,13 +417,22 @@ def test_plugin_absent_native_review_publishes_once_then_materializes_initial_ac
         validated_executor_result=validated,
     )
     _, consumed = execution_context.load_current_accepted_task_result(control, task)
+    counts_after_consumption = _invocation_counts(
+        fixture_executor_events, receipt, validation_counter
+    )
+    stored = execution_context.load_task_execution_binding(control, "plan-native", "task-native")
 
     assert native_calls == 1
+    assert counts_after_publication == counts_after_publication_retry == counts_after_consumption == (
+        1, 1, 1
+    )
     assert original_handoff == handoff_before_review
-    assert accepted == consumed == persisted["accepted_result"]
+    assert accepted == consumed == stored["accepted_result"]
     assert accepted["baseline_identity"] == {"head": head, "tree": tree}
     assert accepted["review_id"] == review["review_id"]
-    assert accepted["validation_evidence_ids"] == ["observation-native"]
+    assert accepted["validation_evidence_ids"] == [
+        validated["observed_validation"][0]["observation_id"]
+    ]
     assert accepted["owner_identity"]["agent_id"] == "executor-agent"
     assert review["reviewer"]["agent_id"] != accepted["owner_identity"]["agent_id"]
     request = json.loads(Path(receipt["receipt_path"]).with_suffix(".request.json").read_text())
@@ -339,7 +471,7 @@ def test_missing_native_host_capability_fails_before_review_dispatch(
 
 
 def test_incorrect_executor_result_cannot_reach_acceptance_by_matching_review_shape(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     source = tmp_path / "source"
     control = tmp_path / "control"
@@ -360,16 +492,19 @@ def test_incorrect_executor_result_cannot_reach_acceptance_by_matching_review_sh
     )
     head = _git(source, "rev-parse", "HEAD")
     tree = _git(source, "rev-parse", "HEAD^{tree}")
+    _establish_reviewed_plan_authority(control, "plan-negative")
+    validation, validation_counter = _harness_validation(control, source)
     task = {
         "plan_id": "plan-negative",
         "task_id": "task-negative",
-        "source_ids": ["REQ-VALUE"],
+        "source_ids": ["REQ-NATIVE"],
         "goal": "Produce the required product value",
         "requirements": ["product.py must define VALUE with the integer value 1."],
         "constraints": [],
-        "truth_basis": {"decision_authority": ["REQ-VALUE is authoritative."]},
+        "truth_basis": {"decision_authority": ["REQ-NATIVE is authoritative."]},
         "files": {"read": ["product.py"], "write": ["product.py"], "forbidden": []},
-        "validation": [],
+        "validation": [validation],
+        "evidence_capability": _validation_capability("task-negative"),
         "review_required": True,
         "workspace": {"root": str(control)},
     }
@@ -384,7 +519,7 @@ def test_incorrect_executor_result_cannot_reach_acceptance_by_matching_review_sh
         "type": "executor-result",
         "related": {"plan": "plan-negative", "task": "task-negative"},
         "result": {"state": "completed", "summary": "Produced the requested value."},
-        "changes": {"files": [{"path": "outside-scope.py", "change": "created"}]},
+        "changes": {"files": [{"path": "product.py", "change": "updated"}]},
         "task_fit_check": {"task": "task-negative", "result": "clean"},
         "knowledge_disposition": {
             "action": "none", "reason": "No durable authority changed.", "affected_authority": [],
@@ -397,20 +532,49 @@ def test_incorrect_executor_result_cannot_reach_acceptance_by_matching_review_sh
             "run_id": "executor-negative",
             "mechanism": "host-native",
         },
-        "validation": {"commands": []},
+        "repository": [{
+            "root": str(source.resolve()), "target_kind": "git-backed",
+            "preflight_kind": "git-clean-worktree", "baseline": "initial", "status": "clean",
+        }],
+        "codegraph": [{
+            "root": str(source.resolve()), "applicable": False,
+            "up_to_date": False, "reason": "no-index",
+        }],
+        "evidence_closure": {
+            "result": "passed",
+            "invariants": [{
+                "id": "INV-NATIVE", "boundary": "product.py",
+                "freshness": "current_task_batch", "evidence_ids": ["VAL-NATIVE"],
+                "closure_result": "passed", "repair_owner": None,
+            }],
+        },
+        "validation": {"commands": [{
+            "id": "VAL-NATIVE", "command": validation["command"],
+            "invariant_ids": ["INV-NATIVE"], "result": "passed",
+        }]},
     }
+    review_calls = 0
 
-    with pytest.raises(SystemExit, match="outside task write scope"):
+    def unexpected_review(*_args):
+        nonlocal review_calls
+        review_calls += 1
+        raise AssertionError("failed harness validation must block review dispatch")
+
+    monkeypatch.setattr(reviewer_workspace, "_run_native_process", unexpected_review)
+
+    with pytest.raises(SystemExit, match="does not match observed failed"):
         execution_context.validate_executor_result_for_task(
             handoff,
             task,
             observe=True,
-            mutation_events=[{"actor_kind": "subagent", "paths": ["outside-scope.py"]}],
+            mutation_events=[{"actor_kind": "subagent", "paths": ["product.py"]}],
             preparing_review=True,
         )
     stored = execution_context.load_task_execution_binding(
         control, "plan-negative", "task-negative"
     )
+    assert validation_counter.read_text(encoding="utf-8") == "1"
+    assert review_calls == 0
     assert "accepted_result" not in stored
 
 
@@ -523,6 +687,8 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
     )
     head = _git(source, "rev-parse", "HEAD")
     tree = _git(source, "rev-parse", "HEAD^{tree}")
+    _establish_reviewed_plan_authority(control, "plan-native-live")
+    validation, validation_counter = _harness_validation(control, source)
 
     task = {
         "plan_id": "plan-native-live",
@@ -535,11 +701,12 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
             "decision_authority": ["The requested VALUE behavior is authoritative."],
         },
         "files": {"read": ["product.py"], "write": ["product.py"], "forbidden": []},
-        "validation": [],
+        "validation": [validation],
+        "evidence_capability": _validation_capability("task-native-live"),
         "review_required": True,
         "workspace": {"root": str(control)},
     }
-    binding = _persist_production_binding(
+    _persist_production_binding(
         control,
         source,
         task,
@@ -565,7 +732,36 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
             "run_id": executor_ids[0],
             "mechanism": "host-native",
         },
-        "validation": {"commands": []},
+        "repository": [{
+            "root": str(source.resolve()),
+            "target_kind": "git-backed",
+            "preflight_kind": "git-clean-worktree",
+            "baseline": "initial",
+            "status": "clean",
+        }],
+        "codegraph": [{
+            "root": str(source.resolve()),
+            "applicable": False,
+            "up_to_date": False,
+            "reason": "no-index",
+        }],
+        "evidence_closure": {
+            "result": "passed",
+            "invariants": [{
+                "id": "INV-NATIVE",
+                "boundary": "product.py",
+                "freshness": "current_task_batch",
+                "evidence_ids": ["VAL-NATIVE"],
+                "closure_result": "passed",
+                "repair_owner": None,
+            }],
+        },
+        "validation": {"commands": [{
+            "id": "VAL-NATIVE",
+            "command": validation["command"],
+            "invariant_ids": ["INV-NATIVE"],
+            "result": "passed",
+        }]},
     }
     validated = execution_context.validate_executor_result_for_task(
         handoff,
@@ -599,7 +795,11 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
         source_root=source,
         control_root=control,
         protected_roots=[protected],
-        artifacts=["source:product.py", "control:task-authority.json"],
+        artifacts=[
+            "source:product.py",
+            "control:task-authority.json",
+            "control:.work-bundle/runtime/completion-provenance/completion-provenance-v1.json",
+        ],
         search_roots=[],
         validators=[],
         sentinels=[],
@@ -625,9 +825,15 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
     reference = review_runtime.publish_review(
         control, review, current_target_identity=target_identity
     )
+    counts_after_publication = _invocation_counts(
+        executor_events, receipt, validation_counter
+    )
     assert review_runtime.publish_review(
         control, review, current_target_identity=target_identity
     ) == reference
+    counts_after_publication_retry = _invocation_counts(
+        executor_events, receipt, validation_counter
+    )
 
     accepted = execution_context.materialize_accepted_task_review(
         control,
@@ -642,6 +848,12 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
         validated_executor_result=validated,
     )
     _, consumed = execution_context.load_current_accepted_task_result(control, task)
+    counts_after_consumption = _invocation_counts(
+        executor_events, receipt, validation_counter
+    )
+    assert counts_after_publication == counts_after_publication_retry == counts_after_consumption == (
+        1, 1, 1
+    )
     assert consumed == accepted
     assert accepted["review_id"] == review["review_id"]
     assert accepted["baseline_identity"] == {

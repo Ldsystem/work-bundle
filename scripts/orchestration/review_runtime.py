@@ -597,7 +597,8 @@ def _validate_native_run_proof(receipt, packet, result, path, immutable_file, ca
         else:
             observed = runtime._stage_product_judgment_review(
                 worker, review_id=receipt["review_id"], context=context, packet=packet,
-                started_at=receipt["started_at"], completed_at=receipt["completed_at"])
+                started_at=receipt["started_at"], completed_at=receipt["completed_at"],
+                previous_review=result.get("previous_review"))
         if observed != result or receipt.get("review_result") != result or receipt.get(key) != context:
             raise ValueError("native judgment/result mismatch")
         return context
@@ -1271,21 +1272,22 @@ def _validated_review_envelope(value: Mapping[str, Any]) -> StageReviewV1:
 
     if value.get("review_target_kind") == "task":
         return validate_task_acceptance_review(value)
-    current = validate_stage_review(value)
     previous = value.get("previous_review")
+    envelope = {key: item for key, item in value.items() if key != "previous_review"}
+    current = validate_stage_review(envelope)
     if current.review_mode == "repair":
         if not isinstance(previous, Mapping) or "previous_review" in previous:
             raise ReviewContractError("stage repair review requires exactly one previous_review")
-        return validate_review_sequence(value, previous_review=previous)
+        return validate_review_sequence(envelope, previous_review=previous)
     if current.review_reset is not None:
         if not isinstance(previous, Mapping) or "previous_review" in previous:
             raise ReviewContractError("stage reset review requires exactly one previous_review")
         return validate_review_sequence(
-            value,
+            envelope,
             previous_review=previous,
             material_change=str(current.review_reset["reason_class"]),
         )
-    return validate_review_sequence(value)
+    return validate_review_sequence(envelope)
 
 
 def _review_store_path(root: Path, review_id: str) -> Path:
