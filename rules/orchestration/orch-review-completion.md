@@ -17,7 +17,7 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 ## Must
 
 - Confirm each required task review judged the accepted product requirements/boundaries, exact product source/diff, normalized validation observations, and unresolved product concerns before accepting the task.
-- Admit a task-or-stage verdict or route a finding only from its immutable review-store reference after native reviewer-run receipt and exact current-target validation. Treat bare reviewer output, unattached receipts, and bare findings as observations only.
+- Admit a task-or-stage verdict or route a finding only from its immutable review-store reference after provider-specific reviewer-run receipt and exact current-target validation. Treat bare reviewer output, unattached receipts, and bare findings as observations only.
 - Keep product review candidates limited to accepted product requirements/boundaries, exact source/diff identity, harness-owned normalized observations, and unresolved product concerns. Handoff, knowledge, reviewer-history, and publication/archive bookkeeping remain controller audit concerns and cannot become review inputs. Controller/orchestration code remains reviewable product when allocated by the task.
 - On reviewer infrastructure or provider failure, preserve the immutable candidate and repair the first broken preparation/provider owner. A still-independent capable reviewer may be reused; infrastructure failure does not itself require identity rotation, source change, validation rerun, or another product review after a completed judgment.
 - For a finding-scoped repair review under unchanged authority, carry exactly the previous finding/evidence frontier and review only the repaired identity and affected boundaries. Reset to an initial frontier only after a material authority, scope, acceptance, decomposition, or validation-allocation change.
@@ -28,6 +28,7 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Keep this pre-closure oracle-capability check distinct from `RuntimeVerificationClassificationV1`. WOR-59 G9 remains the unchanged post-execution classifier and may use this map only as evidence when triggered. Mechanical helpers validate IDs, completeness, provenance, and observed results; agents own semantic capability judgment and must not impose a universal browser, E2E, production, or runtime gate.
 - Missing `acceptance_review.verdict` blocks only a task that explicitly required independent review. Do not require universal task-review evidence.
 - Keep approved `ks-*` persistence delegation review-owned; executor disposition evidence never authorizes knowledge retrieval or writes.
+- Knowledge closure gates final completion and archive; it never precedes specification, plan, task, or integrated-implementation review.
 
 - Audit spec, plan, phase, task, handoff, and required optional-review status coherence.
 - Require fresh planned validation evidence and an `accept` task-review verdict wherever review is explicitly required.

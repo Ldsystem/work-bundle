@@ -1929,6 +1929,47 @@ def test_review_required_task_fails_closed_until_independent_accept() -> None:
     assert validated["result_state"] == "completed"
 
 
+def test_workflow_distinguishes_native_and_legacy_process_review_provenance() -> None:
+    workflow = read("references/assets/orchestration/workflow.md")
+
+    for token in [
+        "`reviewer-native-receipt-v1` for native host runs",
+        "`reviewer-process-receipt-v1` for legacy sandboxed process runs",
+        "`run_native_reviewer` for the ordinary plugin-independent native path",
+        "native host read-only policy is not OS process isolation",
+        "provider-specific execution boundary",
+    ]:
+        assert token in workflow
+    for process_only_claim in [
+        "referencing a native `reviewer-process-receipt-v1`",
+        "Run the worker with `reviewer-process-run` using that runtime root",
+        "completion, sandbox/network/write boundary, and immutable packet/profile/event",
+    ]:
+        assert process_only_claim not in workflow
+
+
+def test_review_contract_owners_use_common_provenance_and_final_knowledge_gate() -> None:
+    provenance_owners = [
+        "skills/orch-execute-plan/SKILL.md",
+        "skills/orch-review-plan/SKILL.md",
+        "references/assets/orchestration/contract/task-v1.md",
+        "rules/orchestration/orch-review-completion.md",
+        "references/assets/orchestration/workflow.md",
+    ]
+    for owner in provenance_owners:
+        assert "provider-specific reviewer-run receipt" in read(owner), owner
+
+    final_gate_owners = [
+        "skills/orch-review-plan/SKILL.md",
+        "rules/orchestration/orch-review-completion.md",
+        "references/assets/orchestration/workflow.md",
+    ]
+    for owner in final_gate_owners:
+        text = read(owner)
+        assert "Knowledge closure gates final completion and archive" in text, owner
+        assert "never precedes specification, plan, task, or integrated-implementation review" in text, owner
+
+
 def test_overlapping_writes_are_not_parallelizable() -> None:
     execute = read("skills/orch-execute-plan/SKILL.md")
     create = read("skills/orch-create-implementation-plan/SKILL.md")

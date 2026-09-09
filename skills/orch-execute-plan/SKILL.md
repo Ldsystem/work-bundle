@@ -56,7 +56,7 @@ python3 scripts/orch.py build-review-package \
 
 Use `--head worktree` for pre-commit review; the compiler includes tracked, staged, unstaged, and untracked changes, assigns a stable worktree identity, and withholds protected-path content.
 
-The reviewer uses only that bounded product candidate and `dev-code-review`, returning compact `accept|repair` product judgment. Invalid or incomplete input is a controller input/runner failure outside the product verdict. The controller composes the native envelope, verifies independent provenance, and publishes it. A task or stage verdict becomes lifecycle authority only after exact result and native immutable reviewer-run receipt are stored and validated against controller-authorized target identity.
+The reviewer uses only that bounded product candidate and `dev-code-review`, returning compact `accept|repair` product judgment. Invalid or incomplete input is a controller input/runner failure outside the product verdict. The controller composes the native envelope, verifies independent provenance, and publishes it. A task or stage verdict becomes lifecycle authority only after the exact result and its provider-specific reviewer-run receipt are stored and validated against controller-authorized target identity.
 
 If reviewer infrastructure or provider failure prevents a verdict, preserve the immutable package and repair the first broken runner/provider owner. A capable independent reviewer may be reused. Do not change source, rerun validation, reslice, or require identity rotation for provider availability. Publication retry after a completed judgment reuses the exact result and receipt.
 

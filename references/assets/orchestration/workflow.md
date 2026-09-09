@@ -103,7 +103,9 @@ retained for blocked/repair evidence, never sole acceptance. Accepted review req
 direct-source or reproducible-snapshot context and no unavailable claim-relevant
 evidence. Snapshot access additionally requires explicit snapshot artifact digests.
 The record describes evidence access; lifecycle acceptance additionally requires
-`reviewer_run: {run_id, sha256}` referencing a native `reviewer-process-receipt-v1`.
+`reviewer_run: {run_id, sha256}` referencing a provider-specific reviewer-run receipt:
+`reviewer-native-receipt-v1` for native host runs or
+`reviewer-process-receipt-v1` for legacy sandboxed process runs.
 Envelope validation alone (including historical records without that reference) is
 not lifecycle admission. The gate resolves the controller-owned store through
 `reviewer_runtime_root(workspace_root)` under `~/.work-bundle/reviewer-runtime/workspaces/`;
@@ -116,8 +118,11 @@ For task review it instead adds native `task_review_context`, binding the task t
 review mode/frontier or reset, reviewer identity/capability, execution identity, and
 evidence mode. Workspace creation admits it only when the source checkout is clean and
 its exact HEAD/tree still equal that task target.
-The current sandbox denies live source/control access, so its packet builder derives
-`evidence_mode`; requesting `direct_source` does not grant it. A mechanically complete
+The frozen packet builder derives `evidence_mode` from available evidence; requesting
+`direct_source` does not grant it. The legacy process sandbox denies live source/control
+access. The ordinary native host path consumes the same explicit frozen evidence,
+suppresses author transport and user configuration, disables tools, and rejects observed
+tool activity; native host read-only policy is not OS process isolation. A mechanically complete
 `stage-evidence-manifest-v1` yields `reproducible_snapshot`; missing evidence yields
 `packet_only`, which cannot grant acceptance, even with `unavailable_evidence: []`.
 The manifest binds stage/target identity, required locators, roles, artifact digests,
@@ -146,8 +151,9 @@ recomputing packet/receipt hashes cannot turn partial evidence into complete evi
 
 `stage_target_identity` computes the target from current source artifacts, and
 workspace creation checks it again. Complete stage evidence is checked before any
-reviewer process launch. Run the worker with `reviewer-process-run` using that runtime
-root. Specification and plan workers retain the stage-review contract; task and
+reviewer launch. Use `run_native_reviewer` for the ordinary plugin-independent native path;
+`reviewer-process-run` remains the legacy sandboxed process runner. Specification and
+plan workers retain the stage-review contract; task and
 integrated-implementation product workers return the compact `task_review` judgment
 defined by `dev-code-review`. The controller constructs the native envelope from frozen target, independence, and evidence context,
 then binds its canonical digest into the receipt. The controller then attaches the run
@@ -157,8 +163,11 @@ named-finding routing resolve only that stored reference and recheck its receipt
 current target; bare stdout, unattached receipts, and bare findings remain observations.
 
 The lifecycle gate verifies review ID, exact result/target/profile, successful
-completion, sandbox/network/write boundary, and immutable packet/profile/event
-digests. Run-scoped evidence remains available after workspace cleanup; full traces
+completion, the provider-specific execution boundary, and immutable packet/profile/event
+digests. Native receipts bind the executable, request, actual host run identity, sanitized
+context, read-only policy, and absence of observed tool activity. Legacy process receipts
+bind the sandbox, denied network, and scratch-only write boundary. Run-scoped evidence
+remains available after workspace cleanup; full traces
 are never embedded into the stage envelope. Missing, altered, failed, mutable, or
 mismatched provenance cannot grant acceptance. Known execution IDs are obtained
 from artifact `execution_id`, `author_execution_id(s)`, `repair_execution_id(s)` and
@@ -270,6 +279,8 @@ accepted manifests into a live source inventory.
 `orch-review-plan` audits workflow completion, required optional reviews, declared plan-level/integration acceptance, handoff integrity, knowledge disposition, finalization gates, and archive readiness. It checks declared completion evidence against the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints. It does not redo task code review, reread implementation for code quality, or start another implementation-review agent.
 
 Final review aggregates accepted task dispositions from execution and task-review evidence. Any accepted `update`, `supersede`, or `reclassify` promotes durable closure to `required` even when the specification's upstream Knowledge Base Update state was `not-needed`; accepted `none` does not. Rejected task dispositions do not trigger closure. Archive is allowed only after required optional reviews are accepted, declared plan-level/integration acceptance is recorded, validation and handoffs are coherent, barriers converged, the resulting Knowledge Base Update disposition is `completed` or `not-needed`, approved `ks-*` return evidence exists when required, and allowed commit/CodeGraph/metadata/archive/index mechanics complete or are explicitly inapplicable. Missing review verdicts are not a blocker when no task set `acceptance_review.required: true`.
+
+Knowledge closure gates final completion and archive; it never precedes specification, plan, task, or integrated-implementation review.
 
 Only approved keep-summarizing owners write durable knowledge. Final orchestration review owns approved persistence delegation and may invoke that owner, then validate returned paths or an evidence-backed no-write result; executors and orchestration itself must not write knowledge directly.
 

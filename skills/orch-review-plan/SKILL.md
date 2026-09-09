@@ -30,7 +30,7 @@ Verify:
 - approved `ks-*` return evidence exists when durable knowledge was required;
 - allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh completed or are explicitly not applicable.
 - dependency, finalization, resume, and archive decisions consume compact accepted results and current harness observations without replaying transient evidence or historical handoff chains.
-- required task and stage verdicts are admitted from immutable review-store references with native reviewer-run receipts and still-current targets; bare output, unattached receipts, and bare findings are not lifecycle authority.
+- required task and stage verdicts are admitted from immutable review-store references with provider-specific reviewer-run receipts and still-current targets; bare output, unattached receipts, and bare findings are not lifecycle authority.
 - product findings concern accepted product requirements/boundaries, exact product source/diff, normalized harness observations, and unresolved product concerns; handoff, knowledge disposition, reviewer history, and publication/status/archive bookkeeping stay with controller audit.
 
 ## Evidence capability correspondence
@@ -91,6 +91,8 @@ Do not create a repair specification for every failed gate.
 ## Knowledge delegate-return
 
 When the upstream disposition or aggregate accepted task dispositions make closure `required`, invoke the approved keep-summarizing owner with accepted implementation, validation, handoff, review, and decision evidence. Review owns approved persistence delegation; executor disposition evidence never invokes a `ks-*` skill. Validate structural-value result, written or updated durable paths or evidence-backed no-write rationale, index rebuild status, blockers, and completion state. Resume only from that return evidence. Orchestration does not directly create, edit, promote, delete, or index durable knowledge, and archive remains blocked until the validated return resolves required closure.
+
+Knowledge closure gates final completion and archive; it never precedes specification, plan, task, or integrated-implementation review.
 
 ## Finalization
 
