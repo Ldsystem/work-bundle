@@ -147,7 +147,17 @@ def run_native_reviewer(workspace: Path, executable: Path, *, model: str, review
     """
     executable = executable.expanduser().resolve()
     workspace = workspace.expanduser().resolve()
-    if not executable.is_file() or not os.access(executable, os.X_OK) or not model or not review_instructions.strip():
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_CAPABILITY_UNAVAILABLE",
+            {"capability": "native_reviewer_executable"},
+        )
+    if not model:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_CAPABILITY_UNAVAILABLE",
+            {"capability": "native_reviewer_model"},
+        )
+    if not review_instructions.strip():
         raise ReviewerWorkspaceError("WB_REVIEW_COMMAND_INVALID")
     packet, _ = _load_workspace(workspace)
     if not ("stage_review_context" in packet or "task_review_context" in packet):

@@ -1896,10 +1896,94 @@ def materialize_accepted_task_review(
     *,
     accepted_at: str | None = None,
     validation_evidence_ids: Sequence[str] | None = None,
+    executor_handoff: Mapping[str, Any] | None = None,
+    validated_executor_result: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Compose prior executor authority with one standalone current review."""
+    """Compose executor authority with one published current task review."""
 
     root = control_root.expanduser().resolve()
+    initial_acceptance = (
+        executor_handoff is not None or validated_executor_result is not None
+    )
+    if initial_acceptance:
+        expected_initial = {
+            "causal_class": "initial_acceptance",
+            "affected_task": str(task.get("task_id") or ""),
+            "authorized_lifecycle_action": "materialize_accepted_result",
+        }
+        if (
+            not isinstance(executor_handoff, Mapping)
+            or not isinstance(validated_executor_result, Mapping)
+            or not isinstance(causal_classification, Mapping)
+            or dict(causal_classification) != expected_initial
+            or validation_evidence_ids is not None
+        ):
+            raise SystemExit(
+                "initial accepted task review requires exact executor result authority"
+            )
+        binding = load_task_execution_binding(
+            root, str(task.get("plan_id") or ""), str(task.get("task_id") or "")
+        )
+        try:
+            from review_runtime import (
+                ReviewContractError,
+                load_stored_review,
+                stored_review_target_identity,
+            )
+
+            target_identity = stored_review_target_identity(root, review_reference)
+            review, validated_review = load_stored_review(
+                root,
+                review_reference,
+                current_target_identity=target_identity,
+            )
+        except (ReviewContractError, KeyError, TypeError, ValueError) as error:
+            raise SystemExit(f"Accepted initial task review is invalid: {error}") from error
+        task_id = str(task.get("task_id") or "")
+        if (
+            task.get("review_required") is not True
+            or validated_review.verdict != "accepted"
+            or validated_review.review_mode != "initial"
+            or validated_review.repair_frontier is not None
+            or validated_review.review_reset is not None
+            or validated_review.target_identity.get("artifact_id") != task_id
+        ):
+            raise SystemExit("accepted initial task review must bind the exact current task")
+        owner = validated_executor_result.get("task_ownership")
+        if not isinstance(owner, Mapping):
+            raise SystemExit("accepted initial task review requires validated executor ownership")
+        if validated_review.reviewer.get("agent_id") == owner.get("agent_id"):
+            raise SystemExit("accepted initial task review must be independent from the executor owner")
+        execution_path = Path(str(binding.get("execution_path") or "")).expanduser().resolve()
+        try:
+            evidence = capture_repository_evidence(execution_path)
+        except RuntimeError as error:
+            raise SystemExit("accepted initial task review Git identity is unavailable") from error
+        identity = validated_review.target_identity
+        if (
+            evidence.get("status") != "clean"
+            or evidence.get("entries")
+            or evidence.get("head") != identity.get("revision")
+            or evidence.get("tree") != identity.get("source_tree")
+            or review.get("reviewed_head") != identity.get("revision")
+        ):
+            raise SystemExit(
+                "accepted initial task review does not match the clean exact source identity"
+            )
+        handoff_with_review = dict(executor_handoff)
+        handoff_with_review["acceptance_review"] = review
+        accepted = build_accepted_task_result(
+            task,
+            binding,
+            handoff_with_review,
+            validated_executor_result,
+            accepted_at=accepted_at,
+        )
+        updated = dict(binding)
+        updated["accepted_result"] = accepted
+        _persist_binding(updated, root)
+        return accepted
+
     expected_classification = {
         "causal_class", "affected_task", "authorized_lifecycle_action",
     }
