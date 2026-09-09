@@ -20,6 +20,8 @@ for module_root in (WORK_BUNDLE, ORCHESTRATION):
         sys.path.insert(0, str(module_root))
 
 import execution_context  # noqa: E402
+import completion_provenance  # noqa: E402
+import execution_workspace  # noqa: E402
 import review_runtime  # noqa: E402
 import reviewer_workspace  # noqa: E402
 
@@ -29,6 +31,55 @@ def _git(root: Path, *arguments: str) -> str:
         ["git", *arguments], cwd=root, check=True, capture_output=True, text=True
     )
     return completed.stdout.strip()
+
+
+def _persist_production_binding(
+    control: Path,
+    source: Path,
+    task: dict[str, object],
+    *,
+    execution_id: str,
+    baseline: dict[str, str],
+) -> dict[str, object]:
+    plan_id = str(task["plan_id"])
+    task_id = str(task["task_id"])
+    workspace_id = "workspace-native"
+    repository_id = "repo-native"
+    runtime_root = control / "execution-workspaces"
+    registered = execution_workspace.register_existing(
+        source,
+        workspace_id=workspace_id,
+        execution_id=execution_id,
+        repository_id=repository_id,
+        created_for=task_id,
+        owner="harness",
+        runtime_root=runtime_root,
+    )
+    ownership = completion_provenance.execution_binding_ownership(
+        control / ".work-bundle/runtime/completion-provenance",
+        binding_id=f"binding:{plan_id}:{task_id}",
+        target_kind="git_backed",
+        owner=task_id,
+    )
+    binding = {
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "workspace_id": workspace_id,
+        "execution_id": execution_id,
+        "repository_id": repository_id,
+        "runtime_root": str(runtime_root),
+        "execution_path": str(source.resolve()),
+        "control_root": str(control.resolve()),
+        "state_path": registered["state_path"],
+        "git_identity": registered["git_identity"],
+        "write_scope": list(task.get("files", {}).get("write", [])),
+        "forbidden_scope": list(task.get("files", {}).get("forbidden", [])),
+        "ownership": ownership,
+        "mutating": True,
+        "baseline": baseline,
+    }
+    execution_context._persist_binding(binding, control)
+    return execution_context.load_task_execution_binding(control, plan_id, task_id)
 
 
 def _native_events(result: dict[str, object]) -> str:
@@ -287,6 +338,82 @@ def test_missing_native_host_capability_fails_before_review_dispatch(
     assert dispatched is False
 
 
+def test_incorrect_executor_result_cannot_reach_acceptance_by_matching_review_shape(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    control = tmp_path / "control"
+    source.mkdir()
+    control.mkdir()
+    (source / "product.py").write_text("VALUE = 0\n", encoding="utf-8")
+    _git(source, "init", "-q")
+    _git(source, "add", "product.py")
+    _git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "incorrect executor output",
+    )
+    head = _git(source, "rev-parse", "HEAD")
+    tree = _git(source, "rev-parse", "HEAD^{tree}")
+    task = {
+        "plan_id": "plan-negative",
+        "task_id": "task-negative",
+        "source_ids": ["REQ-VALUE"],
+        "goal": "Produce the required product value",
+        "requirements": ["product.py must define VALUE with the integer value 1."],
+        "constraints": [],
+        "truth_basis": {"decision_authority": ["REQ-VALUE is authoritative."]},
+        "files": {"read": ["product.py"], "write": ["product.py"], "forbidden": []},
+        "validation": [],
+        "review_required": True,
+        "workspace": {"root": str(control)},
+    }
+    _persist_production_binding(
+        control,
+        source,
+        task,
+        execution_id="executor-negative",
+        baseline={"head": head, "tree": tree},
+    )
+    handoff = {
+        "type": "executor-result",
+        "related": {"plan": "plan-negative", "task": "task-negative"},
+        "result": {"state": "completed", "summary": "Produced the requested value."},
+        "changes": {"files": [{"path": "outside-scope.py", "change": "created"}]},
+        "task_fit_check": {"task": "task-negative", "result": "clean"},
+        "knowledge_disposition": {
+            "action": "none", "reason": "No durable authority changed.", "affected_authority": [],
+        },
+        "acceptance_review": {"required": True, "verdict": "pending"},
+        "delegation_evidence": {
+            "delegated": True,
+            "owner_kind": "subagent",
+            "agent_id": "executor-negative",
+            "run_id": "executor-negative",
+            "mechanism": "host-native",
+        },
+        "validation": {"commands": []},
+    }
+
+    with pytest.raises(SystemExit, match="outside task write scope"):
+        execution_context.validate_executor_result_for_task(
+            handoff,
+            task,
+            observe=True,
+            mutation_events=[{"actor_kind": "subagent", "paths": ["outside-scope.py"]}],
+            preparing_review=True,
+        )
+    stored = execution_context.load_task_execution_binding(
+        control, "plan-negative", "task-negative"
+    )
+    assert "accepted_result" not in stored
+
+
 @pytest.mark.skipif(
     os.environ.get("WB_NATIVE_REVIEW_INTEGRATION") != "1",
     reason="set WB_NATIVE_REVIEW_INTEGRATION=1 for the genuine native host observation",
@@ -401,29 +528,24 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
         "plan_id": "plan-native-live",
         "task_id": "task-native-live",
         "source_ids": ["REQ-NATIVE"],
-        "truth_basis": {"decision_authority": []},
+        "goal": "Create the requested product constant",
+        "requirements": ["product.py must define VALUE with the integer value 1."],
+        "constraints": ["The implementation must remain within product.py."],
+        "truth_basis": {
+            "decision_authority": ["The requested VALUE behavior is authoritative."],
+        },
         "files": {"read": ["product.py"], "write": ["product.py"], "forbidden": []},
         "validation": [],
         "review_required": True,
         "workspace": {"root": str(control)},
     }
-    binding = {
-        "plan_id": "plan-native-live",
-        "task_id": "task-native-live",
-        "workspace_id": "workspace-native-live",
-        "execution_id": executor_ids[0],
-        "repository_id": "repo-native-live",
-        "execution_path": str(source),
-        "control_root": str(control),
-        "git_identity": {"branch_ref": "refs/heads/main"},
-        "baseline": {"head": baseline_head, "tree": baseline_tree},
-        "ownership": {
-            "binding_id": "binding:plan-native-live:task-native-live",
-            "state": "active",
-            "current_owner": "task-native-live",
-            "history": [{"event": "created"}],
-        },
-    }
+    binding = _persist_production_binding(
+        control,
+        source,
+        task,
+        execution_id=executor_ids[0],
+        baseline={"head": baseline_head, "tree": baseline_tree},
+    )
     handoff = {
         "type": "executor-result",
         "related": {"plan": "plan-native-live", "task": "task-native-live"},
@@ -445,12 +567,13 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
         },
         "validation": {"commands": []},
     }
-    validated = {
-        "result_state": "completed",
-        "knowledge_disposition": handoff["knowledge_disposition"],
-        "task_ownership": handoff["delegation_evidence"],
-        "observed_validation": [],
-    }
+    validated = execution_context.validate_executor_result_for_task(
+        handoff,
+        task,
+        observe=True,
+        mutation_events=[{"actor_kind": "subagent", "paths": ["product.py"]}],
+        preparing_review=True,
+    )
     target_identity = {
         "artifact_id": "task-native-live",
         "revision": head,
@@ -470,11 +593,13 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
     }
     protected = control / ".protected"
     protected.mkdir()
+    authority = control / "task-authority.json"
+    authority.write_text(json.dumps(task, sort_keys=True), encoding="utf-8")
     packet = reviewer_workspace.build_direct_evidence_packet(
         source_root=source,
         control_root=control,
         protected_roots=[protected],
-        artifacts=["source:product.py"],
+        artifacts=["source:product.py", "control:task-authority.json"],
         search_roots=[],
         validators=[],
         sentinels=[],
@@ -489,9 +614,10 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
         executable,
         model=model,
         review_instructions=(
-            "Independently review the supplied task source. Return only a final JSON object "
-            f'with exactly this shape: {{"task_review":{{"reviewed_head":"{head}",'
-            '"verdict":"accept","findings":[]}}}. Accept only if the evidence satisfies the task.'
+            "Independently judge the supplied task source against task-authority.json. Return a "
+            "task_review JSON object for the supplied reviewed_head. Set verdict to accept only "
+            "when every requirement is satisfied; otherwise set it to repair and report concrete "
+            "findings using the required review contract."
         ),
     )
     review = {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]}
@@ -503,15 +629,6 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
         control, review, current_target_identity=target_identity
     ) == reference
 
-    monkeypatch.setattr(
-        execution_context, "load_task_execution_binding", lambda *_args: binding
-    )
-
-    def persist(value, _root):
-        binding.clear()
-        binding.update(value)
-
-    monkeypatch.setattr(execution_context, "_persist_binding", persist)
     accepted = execution_context.materialize_accepted_task_review(
         control,
         task,

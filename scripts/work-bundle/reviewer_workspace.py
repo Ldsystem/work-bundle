@@ -113,6 +113,110 @@ def _integrated_change_manifest(
     return candidates[0] if candidates else None
 
 
+def _stage_evidence_roles(packet: dict[str, object]) -> dict[str, str]:
+    manifest = packet.get("stage_evidence_manifest")
+    entries = manifest.get("entries") if isinstance(manifest, dict) else []
+    return {
+        str(item.get("locator") or ""): str(item.get("role") or "")
+        for item in entries
+        if isinstance(item, dict)
+    }
+
+
+def _controller_only_artifact_locators(
+    packet: dict[str, object], evidence: list[dict[str, object]],
+) -> set[str]:
+    context = packet.get("stage_review_context")
+    if not isinstance(context, dict) or context.get("stage") != "integrated_implementation":
+        return set()
+    roles = _stage_evidence_roles(packet)
+    result: set[str] = set()
+    for item in evidence:
+        locator = str(item.get("locator") or "")
+        if roles.get(locator) in {"accepted_task_result", "validation_observation"}:
+            result.add(locator)
+            continue
+        if "/handoff/" in locator:
+            result.add(locator)
+            continue
+        content = item.get("content")
+        value = _structured_evidence(content) if isinstance(content, str) else None
+        schema = str(value.get("schema") or "") if isinstance(value, dict) else ""
+        if (
+            isinstance(value, dict)
+            and (
+                value.get("type") == "executor-result"
+                or "lifecycle" in schema
+                or {"execution_id", "ownership", "accepted_result"}.issubset(value)
+            )
+        ):
+            result.add(locator)
+    return result
+
+
+def _integrated_product_evidence(
+    packet: dict[str, object], evidence: list[dict[str, object]],
+) -> dict[str, object]:
+    roles = _stage_evidence_roles(packet)
+    accepted_results: list[dict[str, object]] = []
+    accepted_observation_ids: set[str] = set()
+    observation_stores: list[dict[str, object]] = []
+    unresolved: list[object] = []
+    for item in evidence:
+        locator = str(item.get("locator") or "")
+        content = item.get("content")
+        value = _structured_evidence(content) if isinstance(content, str) else None
+        if not isinstance(value, dict):
+            continue
+        if roles.get(locator) == "accepted_task_result":
+            accepted = value.get("accepted_result")
+            if not isinstance(accepted, dict):
+                continue
+            ids = [str(value) for value in accepted.get("validation_evidence_ids", [])]
+            accepted_observation_ids.update(ids)
+            accepted_results.append(
+                {
+                    "task_id": accepted.get("task_id"),
+                    "accepted_source": accepted.get("accepted_source"),
+                    "validation_evidence_ids": ids,
+                    "review_id": accepted.get("review_id"),
+                    "invalidation": accepted.get("invalidation"),
+                }
+            )
+        elif roles.get(locator) == "validation_observation":
+            observation_stores.append(value)
+        elif locator not in _controller_only_artifact_locators(packet, [item]):
+            unresolved.extend(value.get("unresolved", []) if isinstance(value.get("unresolved"), list) else [])
+    observations = []
+    for store in observation_stores:
+        for item in store.get("observations", []):
+            if not isinstance(item, dict) or item.get("observation_id") not in accepted_observation_ids:
+                continue
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            observations.append(
+                {
+                    "observation_id": item.get("observation_id"),
+                    "product_tree": item.get("product_tree"),
+                    "command_digest": item.get("command_digest"),
+                    "oracle_digest": item.get("oracle_digest"),
+                    "result": {
+                        key: result.get(key)
+                        for key in (
+                            "exit_code", "stdout_digest", "stderr_digest",
+                            "started_at", "completed_at",
+                        )
+                    },
+                }
+            )
+    return {
+        "accepted_results": sorted(accepted_results, key=lambda item: str(item.get("task_id") or "")),
+        "validation_observations": sorted(
+            observations, key=lambda item: str(item.get("observation_id") or "")
+        ),
+        "unresolved_product_concerns": unresolved,
+    }
+
+
 def _native_review_artifacts(
     packet: dict[str, object], evidence: list[dict[str, object]],
 ) -> list[dict[str, object]]:
@@ -130,10 +234,12 @@ def _native_review_artifacts(
         if len(matching) != 1 or matching[0].get("sha256") != exact_diff["sha256"]:
             raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
         changed = set()
+    controller_only = _controller_only_artifact_locators(packet, evidence)
     return [
         item
         for item in artifacts
         if isinstance(item, dict)
+        and item.get("locator") not in controller_only
         and (
             not str(item.get("locator") or "").startswith("source:")
             or item.get("locator") in changed
@@ -313,12 +419,28 @@ def _retain_native_diagnostics(runtime_root, run_id, review_id, argv, request_by
     return str(directory)
 
 
-def _native_review_input(packet: dict[str, object]) -> dict[str, object]:
+def _native_review_input(
+    packet: dict[str, object], evidence: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     key = "task_review_context" if "task_review_context" in packet else "stage_review_context"
     context = packet[key]
+    artifacts = packet["artifacts"]
+    integrated = key == "stage_review_context" and context.get("stage") == "integrated_implementation"
+    if integrated and evidence is not None:
+        controller_only = _controller_only_artifact_locators(packet, evidence)
+        artifacts = [
+            item
+            for item in artifacts
+            if isinstance(item, dict) and item.get("locator") not in controller_only
+        ]
+        return {
+            "target_identity": context["target_identity"],
+            "artifacts": artifacts,
+            "product_evidence": _integrated_product_evidence(packet, evidence),
+        }
     if key == "task_review_context" or context.get("stage") == "integrated_implementation":
-        return {"target_identity": context["target_identity"], "artifacts": packet["artifacts"]}
-    return {"stage": context["stage"], "target_identity": context["target_identity"], "artifacts": packet["artifacts"]}
+        return {"target_identity": context["target_identity"], "artifacts": artifacts}
+    return {"stage": context["stage"], "target_identity": context["target_identity"], "artifacts": artifacts}
 
 
 def run_native_reviewer(workspace: Path, executable: Path, *, model: str, review_instructions: str) -> dict[str, object]:
@@ -350,6 +472,10 @@ def run_native_reviewer(workspace: Path, executable: Path, *, model: str, review
         if str(item.get("locator") or "").startswith("control:"):
             content = _evidence_path(workspace, item["locator"]).read_bytes().decode("utf-8")
             control_evidence.append({**item, "content": content})
+    controller_locators = _controller_only_artifact_locators(packet, control_evidence)
+    controller_evidence = [
+        item for item in control_evidence if item.get("locator") in controller_locators
+    ]
     selected_artifacts = _native_review_artifacts(packet, control_evidence)
     evidence = []
     for item in selected_artifacts:
@@ -359,14 +485,21 @@ def run_native_reviewer(workspace: Path, executable: Path, *, model: str, review
         if _sha256_bytes(content.encode("utf-8")) != item["sha256"]:
             raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
         evidence.append({**item, "content": content})
-    request = {"instructions": review_instructions, "review_input": _native_review_input(packet), "evidence": evidence}
+    request = {
+        "instructions": review_instructions,
+        "review_input": _native_review_input(packet, control_evidence),
+        "evidence": evidence,
+    }
     if len(json.dumps(request, sort_keys=True, ensure_ascii=False)) > NATIVE_REVIEW_REQUEST_MAX_CHARS:
         raise ReviewerWorkspaceError(
             "WB_REVIEW_NATIVE_INPUT_TOO_LARGE",
             {"max_chars": NATIVE_REVIEW_REQUEST_MAX_CHARS},
         )
     argv = _native_reviewer_argv(executable, workspace, model)
-    return _run_reviewer(workspace, argv, native_request=request)
+    return _run_reviewer(
+        workspace, argv, native_request=request,
+        native_controller_evidence=controller_evidence,
+    )
 
 
 def _review_runtime():
@@ -1187,7 +1320,13 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
     return _run_reviewer(workspace, argv)
 
 
-def _run_reviewer(workspace: Path, argv: list[str], *, native_request: dict[str, object] | None = None) -> dict[str, object]:
+def _run_reviewer(
+    workspace: Path,
+    argv: list[str],
+    *,
+    native_request: dict[str, object] | None = None,
+    native_controller_evidence: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     workspace = workspace.expanduser().resolve()
     runtime_root, review_id, state = _runtime_identity(workspace)
     packet, _ = _load_workspace(workspace)
@@ -1335,6 +1474,13 @@ def _run_reviewer(workspace: Path, argv: list[str], *, native_request: dict[str,
         retained_items.extend([("request.json", request_bytes), ("stdout.jsonl", completed.stdout.encode()),
                                ("stderr.txt", completed.stderr.encode()),
                                ("launch.json", json.dumps({"argv": argv, "executable_sha256": executable_digest}, sort_keys=True).encode())])
+        if native_controller_evidence is not None:
+            retained_items.append(
+                (
+                    "controller.json",
+                    json.dumps(native_controller_evidence, sort_keys=True, ensure_ascii=False).encode(),
+                )
+            )
     else:
         retained_items.append(("profile.sb", (workspace / "sandbox.sb").read_bytes()))
     for suffix, content in retained_items:

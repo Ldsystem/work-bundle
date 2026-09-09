@@ -535,6 +535,14 @@ def _validate_native_run_proof(receipt, packet, result, path, immutable_file, ca
         stderr = immutable_file(path.with_suffix(".stderr.txt"))
         request_bytes = immutable_file(path.with_suffix(".request.json"))
         request = json.loads(request_bytes)
+        controller_path = path.with_suffix(".controller.json")
+        controller_evidence = (
+            json.loads(immutable_file(controller_path)) if controller_path.exists() else None
+        )
+        combined_evidence = [
+            *request.get("evidence", []),
+            *(controller_evidence or []),
+        ]
         launch = json.loads(immutable_file(path.with_suffix(".launch.json")))
         argv = launch["argv"]
         host_id, worker = runtime.parse_native_reviewer_transcript(stdout.decode(), stderr.decode())
@@ -548,17 +556,36 @@ def _validate_native_run_proof(receipt, packet, result, path, immutable_file, ca
                 or not Path(argv[0]).is_absolute()
                 or argv != runtime._native_reviewer_argv(Path(argv[0]), Path(argv[9]), argv[11])
                 or set(request) != {"instructions", "review_input", "evidence"}
-                or request["review_input"] != runtime._native_review_input(packet) or not isinstance(request["instructions"], str)
+                or request["review_input"] != runtime._native_review_input(
+                    packet, combined_evidence if controller_evidence is not None else None
+                ) or not isinstance(request["instructions"], str)
                 or not request["instructions"].strip()):
             raise ValueError("native launch/input mismatch")
         evidence = request["evidence"]
-        artifacts = runtime._native_review_artifacts(packet, evidence)
+        artifacts = runtime._native_review_artifacts(packet, combined_evidence)
         if len(evidence) != len(artifacts):
             raise ValueError("native input evidence mismatch")
         for expected, actual in zip(artifacts, evidence):
             if (set(actual) != {*expected, "content"} or any(actual[key] != value for key, value in expected.items())
                     or hashlib.sha256(actual["content"].encode()).hexdigest() != expected["sha256"]):
                 raise ValueError("native input evidence mismatch")
+        if controller_evidence is not None:
+            controller_locators = runtime._controller_only_artifact_locators(
+                packet, combined_evidence
+            )
+            controller_artifacts = [
+                item for item in packet["artifacts"]
+                if item.get("locator") in controller_locators
+            ]
+            if len(controller_evidence) != len(controller_artifacts):
+                raise ValueError("native controller evidence mismatch")
+            for expected, actual in zip(controller_artifacts, controller_evidence):
+                if (
+                    set(actual) != {*expected, "content"}
+                    or any(actual[key] != value for key, value in expected.items())
+                    or hashlib.sha256(actual["content"].encode()).hexdigest() != expected["sha256"]
+                ):
+                    raise ValueError("native controller evidence mismatch")
         key = "task_review_context" if result.get("review_target_kind", "stage") == "task" else "stage_review_context"
         context = {**packet[key], "agent_id": host_id, "execution_id": host_id}
         compact = key == "task_review_context" or (context.get("stage") == "integrated_implementation" and "task_review" in worker)

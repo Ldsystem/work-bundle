@@ -716,7 +716,49 @@ def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_ma
     tree = subprocess.check_output(
         ["git", "-C", str(tmp_path), "rev-parse", "HEAD^{tree}"], text=True
     ).strip()
-    _write_compact_accepted_result(tmp_path, task=task)
+    binding = _write_compact_accepted_result(tmp_path, task=task)
+    provenance = tmp_path / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json"
+    provenance.parent.mkdir(parents=True, exist_ok=True)
+    provenance.write_text(
+        json.dumps(
+            {
+                "schema": "completion-provenance-v1",
+                "observations": [
+                    {
+                        "observation_id": "observation-val-1",
+                        "product_tree": tree,
+                        "command_digest": "1" * 64,
+                        "oracle_digest": "2" * 64,
+                        "result": {
+                            "exit_code": 0,
+                            "stdout_digest": "3" * 64,
+                            "stderr_digest": "4" * 64,
+                            "started_at": "2026-09-09T00:00:00Z",
+                            "completed_at": "2026-09-09T00:00:01Z",
+                        },
+                        "controller_history": "relevant-raw-history-must-not-reach-model",
+                    },
+                    {
+                        "observation_id": "observation-unrelated",
+                        "result": {"exit_code": 1},
+                        "controller_history": "unrelated-history-must-not-reach-model",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    handoff = tmp_path / ".work-bundle/orchestration/handoff/executor/active/history.json"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text(
+        json.dumps({"type": "executor-result", "internal": "handoff-must-not-reach-model"}),
+        encoding="utf-8",
+    )
+    lifecycle = tmp_path / ".work-bundle/runtime/task-lifecycle.json"
+    lifecycle.write_text(
+        json.dumps({"schema": "task-lifecycle-v1", "internal": "lifecycle-must-not-reach-model"}),
+        encoding="utf-8",
+    )
     exact_diff = tmp_path / ".work-bundle/runtime/integrated-source.diff"
     exact_diff.parent.mkdir(parents=True, exist_ok=True)
     exact_diff.write_bytes(
@@ -758,6 +800,8 @@ def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_ma
     )
     required["control:" + change_manifest.relative_to(tmp_path).as_posix()] = "change_manifest"
     required["control:" + exact_diff.relative_to(tmp_path).as_posix()] = "exact_diff"
+    required["control:" + handoff.relative_to(tmp_path).as_posix()] = "handoff"
+    required["control:" + lifecycle.relative_to(tmp_path).as_posix()] = "lifecycle"
     packet = reviewer_workspace.build_direct_evidence_packet(
         source_root=tmp_path,
         control_root=tmp_path,
@@ -821,7 +865,15 @@ def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_ma
     )
     request = json.loads(captured["request"])
     supplied = {item["locator"] for item in request["evidence"]}
+    metadata = {item["locator"] for item in request["review_input"]["artifacts"]}
+    product_authority = {
+        item["locator"]
+        for item in packet["stage_evidence_manifest"]["entries"]
+        if item["role"] in {"target", "plan_member", "verified_specification"}
+    }
     assert len(captured["request"]) <= reviewer_workspace.NATIVE_REVIEW_REQUEST_MAX_CHARS
+    assert product_authority
+    assert product_authority <= supplied
     assert "source:source.txt" not in supplied
     assert "source:unchanged-large.txt" not in supplied
     assert "control:.work-bundle/runtime/integrated-source.diff" in supplied
@@ -831,6 +883,22 @@ def test_native_integrated_review_bounds_large_unchanged_tree_to_exact_change_ma
         if item["locator"] == "control:.work-bundle/runtime/integrated-source.diff"
     )
     assert supplied_diff.encode("utf-8") == exact_diff.read_bytes()
+    binding_locator = "control:" + binding.relative_to(tmp_path).as_posix()
+    provenance_locator = "control:" + provenance.relative_to(tmp_path).as_posix()
+    assert binding_locator not in supplied | metadata
+    assert provenance_locator not in supplied | metadata
+    assert "control:" + handoff.relative_to(tmp_path).as_posix() not in supplied | metadata
+    assert "control:" + lifecycle.relative_to(tmp_path).as_posix() not in supplied | metadata
+    encoded_request = captured["request"]
+    assert "relevant-raw-history-must-not-reach-model" not in encoded_request
+    assert "unrelated-history-must-not-reach-model" not in encoded_request
+    assert "handoff-must-not-reach-model" not in encoded_request
+    assert "lifecycle-must-not-reach-model" not in encoded_request
+    product_evidence = request["review_input"]["product_evidence"]
+    assert [item["task_id"] for item in product_evidence["accepted_results"]] == ["task-test"]
+    assert [
+        item["observation_id"] for item in product_evidence["validation_observations"]
+    ] == ["observation-val-1"]
     assert request["review_input"]["target_identity"]["source_tree"] == tree
     assert any(
         item["locator"] == "source:unchanged-large.txt"
