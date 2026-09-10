@@ -221,12 +221,12 @@ scheduler selects executable task
   -> dispatch every planner-approved disjoint ready task before waiting
   -> subagent implements with declared methodology
   -> run fresh task-local validation
-  -> write executor-result handoff
-  -> validate-executor-result
-  -> optional task review when acceptance_review.required: true
+  -> creation-safe validation and atomic executor-result handoff write
+  -> optional task review when compiled review_required: true
      -> compile bounded review package
      -> independent `dev-code-review`
      -> accept | repair | blocked
+  -> accepted-result materialization joins executor facts, observations, and stored review authority
   -> Completed
 ```
 
@@ -249,7 +249,9 @@ carries the previous finding/evidence frontier and reviews only repaired boundar
 Only a material authority, scope, acceptance, decomposition, or validation-allocation
 change resets review to an initial frontier.
 
-A task becomes `Completed` only when implementation criteria, fresh validation, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan status derive from accepted children plus declared dependency and barrier gates.
+A task becomes `Completed` only when implementation criteria, fresh validation, a valid immutable executor-result handoff, and a passing `validate-executor-result` check all exist. Review-required tasks additionally require exact stored `accept` authority, joined only during accepted-result materialization. Phase and plan status derive from accepted children plus declared dependency and barrier gates.
+
+`write-handoff` resolves the compiled task and runs its pure creation-safe projection before artifact or handoff-index mutation. This admits structurally complete executor facts before independent observation or review while rejecting wrong-owner review, receipt, publication, accepted-result, and audit fields. New handoffs use `lifecycle_authority: location-v1`: status directories own current lifecycle state, status changes move identical bytes, and same-state requests write nothing. Unmarked legacy artifacts retain embedded/location fallback until their first explicit status change creates the bounded digest/type/plan/task/status override; no historical bytes are rewritten.
 
 ## Failure routing
 
@@ -278,7 +280,7 @@ accepted manifests into a live source inventory.
 
 `orch-review-plan` audits workflow completion, required optional reviews, declared plan-level/integration acceptance, handoff integrity, knowledge disposition, finalization gates, and archive readiness. It checks declared completion evidence against the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints. It does not redo task code review, reread implementation for code quality, or start another implementation-review agent.
 
-Final review aggregates accepted task dispositions from execution and task-review evidence. Any accepted `update`, `supersede`, or `reclassify` promotes durable closure to `required` even when the specification's upstream Knowledge Base Update state was `not-needed`; accepted `none` does not. Rejected task dispositions do not trigger closure. Archive is allowed only after required optional reviews are accepted, declared plan-level/integration acceptance is recorded, validation and handoffs are coherent, barriers converged, the resulting Knowledge Base Update disposition is `completed` or `not-needed`, approved `ks-*` return evidence exists when required, and allowed commit/CodeGraph/metadata/archive/index mechanics complete or are explicitly inapplicable. Missing review verdicts are not a blocker when no task set `acceptance_review.required: true`.
+Final review aggregates accepted task dispositions from execution and task-review evidence. Any accepted `update`, `supersede`, or `reclassify` promotes durable closure to `required` even when the specification's upstream Knowledge Base Update state was `not-needed`; accepted `none` does not. Rejected task dispositions do not trigger closure. Archive is allowed only after required optional reviews are accepted, declared plan-level/integration acceptance is recorded, validation and handoffs are coherent, barriers converged, the resulting Knowledge Base Update disposition is `completed` or `not-needed`, approved `ks-*` return evidence exists when required, and allowed commit/CodeGraph/metadata/archive/index mechanics complete or are explicitly inapplicable. Missing stored review authority is not a blocker when no compiled task set `review_required: true`.
 
 Knowledge closure gates final completion and archive; it never precedes specification, plan, task, or integrated-implementation review.
 

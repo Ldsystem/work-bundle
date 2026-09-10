@@ -279,7 +279,6 @@ def test_plugin_absent_native_review_publishes_once_then_materializes_initial_ac
             "reason": "No durable authority changed.",
             "affected_authority": [],
         },
-        "acceptance_review": {"required": True, "verdict": "pending"},
         "delegation_evidence": {
             "delegated": True,
             "owner_kind": "subagent",
@@ -524,7 +523,6 @@ def test_incorrect_executor_result_cannot_reach_acceptance_by_matching_review_sh
         "knowledge_disposition": {
             "action": "none", "reason": "No durable authority changed.", "affected_authority": [],
         },
-        "acceptance_review": {"required": True, "verdict": "pending"},
         "delegation_evidence": {
             "delegated": True,
             "owner_kind": "subagent",
@@ -724,7 +722,6 @@ def test_live_plugin_absent_native_execution_review_publication_and_acceptance(
             "reason": "No durable authority changed.",
             "affected_authority": [],
         },
-        "acceptance_review": {"required": True, "verdict": "pending"},
         "delegation_evidence": {
             "delegated": True,
             "owner_kind": "subagent",

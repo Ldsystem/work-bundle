@@ -26,7 +26,7 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Use `no_validation_bearing_obligation + reason` only when no accepted validation-bearing obligation or design decision exists. Do not infer an empty evidence-capability map from a WOR-61 `none_relevant` impact result.
 - Route first-owner repair for this pre-closure oracle-capability check: task repair for failed, stale, or unexecuted implementation evidence; plan repair for missing, wrong-boundary, or incapable allocation; specification repair for contradictory accepted authority.
 - Keep this pre-closure oracle-capability check distinct from `RuntimeVerificationClassificationV1`. WOR-59 G9 remains the unchanged post-execution classifier and may use this map only as evidence when triggered. Mechanical helpers validate IDs, completeness, provenance, and observed results; agents own semantic capability judgment and must not impose a universal browser, E2E, production, or runtime gate.
-- Missing `acceptance_review.verdict` blocks only a task that explicitly required independent review. Do not require universal task-review evidence.
+- Missing exact stored `accept` review authority blocks only a task whose compiled `review_required` is true. Do not require universal task-review evidence or embedded handoff verdicts.
 - Keep approved `ks-*` persistence delegation review-owned; executor disposition evidence never authorizes knowledge retrieval or writes.
 - Knowledge closure gates final completion and archive; it never precedes specification, plan, task, or integrated-implementation review.
 
@@ -67,8 +67,8 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 
 ## Validation
 
-- Confirm every completed review-required task has fresh validation, a valid executor-result handoff, and `accept` review evidence.
-- Confirm missing `acceptance_review.verdict` is not a blocker unless the task explicitly required review.
+- Confirm every completed review-required task has fresh validation, a valid immutable executor-result handoff, and exact stored `accept` review evidence joined into its accepted result.
+- Confirm missing stored review authority is not a blocker unless compiled task authority explicitly required review.
 - Confirm declared completion evidence matches the compiled Truth Basis, source IDs, and AUTH constraints.
 - Confirm every mapped invariant has capable, current, correctly bounded harness-observed evidence under its allocated INV/VAL identities, or a typed first-owner repair route; confirm `no_validation_bearing_obligation` is not inferred from WOR-61 `none_relevant`.
 - Confirm this pre-closure oracle-capability check remains distinct from `RuntimeVerificationClassificationV1` and that WOR-59 G9 remains the unchanged post-execution classifier.

@@ -49,6 +49,50 @@ def test_product_review_candidate_excludes_handoff_and_publication_bookkeeping()
     assert candidate["task_authority"]["task_id"] == "task-006"
 
 
+def test_creation_safe_projection_admits_before_review_and_rejects_review_facts() -> None:
+    task = {
+        "task_id": "task-001",
+        "plan_id": "plan-001",
+        "source_ids": [],
+        "truth_basis": {},
+        "files": {"read": [], "write": []},
+        "validation": [],
+        "evidence_capability": {
+            "result": "no_validation_bearing_obligation",
+            "reason": "No validation-bearing obligation.",
+            "invariants": [],
+        },
+        "review_required": True,
+    }
+    handoff = {
+        "type": "executor-result",
+        "related": {"plan": "plan-001", "task": "task-001"},
+        "result": {"state": "completed"},
+        "task_fit_check": {"task": "task-001", "result": "clean"},
+        "delegation_evidence": {
+            "delegated": True,
+            "owner_kind": "subagent",
+            "agent_id": "agent-001",
+            "run_id": "run-001",
+            "mechanism": "host-native",
+        },
+        "knowledge_disposition": {
+            "action": "none",
+            "reason": "No stable authority changed.",
+            "affected_authority": [],
+        },
+    }
+
+    validated = execution_context.validate_executor_result_creation_for_task(handoff, task)
+    assert validated["result_state"] == "completed"
+
+    with pytest.raises(SystemExit, match="wrong-owner field acceptance_review"):
+        execution_context.validate_executor_result_creation_for_task(
+            {**handoff, "acceptance_review": {"required": True, "verdict": "pending"}},
+            task,
+        )
+
+
 def _load_orchestration_dispatcher():
     path = ORCHESTRATION / "dispatcher.py"
     spec = importlib.util.spec_from_file_location(
@@ -1622,15 +1666,11 @@ def test_initial_completed_result_can_prepare_required_review_without_future_ver
     handoff = write_executor_handoff(
         root, "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n"
     )
-    handoff.write_text(handoff.read_text().replace(
-        "result: {state: completed}\n",
-        "result: {state: completed}\nacceptance_review: {required: true, verdict: pending}\n",
-    ))
     _enable_passing_observation(root, task, handoff)
 
     package = build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
     assert package.is_file()
-    with pytest.raises(SystemExit, match="cannot complete without"):
+    with pytest.raises(SystemExit, match="compiled review_required"):
         _validate_observed(_read_handoff(handoff), _compiled_brief(root, task))
 
 

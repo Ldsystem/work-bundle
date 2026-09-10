@@ -323,7 +323,7 @@ def _material_repository_root(
         if not handoff_has_provenance:
             try:
                 fallback = _resolve_final_plan_workspace(args, plan_id)
-            except SystemExit as error:
+            except (OSError, SystemExit) as error:
                 raise SystemExit(
                     "acceptance-blocked: material handoff repository provenance is unavailable"
                 ) from error

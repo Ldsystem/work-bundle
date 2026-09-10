@@ -108,6 +108,22 @@ FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
     "mutation_events",
     "accepted_dependency_deltas",
 }
+FORBIDDEN_CREATION_CONTROL_FIELDS = {
+    "acceptance_review",
+    "accepted_result",
+    "accepted_result_id",
+    "accepted_at",
+    "accepted_observations",
+    "reviewer",
+    "verdict",
+    "target_identity",
+    "review_mode",
+    "repair_frontier",
+    "review_reset",
+    "reviewer_run",
+    "publication",
+    "receipt",
+}
 VALID_RESULT_STATES = {"completed", "blocked", "partial", "failed"}
 TASK_FIT_RESULTS = {"clean", "repaired", "unresolved", "skipped"}
 EXECUTOR_CAPABILITIES = {"mechanical", "standard", "judgment"}
@@ -1559,6 +1575,7 @@ def build_accepted_task_result(
     handoff: Mapping[str, Any],
     validated: Mapping[str, Any],
     *,
+    accepted_review: Mapping[str, Any] | None = None,
     accepted_at: str | None = None,
 ) -> dict[str, Any]:
     """Project a strongly validated executor result into compact durable authority."""
@@ -1576,7 +1593,13 @@ def build_accepted_task_result(
         accepted_ownership = normalize_subagent_provenance(ownership)
     except OwnershipBlocker as error:
         raise SystemExit(f"accepted task result ownership is invalid: {error.reason}") from error
-    review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), Mapping) else {}
+    review = (
+        dict(accepted_review)
+        if isinstance(accepted_review, Mapping)
+        else handoff.get("acceptance_review")
+        if isinstance(handoff.get("acceptance_review"), Mapping)
+        else {}
+    )
     if task.get("review_required") is True and (
         review.get("required") is not True or review.get("verdict") not in {"accept", "accepted"}
     ):
@@ -1970,13 +1993,12 @@ def materialize_accepted_task_review(
             raise SystemExit(
                 "accepted initial task review does not match the clean exact source identity"
             )
-        handoff_with_review = dict(executor_handoff)
-        handoff_with_review["acceptance_review"] = review
         accepted = build_accepted_task_result(
             task,
             binding,
-            handoff_with_review,
+            executor_handoff,
             validated_executor_result,
+            accepted_review=review,
             accepted_at=accepted_at,
         )
         updated = dict(binding)
@@ -4001,12 +4023,17 @@ def validate_executor_result_for_task(
     repair_continuity: Mapping[str, Mapping[str, object] | RepairContinuity] | None = None,
     authorized_replacements: Iterable[str] | None = None,
     preparing_review: bool = False,
+    creation_safe: bool = False,
 ) -> dict[str, Any]:
     if handoff.get("type") != "executor-result":
         raise SystemExit("Handoff is not executor-result")
     for field in FORBIDDEN_EXECUTOR_RESULT_FIELDS:
         if field in handoff:
             raise SystemExit(f"Executor result contains forbidden field {field}")
+    if creation_safe or preparing_review:
+        for field in FORBIDDEN_CREATION_CONTROL_FIELDS:
+            if field in handoff:
+                raise SystemExit(f"Executor result contains wrong-owner field {field}")
     task_id = str(task.get("task_id") or "")
     plan_id = str(task.get("plan_id") or "")
     if not task_id or not plan_id:
@@ -4033,10 +4060,7 @@ def validate_executor_result_for_task(
     if state in {"completed", "partial"}:
         _assert_task_fit_check(handoff, task_id, state)
         _assert_changed_paths_in_write_scope(handoff, task_files)
-    if preparing_review:
-        review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
-        if (task.get("review_required") is True) != (review.get("required") is True):
-            raise SystemExit("Executor result acceptance_review.required must match compiled review_required")
+    if preparing_review or creation_safe:
         acceptance_review_sequence = None
     else:
         acceptance_review_sequence = _assert_handoff_review_matches_task(handoff, task, state)
@@ -4077,9 +4101,13 @@ def validate_executor_result_for_task(
                 )
     capability = task.get("evidence_capability") if isinstance(task.get("evidence_capability"), dict) else {}
     if state == "completed" and capability.get("result") == "mapped":
-        if not observe:
+        if not observe and not creation_safe:
             raise SystemExit(
                 "evidence-closure-blocked: completed mapped invariants require independent harness observation"
+            )
+        if creation_safe:
+            evidence_closure = _validate_evidence_closure(
+                handoff, task, state, reported_commands, list(reported_commands.values())
             )
     else:
         evidence_closure = _validate_evidence_closure(
@@ -4097,6 +4125,21 @@ def validate_executor_result_for_task(
         repository_entries = _validated_repository_evidence(handoff, True)
     if evidence_applicability["codegraph"]["required"]:
         codegraph_entries = _validated_codegraph_evidence(handoff, repository_entries)
+    if creation_safe:
+        delegation = handoff.get("delegation_evidence")
+        if not isinstance(delegation, Mapping):
+            raise SystemExit("Executor result is missing delegation_evidence")
+        try:
+            normalize_subagent_provenance(delegation)
+        except OwnershipBlocker as error:
+            raise SystemExit(str(error)) from error
+        return {
+            "knowledge_disposition": knowledge_disposition,
+            "unresolved": unresolved,
+            "result_state": state,
+            "evidence_applicability": evidence_applicability,
+            "evidence_closure": evidence_closure,
+        }
     if observe and (repository_entries or codegraph_entries):
         _observe_repository_and_codegraph_evidence(
             task,
@@ -4206,6 +4249,16 @@ def validate_executor_result_for_task(
         **({"task_ownership": task_ownership} if task_ownership is not None else {}),
         **({"observed_validation": observed_validation} if observed_validation is not None else {}),
     }
+
+
+def validate_executor_result_creation_for_task(
+    handoff: dict[str, Any], task: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate immutable executor facts without observation, review, or acceptance."""
+
+    return validate_executor_result_for_task(
+        handoff, task, observe=False, preparing_review=False, creation_safe=True
+    )
 
 
 def _validate_repair_acceptance_continuity(
@@ -5172,8 +5225,8 @@ def build_review_package(args: argparse.Namespace) -> Path:
         validated = validate_executor_result_for_task(
             handoff, task, observe=True, preparing_review=True, **_observation_kwargs(args)
         )
-        review_request = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
-        review_mode = str(review_request.get("review_mode") or "initial")
+        review_request = {}
+        review_mode = "initial"
     else:
         raise SystemExit("build-review-package requires an initial executor handoff or accepted task result")
     if review_mode not in {"initial", "repair"}:

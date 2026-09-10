@@ -17,6 +17,9 @@ FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
     "knowledge_persistence",
     "baseline",
 }
+FORBIDDEN_MARKED_EXECUTOR_RESULT_FIELDS = {
+    "acceptance_review", "accepted_result", "reviewer_run", "publication", "receipt"
+}
 
 
 def check_contract_terms(issues: list[str], path: Path, label: str, required_terms: list[str]) -> None:
@@ -85,18 +88,23 @@ def check_active_handoff_contract(issues: list[str], root: Path) -> None:
             if path.is_file():
                 issues.append(f"active orchestration handoff is retired: {path.relative_to(root)}")
 
-    active_executor = root / "handoff" / "executor" / "active"
-    for pattern in ("*.yaml", "*.yml"):
-        for path in active_executor.glob(pattern):
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if not line or line[0].isspace() or ":" not in line:
-                    continue
-                field = line.split(":", 1)[0]
-                if field in FORBIDDEN_EXECUTOR_RESULT_FIELDS:
-                    issues.append(
-                        f"active executor-result handoff contains forbidden field {field}: "
-                        f"{path.relative_to(root)}"
-                    )
+    executor_root = root / "handoff" / "executor"
+    for status in HANDOFF_STATUSES:
+        for pattern in ("*.yaml", "*.yml"):
+            for path in (executor_root / status).glob(pattern):
+                lines = path.read_text(encoding="utf-8").splitlines()
+                marked = any(line == "lifecycle_authority: location-v1" for line in lines)
+                for line in lines:
+                    if not line or line[0].isspace() or ":" not in line:
+                        continue
+                    field = line.split(":", 1)[0]
+                    if field in FORBIDDEN_EXECUTOR_RESULT_FIELDS or (
+                        marked and field in FORBIDDEN_MARKED_EXECUTOR_RESULT_FIELDS
+                    ):
+                        issues.append(
+                            f"executor-result handoff contains forbidden field {field}: "
+                            f"{path.relative_to(root)}"
+                        )
 
 
 def index_row_identity(index_scope: str, row: dict[str, object]) -> tuple[object, ...]:

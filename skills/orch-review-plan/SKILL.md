@@ -19,8 +19,8 @@ Verify:
 - executor-result handoffs by applicability;
 - declared completion evidence corresponds to the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints;
 - every mapped invariant has capable, current, correctly bounded harness-observed evidence under its allocated INV/VAL identities; treat incapable green, contradiction, staleness, wrong-boundary, failure, missing, or unexecuted evidence as negative acceptance evidence and route first-owner repair: task repair for failed, stale, or unexecuted implementation evidence; plan repair for missing, wrong-boundary, or incapable allocation; specification repair for contradictory accepted authority;
-- missing `acceptance_review.verdict` blocks only a task that explicitly required independent review; do not require universal task-review evidence;
-- `acceptance_review.verdict: accept` only for those explicitly required reviews;
+- missing stored `accept` review authority blocks only a task whose compiled `review_required` is true; do not require universal task-review evidence or embedded handoff verdicts;
+- exact stored `accept` authority only for those explicitly required reviews, joined during accepted-result materialization;
 - declared plan-level/integration acceptance observed on the final integrated workspace; do not start another implementation-review agent to produce plan-level acceptance;
 - aggregate accepted task dispositions before applying the final knowledge gate: any accepted `update`, `supersede`, or `reclassify` makes durable closure required even when the upstream specification said `not-needed`; accepted `none` and rejected task dispositions do not trigger closure;
 - record validated delegate-return state in the root plan's existing Knowledge Base Update `Closure return` field so the deterministic `archive-plan` helper enforces the same aggregate gate;

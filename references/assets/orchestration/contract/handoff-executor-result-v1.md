@@ -24,6 +24,7 @@ Templates define the maximum available fields, not mandatory output shape. Omit 
 id: handoff-exec-YYYYMMDD-001-slug
 type: executor-result
 status: active
+lifecycle_authority: location-v1
 project: work-bundle
 created_at: YYYY-MM-DD
 updated_at: YYYY-MM-DD
@@ -109,16 +110,6 @@ task_fit_check:
     - assigned task
   findings: []
 
-acceptance_review:
-  required: false | true
-  reviewer_independent: true | false
-  verdict: pending | accept | repair | blocked
-  reviewed_head: commit-or-tree-identity
-  findings:
-    - severity: blocking | advisory
-      scope: specification | correctness | quality | validation | rule
-      finding: "Compact evidence-backed text."
-
 repository:
   - root: /absolute/path
     target_kind: git-backed | local-project
@@ -161,7 +152,7 @@ allocation_evidence:
 
 ## Required By Applicability
 
-- `id`, `type`, `status`, `project`, `created_at`, `related`, and `result` are always required.
+- `id`, `type`, `status`, `lifecycle_authority: location-v1`, `project`, `created_at`, `related`, and `result` are always required for newly written handoffs. Embedded `status` is immutable creation metadata; current lifecycle status comes from the status-specific location.
 - For a task-scoped executor-result, `related.plan` and `related.task` are required and must equal the assigned task's `plan_id` and `id`. Nested `related.plan` and flat `related_plan` must resolve to exactly one identity. Missing, null, conflicting, or mismatched plan identity fails closed before `Completed` and before `build-review-package` produces a review package. The shared `validate-executor-result` helper owns this gate. Do not infer plan identity from a local task ID.
 - `changes.files` is required when files, symbols, artifacts, schemas, commands, or docs changed or were inspected as the task output.
 - `validation.commands` is required when any command, test, lint, inspection, or manual verification was run or intentionally skipped.
@@ -173,7 +164,7 @@ allocation_evidence:
 - `defect_closure` is required when a review task closes or carries specification-included defect evidence.
 - `unresolved` is included only when blockers or issues remain.
 - `task_fit_check` is required for completed and partial task results. It records the assigned task, result `clean|repaired|unresolved|skipped`, artifacts checked, and meaningful findings.
-- `acceptance_review` is required when the task contract requires review. A review-required task cannot become `Completed` until the verdict is `accept`.
+- Review requirements come from compiled task authority. Review packets, verdicts, receipts, accepted-result identities, observations, and later audit facts are wrong-owner fields and must not be written into a new executor-result handoff. A structurally complete review-required executor result is admitted before review; accepted-result materialization later joins it with the exact published review and current observations.
 - `repository` is required when repository preflight, accepted baseline, changed paths, or blocker state matters for continuation.
 - `repository[].metadata` is required when project metadata baseline was used for target resolution, branch checks, commit checks, or CodeGraph policy decisions.
 - `codegraph` is required when source-code inspection or edits were in scope. Keep it compact: `root`, `applicable`, `up_to_date`, and required fallback or blocker facts are enough unless a failure needs detail.
@@ -194,6 +185,11 @@ deviations: []
 strategy_advice: []
 knowledge_persistence: []
 baseline: {}
+acceptance_review: {}
+accepted_result: {}
+reviewer_run: {}
+publication: {}
+receipt: {}
 ```
 
 Use `delegation_evidence` for compact delegation proof. Use `unresolved` and `task_fit_check.findings` for remaining issues instead of `deviations`. Do not include a top-level `baseline`; the helper owns pre-task baseline capture, and executor-result cannot supply or replace that baseline.
@@ -208,12 +204,18 @@ Compact handoffs must not weaken safety gates:
 - Delegation evidence must preserve delegated state, `owner_kind: subagent`, minimum agent/run identity, and `host-native|execution-flow` mechanism. UI, visibility, fallback, controller-owner, and internal-worker fields are invalid.
 - Validation evidence must list exact commands or inspections and their result. Executor-authored `result`, `exit_code`, or an equivalently named receipt block is corroboration, not independent proof and not authority for `Completed`. Direct helper observation in the bound worktree is the terminal evidence.
 - Task-fit evidence must prove the executor followed the compiled brief and assigned task. Full specification, root-plan, and phase inspection is an escalation path when compiled context is inconsistent.
-- Acceptance-review evidence must identify review independence, the reviewed tree, verdict, and blocking or advisory findings.
+- Published review authority must identify review independence, the reviewed tree, verdict, and findings outside the executor-result handoff. Accepted-result materialization owns the join and never rewrites the original handoff.
 - Executor-result handoffs must not retrieve or write `.work-bundle/knowledge/`.
 - `knowledge_disposition.action` is exactly `none`, `update`, `supersede`, or `reclassify`; reasons and affected authority must not name knowledge paths or any `ks-*` skill, and review owns any approved persistence follow-up.
 - Contract-decoupled handoffs must show validation against the common contract and accepted prior handoffs, not sibling in-progress implementation.
 - Barrier handoffs must show whether the participant reached the barrier or blocked before convergence work is scheduled.
 - Defect closure handoffs must use review-owned lifecycle evidence and must not delete defect evidence files.
+
+## Immutable Lifecycle Authority
+
+New handoffs are marked `lifecycle_authority: location-v1`. Their complete bytes never change after creation. The controller moves the same bytes among `active/`, `reviewed/`, `superseded/`, and `archived/`; the index derives current status from that location and lookups search every status directory. Same-state requests are no-ops and write neither artifact, override, index, nor dispatch evidence.
+
+Unmarked historical handoffs are not rewritten or bulk-migrated. Without an override, an unmarked file in `active/` uses a recognized embedded status and an unmarked file in a non-active status directory uses its location. On the first actual explicit status change, including return to `active`, the controller writes only `handoff/legacy-status-overrides/<handoff-id>.json`, binding the complete-byte digest, type, related plan/task, and current status. A valid override then takes precedence and must agree with location. Duplicate identities, type/folder disagreement, task/plan contradictions, or override digest/binding/location contradictions fail closed.
 
 ## Format Guidance
 
