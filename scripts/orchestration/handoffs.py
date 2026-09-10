@@ -297,13 +297,8 @@ def _collect_handoff_rows(args: argparse.Namespace) -> list[dict[str, object]]:
         prior = seen.setdefault(handoff_id, [])
         if prior:
             candidates = [*prior, (path, metadata, folder, location_status)]
-            projects = [str(item[1].get("project") or "").strip() for item in candidates]
-            legacy_projects_are_distinct = bool(all(projects)) and len(projects) == len(
-                set(projects)
-            )
             colocated_unmarked_legacy = (
                 handoff_id not in overrides
-                and legacy_projects_are_distinct
                 and len({(item[2], item[3]) for item in candidates}) == 1
                 and all(
                     item[1].get("lifecycle_authority") in (None, "")

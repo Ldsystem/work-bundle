@@ -244,6 +244,8 @@ def _write_unmarked_legacy_handoff(
     name: str,
     project: str,
     status_location: str = "active",
+    phase: str = "phase-legacy",
+    task: str = "task-legacy",
 ) -> Path:
     path = (
         tmp_path
@@ -255,7 +257,10 @@ def _write_unmarked_legacy_handoff(
         "type: executor-result\n"
         "status: active\n"
         f"project: {project}\n"
-        "related:\n  plan: plan-legacy\n  task: task-legacy\n",
+        "related:\n"
+        "  plan: plan-legacy\n"
+        f"  phase: {phase}\n"
+        f"  task: {task}\n",
         encoding="utf-8",
     )
     return path
@@ -281,14 +286,36 @@ def test_handoff_index_preserves_unrelated_colocated_unmarked_legacy_duplicates(
     assert {tmp_path / str(row["path"]) for row in rows} == {first, second}
 
 
-def test_handoff_index_rejects_same_project_unmarked_legacy_duplicate(
+def test_handoff_index_preserves_same_project_colocated_unmarked_legacy_duplicate(
     tmp_path: Path,
 ) -> None:
-    _write_unmarked_legacy_handoff(tmp_path, name="legacy-first", project="same-project")
-    _write_unmarked_legacy_handoff(tmp_path, name="legacy-second", project="same-project")
+    first = _write_unmarked_legacy_handoff(
+        tmp_path,
+        name="legacy-first",
+        project="same-project",
+        status_location="archived",
+        phase="phase-first",
+        task="task-first",
+    )
+    second = _write_unmarked_legacy_handoff(
+        tmp_path,
+        name="legacy-second",
+        project="same-project",
+        status_location="archived",
+        phase="phase-second",
+        task="task-second",
+    )
 
-    with pytest.raises(SystemExit, match="Duplicate handoff identity"):
-        index_handoffs(handoff_args(tmp_path))
+    rows = [
+        row
+        for row in index_handoffs(handoff_args(tmp_path))
+        if row["id"] == "legacy-duplicate"
+    ]
+
+    assert {row["project"] for row in rows} == {"same-project"}
+    assert {row["related_phase"] for row in rows} == {"phase-first", "phase-second"}
+    assert {row["related_task"] for row in rows} == {"task-first", "task-second"}
+    assert {tmp_path / str(row["path"]) for row in rows} == {first, second}
 
 
 def test_handoff_index_rejects_cross_location_unmarked_legacy_duplicate(
