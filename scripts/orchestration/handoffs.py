@@ -275,7 +275,7 @@ def _collect_handoff_rows(args: argparse.Namespace) -> list[dict[str, object]]:
     root = orchestration_root(args) / "handoff"
     overrides = _legacy_overrides(root)
     rows: list[dict[str, object]] = []
-    seen: set[str] = set()
+    seen: dict[str, list[tuple[Path, dict[str, object], str, str]]] = {}
     for path in _handoff_paths(root):
         metadata = _read_handoff_metadata(path)
         if not metadata:
@@ -283,9 +283,6 @@ def _collect_handoff_rows(args: argparse.Namespace) -> list[dict[str, object]]:
         if metadata.get("lifecycle_authority") == LIFECYCLE_AUTHORITY and not metadata.get("id"):
             raise SystemExit(f"Marked handoff is missing identity: {path}")
         handoff_id = str(metadata.get("id") or path.stem)
-        if handoff_id in seen:
-            raise SystemExit(f"Duplicate handoff identity across lifecycle locations: {handoff_id}")
-        seen.add(handoff_id)
         folder, location_status = _status_location(path, root)
         handoff_type = str(metadata.get("type") or "")
         expected_folder = "orchestration" if handoff_type == "orchestration" else "executor"
@@ -297,11 +294,32 @@ def _collect_handoff_rows(args: argparse.Namespace) -> list[dict[str, object]]:
         task_identities = _explicit_related_identities(metadata, "related_task", "task")
         if len(task_identities) > 1:
             raise SystemExit(f"Handoff task identity conflict: {' vs '.join(task_identities)}")
+        prior = seen.setdefault(handoff_id, [])
+        if prior:
+            candidates = [*prior, (path, metadata, folder, location_status)]
+            projects = [str(item[1].get("project") or "").strip() for item in candidates]
+            legacy_projects_are_distinct = bool(all(projects)) and len(projects) == len(
+                set(projects)
+            )
+            colocated_unmarked_legacy = (
+                handoff_id not in overrides
+                and legacy_projects_are_distinct
+                and len({(item[2], item[3]) for item in candidates}) == 1
+                and all(
+                    item[1].get("lifecycle_authority") in (None, "")
+                    for item in candidates
+                )
+            )
+            if not colocated_unmarked_legacy:
+                raise SystemExit(
+                    f"Duplicate handoff identity across lifecycle locations: {handoff_id}"
+                )
+        prior.append((path, metadata, folder, location_status))
         current_status = _resolved_handoff_status(
             path, metadata, location_status, overrides.get(handoff_id)
         )
         rows.append({"id": handoff_id, "type": handoff_type, "status": current_status, "path": rel(path, args), "project": metadata.get("project", ""), "created_at": metadata.get("created_at", ""), "updated_at": metadata.get("updated_at", ""), "related_spec": _related_value(metadata, "related_spec", "spec"), "related_plan": _related_value(metadata, "related_plan", "plan"), "related_phase": _related_value(metadata, "related_phase", "phase"), "related_task": _related_value(metadata, "related_task", "task")})
-    orphans = sorted(set(overrides) - seen)
+    orphans = sorted(set(overrides) - set(seen))
     if orphans:
         raise SystemExit(f"Legacy handoff status override has no handoff: {', '.join(orphans)}")
     return rows
@@ -457,9 +475,12 @@ def cmd_set_handoff_status(args: argparse.Namespace) -> None:
     if not HANDOFF_ID_RE.fullmatch(str(args.id)):
         raise SystemExit(f"Invalid handoff identity: {args.id}")
     rows = _collect_handoff_rows(args)
-    match = next((row for row in rows if row.get("id") == args.id), None)
-    if not match:
+    matches = [row for row in rows if row.get("id") == args.id]
+    if not matches:
         raise SystemExit(f"Handoff not found: {args.id}")
+    if len(matches) != 1:
+        raise SystemExit(f"Handoff identity is ambiguous for lifecycle operation: {args.id}")
+    match = matches[0]
     path = artifact_path_from_row(match, args)
     if match.get("status") == args.status:
         print(args.id)

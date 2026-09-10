@@ -238,6 +238,161 @@ def test_handoff_index_fails_closed_on_duplicate_identity(tmp_path: Path) -> Non
         index_handoffs(handoff_args(tmp_path))
 
 
+def _write_unmarked_legacy_handoff(
+    tmp_path: Path,
+    *,
+    name: str,
+    project: str,
+    status_location: str = "active",
+) -> Path:
+    path = (
+        tmp_path
+        / f".work-bundle/orchestration/handoff/executor/{status_location}/{name}.yaml"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "id: legacy-duplicate\n"
+        "type: executor-result\n"
+        "status: active\n"
+        f"project: {project}\n"
+        "related:\n  plan: plan-legacy\n  task: task-legacy\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_handoff_index_preserves_unrelated_colocated_unmarked_legacy_duplicates(
+    tmp_path: Path,
+) -> None:
+    first = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-first", project="project-first"
+    )
+    second = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-second", project="project-second"
+    )
+
+    rows = [
+        row
+        for row in index_handoffs(handoff_args(tmp_path))
+        if row["id"] == "legacy-duplicate"
+    ]
+
+    assert {row["project"] for row in rows} == {"project-first", "project-second"}
+    assert {tmp_path / str(row["path"]) for row in rows} == {first, second}
+
+
+def test_handoff_index_rejects_same_project_unmarked_legacy_duplicate(
+    tmp_path: Path,
+) -> None:
+    _write_unmarked_legacy_handoff(tmp_path, name="legacy-first", project="same-project")
+    _write_unmarked_legacy_handoff(tmp_path, name="legacy-second", project="same-project")
+
+    with pytest.raises(SystemExit, match="Duplicate handoff identity"):
+        index_handoffs(handoff_args(tmp_path))
+
+
+def test_handoff_index_rejects_cross_location_unmarked_legacy_duplicate(
+    tmp_path: Path,
+) -> None:
+    _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-first", project="project-first"
+    )
+    _write_unmarked_legacy_handoff(
+        tmp_path,
+        name="legacy-second",
+        project="project-second",
+        status_location="reviewed",
+    )
+
+    with pytest.raises(SystemExit, match="Duplicate handoff identity"):
+        index_handoffs(handoff_args(tmp_path))
+
+
+def test_handoff_index_rejects_override_for_unmarked_legacy_duplicates(
+    tmp_path: Path,
+) -> None:
+    first = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-first", project="project-first"
+    )
+    _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-second", project="project-second"
+    )
+    override = (
+        tmp_path
+        / ".work-bundle/orchestration/handoff/legacy-status-overrides/legacy-duplicate.json"
+    )
+    override.parent.mkdir(parents=True)
+    override.write_text(
+        json.dumps(
+            {
+                "handoff_id": "legacy-duplicate",
+                "sha256": __import__("hashlib").sha256(first.read_bytes()).hexdigest(),
+                "type": "executor-result",
+                "related_plan": "plan-legacy",
+                "related_task": "task-legacy",
+                "status": "active",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="Duplicate handoff identity"):
+        index_handoffs(handoff_args(tmp_path))
+
+
+def test_handoff_status_change_rejects_ambiguous_legacy_duplicate(
+    tmp_path: Path,
+) -> None:
+    first = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-first", project="project-first"
+    )
+    second = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-second", project="project-second"
+    )
+    originals = {first: first.read_bytes(), second: second.read_bytes()}
+
+    with pytest.raises(SystemExit, match="ambiguous"):
+        cmd_set_handoff_status(
+            handoff_args(tmp_path, id="legacy-duplicate", status="reviewed")
+        )
+
+    assert {path: path.read_bytes() for path in originals} == originals
+    assert not (
+        tmp_path
+        / ".work-bundle/orchestration/handoff/legacy-status-overrides/legacy-duplicate.json"
+    ).exists()
+
+
+def test_handoff_creation_rejects_identity_owned_by_legacy_duplicates(
+    tmp_path: Path,
+) -> None:
+    first = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-first", project="project-first"
+    )
+    second = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-second", project="project-second"
+    )
+    content = tmp_path / "handoff-content.txt"
+    content.write_text("result:\n  state: completed\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Duplicate handoff identity"):
+        cmd_write_handoff(
+            handoff_args(
+                tmp_path,
+                id="legacy-duplicate",
+                content_file=str(content),
+            )
+        )
+
+    assert first.is_file()
+    assert second.is_file()
+    assert not list(
+        (tmp_path / ".work-bundle/orchestration/handoff/executor/active").glob(
+            "legacy-duplicate-task-result.*"
+        )
+    )
+
+
 @pytest.mark.parametrize("target_status", ["active", "reviewed", "superseded", "archived"])
 def test_marked_handoff_supports_every_target_status(
     tmp_path: Path, target_status: str
