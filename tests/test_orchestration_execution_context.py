@@ -93,6 +93,26 @@ def test_creation_safe_projection_admits_before_review_and_rejects_review_facts(
         )
 
 
+def test_changed_path_scope_distinguishes_inspection_from_mutation() -> None:
+    files = {"read": ["docs/contract.md"], "write": ["src/runtime.py"]}
+
+    execution_context._assert_changed_paths_in_write_scope(
+        {"changes": {"files": [{"path": "docs/contract.md", "action": "inspected"}]}},
+        files,
+    )
+
+    with pytest.raises(SystemExit, match="write scope"):
+        execution_context._assert_changed_paths_in_write_scope(
+            {"changes": {"files": [{"path": "docs/contract.md", "action": "modified"}]}},
+            files,
+        )
+    with pytest.raises(SystemExit, match="inspection scope"):
+        execution_context._assert_changed_paths_in_write_scope(
+            {"changes": {"files": [{"path": "docs/unallocated.md", "action": "inspected"}]}},
+            files,
+        )
+
+
 def _load_orchestration_dispatcher():
     path = ORCHESTRATION / "dispatcher.py"
     spec = importlib.util.spec_from_file_location(
@@ -2802,6 +2822,13 @@ def test_validate_executor_result_rejects_review_required_downgrade(tmp_path: Pa
         root,
         "  action: none\n  reason: No stable authority changed.\n  affected_authority: []\n",
     )
+    handoff.write_text(
+        handoff.read_text(encoding="utf-8").replace(
+            "result: {state: completed}\n",
+            "result: {state: completed}\nacceptance_review: {required: false}\n",
+        ),
+        encoding="utf-8",
+    )
     brief = _compiled_brief(root, task)
 
     with pytest.raises(SystemExit, match="review"):
@@ -2871,6 +2898,60 @@ def test_initial_review_preparation_accepts_sparse_repaired_task_fit() -> None:
 
     assert prepared["result_state"] == "completed"
     assert prepared["task_ownership"]["agent_id"] == "repair-fixture-agent"
+
+
+def test_terminal_validation_accepts_sparse_review_required_executor_result() -> None:
+    brief, handoff = _repair_completion_fixture()
+    handoff.pop("acceptance_review")
+    handoff["task_fit_check"]["result"] = "clean"
+
+    validated = execution_context.validate_executor_result_for_task(
+        handoff,
+        brief,
+        observe=True,
+        mutation_events=[],
+    )
+
+    assert validated["result_state"] == "completed"
+    assert validated["task_ownership"]["agent_id"] == "repair-fixture-agent"
+
+
+def test_terminal_cli_defers_review_required_result_materialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    handoff_path = tmp_path / "handoff.yaml"
+    handoff_path.write_text("type: executor-result\n", encoding="utf-8")
+    task = {"task_id": "task-rf", "plan_id": "plan-rf", "review_required": True}
+    monkeypatch.setattr(
+        execution_context,
+        "_compile_task_brief",
+        lambda _args: (tmp_path / "task.md", {"task_brief": task}),
+    )
+    monkeypatch.setattr(execution_context, "resolve_workspace_root", lambda _args: tmp_path)
+    monkeypatch.setattr(
+        execution_context, "_input_path", lambda *_args: handoff_path
+    )
+    monkeypatch.setattr(
+        execution_context, "_read_structured", lambda _path: ({}, "")
+    )
+    monkeypatch.setattr(
+        execution_context,
+        "validate_executor_result_for_task",
+        lambda *_args, **_kwargs: {"result_state": "completed"},
+    )
+    monkeypatch.setattr(
+        execution_context,
+        "materialize_accepted_task_result",
+        lambda *_args, **_kwargs: pytest.fail(
+            "review-required materialization must wait for stored review authority"
+        ),
+    )
+
+    execution_context.cmd_validate_executor_result(
+        argparse.Namespace(handoff=str(handoff_path))
+    )
+
+    assert capsys.readouterr().out.strip() == "handoff.yaml"
 
 
 def test_repair_review_preparation_requires_prior_owner_continuity() -> None:
