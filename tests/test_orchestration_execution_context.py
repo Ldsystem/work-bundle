@@ -2349,26 +2349,20 @@ def test_validate_executor_result_rejects_completed_result_with_unresolved(tmp_p
         _validate_observed(_read_handoff(handoff_path), brief)
 
 
-def test_validate_executor_result_rejects_missing_required_validation(tmp_path: Path) -> None:
+def test_creation_safe_result_may_omit_controller_required_validation(tmp_path: Path) -> None:
     root, _, task = workspace(tmp_path)
-    handoff = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
-    handoff.parent.mkdir(parents=True, exist_ok=True)
-    handoff.write_text(
-        "id: handoff-task-004\n"
-        "type: executor-result\n"
-        "related: {plan: plan-001, task: task-004}\n"
-        "result: {state: completed}\n"
-        "task_fit_check: {task: task-004, result: clean}\n"
-        "knowledge_disposition:\n"
-        "  action: none\n"
-        "  reason: No stable authority changed.\n"
-        "  affected_authority: []\n",
-        encoding="utf-8",
-    )
+    handoff = _read_handoff(_completed_handoff_payload(root))
+    handoff.pop("validation")
     brief = _compiled_brief(root, task)
 
-    with pytest.raises(SystemExit, match="validation"):
-        _validate_observed(_read_handoff(handoff), brief)
+    created = execution_context.validate_executor_result_creation_for_task(
+        handoff, brief
+    )
+    assert created["result_state"] == "completed"
+    with pytest.raises(SystemExit, match="missing fresh required validation"):
+        execution_context.validate_executor_result_for_task(
+            handoff, brief, observe=False, mutation_events=[]
+        )
 
 
 def test_validate_executor_result_cli_rejects_missing_plan_identity(tmp_path: Path) -> None:
