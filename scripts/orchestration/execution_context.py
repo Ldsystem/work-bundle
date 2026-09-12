@@ -4066,7 +4066,7 @@ def validate_executor_result_for_task(
     if state in {"completed", "partial"}:
         _assert_task_fit_check(handoff, task_id, state)
         _assert_changed_paths_in_write_scope(handoff, task_files)
-    if preparing_review or creation_safe:
+    if preparing_review or creation_safe or "acceptance_review" not in handoff:
         acceptance_review_sequence = None
     else:
         acceptance_review_sequence = _assert_handoff_review_matches_task(handoff, task, state)
@@ -4372,6 +4372,9 @@ def _assert_task_fit_check(handoff: dict[str, Any], task_id: str, state: str) ->
 
 def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: dict[str, Any]) -> None:
     try:
+        read_scope = {
+            canonical_relative_path(str(path)) for path in _as_list(task_files.get("read"))
+        }
         write_scope = {
             canonical_relative_path(str(path)) for path in _as_list(task_files.get("write"))
         }
@@ -4386,7 +4389,15 @@ def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: di
             canonical = canonical_relative_path(path) if path else ""
         except OwnershipBlocker as error:
             raise SystemExit(f"Executor result changed path is unsafe: {path}") from error
-        if canonical and canonical not in write_scope:
+        if (
+            canonical
+            and item.get("action") == "inspected"
+            and canonical not in read_scope | write_scope
+        ):
+            raise SystemExit(
+                f"Executor result inspected path is outside task inspection scope: {path}"
+            )
+        if canonical and item.get("action") != "inspected" and canonical not in write_scope:
             raise SystemExit(f"Executor result changed path is outside task write scope: {path}")
 
 
@@ -5624,7 +5635,7 @@ def cmd_validate_executor_result(args: argparse.Namespace) -> None:
     validated = validate_executor_result_for_task(
         handoff, task, observe=True, **_observation_kwargs(args)
     )
-    if validated.get("result_state") == "completed":
+    if validated.get("result_state") == "completed" and task.get("review_required") is not True:
         materialize_accepted_task_result(root, task, handoff, validated)
     print(handoff_path.relative_to(root).as_posix())
 
