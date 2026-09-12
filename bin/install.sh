@@ -470,14 +470,14 @@ install_default() {
     record failed "$installer"
     echo "missing executable skill installer: $installer" >&2
   else
-    installer_args=()
+    installer_command=("$installer")
     if [[ "$force" -eq 1 ]]; then
-      installer_args+=(--force)
+      installer_command+=(--force)
     fi
     if [[ "$dry_run" -eq 1 ]]; then
-      installer_args+=(--dry-run)
+      installer_command+=(--dry-run)
     fi
-    if installer_output="$("$installer" "${installer_args[@]}")"; then
+    if installer_output="$("${installer_command[@]}")"; then
       printf '%s\n' "$installer_output"
       record updated "$installer"
     else

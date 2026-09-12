@@ -42,6 +42,46 @@ def codex_work_bundle_entry() -> dict:
     }
 
 
+def test_default_install_invokes_supported_installer_with_zero_options_under_bash_3(tmp_path: Path) -> None:
+    isolated_root = tmp_path / "work-bundle"
+    isolated_bin = isolated_root / "bin"
+    template_root = isolated_root / "references" / "assets" / "template"
+    isolated_bin.mkdir(parents=True)
+    template_root.mkdir(parents=True)
+    isolated_installer = isolated_bin / "install.sh"
+    isolated_installer.write_bytes(INSTALLER.read_bytes())
+    supported_installer = isolated_bin / "install-work-bundle-skills"
+    supported_installer.write_text(
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$#" > "$HOME/supported-installer-arg-count"\n',
+        encoding="utf-8",
+    )
+    supported_installer.chmod(0o755)
+    (template_root / "bootstrap.yaml").write_text(
+        "work_bundle_root: __WORK_BUNDLE_ROOT__\n",
+        encoding="utf-8",
+    )
+    (template_root / "projects.yaml").write_text("projects: []\n", encoding="utf-8")
+    (template_root / "skill-registry.yaml").write_text("skills: []\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+
+    result = subprocess.run(
+        ["/bin/bash", str(isolated_installer)],
+        cwd=isolated_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (home / "supported-installer-arg-count").read_text(encoding="utf-8") == "0\n"
+    assert "updated:" in result.stdout
+    assert str(supported_installer) in result.stdout
+
+
 def test_codex_register_hook_merges_unrelated_hooks_and_is_idempotent(tmp_path: Path) -> None:
     home = tmp_path / "home"
     hooks_path = home / ".codex" / "hooks.json"
