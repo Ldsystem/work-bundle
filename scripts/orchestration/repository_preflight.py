@@ -9,7 +9,9 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
+
+import yaml
 
 from core import project_registry_path, resolve_workspace_root
 
@@ -79,19 +81,6 @@ def _metadata_scalar(text: str, key: str) -> str:
     return match.group(1).strip().strip("'\"") if match else ""
 
 
-def _workspace_id(text: str) -> str:
-    in_workspace = False
-    for line in text.splitlines():
-        if line == "workspace:":
-            in_workspace = True
-            continue
-        if in_workspace and line and not line.startswith(" "):
-            break
-        if in_workspace and line.strip().startswith("id:"):
-            return line.split(":", 1)[1].strip().strip("'\"")
-    return ""
-
-
 def _device_binding_repositories(workspace_id: str) -> dict[str, dict[str, object]]:
     registry = project_registry_path()
     if not registry.is_file() or not workspace_id:
@@ -131,43 +120,34 @@ def _device_binding_repositories(workspace_id: str) -> dict[str, dict[str, objec
 
 
 def _v4_metadata_repository_entries(root: Path, text: str) -> list[dict[str, object]]:
-    local = _device_binding_repositories(_workspace_id(text))
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(document, Mapping):
+        return []
+    workspace = document.get("workspace")
+    workspace_id = str(workspace.get("id") or "") if isinstance(workspace, Mapping) else ""
+    local = _device_binding_repositories(workspace_id)
+    repositories = document.get("source_repositories")
+    if not isinstance(repositories, list):
+        return []
     entries: list[dict[str, object]] = []
-    in_repositories = False
-    current: dict[str, object] | None = None
-    nested_key = ""
-    for line in text.splitlines():
-        if line == "source_repositories:":
-            in_repositories = True
+    for raw in repositories:
+        if not isinstance(raw, Mapping):
             continue
-        if in_repositories and line and not line.startswith(" "):
-            break
-        if not in_repositories or not line.strip():
-            continue
-        if line.startswith("  - "):
-            if current is not None:
-                entries.append(current)
-            current = {}
-            nested_key = ""
-            key, value = line.strip()[2:].split(":", 1)
-            current[key] = _parse_value(value)
-            continue
-        if current is None:
-            continue
-        if line.startswith("    ") and not line.startswith("      ") and ":" in line:
-            key, value = line.strip().split(":", 1)
-            nested_key = key if not value.strip() else ""
-            if value.strip():
-                current[key] = _parse_value(value)
-            continue
-        if line.startswith("      ") and ":" in line:
-            key, value = line.strip().split(":", 1)
-            if nested_key == "remote" and key == "canonical":
-                current["remote"] = _parse_value(value)
-            elif nested_key == "materialization" and key == "required":
-                current["materialization_required"] = _parse_value(value)
-    if current is not None:
-        entries.append(current)
+        entry = {
+            str(key): value
+            for key, value in raw.items()
+            if not isinstance(value, Mapping)
+        }
+        remote = raw.get("remote")
+        if isinstance(remote, Mapping) and remote.get("canonical") is not None:
+            entry["remote"] = remote["canonical"]
+        materialization = raw.get("materialization")
+        if isinstance(materialization, Mapping) and materialization.get("required") is not None:
+            entry["materialization_required"] = materialization["required"]
+        entries.append(entry)
     resolved: list[dict[str, object]] = []
     for entry in entries:
         repository_id = str(entry.get("id") or "")

@@ -16,6 +16,7 @@ sys.path.insert(0, str(ORCHESTRATION))
 
 import execution_context  # noqa: E402
 import plans  # noqa: E402
+import repository_preflight  # noqa: E402
 from test_orchestration_accepted_result import (  # noqa: E402
     _binding,
     _build_accepted_task_result,
@@ -453,6 +454,52 @@ def test_registered_repository_roots_rejects_duplicate_identity_at_same_root(
 
     with pytest.raises(SystemExit, match="registered repository identity is duplicated"):
         plans._registered_repository_roots(tmp_path)
+
+
+def test_final_plan_workspace_resolves_indentless_v4_registered_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    members = {
+        "work-bundle-main": tmp_path / "work-bundle-main",
+        "execution-flow": tmp_path / "execution-flow",
+    }
+    for member in members.values():
+        member.mkdir()
+    metadata = tmp_path / ".work-bundle/project.yaml"
+    metadata.parent.mkdir()
+    metadata.write_text(
+        "metadata_version: 4\n"
+        "workspace:\n"
+        "  id: workspace-v4\n"
+        "  mode: multi-repository\n"
+        "source_repositories:\n"
+        "- id: work-bundle-main\n"
+        "  role: source\n"
+        "  default_branch: main\n"
+        "- id: execution-flow\n"
+        "  role: source\n"
+        "  default_branch: main\n",
+        encoding="utf-8",
+    )
+    registry = tmp_path / "projects.yaml"
+    registry.write_text(
+        "device_bindings:\n"
+        "  workspace-v4:\n"
+        "    repositories:\n"
+        "      work-bundle-main:\n"
+        f"        project_root: {members['work-bundle-main']}\n"
+        "      execution-flow:\n"
+        f"        project_root: {members['execution-flow']}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(repository_preflight, "project_registry_path", lambda: registry)
+    monkeypatch.setattr(plans, "_member_roots", lambda _workspace: list(members.values()))
+
+    selected = plans._resolve_final_plan_workspace(
+        argparse.Namespace(project_root=str(tmp_path), repository_id="work-bundle-main"),
+    )
+
+    assert selected == members["work-bundle-main"].resolve()
 
 
 def test_archive_knowledge_gate_aggregates_new_results_and_bounds_legacy_bridge(
