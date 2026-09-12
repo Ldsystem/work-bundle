@@ -103,14 +103,29 @@ def _binding(root: Path) -> dict[str, object]:
 
 
 def _record_validation_observation(
-    root: Path, binding: dict[str, object], task: dict[str, object]
+    root: Path,
+    binding: dict[str, object],
+    task: dict[str, object],
+    *,
+    live_initial_acceptance: bool = False,
 ) -> str:
     item = task["validation"][0]
     assert isinstance(item, dict)
-    item.setdefault("evidence_reuse", {
-        "mode": "deterministic", "max_age_seconds": 3600,
-        "environment_inputs": [], "include_head": False,
-    })
+    if live_initial_acceptance:
+        item["evidence_reuse"] = {
+            "mode": "live", "max_age_seconds": 0,
+            "environment_inputs": [], "include_head": True,
+        }
+        observed_item = {
+            **item,
+            "evidence_reuse": {**item["evidence_reuse"], "max_age_seconds": 86400},
+        }
+    else:
+        item.setdefault("evidence_reuse", {
+            "mode": "deterministic", "max_age_seconds": 3600,
+            "environment_inputs": [], "include_head": False,
+        })
+        observed_item = item
     evidence = execution_context.capture_repository_evidence(root)
 
     def observe(receipt: dict[str, object]) -> dict[str, object]:
@@ -127,8 +142,12 @@ def _record_validation_observation(
         }
 
     observed = execution_context._completion_provenance_module().observe_validation(
-        binding, execution_context._validation_observation_task(task), item, evidence, observe,
+        binding, execution_context._validation_observation_task(task), observed_item, evidence, observe,
         lambda: execution_context.capture_repository_evidence(root),
+        finalization_id=(
+            f"initial-acceptance:{task['plan_id']}:{task['task_id']}:fixture"
+            if live_initial_acceptance else None
+        ),
     )
     return str(observed["observation_id"])
 
@@ -517,6 +536,7 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
     accepted_head = _git(tmp_path, "rev-parse", "HEAD")
     accepted_tree = _git(tmp_path, "rev-parse", "HEAD^{tree}")
     task = _task(tmp_path)
+    task["depends_on"] = []
     binding = _binding(tmp_path)
     binding["baseline"] = {"head": accepted_head, "tree": accepted_tree}
     prior = _build_accepted_task_result(
@@ -626,6 +646,10 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         "started_at": "2026-09-08T01:03:00Z",
         "completed_at": "2026-09-08T01:04:00Z",
     }
+    (tmp_path / ".git/info/exclude").write_text(".work-bundle/\n", encoding="utf-8")
+    observation_id = _record_validation_observation(
+        tmp_path, binding, task, live_initial_acceptance=True
+    )
     (tmp_path / "unrelated.py").write_text("UNCHANGED_FRONTIER = True\n")
     _git(tmp_path, "add", "unrelated.py")
     _git(tmp_path, "commit", "-qm", "later unrelated lifecycle progress")
@@ -639,11 +663,9 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
     )
 
     monkeypatch.setattr(review_runtime, "_validate_reviewer_run", lambda *_: None)
-    (tmp_path / ".git/info/exclude").write_text(".work-bundle/\n", encoding="utf-8")
     review_reference = review_runtime.publish_review(
         tmp_path, repair_review, current_target_identity=repaired_identity
     )
-    observation_id = _record_validation_observation(tmp_path, binding, task)
     repaired = execution_context.materialize_accepted_task_repair_review(
         tmp_path,
         task,
