@@ -794,6 +794,71 @@ def test_evidence_closure_rejects_harness_observation_without_allocated_identity
         execution_context._validate_evidence_closure(handoff, task, "completed", reported, observed)
 
 
+def _sparse_mapped_creation_fixture() -> tuple[dict, dict, list[dict]]:
+    task, handoff, _, observed = evidence_closure_fixture()
+    task.update(
+        {
+            "plan_id": "plan-001",
+            "source_ids": [],
+            "files": {"read": [], "write": []},
+            "truth_basis": {},
+            "review_required": False,
+            "evidence_applicability": {
+                "metadata": {"required": False, "reasons": []},
+                "repository": {"required": False, "reasons": []},
+                "codegraph": {"required": False, "reasons": []},
+            },
+        }
+    )
+    handoff.update(
+        {
+            "type": "executor-result",
+            "related": {"plan": "plan-001", "task": "task-001"},
+            "result": {"state": "completed"},
+            "task_fit_check": {"task": "task-001", "result": "clean"},
+            "delegation_evidence": {
+                "delegated": True,
+                "owner_kind": "subagent",
+                "agent_id": "agent-001",
+                "run_id": "run-001",
+                "mechanism": "host-native",
+            },
+            "knowledge_disposition": {
+                "action": "none",
+                "reason": "No stable authority changed.",
+                "affected_authority": [],
+            },
+        }
+    )
+    return task, handoff, observed
+
+
+def test_creation_safe_projection_admits_unreported_controller_final_validation() -> None:
+    task, handoff, observed = _sparse_mapped_creation_fixture()
+
+    created = execution_context.validate_executor_result_creation_for_task(handoff, task)
+    assert created["result_state"] == "completed"
+
+    with pytest.raises(SystemExit, match="independent harness observation"):
+        execution_context.validate_executor_result_for_task(
+            handoff, task, observe=False, mutation_events=[]
+        )
+    terminal_closure = execution_context._validate_evidence_closure(
+        handoff, task, "completed", {}, observed
+    )
+    assert terminal_closure["result"] == "passed"
+
+
+def test_creation_safe_projection_rejects_malformed_optional_executor_report() -> None:
+    task, handoff, _ = _sparse_mapped_creation_fixture()
+    handoff["validation"] = {
+        "commands": [{"command": "focused-test", "result": "invented"}]
+    }
+
+    with pytest.raises(SystemExit, match="reported validation result"):
+        execution_context.validate_executor_result_creation_for_task(handoff, task)
+
+
 def test_completed_mapped_result_requires_produced_observation_batch() -> None:
     task, handoff, _, _ = evidence_closure_fixture()
     task.update(
@@ -1691,8 +1756,14 @@ def test_initial_completed_result_can_prepare_required_review_without_future_ver
 
     package = build_review_package(args(root, task, handoff=str(handoff), base=base, head=base))
     assert package.is_file()
-    with pytest.raises(SystemExit, match="compiled review_required"):
-        _validate_observed(_read_handoff(handoff), _compiled_brief(root, task))
+    handoff_data = _read_handoff(handoff)
+    brief = _compiled_brief(root, task)
+    validated = _validate_observed(handoff_data, brief)
+    assert validated["result_state"] == "completed"
+    with pytest.raises(SystemExit, match="accepted mandatory review"):
+        execution_context.materialize_accepted_task_result(
+            root, brief, handoff_data, validated
+        )
 
 
 def test_postacceptance_review_package_ignores_stale_handoff_and_requires_current_observation(tmp_path: Path) -> None:
