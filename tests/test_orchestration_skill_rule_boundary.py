@@ -411,7 +411,10 @@ def test_bounded_closure_contract_converges_policy_controller_and_consumers() ->
         assert "review_revision_limit" not in text
 
     for token in [
-        "metadata_version: 4",
+        "metadata_version: 3",
+        "authority: workspace-working-state",
+        "workspace_root: <absolute-path-to-workspace-root>",
+        "project_root: <absolute-path-to-project-root>",
         "orchestration_control:",
         "post_execution_review_round_limit: 5",
         "post_execution_review_flows: []",
@@ -420,6 +423,7 @@ def test_bounded_closure_contract_converges_policy_controller_and_consumers() ->
         "implementation_exemptions: []",
     ]:
         assert token in metadata_template, token
+    assert "prefer_subagent" not in metadata_template
 
     for text in (boundary_rule, workflow):
         assert "exhausted flow refuses reconciliation before its blocker is written" in text

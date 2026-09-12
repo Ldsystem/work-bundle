@@ -1,13 +1,12 @@
-metadata_version: 4
-authority: canonical
-workspace:
-  id: <stable-workspace-id>
-  slug: <workspace-slug>
-  mode: <single-repository|multi-repository|composite>
-  industry: <industry-or-domain>
+metadata_version: 3
+authority: workspace-working-state
+workspace_root: <absolute-path-to-workspace-root>
+workspace_mode: <single-repository|multi-repository>
+project_root: <absolute-path-to-project-root>
+industry: <industry-or-domain>
 
 metadata_compatibility:
-  readable_versions: [2, 3, 4]
+  readable_versions: [2, 3]
   migration_requires_explicit_apply: true
   preserves_unknown_fields: true
 
@@ -55,30 +54,38 @@ operation_policy:
     forbid_operations: [reset --hard, clean -fd, push --force]
 
 source_repository_roles:
-  project_metadata: "Portable authority: stable repository ID, canonical remote, default branch, and workspace binding."
-  device_binding: "Device-local authority: checkout path, observed branch/HEAD, Git control root, lifecycle observation, and CodeGraph state."
+  registry: "Locator only: workspace slug/root and stable repository origin identity and locators."
+  project_metadata: "Working-state authority: member path, branch/HEAD observation, lifecycle transaction, operation policy, and CodeGraph state."
 
 source_repositories:
   - id: <stable-repository-id>
-    role: source
-    remote:
-      canonical: <canonical-repository-remote>
-      aliases: []
-    default_branch: <required-working-branch>
-    workspace_binding:
-      type: <root|member>
-      name: <required-for-member>
-      path: <one-segment-member-path-when-applicable>
-    materialization:
-      required: true
+    project_root: <absolute-path-to-source-repository>
+    origin_id: <stable-repository-id>
+    checkout_kind: single-repository
+    git_control_root: <absolute-path-to-source-repository>/.git
+    git_control_scope: project
+    worktree_name: <stable-repository-id>
+    git_repository: true
+    expected_branch: <required-working-branch>
+    base_ref: HEAD
+    observed_head: <git-head-commit-or-empty-for-non-git>
+    observation_time: <rfc3339-observation-time>
+    baseline_status: current
+    lifecycle_status: active
     operation_policy: inherit
+    codegraph:
+      supported: false
+      index_present: false
+      root: <absolute-path-to-source-repository>
+      status: not-indexed
+      synced_commit_id: ""
+      last_synced_at: ""
+      reason: no-index
 
-control_plane:
-  schema_version: 1
-  repository:
-    remote: <canonical-control-plane-remote-or-empty>
-  sync_policy:
-    mode: manual
+lifecycle_transaction:
+  state: published
+  registry_status: published
+  metadata_status: published
 
 # Optional for legacy workspaces. The controller owns round history under
 # .work-bundle/runtime/orchestration-control/ and projects only stable state here.
@@ -90,10 +97,8 @@ orchestration_control:
   closed_flows: []
   implementation_exemptions: []
 
-prefer_subagent: false
-
 migration:
   authority_owner: /wb-initialize-project
-  compatibility_window: metadata-v2-v3-readable-until-explicit-v4-apply
-  doctor_flow: "Use /wb-initialize-project doctor for deterministic portable metadata and device-binding repair."
-  migrate_flow: "Inspect or dry-run metadata v2/v3, then use an exact proposal ID with explicit --apply for v4 conversion."
+  compatibility_window: metadata-v2-readable-until-explicit-v3-apply
+  doctor_flow: "Use /wb-initialize-project doctor for deterministic file-only repair."
+  migrate_flow: "Inspect or dry-run metadata v2, then use explicit --apply for v3 conversion."
