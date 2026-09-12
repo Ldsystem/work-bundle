@@ -128,9 +128,9 @@ def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> 
         "there is no controller or single-agent fallback",
         "must not implement or repair task write scope",
         "one scoped rereview",
-        "acceptance_review.required: true",
         "review_required: true",
-        "does not require `verdict: accept`",
+        "validate initial executor facts without demanding or embedding the future review verdict",
+        "stored required-review authority",
         "context-blocked",
         "repository-blocked",
         "decision-blocked",
@@ -325,8 +325,8 @@ def test_workflow_makes_task_review_optional_on_the_chain() -> None:
     for token in [
         "optional task review",
         "validate-executor-result",
-        "does not require `verdict: accept`",
-        "acceptance_review.required: true",
+        "optional task review when compiled review_required: true",
+        "accepted-result materialization joins executor facts, observations, and stored review authority",
     ]:
         assert token in text
     assert "-> independent dev-code-review" not in text

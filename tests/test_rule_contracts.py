@@ -570,12 +570,13 @@ def test_execution_and_review_skills_carry_task003_flow_requirements() -> None:
     assert "reach the named barrier before convergence work" in execute
     assert "The scheduler does not perform code-quality review" in execute
     assert "validate-executor-result" in execute
-    assert "does not require `verdict: accept`" in execute
-    assert "acceptance_review.required: true" in execute
+    assert "validate initial executor facts without demanding or embedding the future review verdict" in execute
+    assert "stored required-review authority" in execute
 
     assert "Independent `dev-code-review` owns task-scoped implementation quality" in review
     assert "compiled Truth Basis" in review
     assert "implementation-review agent" in review
+    assert "do not require universal task-review evidence or embedded handoff verdicts" in review
     assert "Do not broadly inspect source" in review
     assert "knowledge-blocked" in review
     assert "repair plan only" in review

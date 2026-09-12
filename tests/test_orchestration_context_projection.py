@@ -79,7 +79,7 @@ def test_ctx_01_unrelated_runtime_history_does_not_inflate_unchanged_task_brief(
 
 
 def test_ctx_01_repair_package_uses_frontier_without_reacquiring_review_history(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root, _, task = workspace(tmp_path)
     task.write_text(
@@ -101,28 +101,36 @@ def test_ctx_01_repair_package_uses_frontier_without_reacquiring_review_history(
     git(root, "commit", "-qm", "repaired")
     head = git(root, "rev-parse", "HEAD")
     head_tree = git(root, "rev-parse", "HEAD^{tree}")
-    identity = lambda tree, digest: {
-        "artifact_id": "task-004", "revision": "rev-1", "sha256": digest, "source_tree": tree
+    identity = lambda revision, tree, digest: {
+        "artifact_id": "task-004", "revision": revision, "sha256": digest, "source_tree": tree
     }
+    frontier = {
+        "prior_review_id": "review-prior",
+        "blocking_finding_ids": ["RF-FINDING-1"],
+        "previous_reviewed_identity": identity(
+            base, base_tree, execution_context.semantic_digest("old")
+        ),
+        "repaired_identity": identity(
+            head, head_tree, execution_context.semantic_digest("new")
+        ),
+        "affected_boundaries": ["compile_task"],
+        "frozen_evidence_reference": execution_context.semantic_digest("frozen"),
+    }
+    monkeypatch.setattr(
+        execution_context,
+        "_stored_task_repair_preparation",
+        lambda *_args, **_kwargs: (
+            {"review_id": "review-prior", "history": "MUST-NOT-BE-PROJECTED"},
+            frontier,
+        ),
+    )
     handoff = {
         "id": "handoff-task-004",
         "type": "executor-result",
         "related": {"plan": "plan-001", "task": "task-004"},
         "result": {"state": "partial"},
         "task_fit_check": {"task": "task-004", "result": "repaired"},
-        "acceptance_review": {
-            "required": True,
-            "verdict": "pending",
-            "review_mode": "repair",
-            "repair_frontier": {
-                "prior_review_id": "review-prior",
-                "blocking_finding_ids": ["RF-FINDING-1"],
-                "previous_reviewed_identity": identity(base_tree, execution_context.semantic_digest("old")),
-                "repaired_identity": identity(head_tree, execution_context.semantic_digest("new")),
-                "affected_boundaries": ["compile_task"],
-                "frozen_evidence_reference": execution_context.semantic_digest("frozen"),
-            },
-        },
+        "delegation_evidence": _delegation_evidence(),
         "changes": {"files": [{"path": "scripts/orchestration/execution_context.py", "action": "modified"}]},
         "repository": [{
             "root": str(root.resolve()), "target_kind": "git-backed",
@@ -130,7 +138,6 @@ def test_ctx_01_repair_package_uses_frontier_without_reacquiring_review_history(
         }],
         "codegraph": [{"root": str(root.resolve()), "applicable": False, "up_to_date": False, "reason": "no-index"}],
         "knowledge_disposition": {"action": "none", "reason": "No stable authority changed.", "affected_authority": []},
-        "previous_review_history": "MUST-NOT-BE-PROJECTED",
     }
     handoff_path = root / ".work-bundle/orchestration/handoff/executor/active/handoff-task-004.yaml"
     handoff_path.parent.mkdir(parents=True)
@@ -380,7 +387,6 @@ def test_repair_acceptance_requires_exact_runtime_owner_and_continuity(
         "result": {"state": "completed"},
         "task_fit_check": {"task": brief["task_id"], "result": "repaired"},
         "delegation_evidence": _delegation_evidence(),
-        "acceptance_review": {"required": False, "repair_frontier": frontier},
         "knowledge_disposition": {
             "action": "none",
             "reason": "No stable authority changed.",
@@ -403,6 +409,7 @@ def test_repair_acceptance_requires_exact_runtime_owner_and_continuity(
         mutation_events=[],
         prior_ownership=prior,
         repair_continuity=continuity,
+        review_repair_frontier=frontier,
     )
     assert accepted["task_ownership"]["agent_id"] == "ctx-fixture-agent"
 
@@ -419,6 +426,7 @@ def test_repair_acceptance_requires_exact_runtime_owner_and_continuity(
             mutation_events=[],
             prior_ownership=prior,
             repair_continuity=continuity,
+            review_repair_frontier=frontier,
         )
     execution_context.validate_executor_result_for_task(
         replacement,
@@ -426,6 +434,7 @@ def test_repair_acceptance_requires_exact_runtime_owner_and_continuity(
         mutation_events=[],
         prior_ownership=prior,
         repair_continuity=continuity,
+        review_repair_frontier=frontier,
         authorized_replacements={brief["task_id"]},
     )
 
@@ -438,6 +447,7 @@ def test_repair_acceptance_requires_exact_runtime_owner_and_continuity(
             mutation_events=[],
             prior_ownership=prior,
             repair_continuity=stale,
+            review_repair_frontier=frontier,
         )
 
 

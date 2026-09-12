@@ -203,13 +203,17 @@ def test_pd_03_executor_acceptance_path_has_explicit_controller_authority(
             "status": "clean",
         },
     )
+    handoff = _handoff()
+    stored_review = handoff.pop("acceptance_review")
     accepted = execution_context.materialize_accepted_task_result(
         tmp_path,
         task,
-        _handoff(),
+        handoff,
         _validated(),
+        accepted_review=stored_review,
         accepted_at="2026-09-07T00:00:00Z",
     )
+    assert "acceptance_review" not in handoff
     assert persisted == [{**binding, "accepted_result": accepted}]
     assert accepted["schema"] == "accepted-task-result-v1"
     assert accepted["owner_identity"]["owner_kind"] == "subagent"
