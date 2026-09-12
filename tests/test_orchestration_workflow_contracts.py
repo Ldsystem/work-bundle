@@ -2231,9 +2231,10 @@ def test_archive_plan_review_required_cannot_downgrade_via_omitted_required(tmp_
         f"  action: update\n  reason: Task-local evidence.\n  affected_authority: [{ACCEPTED_AUTHORITY}]\n",
     )
 
-    cmd_archive_plan(archive_args(root, "plan-001"))
+    with pytest.raises(SystemExit, match="knowledge-blocked"):
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
-    assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
 
 def test_missing_or_wrong_plan_identity_cannot_complete_without_review_package() -> None:

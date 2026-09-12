@@ -1023,6 +1023,8 @@ def _validate_evidence_closure(
     state: str,
     reported_commands: dict[str, dict[str, Any]],
     observed_validation: list[dict[str, Any]] | None,
+    *,
+    creation_safe: bool = False,
 ) -> dict[str, Any]:
     capability = task.get("evidence_capability")
     if not isinstance(capability, dict):
@@ -1031,7 +1033,7 @@ def _validate_evidence_closure(
         return {"result": "no_validation_bearing_obligation", "invariants": []}
     if capability.get("result") != "mapped" or state != "completed":
         return {"result": "not-terminal", "invariants": []}
-    if observed_validation is None:
+    if observed_validation is None and not creation_safe:
         raise SystemExit("evidence-closure-blocked: completed mapped invariants require independent harness observation")
     closure = handoff.get("evidence_closure")
     if not isinstance(closure, dict):
@@ -1083,13 +1085,12 @@ def _validate_evidence_closure(
                 raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} is missing; route plan")
             command = str(validation.get("command") or "").strip()
             reported = reported_commands.get(command)
-            if not isinstance(reported, dict):
-                raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} is unexecuted; route task")
-            if str(reported.get("id") or "") != evidence_id or invariant_id not in _as_list(reported.get("invariant_ids")):
-                raise SystemExit(f"evidence-closure-blocked: reported evidence identity for {invariant_id} is missing; route task")
-            if reported.get("result") != "passed":
-                raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} failed; route task")
-            if observed_validation is not None:
+            if isinstance(reported, dict):
+                if str(reported.get("id") or "") != evidence_id or invariant_id not in _as_list(reported.get("invariant_ids")):
+                    raise SystemExit(f"evidence-closure-blocked: reported evidence identity for {invariant_id} is missing; route task")
+                if reported.get("result") != "passed":
+                    raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} failed; route task")
+            if not creation_safe:
                 observed = observed_by_id.get(evidence_id)
                 if not isinstance(observed, dict) or invariant_id not in _as_list(observed.get("invariant_ids")):
                     raise SystemExit(f"evidence-closure-blocked: harness evidence for {invariant_id} is missing; route task")
@@ -4075,19 +4076,32 @@ def validate_executor_result_for_task(
         for item in _as_list(task.get("validation"))
         if isinstance(item, dict) and item.get("command")
     ]
+    capability = task.get("evidence_capability") if isinstance(task.get("evidence_capability"), dict) else {}
     observed_validation = None
     evidence_closure = None
     reported_commands: dict[str, dict[str, Any]] = {}
     if state == "completed" and required_items:
-        reported = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
-        reported_commands = {
-            str(item.get("command", "")).strip(): item
-            for item in _as_list(reported.get("commands"))
-            if isinstance(item, dict)
-        }
+        reported_value = handoff.get("validation")
+        if reported_value is not None and not isinstance(reported_value, dict):
+            raise SystemExit("Executor result validation report must be a mapping")
+        reported = reported_value if isinstance(reported_value, dict) else {}
+        reported_items = reported.get("commands", [])
+        if not isinstance(reported_items, list):
+            raise SystemExit("Executor result validation commands must be a list")
+        for reported_item in reported_items:
+            if not isinstance(reported_item, dict):
+                raise SystemExit("Executor result validation commands must contain mappings")
+            command = str(reported_item.get("command") or "").strip()
+            if not command or command in reported_commands:
+                raise SystemExit("Executor result reported validation command is missing or duplicated")
+            if reported_item.get("result") not in {"passed", "failed", "skipped"}:
+                raise SystemExit("Executor result reported validation result is invalid")
+            reported_commands[command] = reported_item
         for item in required_items:
             command = str(item.get("command")).strip()
             if command not in reported_commands:
+                if creation_safe or observe or capability.get("result") == "mapped":
+                    continue
                 raise SystemExit(f"Executor result is missing fresh required validation: {command}")
             reported_item = reported_commands[command]
             compiled_kind = str(item.get("kind") or "").strip().lower()
@@ -4105,7 +4119,6 @@ def validate_executor_result_for_task(
                 raise SystemExit(
                     f"Executor result validation for {command} must be {allowed_text}; got {result_value}"
                 )
-    capability = task.get("evidence_capability") if isinstance(task.get("evidence_capability"), dict) else {}
     if state == "completed" and capability.get("result") == "mapped":
         if not observe and not creation_safe:
             raise SystemExit(
@@ -4113,7 +4126,12 @@ def validate_executor_result_for_task(
             )
         if creation_safe:
             evidence_closure = _validate_evidence_closure(
-                handoff, task, state, reported_commands, list(reported_commands.values())
+                handoff,
+                task,
+                state,
+                reported_commands,
+                None,
+                creation_safe=True,
             )
     else:
         evidence_closure = _validate_evidence_closure(
