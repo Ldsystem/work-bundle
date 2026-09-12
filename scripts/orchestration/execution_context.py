@@ -4401,21 +4401,19 @@ def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: di
     changes = handoff.get("changes") if isinstance(handoff.get("changes"), dict) else {}
     for item in _as_list(changes.get("files")):
         if not isinstance(item, dict):
-            continue
+            raise SystemExit("Executor result file entry must be a mapping with a non-empty path")
         path = str(item.get("path") or "").strip()
+        if not path:
+            raise SystemExit("Executor result file entry must provide a non-empty path")
         try:
-            canonical = canonical_relative_path(path) if path else ""
+            canonical = canonical_relative_path(path)
         except OwnershipBlocker as error:
             raise SystemExit(f"Executor result changed path is unsafe: {path}") from error
-        if (
-            canonical
-            and item.get("action") == "inspected"
-            and canonical not in read_scope | write_scope
-        ):
+        if item.get("action") == "inspected" and canonical not in read_scope | write_scope:
             raise SystemExit(
                 f"Executor result inspected path is outside task inspection scope: {path}"
             )
-        if canonical and item.get("action") != "inspected" and canonical not in write_scope:
+        if item.get("action") != "inspected" and canonical not in write_scope:
             raise SystemExit(f"Executor result changed path is outside task write scope: {path}")
 
 

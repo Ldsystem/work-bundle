@@ -113,6 +113,21 @@ def test_changed_path_scope_distinguishes_inspection_from_mutation() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "file_entry",
+    [
+        {"action": "inspected"},
+        {"path": "", "action": "inspected"},
+    ],
+)
+def test_changed_path_scope_rejects_missing_or_empty_paths(file_entry: dict[str, str]) -> None:
+    with pytest.raises(SystemExit, match="non-empty path"):
+        execution_context._assert_changed_paths_in_write_scope(
+            {"changes": {"files": [file_entry]}},
+            {"read": ["docs/contract.md"], "write": ["src/runtime.py"]},
+        )
+
+
 def _load_orchestration_dispatcher():
     path = ORCHESTRATION / "dispatcher.py"
     spec = importlib.util.spec_from_file_location(
