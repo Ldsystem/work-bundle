@@ -107,10 +107,10 @@ def _record_validation_observation(
 ) -> str:
     item = task["validation"][0]
     assert isinstance(item, dict)
-    item["evidence_reuse"] = {
+    item.setdefault("evidence_reuse", {
         "mode": "deterministic", "max_age_seconds": 3600,
         "environment_inputs": [], "include_head": False,
-    }
+    })
     evidence = execution_context.capture_repository_evidence(root)
 
     def observe(receipt: dict[str, object]) -> dict[str, object]:
@@ -131,6 +131,66 @@ def _record_validation_observation(
         lambda: execution_context.capture_repository_evidence(root),
     )
     return str(observed["observation_id"])
+
+
+def test_claim_bound_observation_survives_only_orthogonal_head_progress(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    for relative in ("src/read.py", "src/a.py", "config/test.ini"):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"# {relative}\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "reviewed task source")
+    reviewed_head = _git(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / ".git/info/exclude").write_text(".work-bundle/\n", encoding="utf-8")
+    task = _task(tmp_path)
+    task["depends_on"] = []
+    task["validation"][0]["evidence_reuse"] = {
+        "mode": "deterministic",
+        "max_age_seconds": 3600,
+        "environment_inputs": [],
+        "dependency_files": ["config/test.ini"],
+        "include_head": False,
+    }
+    binding = _binding(tmp_path)
+    observation_id = _record_validation_observation(tmp_path, binding, task)
+
+    (tmp_path / "orthogonal.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "orthogonal.py")
+    _git(tmp_path, "commit", "-qm", "integrate orthogonal task")
+    matched = execution_context._claim_bound_validation_observations(
+        binding,
+        task,
+        execution_context.capture_repository_evidence(tmp_path),
+        [observation_id],
+        reviewed_head=reviewed_head,
+    )
+    assert [item["observation_id"] for item in matched] == [observation_id]
+
+    dependent_task = deepcopy(task)
+    dependent_task["depends_on"] = ["task-upstream"]
+    with pytest.raises(SystemExit, match="claim-bound"):
+        execution_context._claim_bound_validation_observations(
+            binding,
+            dependent_task,
+            execution_context.capture_repository_evidence(tmp_path),
+            [observation_id],
+            reviewed_head=reviewed_head,
+        )
+
+    (tmp_path / "config/test.ini").write_text("changed=true\n", encoding="utf-8")
+    _git(tmp_path, "add", "config/test.ini")
+    _git(tmp_path, "commit", "-qm", "change validation dependency")
+    with pytest.raises(SystemExit, match="claim-bound"):
+        execution_context._claim_bound_validation_observations(
+            binding,
+            task,
+            execution_context.capture_repository_evidence(tmp_path),
+            [observation_id],
+            reviewed_head=reviewed_head,
+        )
 
 
 def _handoff() -> dict[str, object]:
@@ -679,7 +739,7 @@ def test_standalone_review_recomposes_changed_task_authority_without_executor_re
     monkeypatch.setattr(
         execution_context,
         "_claim_bound_validation_observations",
-        lambda *_args: [{"observation_id": "obs-current"}],
+        lambda *_args, **_kwargs: [{"observation_id": "obs-current"}],
     )
 
     accepted = execution_context.materialize_accepted_task_review(
