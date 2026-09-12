@@ -11,7 +11,6 @@ from execution_context import (
     unique_explicit_handoff_plan_id,
     validate_executor_result_for_task,
     _compile_task_brief,
-    _observe_validation_item,
     _observation_kwargs,
     _parse_scalar,
     _execution_workspace_module,
@@ -26,7 +25,6 @@ from completion_provenance import (
     CompletionProvenanceError,
     ManagedProvenanceStore,
     load_observation,
-    observe_validation,
     release_completion_binding,
 )
 from handoffs import _read_compact_yaml_metadata
@@ -561,7 +559,7 @@ def _observe_archive_obligations(
     workspace: Path,
     validated: list[tuple[dict[str, object], dict[str, object]]],
 ) -> list[dict[str, object]]:
-    """Consume accepted task observations through the shared validation observer."""
+    """Consume exact accepted task observations without rerunning validation."""
 
     store = ManagedProvenanceStore(
         control_root / ".work-bundle/runtime/completion-provenance"
@@ -591,73 +589,35 @@ def _observe_archive_obligations(
             )
         }
         expected_command_digest = semantic_digest(definition)
-        accepted_harness_observation = False
+        accepted_source = accepted.get("accepted_source")
+        accepted_tree = (
+            accepted_source.get("tree") if isinstance(accepted_source, dict) else None
+        )
+        accepted_observation_id: str | None = None
         for evidence_id in evidence_ids:
             try:
-                load_observation(store, str(evidence_id))
+                record = load_observation(store, str(evidence_id)).to_dict()
             except CompletionProvenanceError:
                 continue
-            accepted_harness_observation = True
-            break
-        if not accepted_harness_observation:
+            if (
+                record.get("command_digest") == expected_command_digest
+                and record.get("product_tree") == accepted_tree
+                and isinstance(record.get("result"), dict)
+                and record["result"].get("exit_code") == 0
+            ):
+                accepted_observation_id = str(evidence_id)
+                break
+        if accepted_observation_id is None:
             raise SystemExit(
                 "acceptance-blocked: accepted task result does not reference an accepted harness observation"
             )
-        binding = load_task_execution_binding(
-            control_root, str(task.get("plan_id") or ""), str(task.get("task_id") or "")
+        observed.append(
+            {
+                "id": str(item.get("id") or ""),
+                "observation_id": accepted_observation_id,
+                "result": "passed",
+            }
         )
-        if Path(str(binding.get("execution_path") or "")).resolve() != workspace.resolve():
-            raise SystemExit(
-                "acceptance-blocked: accepted observation execution workspace mismatch"
-            )
-        try:
-            before = capture_repository_evidence(workspace)
-        except RuntimeError as error:
-            raise SystemExit(f"acceptance-blocked: {error}") from error
-        result = observe_validation(
-            binding,
-            task,
-            item,
-            before,
-            lambda receipt: _observe_validation_item(item, workspace, task, receipt),
-            lambda: capture_repository_evidence(workspace),
-            finalization_id=(
-                f"archive:{task.get('plan_id')}:{task.get('task_id')}:{item.get('id')}"
-            ),
-            stage_event_workspace=control_root,
-            stage_event={
-                "event_id": "event-template",
-                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                "process_id": "process-plan-archive",
-                "stage": "plan-archive",
-                "attempt_id": str(task.get("plan_id") or ""),
-                "event_type": "suite_started",
-                "enforcement_mode": "native",
-                "join_ids": {
-                    "specification_id": None,
-                    "plan_id": str(task.get("plan_id") or "") or None,
-                    "phase_id": str(task.get("phase_id") or "") or None,
-                    "task_id": str(task.get("task_id") or "") or None,
-                    "review_id": None,
-                    "evaluation_id": None,
-                },
-                "clocks": {"wall_ms": 0, "active_ms": 0, "billed_ms": None},
-                "finding_class": None,
-                "return_reason": "accepted terminal observation",
-                "owner": str(task.get("task_id") or "plan-archive"),
-                "identity": {
-                    "product_tree": _git_tree_id(workspace, "HEAD"),
-                    "artifact_digest": expected_command_digest,
-                    "mutation_epoch": 0,
-                },
-                "privacy": "operational_metadata_only",
-            },
-        )
-        if result.get("result") != "passed":
-            raise SystemExit(
-                f"acceptance-blocked: declared plan-level acceptance {command} is {result.get('result')}"
-            )
-        observed.append(result)
     return observed
 
 
@@ -1101,10 +1061,6 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
         validated = _validated_plan_task_handoffs(args, args.id)
     _assert_archive_knowledge_gate(args, args.id, root_path, validated)
     _assert_archive_plan_acceptance(args, args.id, root_path, validated)
-    require_plan_reviews(
-        project_root(args), root_path,
-        source_root=_resolve_final_plan_workspace(args, args.id),
-    )
     if is_relative_to(root_path, active_root):
         replace_front_matter_value(root_path, "status", "Completed")
         moved.append(move_to_archive(root_path, active_root, archived_root))

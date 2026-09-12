@@ -52,6 +52,58 @@ def test_native_transcript_requires_one_actual_fresh_completed_judgment():
             reviewer_workspace.parse_native_reviewer_transcript(forged)
 
 
+def test_native_transcript_retains_ancillary_stderr_but_rejects_structured_forbidden_activity():
+    ancillary = (
+        "2026-09-12T18:40:42.858443Z ERROR codex_core::tools::router: "
+        "error=code-mode host is disabled\n"
+        "2026-09-12T18:41:30.252413Z ERROR codex_core::models_manager: "
+        "failed to refresh models: timed out\n"
+        "unverified host log claim: command_execution may have failed\n"
+    )
+    assert reviewer_workspace.parse_native_reviewer_transcript(
+        native_events({"verdict": "accepted"}), ancillary
+    )[1] == {"verdict": "accepted"}
+
+    attempted = json.dumps({
+        "type": "item.completed",
+        "item": {"id": "tool", "type": "command_execution"},
+    })
+    with pytest.raises(ReviewerWorkspaceError, match="NATIVE_TRANSCRIPT"):
+        reviewer_workspace.parse_native_reviewer_transcript(
+            native_events({"verdict": "accepted"}), attempted
+        )
+
+
+def test_native_transcript_requires_one_terminal_substantive_judgment():
+    thread_id = "01a0821d-f359-7d60-a9bd-90dd0e006166"
+    commentary = [
+        {"type": "thread.started", "thread_id": thread_id},
+        {"type": "turn.started"},
+        {"type": "item.completed", "item": {
+            "id": "commentary", "type": "agent_message", "text": "Inspecting frozen evidence."
+        }},
+        {"type": "item.completed", "item": {
+            "id": "judgment", "type": "agent_message", "text": json.dumps({"verdict": "accepted"})
+        }},
+        {"type": "turn.completed", "usage": {}},
+    ]
+    assert reviewer_workspace.parse_native_reviewer_transcript(
+        "\n".join(json.dumps(event) for event in commentary)
+    )[1] == {"verdict": "accepted"}
+
+    for extra in [
+        {"id": "conflict", "type": "agent_message", "text": json.dumps({"verdict": "repair"})},
+        {"id": "late-commentary", "type": "agent_message", "text": "One more thought."},
+    ]:
+        events = commentary[:-1]
+        events.append({"type": "item.completed", "item": extra})
+        events.append(commentary[-1])
+        with pytest.raises(ReviewerWorkspaceError, match="NATIVE_TRANSCRIPT"):
+            reviewer_workspace.parse_native_reviewer_transcript(
+                "\n".join(json.dumps(event) for event in events)
+            )
+
+
 def test_native_observed_catalog_notice_is_initialization_only():
     notice = {"type": "item.completed", "item": {"id": "warning", "type": "error", "message":
         "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."}}
@@ -310,15 +362,34 @@ def test_task_review_worker_output_receives_native_bound_receipt(
     assert finding["finding_id"] == "finding-product-value"
     assert finding["evidence"][0]["locator"] == "src/target.py:target"
     assert "The returned value violates the requirement." in finding["evidence"][0]["observation"]
+    assert finding["reviewer_observation"] == judgment["task_review"]["findings"][0]
+    assert finding["controller_decision"] is None
+    with pytest.raises(review_runtime.ReviewContractError, match="controller decision"):
+        review_runtime.publish_review(
+            control, receipt["review_result"] | {"reviewer_run": receipt["reviewer_run"]},
+            current_target_identity=identity,
+        )
+    classified = review_runtime.apply_review_finding_decisions(
+        receipt["review_result"],
+        {finding["finding_id"]: {
+            "classification": "implementation_defect",
+            "first_broken_artifact": "implementation",
+            "affected_owner": "task_owner",
+            "action": "repair_task",
+            "obligation_basis": "accepted_requirement",
+            "evidence_basis": "The accepted task requirement binds the observed return value.",
+        }},
+    )
     reference = review_runtime.publish_review(
-        control, receipt["review_result"] | {"reviewer_run": receipt["reviewer_run"]},
+        control, classified | {"reviewer_run": receipt["reviewer_run"]},
         current_target_identity=identity,
     )
     stored, validated = review_runtime.load_stored_review(
         control, reference, current_target_identity=identity
     )
-    assert stored["findings"] == receipt["review_result"]["findings"]
+    assert stored["findings"] == classified["findings"]
     assert validated.findings[0].finding_id == "finding-product-value"
+    assert review_runtime._route_review_finding(stored["findings"][0])["action"] == "repair_task"
 
     empty_repair = {"task_review": {
         "reviewed_head": head,
@@ -334,6 +405,90 @@ def test_task_review_worker_output_receives_native_bound_receipt(
             started_at="2026-09-09T00:00:00Z",
             completed_at="2026-09-09T00:01:00Z",
         )
+
+
+def test_completed_native_capture_resumes_ordinary_receipt_idempotently(
+    review_roots: tuple[Path, Path, Path],
+) -> None:
+    source, control, _ = review_roots
+    runtime = reviewer_workspace._review_runtime().reviewer_runtime_root(control)
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "src/target.py", ".wor105-review-sentinel"], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+         "commit", "-qm", "fixture"],
+        check=True,
+    )
+    head = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
+    tree = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD^{tree}"], text=True).strip()
+    identity = {"artifact_id": "task-resume", "revision": head, "sha256": "4" * 64, "source_tree": tree}
+    context = {
+        "target_identity": identity, "agent_id": "reserved", "capability": "judgment",
+        "execution_id": "reserved-run", "evidence_mode": "reproducible_snapshot",
+        "review_mode": "initial", "review_target_kind": "task", "repair_frontier": None,
+        "review_reset": None,
+    }
+    direct = build_direct_evidence_packet(
+        source_root=source, control_root=control, protected_roots=[control / "credentials"],
+        artifacts=["source:src/target.py"], search_roots=[], validators=[], sentinels=[],
+        network_state="denied", task_review_context=context,
+    )
+    created = create_reviewer_workspace(runtime, "review-native-resume", direct)
+    judgment = {"task_review": {"reviewed_head": head, "verdict": "accept", "findings": []}}
+    completed = subprocess.CompletedProcess(
+        [], 0, native_events(judgment),
+        "2026-09-12T18:41:30Z ERROR codex_core::models_manager: failed to refresh models: timed out\n",
+    )
+    parse_failure = ReviewerWorkspaceError("WB_REVIEW_NATIVE_TRANSCRIPT_INVALID")
+    with patch.object(reviewer_workspace, "_run_native_process", return_value=completed), patch.object(
+        reviewer_workspace, "parse_native_reviewer_transcript", side_effect=parse_failure
+    ):
+        with pytest.raises(ReviewerWorkspaceError, match="NATIVE_TRANSCRIPT") as failed:
+            reviewer_workspace.run_native_reviewer(
+                Path(str(created["workspace_path"])), Path(sys.executable), model="test-model",
+                review_instructions="Assess the frozen task evidence.",
+            )
+
+    diagnostic = Path(failed.value.result["diagnostic_path"])
+    capture = json.loads((diagnostic / "capture.json").read_text())
+    assert capture["schema"] == "reviewer-native-capture-v2"
+    assert capture["started_at"] <= capture["completed_at"]
+    assert {"packet.json", "events.jsonl", "request.json", "stdout.jsonl", "stderr.txt", "launch.json"} <= set(capture["artifacts"])
+    assert all(not item.stat().st_mode & 0o222 for item in diagnostic.iterdir())
+
+    receipt = reviewer_workspace.complete_native_reviewer_capture(runtime, capture["run_id"])
+    repeated = reviewer_workspace.complete_native_reviewer_capture(runtime, capture["run_id"])
+    assert repeated["reviewer_run"] == receipt["reviewer_run"]
+    assert repeated["review_result"] == receipt["review_result"]
+    assert receipt["status"] == "passed"
+    assert receipt["host_run_id"] == "01a0821d-f359-7d60-a9bd-90dd0e006166"
+    assert Path(receipt["receipt_path"]).with_suffix(".events.jsonl").read_bytes() == (
+        diagnostic / "events.jsonl"
+    ).read_bytes()
+    review_runtime = reviewer_workspace._review_runtime()
+    review = {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]}
+    reference = review_runtime.publish_review(
+        control, review, current_target_identity=identity
+    )
+    stored, accepted = review_runtime.load_stored_review(
+        control, reference, current_target_identity=identity
+    )
+    assert stored == review
+    assert accepted.verdict == "accepted"
+
+
+def test_legacy_native_diagnostic_cannot_be_promoted_to_receipt(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    run_id = "reviewer-run-01a0821d-f359-7d60-a9bd-90dd0e006166"
+    diagnostic = runtime / "diagnostics" / "reviewer-native" / run_id
+    diagnostic.mkdir(parents=True)
+    (diagnostic / "capture.json").write_text(json.dumps({
+        "schema": "reviewer-native-diagnostic-v1", "status": "unadmitted",
+        "run_id": run_id, "review_id": "review-legacy", "exit_code": 0,
+        "captured_at": "2026-09-12T18:41:30Z", "artifacts": {},
+    }))
+    with pytest.raises(ReviewerWorkspaceError, match="NATIVE_CAPTURE_INCOMPLETE"):
+        reviewer_workspace.complete_native_reviewer_capture(runtime, run_id)
 
 
 def test_compact_task_judgment_composes_repair_and_reset_predecessors() -> None:
@@ -650,8 +805,8 @@ def test_native_compact_integrated_repair_keeps_exact_predecessor_controller_onl
     (history / "review-integrated-extra-history.json").write_text(
         json.dumps(malformed), encoding="utf-8"
     )
-    with pytest.raises(SystemExit, match="exactly one previous_review"):
-        runtime._require_current_review(control, "integrated_implementation", reset_identity)
+    # Extra historical links are not part of the selected current authority.
+    runtime._require_current_review(control, "integrated_implementation", reset_identity)
 
 
 def test_incomplete_stage_snapshot_fails_before_reviewer_process_launch(
@@ -876,8 +1031,14 @@ def test_stage_evidence_survives_plan_lifecycle_markers_but_not_product_changes(
         ),
         encoding="utf-8",
     )
-    with pytest.raises(SystemExit, match="authority identity changed"):
-        runtime._require_current_review(control, "integrated_implementation", identity)
+    changed_identity = runtime.stage_target_identity(
+        control, "integrated_implementation", plan, source_root=source
+    )
+    assert changed_identity != identity
+    with pytest.raises(SystemExit, match="fresh accepted integrated_implementation review"):
+        runtime._require_current_review(
+            control, "integrated_implementation", changed_identity
+        )
 
 
 def test_bounded_read_search_and_validators_are_allowed(review_roots: tuple[Path, Path, Path]) -> None:

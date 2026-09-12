@@ -11,6 +11,8 @@ Did the approved WorkBundle workflow complete correctly, with required optional 
 
 This is a workflow audit and deterministic finalizer. Independent `dev-code-review` owns task-scoped implementation quality when review is explicitly required.
 
+The audit has no mandatory Execution Flow dependency: host-native execution is sufficient and Execution Flow is optional.
+
 ## Audit
 
 Verify:
@@ -30,7 +32,7 @@ Verify:
 - approved `ks-*` return evidence exists when durable knowledge was required;
 - allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh completed or are explicitly not applicable.
 - dependency, finalization, resume, and archive decisions consume compact accepted results and current harness observations without replaying transient evidence or historical handoff chains.
-- required task and stage verdicts are admitted from immutable review-store references with provider-specific reviewer-run receipts and still-current targets; bare output, unattached receipts, and bare findings are not lifecycle authority.
+- required task and stage verdicts are strongly checked with provider-specific reviewer-run receipts at publication, then later admitted from immutable direct current-authority bindings and still-current targets without receipt or predecessor replay; bare output, unattached receipts, and bare findings are not lifecycle authority.
 - product findings concern accepted product requirements/boundaries, exact product source/diff, normalized harness observations, and unresolved product concerns; handoff, knowledge disposition, reviewer history, and publication/status/archive bookkeeping stay with controller audit.
 
 ## Evidence capability correspondence

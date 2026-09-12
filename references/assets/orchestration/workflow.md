@@ -158,13 +158,14 @@ integrated-implementation product workers return the compact `task_review` judgm
 defined by `dev-code-review`. The controller constructs the native envelope from frozen target, independence, and evidence context,
 then binds its canonical digest into the receipt. The controller then attaches the run
 ID and SHA-256 of the immutable receipt bytes to that exact result and publishes the
-task-or-stage envelope as a read-only review-store record. Verdict admission and
-named-finding routing resolve only that stored reference and recheck its receipt and
-current target; bare stdout, unattached receipts, and bare findings remain observations.
+task-or-stage envelope as a read-only review-store record. Publication validates the provider-specific reviewer-run receipt once and persists an immutable direct
+current-authority binding. Later lifecycle consumers use the immutable direct current-authority binding and recheck only its exact record and current target; they do
+not traverse predecessors or replay receipt completeness. Bare stdout, unattached
+receipts, and bare findings remain observations.
 
-The lifecycle gate verifies review ID, exact result/target/profile, successful
-completion, the provider-specific execution boundary, and immutable packet/profile/event
-digests. Native receipts bind the executable, request, actual host run identity, sanitized
+At publication, the lifecycle gate verifies review ID, exact result/target/profile,
+successful completion, the provider-specific execution boundary, and immutable
+packet/profile/event digests. Native receipts bind the executable, request, actual host run identity, sanitized
 context, read-only policy, and absence of observed tool activity. Legacy process receipts
 bind the sandbox, denied network, and scratch-only write boundary. Run-scoped evidence
 remains available after workspace cleanup; full traces
@@ -194,6 +195,15 @@ observations, and unresolved product concerns. Handoff, knowledge, reviewer-hist
 receipt/publication, status, and archive bookkeeping remain controller inputs and do
 not enter product judgment. Controller/orchestration code is product when allocated
 by the accepted task.
+
+Reviewer observations remain intact. The controller owns their classification, the
+first broken owner or artifact, and the selected action through the agent-owned v2
+contract; current routing has no fixed class-to-remedy table or confirming-review step.
+
+Plan identity uses the documented `plan-structural-projection-v2`: lifecycle fields are
+excluded only at designated structural locations, while unknown or substantive nested
+fields and requirement text remain identity-bearing. The original projection remains
+callable only for explicit legacy interpretation; current writes always use v2.
 
 The **acceptance once** lifecycle rule makes the harness strongly verify binding,
 source/scope, subagent ownership, validation, and required review, then persists one
@@ -232,7 +242,7 @@ scheduler selects executable task
 
 Subagent executors own every implementation and repair mutation, task-local verification, and executor-result evidence, including a task-local knowledge disposition of `none`, `update`, `supersede`, or `reclassify`. They never invoke persistence or read knowledge. Product reviewers judge accepted product requirements/boundaries, exact source/diff, correctness, edge cases, normalized validation observations, unresolved product concerns, and unnecessary complexity. Controllers own disposition, handoff, provenance, publication, and lifecycle mechanics. Schedulers own dependencies, barriers, context compilation, neutral subagent binding, validation routing, and evidence shape; they do not perform code-quality review or mutate task write scope.
 
-Selecting `orch-execute-plan` requires a subagent owner for every task without a separate user opt-in. The production `TaskOwnershipScheduler` admission entry consumes either a host-native or Execution-Flow adapter; evidence records only the minimum agent/run identity and mechanism. If none is available, execution fails closed before task mutation. Independent disjoint tasks in distinct execution workspaces dispatch before any wait; dependent, overlapping, or same-workspace tasks serialize. Acceptance uses the same scheduler entry to reject controller mutation, and repair dispatch uses `operation: repair` through the same adapter path.
+Selecting `orch-execute-plan` requires a subagent owner for every task without a separate user opt-in. The production `TaskOwnershipScheduler` admission entry consumes a host-native adapter or, when available, an Execution-Flow adapter; host-native execution is sufficient and Execution Flow is optional. Evidence records only the minimum agent/run identity and mechanism. If none is available, execution fails closed before task mutation. Independent disjoint tasks in distinct execution workspaces dispatch before any wait; dependent, overlapping, or same-workspace tasks serialize. Acceptance uses the same scheduler entry to reject controller mutation, and repair dispatch uses `operation: repair` through the same adapter path.
 
 On `repair`, return blocking findings to the existing task owner, repair from the exact
 previously reviewed source, rerun only claim-relevant invalidated validation, and

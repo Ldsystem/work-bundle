@@ -1517,7 +1517,9 @@ def test_execute_plan_requires_bound_observation_and_isolate_or_serialize() -> N
     assert "not independent proof" in contract or "not authority" in contract
 
 
-def test_optional_review_package_does_not_absorb_sibling_task_files(tmp_path: Path) -> None:
+def test_optional_review_package_does_not_absorb_sibling_task_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from test_orchestration_execution_context import (
         WRITE_SCOPE_FILE,
         args as review_args,
@@ -1540,6 +1542,7 @@ def test_optional_review_package_does_not_absorb_sibling_task_files(tmp_path: Pa
     task_a_file.write_text("TASK_A_NEW = 2\n", encoding="utf-8")
     from test_orchestration_execution_context import _bind_passing_observation
 
+    monkeypatch.setattr("review_runtime.require_plan_reviews", lambda *_args: None)
     handoff = _bind_passing_observation(root, task_b)
 
     package = build_review_package(
@@ -1608,7 +1611,9 @@ def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer
     assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md").is_file()
 
 
-def _mapped_archive_workspace(tmp_path: Path):
+def _mapped_archive_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     from test_orchestration_execution_context import (
         PASSING_PROCESS,
         _bind_task_execution,
@@ -1645,6 +1650,7 @@ def _mapped_archive_workspace(tmp_path: Path):
     git(root, "add", ".")
     git(root, "commit", "-qm", "mapped archive workspace")
     brief = _compiled_brief(root, task)
+    monkeypatch.setattr("review_runtime.require_plan_reviews", lambda *_args: None)
     binding = _bind_task_execution(root, brief)
     handoff = _handoff_for_command(root, PASSING_PROCESS)
     handoff.write_text(
@@ -1662,20 +1668,24 @@ def _mapped_archive_workspace(tmp_path: Path):
     return root, binding, command
 
 
-def test_archive_plan_accepts_mapped_invariant_handoff_with_harness_observation(tmp_path: Path) -> None:
+def test_archive_plan_accepts_mapped_invariant_handoff_with_harness_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from plans import cmd_archive_plan
 
-    root, _binding, _command = _mapped_archive_workspace(tmp_path)
+    root, _binding, _command = _mapped_archive_workspace(tmp_path, monkeypatch)
 
     cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
 
-def test_archive_plan_does_not_replay_task_validation_from_execution_binding(tmp_path: Path) -> None:
+def test_archive_plan_does_not_replay_task_validation_from_execution_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from plans import cmd_archive_plan
 
-    root, binding, command = _mapped_archive_workspace(tmp_path)
+    root, binding, command = _mapped_archive_workspace(tmp_path, monkeypatch)
 
     cmd_archive_plan(
         archive_args(
@@ -1691,7 +1701,9 @@ def test_archive_plan_does_not_replay_task_validation_from_execution_binding(tmp
 
     restored = tmp_path / "restored-mapped"
     restored.mkdir()
-    restored_root, restored_binding, _command = _mapped_archive_workspace(restored)
+    restored_root, restored_binding, _command = _mapped_archive_workspace(
+        restored, monkeypatch
+    )
     cmd_archive_plan(
         archive_args(
             restored_root,
@@ -2308,14 +2320,28 @@ def test_workflow_distinguishes_native_and_legacy_process_review_provenance() ->
         "`run_native_reviewer` for the ordinary plugin-independent native path",
         "native host read-only policy is not OS process isolation",
         "provider-specific execution boundary",
+        "Publication validates the provider-specific reviewer-run receipt once",
+        "Later lifecycle consumers use the immutable direct current-authority binding",
     ]:
         assert token in workflow
     for process_only_claim in [
         "referencing a native `reviewer-process-receipt-v1`",
         "Run the worker with `reviewer-process-run` using that runtime root",
         "completion, sandbox/network/write boundary, and immutable packet/profile/event",
+        "recheck its receipt",
     ]:
         assert process_only_claim not in workflow
+
+
+def test_current_orchestration_instructions_do_not_depend_on_execution_flow() -> None:
+    owners = [
+        read("references/assets/orchestration/workflow.md"),
+        read("skills/orch-execute-plan/SKILL.md"),
+        read("skills/orch-review-plan/SKILL.md"),
+    ]
+    for owner in owners:
+        assert "host-native execution is sufficient" in owner
+        assert "Execution Flow is optional" in owner
 
 
 def test_review_contract_owners_use_common_provenance_and_final_knowledge_gate() -> None:

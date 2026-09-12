@@ -106,8 +106,6 @@ def _establish_reviewed_plan_authority(control: Path, plan_id: str) -> None:
         f"---\nid: {plan_id}\nstatus: Planned\nsource_spec: [spec-native]\n---\nNative test plan.\n",
         encoding="utf-8",
     )
-    reviews = orchestration / "reviews"
-    reviews.mkdir(parents=True, exist_ok=True)
     for stage, identity in (
         ("specification", review_runtime.artifact_review_identity(specification)),
         ("plan", review_runtime.plan_review_identity(control, plan)),
@@ -135,8 +133,9 @@ def _establish_reviewed_plan_authority(control: Path, plan_id: str) -> None:
             "completed_at": "2026-09-09T00:01:00Z",
             "staleness": {"is_stale": False, "reason": None, "supersedes": None},
         }
-        (reviews / f"{stage}.json").write_text(
-            json.dumps(bind_review_receipt(control, record)), encoding="utf-8"
+        record = bind_review_receipt(control, record)
+        review_runtime.publish_review(
+            control, record, current_target_identity=record["target_identity"]
         )
 
 

@@ -1018,7 +1018,7 @@ def workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
 def test_set_spec_status_verified_compiles_task_brief(tmp_path: Path) -> None:
     from specs import cmd_set_spec_status
     from test_orchestration_reviews import stage_review
-    from review_runtime import artifact_review_identity
+    from review_runtime import artifact_review_identity, publish_review
 
     root, spec, task = workspace(tmp_path)
     spec.write_text(
@@ -1029,9 +1029,7 @@ def test_set_spec_status_verified_compiles_task_brief(tmp_path: Path) -> None:
     review = stage_review("specification")
     review["target_identity"] = artifact_review_identity(spec)
     review = bind_review_receipt(root, review)
-    review_root = root / ".work-bundle/orchestration/reviews"
-    review_root.mkdir(parents=True)
-    (review_root / "spec.json").write_text(json.dumps(review))
+    publish_review(root, review, current_target_identity=review["target_identity"])
     cmd_set_spec_status(
         argparse.Namespace(project_root=str(root), workspace_root=None, id="spec-001", status="verified")
     )
@@ -3647,19 +3645,23 @@ def _bind_task_execution(
         )
     # The harness fixture represents an independently accepted current plan.
     from test_orchestration_reviews import stage_review
-    from review_runtime import artifact_review_identity, plan_review_identity
+    from review_runtime import (
+        artifact_review_identity,
+        plan_review_identity,
+        publish_review,
+    )
     plan_path, plan_data = execution_context._find_plan(root, str(brief["plan_id"]))
-    review_root = root / ".work-bundle/orchestration/reviews"
-    review_root.mkdir(parents=True, exist_ok=True)
     for spec in execution_context._resolve_spec_paths(root, {}, plan_data):
         review = stage_review("specification")
         review["target_identity"] = artifact_review_identity(spec)
         review = bind_review_receipt(root, review)
-        (review_root / f"{spec.stem}.json").write_text(json.dumps(review))
+        publish_review(
+            root, review, current_target_identity=review["target_identity"]
+        )
     review = stage_review("plan")
     review["target_identity"] = plan_review_identity(root, plan_path)
     review = bind_review_receipt(root, review)
-    (review_root / "plan.json").write_text(json.dumps(review))
+    publish_review(root, review, current_target_identity=review["target_identity"])
     binding = execution_context.create_or_load_task_execution_binding(
         control_root=root,
         plan_id=str(brief["plan_id"]),

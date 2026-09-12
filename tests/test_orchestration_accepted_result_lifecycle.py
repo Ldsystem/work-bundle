@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -209,7 +210,9 @@ def test_archive_switches_irreversibly_to_accepted_results_without_handoff_repla
         )
     ]
     calls: list[object] = []
-    monkeypatch.setattr(plans, "require_plan_reviews", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        plans, "require_plan_reviews", lambda *_args, **_kwargs: calls.append("review")
+    )
     monkeypatch.setattr(
         plans,
         "_accepted_plan_task_results",
@@ -229,8 +232,52 @@ def test_archive_switches_irreversibly_to_accepted_results_without_handoff_repla
 
     plans.cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-001"))
 
-    assert calls == ["accepted", accepted, accepted]
+    assert calls == ["review", "accepted", accepted, accepted]
     assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan.md").is_file()
+
+
+def test_archive_consumes_bound_validation_observation_without_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = "pytest -q tests/test_claim.py"
+    item = {
+        "id": "VAL-001",
+        "kind": "process",
+        "command": command,
+        "expected": "passed",
+        "invariant_ids": ["INV-001"],
+    }
+    definition = {
+        key: item.get(key)
+        for key in (
+            "id", "kind", "command", "mechanism", "expected",
+            "acceptable_results", "invariant_ids", "digest", "proves",
+        )
+    }
+    accepted = {
+        "schema": "accepted-task-result-v1",
+        "plan_id": "plan-001",
+        "task_id": "task-001",
+        "validation_evidence_ids": ["observation-001"],
+        "accepted_source": {"tree": "b" * 40},
+    }
+    record = {
+        "observation_id": "observation-001",
+        "product_tree": "b" * 40,
+        "command_digest": execution_context.semantic_digest(definition),
+        "result": {"exit_code": 0},
+    }
+    monkeypatch.setattr(
+        plans, "load_observation", lambda *_args: SimpleNamespace(to_dict=lambda: record)
+    )
+    observed = plans._observe_archive_obligations(
+        tmp_path,
+        command,
+        tmp_path,
+        [(accepted, {"plan_id": "plan-001", "task_id": "task-001", "validation": [item]})],
+    )
+
+    assert observed == [{"id": "VAL-001", "observation_id": "observation-001", "result": "passed"}]
 
 
 def _write_multi_repository_workspace(root: Path, members: dict[str, Path]) -> None:

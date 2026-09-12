@@ -44,6 +44,22 @@ def _load_review_runtime():
     return _load_reviewer_workspace()._review_runtime()
 
 
+def _load_legacy_wor107_migration():
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / 'orchestration'
+        / 'legacy_wor107_migration.py'
+    )
+    spec = importlib.util.spec_from_file_location(
+        '_wb_legacy_wor107_migration', module_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f'Unable to load legacy migration utility: {module_path}')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load_reviewer_workspace():
     module_path = Path(__file__).with_name('reviewer_workspace.py')
     spec = importlib.util.spec_from_file_location('_wb_reviewer_workspace', module_path)
@@ -201,11 +217,12 @@ def main() -> int:
         return cmd_provision_member(parsed.args)
     if command == 'cleanup-member':
         return cmd_cleanup_member(parsed.args)
-    if command in {'validate-contract', 'assert-migration-stop'}:
-        review_runtime = _load_review_runtime()
-        if command == 'validate-contract':
-            return review_runtime.cmd_validate_contract(parsed.args)
-        return review_runtime.cmd_assert_migration_stop(parsed.args)
+    if command == 'validate-contract':
+        return _load_review_runtime().cmd_validate_contract(parsed.args)
+    if command == 'assert-migration-stop':
+        legacy = _load_legacy_wor107_migration()
+        print(legacy.DEPRECATION_DIAGNOSTIC, file=sys.stderr)
+        return legacy.cmd_assert_migration_stop(parsed.args)
     if command in {'reviewer-workspace-create', 'reviewer-workspace-operation', 'reviewer-workspace-cleanup', 'reviewer-process-run'}:
         return _load_reviewer_workspace().cmd_reviewer_workspace(command, parsed.args)
     if command in {'evaluation-identity-freeze', 'evaluation-identity-complete', 'evaluation-identity-transition'}:

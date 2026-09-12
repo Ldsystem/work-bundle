@@ -531,7 +531,9 @@ def test_lifecycle_gate_reads_current_artifact_not_claimed_staleness(tmp_path):
     reviews = root / "reviews"
     reviews.mkdir()
     review = bind_review_receipt(tmp_path, review)
-    (reviews / "accepted.json").write_text(json.dumps(review))
+    review_runtime.publish_review(
+        tmp_path, review, current_target_identity=review["target_identity"]
+    )
     review_runtime.require_specification_review(tmp_path, spec)
     spec.write_text(spec.read_text().replace("draft", "verified"))
     review_runtime.require_specification_review(tmp_path, spec)
@@ -559,15 +561,29 @@ def _reviewed_plan_fixture(root, *, provenance=True):
         )
         path.write_text(f"---\n{text}\n---\n{body}")
     reviews = orch / "reviews"
-    reviews.mkdir()
     for stage, identity in (("specification", review_runtime.artifact_review_identity(spec)),
                             ("plan", review_runtime.plan_review_identity(root, plan))):
         review = stage_review(stage)
         review["target_identity"] = identity
         if provenance:
             review = bind_review_receipt(root, review)
-        (reviews / f"{stage}.json").write_text(json.dumps(review))
+            review_runtime.publish_review(
+                root, review, current_target_identity=review["target_identity"]
+            )
+        else:
+            reviews.mkdir(exist_ok=True)
+            (reviews / f"{stage}.json").write_text(json.dumps(review))
     return spec, plan, reviews
+
+
+def _stage_review_path(reviews: Path, stage: str) -> Path:
+    matches = [
+        path
+        for path in reviews.glob("*.json")
+        if json.loads(path.read_text()).get("stage") == stage
+    ]
+    assert len(matches) == 1, matches
+    return matches[0]
 
 
 def _write_stage_task(plan: Path, *, review_required: bool = False, command: str = "check-claim") -> Path:
@@ -1041,7 +1057,7 @@ def test_manually_authored_accepted_review_cannot_advance_lifecycle(tmp_path):
     import review_runtime
     spec, _, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
     # Valid shape and an exact current target are not reviewer execution proof.
-    with pytest.raises(SystemExit, match="provenance|receipt"):
+    with pytest.raises(SystemExit, match="direct immutable authority"):
         review_runtime.require_specification_review(tmp_path, spec)
 
 
@@ -1053,9 +1069,13 @@ def test_native_reviewer_receipt_advances_lifecycle_and_survives_cleanup(tmp_pat
     import specs
     spec, _, reviews = _reviewed_plan_fixture(tmp_path, provenance=False)
     spec.write_text(spec.read_text().replace("status: verified", "status: draft"))
-    record = json.loads((reviews / "specification.json").read_text())
+    path = _stage_review_path(reviews, "specification")
+    record = json.loads(path.read_text())
     bound = bind_review_receipt(tmp_path, record, real_process=True)
-    (reviews / "specification.json").write_text(json.dumps(bound))
+    path.unlink()
+    review_runtime.publish_review(
+        tmp_path, bound, current_target_identity=bound["target_identity"]
+    )
     runtime = review_runtime.reviewer_runtime_root(tmp_path)
     state = json.loads((runtime / ".state" / f"{bound['review_id']}.json").read_text())
     terminal = {"schema": "reviewer-terminal-review-v1", "review_id": bound["review_id"],
@@ -1069,9 +1089,10 @@ def test_native_reviewer_receipt_advances_lifecycle_and_survives_cleanup(tmp_pat
 @pytest.mark.parametrize("change", ["missing", "digest", "review_id", "target", "result", "mutable", "packet", "profile", "events", "future"])
 def test_stage_receipt_integrity_failures_block_acceptance(tmp_path, change):
     import review_runtime
-    spec, _, reviews = _reviewed_plan_fixture(tmp_path)
-    path = reviews / "specification.json"
-    record = json.loads(path.read_text())
+    spec, _, _ = _reviewed_plan_fixture(tmp_path, provenance=False)
+    record = stage_review("specification")
+    record["target_identity"] = review_runtime.artifact_review_identity(spec)
+    record = bind_review_receipt(tmp_path, record)
     receipt = review_runtime.reviewer_runtime_root(tmp_path) / "receipts/reviewer-process" / f"{record['reviewer_run']['run_id']}.json"
     if change == "missing":
         receipt.unlink()
@@ -1097,9 +1118,10 @@ def test_stage_receipt_integrity_failures_block_acceptance(tmp_path, change):
     else:
         suffix = {"packet": ".packet.json", "profile": ".profile.sb", "events": ".events.jsonl"}[change]
         receipt.with_suffix(suffix).unlink()
-    path.write_text(json.dumps(record))
-    with pytest.raises(SystemExit, match="provenance"):
-        review_runtime.require_specification_review(tmp_path, spec)
+    with pytest.raises(review_runtime.ReviewContractError, match="provenance"):
+        review_runtime.publish_review(
+            tmp_path, record, current_target_identity=record["target_identity"]
+        )
 
 
 @pytest.mark.parametrize("field", ["author_execution_id", "repair_execution_id"])
@@ -1110,29 +1132,31 @@ def test_known_author_or_repair_execution_cannot_receive_stage_credit(tmp_path, 
     record = stage_review("specification")
     record["target_identity"] = review_runtime.artifact_review_identity(spec)
     record = bind_review_receipt(tmp_path, record, execution_id="same-worker")
-    (reviews / "specification.json").write_text(json.dumps(record))
-    with pytest.raises(SystemExit, match="overlaps author/repair"):
-        review_runtime.require_specification_review(tmp_path, spec)
+    with pytest.raises(review_runtime.ReviewContractError, match="overlaps author/repair"):
+        review_runtime.publish_review(
+            tmp_path, record, current_target_identity=record["target_identity"]
+        )
 
 
 def test_current_plan_execution_binding_excludes_its_worker_from_review(tmp_path):
     import review_runtime
     _, plan, reviews = _reviewed_plan_fixture(tmp_path)
-    record = json.loads((reviews / "plan.json").read_text())
+    record = json.loads(_stage_review_path(reviews, "plan").read_text())
     record = bind_review_receipt(tmp_path, record, execution_id="bound-author")
-    (reviews / "plan.json").write_text(json.dumps(record))
     binding = tmp_path / ".work-bundle/runtime/execution/plan-test/task-1/execution-binding.json"
     binding.parent.mkdir(parents=True)
     binding.write_text(json.dumps({"execution_id": "bound-author"}))
-    with pytest.raises(SystemExit, match="overlaps author/repair"):
-        review_runtime.require_plan_reviews(tmp_path, plan)
+    with pytest.raises(review_runtime.ReviewContractError, match="overlaps author/repair"):
+        review_runtime.publish_review(
+            tmp_path, record, current_target_identity=record["target_identity"]
+        )
 
 
 def test_old_packet_bytes_cannot_be_relabelled_as_current_target(tmp_path):
     import review_runtime
     import reviewer_workspace
     spec, _, reviews = _reviewed_plan_fixture(tmp_path)
-    record = json.loads((reviews / "specification.json").read_text())
+    record = json.loads(_stage_review_path(reviews, "specification").read_text())
     runtime = review_runtime.reviewer_runtime_root(tmp_path)
     workspace = runtime / "reviews" / record["review_id"]
     packet = json.loads((workspace / "packet.json").read_text())
@@ -1144,22 +1168,33 @@ def test_old_packet_bytes_cannot_be_relabelled_as_current_target(tmp_path):
         reviewer_workspace.create_reviewer_workspace(runtime, "relabelled", packet)
 
 
-def _native_spec_receipt(tmp_path, monkeypatch, *, observed_events=None, crlf=False):
+def _native_spec_receipt(
+    tmp_path, monkeypatch, *, observed_events=None, crlf=False, returncode=0, stderr=""
+):
     import reviewer_workspace
     spec, _, reviews = _reviewed_plan_fixture(tmp_path)
-    record = json.loads((reviews / "specification.json").read_text())
+    record = json.loads(_stage_review_path(reviews, "specification").read_text())
     record.pop("reviewer_run")
     workspace = review_runtime.reviewer_runtime_root(tmp_path) / "reviews" / record["review_id"]
+    previous_packet = json.loads((workspace / "packet.json").read_text())
     if crlf:
         spec.write_bytes(spec.read_bytes().replace(b"\n", b"\r\n"))
-        previous_packet = json.loads((workspace / "packet.json").read_text())
-        packet = reviewer_workspace.build_direct_evidence_packet(
-            source_root=tmp_path, control_root=tmp_path, protected_roots=[tmp_path / ".work-bundle/protected-test"],
-            artifacts=[item["locator"] for item in previous_packet["artifacts"]], search_roots=[], validators=[],
-            sentinels=[], network_state="denied", stage_review_context=previous_packet["stage_review_context"])
-        record["review_id"] += "-crlf"
-        created = reviewer_workspace.create_reviewer_workspace(review_runtime.reviewer_runtime_root(tmp_path), record["review_id"], packet)
-        workspace = Path(created["workspace_path"])
+    packet = reviewer_workspace.build_direct_evidence_packet(
+        source_root=tmp_path,
+        control_root=tmp_path,
+        protected_roots=[tmp_path / ".work-bundle/protected-test"],
+        artifacts=[item["locator"] for item in previous_packet["artifacts"]],
+        search_roots=[],
+        validators=[],
+        sentinels=[],
+        network_state="denied",
+        stage_review_context=previous_packet["stage_review_context"],
+    )
+    record["review_id"] += "-native-crlf" if crlf else "-native"
+    created = reviewer_workspace.create_reviewer_workspace(
+        review_runtime.reviewer_runtime_root(tmp_path), record["review_id"], packet
+    )
+    workspace = Path(created["workspace_path"])
     host_id = "01a0821d-f359-7d60-a9bd-90dd0e006166"
     events = [
         {"type": "thread.started", "thread_id": host_id}, {"type": "turn.started"},
@@ -1170,7 +1205,9 @@ def _native_spec_receipt(tmp_path, monkeypatch, *, observed_events=None, crlf=Fa
     if observed_events is not None:
         events = observed_events
     monkeypatch.setattr(reviewer_workspace, "_run_native_process", lambda *_:
-        subprocess.CompletedProcess([], 0, "\n".join(json.dumps(event) for event in events), ""))
+        subprocess.CompletedProcess(
+            [], returncode, "\n".join(json.dumps(event) for event in events), stderr
+        ))
     receipt = reviewer_workspace.run_native_reviewer(workspace, Path(sys.executable), model="test-model",
                                                      review_instructions="Assess supplied specification and return its stage judgment.")
     result = {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]}
@@ -1204,10 +1241,33 @@ def test_failed_native_admission_retains_actual_unadmitted_diagnostics(tmp_path,
     assert (diagnostic / "stderr.txt").is_file()
     assert (diagnostic / "launch.json").is_file()
     metadata = json.loads((diagnostic / "capture.json").read_text())
-    assert metadata["status"] == "unadmitted"
+    assert metadata["status"] == "captured-unadmitted"
+    assert metadata["started_at"] <= metadata["completed_at"]
+    assert {"packet.json", "events.jsonl"} <= set(metadata["artifacts"])
     assert "review_result" not in metadata and "reviewer_run" not in metadata
     assert all(not item.stat().st_mode & 0o222 for item in diagnostic.iterdir())
     assert not (review_runtime.reviewer_runtime_root(tmp_path) / "receipts/reviewer-process" / (metadata["run_id"] + ".json")).exists()
+
+
+def test_failed_native_process_cannot_complete_captured_receipt(tmp_path, monkeypatch):
+    import reviewer_workspace
+    with pytest.raises(reviewer_workspace.ReviewerWorkspaceError, match="NATIVE_PROCESS_FAILED") as failed:
+        _native_spec_receipt(
+            tmp_path, monkeypatch, returncode=23,
+            stderr="transport terminated before a successful process exit\n",
+        )
+    diagnostic = Path(failed.value.result["diagnostic_path"])
+    capture = json.loads((diagnostic / "capture.json").read_text())
+    assert capture["exit_code"] == 23
+    with pytest.raises(reviewer_workspace.ReviewerWorkspaceError, match="NATIVE_PROCESS_FAILED"):
+        reviewer_workspace.complete_native_reviewer_capture(
+            review_runtime.reviewer_runtime_root(tmp_path), capture["run_id"]
+        )
+    assert not (
+        review_runtime.reviewer_runtime_root(tmp_path)
+        / "receipts/reviewer-process"
+        / f"{capture['run_id']}.json"
+    ).exists()
 
 
 def test_plugin_absent_native_review_publishes_and_consumes_actual_host_identity(tmp_path, monkeypatch):
@@ -1255,7 +1315,10 @@ def test_native_receipt_rejects_resealed_false_provenance(tmp_path, monkeypatch,
             proof.write_text(json.dumps(value))
             saved["request_sha256"] = hashlib.sha256(proof.read_bytes()).hexdigest()
         elif change == "stderr":
-            proof.write_text("ERROR codex_core::tools::router: error=code-mode host is disabled\n")
+            proof.write_text(json.dumps({
+                "type": "item.completed",
+                "item": {"id": "tool", "type": "command_execution"},
+            }) + "\n")
             saved["stderr_sha256"] = hashlib.sha256(proof.read_bytes()).hexdigest()
         else:
             value = json.loads(proof.read_text())
@@ -1276,7 +1339,7 @@ def test_launcher_does_not_publish_acceptance_for_unbound_worker_output(tmp_path
     import reviewer_workspace
     import review_runtime
     spec, _, reviews = _reviewed_plan_fixture(tmp_path)
-    record = json.loads((reviews / "specification.json").read_text())
+    record = json.loads(_stage_review_path(reviews, "specification").read_text())
     workspace = review_runtime.reviewer_runtime_root(tmp_path) / "reviews" / record["review_id"]
     record.pop("reviewer_run")
     if change == "review_id":
@@ -1296,9 +1359,10 @@ def test_launcher_does_not_publish_acceptance_for_unbound_worker_output(tmp_path
         receipt = reviewer_workspace.run_sandboxed_reviewer(workspace, ["worker"])
         import hashlib
         record["reviewer_run"] = {"run_id": receipt["run_id"], "sha256": hashlib.sha256(Path(receipt["receipt_path"]).read_bytes()).hexdigest()}
-        (reviews / "specification.json").write_text(json.dumps(record))
-        with pytest.raises(SystemExit, match="provenance"):
-            review_runtime.require_specification_review(tmp_path, spec)
+        with pytest.raises(review_runtime.ReviewContractError, match="provenance"):
+            review_runtime.publish_review(
+                tmp_path, record, current_target_identity=record["target_identity"]
+            )
 
 
 def test_plan_execution_transition_and_binding_reject_stale_plan(tmp_path):
@@ -1355,7 +1419,9 @@ def test_new_spec_review_does_not_refresh_old_plan_review(tmp_path):
     replacement = stage_review("specification")
     replacement["target_identity"] = review_runtime.artifact_review_identity(spec)
     replacement = bind_review_receipt(tmp_path, replacement)
-    (reviews / "specification.json").write_text(json.dumps(replacement))
+    review_runtime.publish_review(
+        tmp_path, replacement, current_target_identity=replacement["target_identity"]
+    )
     with pytest.raises(SystemExit, match="plan review"):
         review_runtime.require_plan_reviews(tmp_path, plan)
 
@@ -1412,7 +1478,9 @@ def test_final_transition_binds_current_source_tree(tmp_path, monkeypatch, trans
     review["target_identity"] = dict(review_runtime.plan_review_identity(tmp_path, plan),
                                       source_tree=git("rev-parse", "HEAD^{tree}"))
     review = bind_review_receipt(tmp_path, review)
-    (reviews / "final.json").write_text(json.dumps(review))
+    review_runtime.publish_review(
+        tmp_path, review, current_target_identity=review["target_identity"]
+    )
     source.write_text("B")
     with pytest.raises(SystemExit, match="clean"):
         run()
@@ -1422,7 +1490,9 @@ def test_final_transition_binds_current_source_tree(tmp_path, monkeypatch, trans
         run()
     review["target_identity"]["source_tree"] = git("rev-parse", "HEAD^{tree}")
     review = bind_review_receipt(tmp_path, review)
-    (reviews / "final.json").write_text(json.dumps(review))
+    review_runtime.publish_review(
+        tmp_path, review, current_target_identity=review["target_identity"]
+    )
     run()
 
 

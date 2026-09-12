@@ -78,13 +78,18 @@ def _legacy_plan_identity(root: Path, plan: Path) -> dict[str, object]:
     return identity
 
 
-def test_semantic_projector_preserves_accepted_legacy_baseline_identity(tmp_path: Path) -> None:
+def test_legacy_semantic_projector_preserves_accepted_baseline_identity(tmp_path: Path) -> None:
     plan, _phase, _task = _plan_graph(tmp_path)
 
-    assert review_runtime.plan_review_identity(tmp_path, plan) == _legacy_plan_identity(tmp_path, plan)
+    assert review_runtime.legacy_plan_review_identity(tmp_path, plan) == _legacy_plan_identity(
+        tmp_path, plan
+    )
+    assert review_runtime.plan_review_identity(tmp_path, plan) != _legacy_plan_identity(
+        tmp_path, plan
+    )
 
 
-def test_missing_knowledge_closure_preserves_accepted_legacy_identity(tmp_path: Path) -> None:
+def test_legacy_identity_preserves_missing_knowledge_closure_compatibility(tmp_path: Path) -> None:
     plan, _phase, _task = _plan_graph(tmp_path)
     plan.write_text(
         plan.read_text()
@@ -94,7 +99,9 @@ def test_missing_knowledge_closure_preserves_accepted_legacy_identity(tmp_path: 
         encoding="utf-8",
     )
 
-    assert review_runtime.plan_review_identity(tmp_path, plan) == _legacy_plan_identity(tmp_path, plan)
+    assert review_runtime.legacy_plan_review_identity(tmp_path, plan) == _legacy_plan_identity(
+        tmp_path, plan
+    )
 
 
 def test_active_to_archived_rotation_preserves_semantic_plan_identity(tmp_path: Path) -> None:
@@ -150,7 +157,7 @@ def test_progress_and_append_only_evidence_do_not_change_semantic_plan_identity(
         ("## Knowledge Base Update Carry Forward", "Closure return"),
     ],
 )
-def test_knowledge_closure_only_change_preserves_plan_review_identity(
+def test_knowledge_closure_lifecycle_change_is_v2_and_legacy_compatible(
     tmp_path: Path, heading: str, label: str
 ) -> None:
     plan, _phase, _task = _plan_graph(tmp_path)
@@ -160,10 +167,12 @@ def test_knowledge_closure_only_change_preserves_plan_review_identity(
         encoding="utf-8",
     )
     original = review_runtime.plan_review_identity(tmp_path, plan)
+    legacy = review_runtime.legacy_plan_review_identity(tmp_path, plan)
 
     plan.write_text(plan.read_text().replace(f"{label}: missing", f"{label}: completed"))
 
     assert review_runtime.plan_review_identity(tmp_path, plan) == original
+    assert review_runtime.legacy_plan_review_identity(tmp_path, plan) == legacy
 
 
 @pytest.mark.parametrize(

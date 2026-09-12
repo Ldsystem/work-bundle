@@ -324,17 +324,34 @@ def _validate_integrated_change_manifest(
         raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
 
 
+def _stderr_reports_forbidden_native_activity(stderr: str) -> bool:
+    """Recognize protocol evidence on stderr without interpreting free-form logs."""
+    for line in stderr.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        kind = event.get("type")
+        if kind in {"turn.failed", "turn.cancelled", "error"}:
+            return True
+        if kind == "item.completed":
+            item = event.get("item")
+            if not isinstance(item, dict) or item.get("type") not in {"agent_message", "reasoning"}:
+                return True
+    return False
+
+
 def parse_native_reviewer_transcript(raw: str, stderr: str = "") -> tuple[str, dict[str, object]]:
     """Accept one completed fresh host turn, never a supplied verdict or tool run."""
     thread_id = None
     phase = "new"
-    messages = []
+    judgment = None
     model_activity = False
     try:
-        # The host can report failed tool dispatch only on stderr, with no JSONL
-        # tool item. Unknown diagnostics are inadmissible, not evidence of silence.
-        if any(line.strip() not in {"", "Reading additional input from stdin..."} for line in stderr.splitlines()):
-            raise ValueError("unexpected host diagnostic")
+        if _stderr_reports_forbidden_native_activity(stderr):
+            raise ValueError("stderr contains forbidden structured activity")
         for line in raw.splitlines():
             event = json.loads(line)
             kind = event["type"]
@@ -359,17 +376,24 @@ def parse_native_reviewer_transcript(raw: str, stderr: str = "") -> tuple[str, d
                     raise ValueError("unexpected host activity")
                 model_activity = True
                 if item["type"] == "agent_message":
-                    messages.append(item["text"])
-            elif kind == "turn.completed" and phase == "running" and messages:
+                    if judgment is not None:
+                        raise ValueError("substantive judgment must be terminal")
+                    try:
+                        candidate = json.loads(item["text"])
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(candidate, dict):
+                        raise ValueError("judgment must be an object")
+                    judgment = candidate
+                elif judgment is not None:
+                    raise ValueError("substantive judgment must be terminal")
+            elif kind == "turn.completed" and phase == "running" and judgment is not None:
                 phase = "complete"
             else:
                 raise ValueError("unexpected host activity")
         if phase != "complete" or not thread_id:
             raise ValueError("incomplete host run")
-        result = json.loads(messages[-1])
-        if not isinstance(result, dict):
-            raise ValueError("judgment must be an object")
-        return thread_id, result
+        return thread_id, judgment
     except (ValueError, TypeError, KeyError, AttributeError) as error:
         raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_TRANSCRIPT_INVALID") from error
 
@@ -393,8 +417,12 @@ def _run_native_process(workspace: Path, argv: list[str], request: str) -> subpr
                           capture_output=True, check=False, timeout=1800)
 
 
-def _retain_native_diagnostics(runtime_root, run_id, review_id, argv, request_bytes, executable_digest, completed):
-    """Keep actual transport evidence before admission; this is never a receipt."""
+def _retain_native_diagnostics(
+    runtime_root, run_id, review_id, argv, request_bytes, executable_digest, completed,
+    *, started_at, completed_at, packet, state, sealed, native_controller_evidence,
+    executable_unchanged,
+):
+    """Freeze one complete native run before admission; this is never a receipt."""
     directory = runtime_root / "diagnostics/reviewer-native" / run_id
     if not _inside(runtime_root, directory):
         raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_PATH_ESCAPE")
@@ -404,11 +432,29 @@ def _retain_native_diagnostics(runtime_root, run_id, review_id, argv, request_by
         "stdout.jsonl": completed.stdout.encode(),
         "stderr.txt": completed.stderr.encode(),
         "launch.json": json.dumps({"argv": argv, "executable_sha256": executable_digest}, sort_keys=True).encode(),
+        "packet.json": json.dumps(packet, sort_keys=True).encode(),
+        "events.jsonl": Path(str(sealed["event_log_path"])).read_bytes(),
+        "control.json": json.dumps({
+            key: state.get(key)
+            for key in (
+                "task_review_previous_review", "stage_review_previous_review",
+                "post_execution_review",
+            )
+            if state.get(key) is not None
+        }, sort_keys=True, ensure_ascii=False).encode(),
     }
+    if native_controller_evidence is not None:
+        items["controller.json"] = json.dumps(
+            native_controller_evidence, sort_keys=True, ensure_ascii=False
+        ).encode()
     items["capture.json"] = json.dumps({
-        "schema": "reviewer-native-diagnostic-v1", "status": "unadmitted",
+        "schema": "reviewer-native-capture-v2", "status": "captured-unadmitted",
         "run_id": run_id, "review_id": review_id, "exit_code": completed.returncode,
-        "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "started_at": started_at, "completed_at": completed_at,
+        "packet_sha256": _canonical_digest(packet),
+        "event_log_sha256": sealed["event_log_sha256"],
+        "event_log_mode": sealed["event_log_mode"],
+        "executable_unchanged": executable_unchanged,
         "artifacts": {name: _sha256_bytes(content) for name, content in items.items()},
     }, sort_keys=True).encode()
     for name, content in items.items():
@@ -1317,7 +1363,7 @@ def _task_product_judgment_review(
     previous_review: object = None,
     integrated_stage: bool = False,
 ) -> dict[str, object]:
-    """Compose controller-owned review authority around a compact product judgment."""
+    """Preserve compact reviewer observations inside a controller-decidable envelope."""
     if not isinstance(judgment, dict) or set(judgment) != {"task_review"}:
         raise ReviewerWorkspaceError("WB_REVIEW_TASK_OUTPUT_INVALID")
     product = judgment["task_review"]
@@ -1341,27 +1387,21 @@ def _task_product_judgment_review(
         if (
             not isinstance(item, dict) or set(item) != expected
             or item["severity"] not in {"blocking", "advisory"}
-            or item["owner"] != "task_owner"
             or not all(isinstance(item[key], str) and item[key].strip() for key in expected - {"severity"})
         ):
             raise ReviewerWorkspaceError("WB_REVIEW_TASK_OUTPUT_INVALID")
-        advisory = item["severity"] == "advisory"
         findings.append({
+            "schema": "review-finding-v2",
             "finding_id": item["finding_id"], "stage": "implementation",
-            "class": "advisory_enhancement" if advisory else "implementation_defect",
-            "severity": item["severity"], "first_broken_artifact": "implementation",
-            "obligation_basis": "none" if advisory else "accepted_requirement",
+            "reviewer_observation": dict(item),
             "evidence": [{
                 "kind": "source", "locator": item["boundary"],
-                "digest_or_identity": _canonical_digest({
-                    "requirement_id": item["requirement_id"], "evidence": item["evidence"]
-                }),
+                "digest_or_identity": _canonical_digest(item),
                 "observation": f"{item['evidence']} Expected: {item['expected']} Observed: {item['observed']}",
             }],
             "target_identity": identity,
             "summary": f"{item['requirement_id']}: {item['observed']}",
-            "recommended_owner": "backlog_owner" if advisory else "task_owner",
-            "disposition": "record_advisory" if advisory else "repair_task",
+            "controller_decision": None,
         })
     artifacts = [
         {"path": item["locator"], "sha256": item["sha256"]}
@@ -1433,6 +1473,245 @@ def _stage_product_judgment_review(
     return result
 
 
+def _native_capture_artifacts(runtime_root: Path, run_id: str) -> tuple[Path, dict[str, object], dict[str, bytes]]:
+    """Load a complete immutable v2 run capture; legacy diagnostics are not promotable."""
+    runtime_root = runtime_root.expanduser().resolve()
+    run_id = _safe_id(run_id)
+    directory = (runtime_root / "diagnostics/reviewer-native" / run_id).resolve(strict=False)
+    if not _inside(runtime_root, directory):
+        raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_PATH_ESCAPE")
+    capture_path = directory / "capture.json"
+    try:
+        if capture_path.is_symlink() or not capture_path.is_file() or capture_path.stat().st_mode & 0o222:
+            raise ValueError("mutable capture")
+        capture = json.loads(capture_path.read_bytes())
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_CAPTURE_INCOMPLETE") from None
+    required = {
+        "request.json", "stdout.jsonl", "stderr.txt", "launch.json", "packet.json",
+        "events.jsonl", "control.json",
+    }
+    artifacts = capture.get("artifacts") if isinstance(capture, dict) else None
+    if (
+        capture.get("schema") != "reviewer-native-capture-v2"
+        or capture.get("status") != "captured-unadmitted"
+        or capture.get("run_id") != run_id
+        or not re.fullmatch(r"reviewer-run-[0-9a-f-]{36}", run_id)
+        or not isinstance(capture.get("review_id"), str)
+        or _safe_id(capture["review_id"]) != capture["review_id"]
+        or not isinstance(capture.get("started_at"), str)
+        or not isinstance(capture.get("completed_at"), str)
+        or not isinstance(artifacts, dict)
+        or not required.issubset(artifacts)
+        or capture.get("event_log_mode") != "0400"
+    ):
+        raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_CAPTURE_INCOMPLETE")
+    contents: dict[str, bytes] = {}
+    try:
+        for name, digest in artifacts.items():
+            if not isinstance(name, str) or Path(name).name != name:
+                raise ValueError("invalid artifact name")
+            path = directory / name
+            if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o222:
+                raise ValueError("mutable artifact")
+            content = path.read_bytes()
+            if _sha256_bytes(content) != digest:
+                raise ValueError("artifact digest mismatch")
+            contents[name] = content
+        packet = json.loads(contents["packet.json"])
+        if _canonical_digest(packet) != capture.get("packet_sha256"):
+            raise ValueError("packet digest mismatch")
+        if _sha256_bytes(contents["events.jsonl"]) != capture.get("event_log_sha256"):
+            raise ValueError("event log mismatch")
+        started = datetime.fromisoformat(capture["started_at"].replace("Z", "+00:00"))
+        completed = datetime.fromisoformat(capture["completed_at"].replace("Z", "+00:00"))
+        if started.tzinfo is None or completed.tzinfo is None or started > completed:
+            raise ValueError("invalid capture timing")
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_CAPTURE_INCOMPLETE") from None
+    return directory, capture, contents
+
+
+def _write_immutable_once(path: Path, content: bytes) -> None:
+    if path.exists():
+        if path.is_symlink() or not path.is_file() or path.read_bytes() != content or path.stat().st_mode & 0o222:
+            raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_RECEIPT_COLLISION")
+        return
+    with path.open("xb") as stream:
+        stream.write(content)
+    path.chmod(0o400)
+
+
+def complete_native_reviewer_capture(runtime_root: Path, run_id: str) -> dict[str, object]:
+    """Idempotently turn one complete future capture into the ordinary native receipt."""
+    runtime_root = runtime_root.expanduser().resolve()
+    diagnostic_path, capture, items = _native_capture_artifacts(runtime_root, run_id)
+    if capture.get("exit_code") != 0:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_PROCESS_FAILED",
+            {"exit_code": capture.get("exit_code"), "diagnostic_path": str(diagnostic_path)},
+        )
+    if capture.get("executable_unchanged") is not True:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_EXECUTABLE_MUTATED", {"diagnostic_path": str(diagnostic_path)}
+        )
+    try:
+        packet = json.loads(items["packet.json"])
+        request = json.loads(items["request.json"])
+        launch = json.loads(items["launch.json"])
+        control = json.loads(items["control.json"])
+        controller_evidence = (
+            json.loads(items["controller.json"]) if "controller.json" in items else None
+        )
+        combined_evidence = [*request["evidence"], *(controller_evidence or [])]
+        expected_input = _native_review_input(
+            packet, combined_evidence if controller_evidence is not None else None
+        )
+        expected_artifacts = _native_review_artifacts(packet, combined_evidence)
+        if (
+            set(request) != {"instructions", "review_input", "evidence"}
+            or not isinstance(request["instructions"], str)
+            or not request["instructions"].strip()
+            or request["review_input"] != expected_input
+            or len(request["evidence"]) != len(expected_artifacts)
+        ):
+            raise ValueError("native request mismatch")
+        for expected, supplied in zip(expected_artifacts, request["evidence"]):
+            if (
+                not isinstance(supplied, dict)
+                or set(supplied) != {*expected, "content"}
+                or any(supplied.get(key) != value for key, value in expected.items())
+                or _sha256_bytes(str(supplied["content"]).encode()) != expected["sha256"]
+            ):
+                raise ValueError("native evidence mismatch")
+        if controller_evidence is not None:
+            controller_locators = _controller_only_artifact_locators(packet, combined_evidence)
+            controller_artifacts = [
+                item for item in packet["artifacts"]
+                if item.get("locator") in controller_locators
+            ]
+            if len(controller_evidence) != len(controller_artifacts):
+                raise ValueError("native controller evidence mismatch")
+            for expected, supplied in zip(controller_artifacts, controller_evidence):
+                if (
+                    not isinstance(supplied, dict)
+                    or set(supplied) != {*expected, "content"}
+                    or any(supplied.get(key) != value for key, value in expected.items())
+                    or _sha256_bytes(str(supplied["content"]).encode()) != expected["sha256"]
+                ):
+                    raise ValueError("native controller evidence mismatch")
+        host_run_id, worker_output = parse_native_reviewer_transcript(
+            items["stdout.jsonl"].decode(), items["stderr.txt"].decode()
+        )
+        context_key = "stage_review_context" if "stage_review_context" in packet else "task_review_context"
+        context = (
+            _validate_stage_context(packet[context_key])
+            if context_key == "stage_review_context"
+            else _validate_task_context(packet[context_key])
+        )
+        context = {**context, "agent_id": host_run_id, "execution_id": host_run_id}
+        compact_integrated = (
+            context_key == "stage_review_context"
+            and context.get("stage") == "integrated_implementation"
+            and isinstance(worker_output, dict)
+            and "task_review" in worker_output
+        )
+        previous_key = (
+            "task_review_previous_review"
+            if context_key == "task_review_context"
+            else "stage_review_previous_review"
+        )
+        review = (
+            _task_product_judgment_review(
+                worker_output,
+                review_id=capture["review_id"], context=context, packet=packet,
+                started_at=capture["started_at"], completed_at=capture["completed_at"],
+                previous_review=control.get(previous_key), integrated_stage=compact_integrated,
+            )
+            if context_key == "task_review_context" or compact_integrated
+            else _stage_product_judgment_review(
+                worker_output,
+                review_id=capture["review_id"], context=context, packet=packet,
+                started_at=capture["started_at"], completed_at=capture["completed_at"],
+                previous_review=control.get(previous_key),
+            )
+        )
+        validated = (
+            _review_runtime()._validated_review_envelope(review)
+            if context_key == "stage_review_context"
+            else _review_runtime().validate_task_acceptance_review(review)
+        )
+        mode = "direct_source" if validated.evidence["mode"] == "direct" else validated.evidence["mode"]
+        if (
+            "reviewer_run" in review
+            or validated.review_id != capture["review_id"]
+            or (context_key == "stage_review_context" and validated.stage != context["stage"])
+            or validated.target_identity != context["target_identity"]
+            or validated.reviewer["agent_id"] != context["agent_id"]
+            or validated.reviewer["context_origin"] != context["evidence_mode"]
+            or validated.reviewer["capability"] != context["capability"]
+            or mode != context["evidence_mode"]
+        ):
+            raise ValueError("native judgment mismatch")
+    except ReviewerWorkspaceError as error:
+        raise ReviewerWorkspaceError(
+            error.code, {**error.result, "diagnostic_path": str(diagnostic_path)}
+        ) from error
+    except (ValueError, TypeError, KeyError, IndexError, AttributeError, json.JSONDecodeError) as error:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_CAPTURE_INVALID", {"diagnostic_path": str(diagnostic_path)}
+        ) from error
+
+    argv = launch["argv"]
+    if (
+        not isinstance(argv, list)
+        or len(argv) <= 11
+        or not re.fullmatch(r"[0-9a-f]{64}", str(launch.get("executable_sha256") or ""))
+        or not isinstance(argv[0], str)
+        or not Path(argv[0]).is_absolute()
+        or argv != _native_reviewer_argv(Path(argv[0]), Path(argv[9]), argv[11])
+    ):
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_CAPTURE_INVALID", {"diagnostic_path": str(diagnostic_path)}
+        )
+    receipt = {
+        "schema": "reviewer-native-receipt-v1", "run_id": run_id,
+        "review_id": capture["review_id"], "status": "passed",
+        "packet_sha256": capture["packet_sha256"], "sandbox_profile_sha256": None,
+        "argv_sha256": _canonical_digest(argv), "exit_code": 0,
+        "stdout_sha256": _sha256_bytes(items["stdout.jsonl"]),
+        "stderr_sha256": _sha256_bytes(items["stderr.txt"]),
+        "event_log_sha256": capture["event_log_sha256"],
+        "event_log_mode": capture["event_log_mode"],
+        "started_at": capture["started_at"], "completed_at": capture["completed_at"],
+        "host_run_id": host_run_id,
+        "request_sha256": _sha256_bytes(items["request.json"]),
+        "executable_sha256": launch["executable_sha256"],
+        "isolation": dict(NATIVE_ISOLATION), context_key: context,
+        "review_result_sha256": _canonical_digest(review), "review_result": review,
+    }
+    receipt_path = (
+        runtime_root / "receipts/reviewer-process" / f"{run_id}.json"
+    ).resolve(strict=False)
+    if not _inside(runtime_root, receipt_path):
+        raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_PATH_ESCAPE")
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    for suffix in (
+        "packet.json", "events.jsonl", "request.json", "stdout.jsonl", "stderr.txt",
+        "launch.json", "controller.json",
+    ):
+        if suffix in items:
+            _write_immutable_once(receipt_path.with_suffix(f".{suffix}"), items[suffix])
+    receipt_bytes = (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode()
+    _write_immutable_once(receipt_path, receipt_bytes)
+    reference = {"run_id": run_id, "sha256": _sha256_bytes(receipt_bytes)}
+    return {
+        **receipt, "receipt_path": str(receipt_path),
+        "event_log_path": str(receipt_path.with_suffix(".events.jsonl")),
+        "diagnostic_path": str(diagnostic_path), "reviewer_run": reference,
+    }
+
+
 def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object]:
     """Launch the entire reviewer under the frozen deny-default profile."""
     return _run_reviewer(workspace, argv)
@@ -1496,23 +1775,38 @@ def _run_reviewer(
     executable_digest = _sha256_bytes(Path(argv[0]).read_bytes()) if native else None
     completed = (_run_native_process(workspace, argv, request_bytes.decode()) if native
                  else _run_sandboxed_process(workspace, argv))
-    host_run_id = None
-    native_worker_output = None
     if native:
+        if _artifact_digest(workspace, packet) != state.get("evidence_digest"):
+            raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
+        completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        sealed = _seal_event_log(runtime_root, review_id)
+        executable_unchanged = _sha256_bytes(Path(argv[0]).read_bytes()) == executable_digest
         diagnostic_path = _retain_native_diagnostics(
-            runtime_root, run_id, review_id, argv, request_bytes, executable_digest, completed)
+            runtime_root, run_id, review_id, argv, request_bytes, executable_digest, completed,
+            started_at=started_at, completed_at=completed_at, packet=packet, state=state,
+            sealed=sealed, native_controller_evidence=native_controller_evidence,
+            executable_unchanged=executable_unchanged,
+        )
         if completed.returncode != 0:
             raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_PROCESS_FAILED", {
                 "exit_code": completed.returncode, "diagnostic_path": diagnostic_path})
-        if _sha256_bytes(Path(argv[0]).read_bytes()) != executable_digest:
+        if not executable_unchanged:
             raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_EXECUTABLE_MUTATED", {"diagnostic_path": diagnostic_path})
         try:
-            host_run_id, native_worker_output = parse_native_reviewer_transcript(completed.stdout, completed.stderr)
+            result = complete_native_reviewer_capture(runtime_root, run_id)
         except ReviewerWorkspaceError as error:
             raise ReviewerWorkspaceError(error.code, {**error.result, "diagnostic_path": diagnostic_path}) from error
+        if state.get("post_execution_review") is not None:
+            state["status"] = "judged"
+            state["judgment_sha256"] = result.get("review_result_sha256")
+            state_path = runtime_root / ".state" / f"{review_id}.json"
+            temporary = state_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            os.replace(temporary, state_path)
+        return result
     if _artifact_digest(workspace, packet) != state.get("evidence_digest"):
         raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
-    denied = not native and _sandbox_denied(completed)
+    denied = _sandbox_denied(completed)
     if denied:
         _append_denial_event(
             workspace,
@@ -1522,7 +1816,7 @@ def _run_reviewer(
     sealed = _seal_event_log(runtime_root, review_id)
     sandbox_state = state.get("sandbox") if isinstance(state.get("sandbox"), dict) else {}
     receipt = {
-        "schema": "reviewer-native-receipt-v1" if native else "reviewer-process-receipt-v1",
+        "schema": "reviewer-process-receipt-v1",
         "run_id": run_id,
         "review_id": review_id,
         "status": "denied" if denied else ("passed" if completed.returncode == 0 else "failed"),
@@ -1537,9 +1831,6 @@ def _run_reviewer(
         "started_at": started_at,
         "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    if native:
-        receipt.update({"host_run_id": host_run_id, "request_sha256": _sha256_bytes(request_bytes),
-                        "executable_sha256": executable_digest, "isolation": dict(NATIVE_ISOLATION)})
     context_key = "stage_review_context" if "stage_review_context" in packet else (
         "task_review_context" if "task_review_context" in packet else None
     )
@@ -1550,9 +1841,7 @@ def _run_reviewer(
             else _validate_task_context(packet[context_key])
         )
         try:
-            worker_output = native_worker_output if native else json.loads(completed.stdout)
-            if native:
-                context = {**context, "agent_id": host_run_id, "execution_id": host_run_id}
+            worker_output = json.loads(completed.stdout)
             compact_integrated = (
                 context_key == "stage_review_context"
                 and context.get("stage") == "integrated_implementation"
@@ -1570,11 +1859,7 @@ def _run_reviewer(
                     integrated_stage=compact_integrated,
                 )
                 if context_key == "task_review_context" or compact_integrated
-                else (_stage_product_judgment_review(
-                    worker_output, review_id=review_id, context=context, packet=packet,
-                    started_at=started_at, completed_at=receipt["completed_at"],
-                    previous_review=state.get("stage_review_previous_review"))
-                    if native else worker_output)
+                else worker_output
             )
             validated = (
                 _review_runtime()._validated_review_envelope(review)
@@ -1612,10 +1897,9 @@ def _run_reviewer(
                 raise ReviewerWorkspaceError("WB_REVIEW_STAGE_EVIDENCE_INCOMPLETE") from error
         receipt[context_key] = context
         receipt["review_result_sha256"] = _canonical_digest(review)
-        if native or context_key == "task_review_context" or compact_integrated:
+        if context_key == "task_review_context" or compact_integrated:
             receipt["review_result"] = review
-        if not native:
-            receipt["isolation"] = {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
+        receipt["isolation"] = {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
     if state.get("post_execution_review") is not None:
         state["status"] = "judged"
         state["judgment_sha256"] = receipt.get("review_result_sha256")
@@ -1630,19 +1914,7 @@ def _run_reviewer(
     # Retain immutable run-scoped evidence after workspace cleanup or later runs.
     retained_items = [("packet.json", json.dumps(packet, sort_keys=True).encode()),
                       ("events.jsonl", Path(str(sealed["event_log_path"])).read_bytes())]
-    if native:
-        retained_items.extend([("request.json", request_bytes), ("stdout.jsonl", completed.stdout.encode()),
-                               ("stderr.txt", completed.stderr.encode()),
-                               ("launch.json", json.dumps({"argv": argv, "executable_sha256": executable_digest}, sort_keys=True).encode())])
-        if native_controller_evidence is not None:
-            retained_items.append(
-                (
-                    "controller.json",
-                    json.dumps(native_controller_evidence, sort_keys=True, ensure_ascii=False).encode(),
-                )
-            )
-    else:
-        retained_items.append(("profile.sb", (workspace / "sandbox.sb").read_bytes()))
+    retained_items.append(("profile.sb", (workspace / "sandbox.sb").read_bytes()))
     for suffix, content in retained_items:
         retained = receipt_path.with_suffix(f".{suffix}")
         with retained.open("xb") as stream:
