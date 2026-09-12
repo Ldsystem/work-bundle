@@ -1869,6 +1869,22 @@ def _validation_observation_task(task: Mapping[str, Any]) -> dict[str, Any]:
     return projected
 
 
+def _transition_changed_paths(root: Path, previous: str, current: str) -> set[str]:
+    """Return both sides of every changed path without rename coalescing."""
+
+    changed = subprocess.run(
+        [
+            "git", "-C", str(root), "diff", "--no-renames", "--name-only",
+            previous, current,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if changed.returncode:
+        raise RuntimeError("Git transition paths are unavailable")
+    return {path for path in changed.stdout.splitlines() if path}
+
+
 def _claim_bound_validation_observations(
     binding: Mapping[str, Any],
     task: Mapping[str, Any],
@@ -1933,15 +1949,13 @@ def _claim_bound_validation_observations(
         ]
         previous = reviewed_head
         for commit in filter(None, history.stdout.splitlines()):
-            changed = subprocess.run(
-                ["git", "-C", str(execution_path), "diff", "--name-only", previous, commit],
-                capture_output=True,
-                text=True,
-            )
-            if changed.returncode or any(
+            try:
+                changed_paths = _transition_changed_paths(execution_path, previous, commit)
+            except RuntimeError as error:
+                raise _ObservationUnavailable from error
+            if any(
                 _write_scope_match(path, [str(scope) for scope in claim_paths])
-                for path in changed.stdout.splitlines()
-                if path
+                for path in changed_paths
             ):
                 raise _ObservationUnavailable
             previous = commit

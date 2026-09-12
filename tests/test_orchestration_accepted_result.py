@@ -207,6 +207,45 @@ def test_claim_bound_observation_rejects_intermediate_dependency_change_reverted
         )
 
 
+def test_transition_changed_paths_exposes_both_sides_of_claim_path_rename(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    claim_path = tmp_path / "config/test.ini"
+    claim_path.parent.mkdir(parents=True)
+    claim_path.write_text("enabled=true\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "claim source")
+    previous = _git(tmp_path, "rev-parse", "HEAD")
+    _git(tmp_path, "mv", "config/test.ini", "orthogonal.ini")
+    _git(tmp_path, "commit", "-qm", "rename claim source")
+
+    assert execution_context._transition_changed_paths(
+        tmp_path, previous, _git(tmp_path, "rev-parse", "HEAD")
+    ) == {"config/test.ini", "orthogonal.ini"}
+
+
+def test_claim_bound_observation_rejects_claim_path_rename_then_revert(
+    tmp_path: Path,
+) -> None:
+    task, binding, observation_id, reviewed_head = _orthogonally_advanced_observation(tmp_path)
+    _git(tmp_path, "mv", "config/test.ini", "temporary.ini")
+    _git(tmp_path, "commit", "-qm", "rename validation dependency")
+    _git(tmp_path, "mv", "temporary.ini", "config/test.ini")
+    _git(tmp_path, "commit", "-qm", "restore validation dependency path")
+
+    with pytest.raises(SystemExit, match="claim-bound"):
+        execution_context._claim_bound_validation_observations(
+            binding,
+            task,
+            execution_context.capture_repository_evidence(tmp_path),
+            [observation_id],
+            reviewed_head=reviewed_head,
+        )
+
+
 def test_claim_bound_observation_rejects_unprojected_validation_field_drift(
     tmp_path: Path,
 ) -> None:
