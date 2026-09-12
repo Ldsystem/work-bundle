@@ -1856,6 +1856,8 @@ def _claim_bound_validation_observations(
     task: Mapping[str, Any],
     evidence: Mapping[str, Any],
     observation_ids: Sequence[str],
+    *,
+    reviewed_head: str | None = None,
 ) -> list[dict[str, Any]]:
     """Resolve existing observations against current validation claim identities without replay."""
 
@@ -1879,6 +1881,119 @@ def _claim_bound_validation_observations(
         Path(str(binding.get("control_root") or task.get("workspace", {}).get("root") or ""))
         / ".work-bundle/runtime/completion-provenance"
     )
+
+    def reviewed_observation(item: Mapping[str, Any], observation_id: str) -> dict[str, Any]:
+        if (
+            not reviewed_head
+            or evidence.get("status") != "clean"
+            or evidence.get("entries")
+            or _as_list(task.get("depends_on"))
+        ):
+            raise _ObservationUnavailable
+        current_head = str(evidence.get("head") or "")
+        ancestor = subprocess.run(
+            ["git", "-C", str(execution_path), "merge-base", "--is-ancestor", reviewed_head, current_head],
+            capture_output=True,
+            text=True,
+        )
+        changed = subprocess.run(
+            ["git", "-C", str(execution_path), "diff", "--name-only", reviewed_head, current_head],
+            capture_output=True,
+            text=True,
+        )
+        if ancestor.returncode or changed.returncode:
+            raise _ObservationUnavailable
+        policy = _completion_provenance_module().validation_reuse_policy(item)
+        files = task.get("files") if isinstance(task.get("files"), Mapping) else {}
+        claim_paths = [
+            *_as_list(files.get("read")),
+            *_as_list(files.get("write")),
+            *policy["dependency_files"],
+        ]
+        if any(
+            _write_scope_match(path, [str(scope) for scope in claim_paths])
+            for path in changed.stdout.splitlines()
+            if path
+        ):
+            raise _ObservationUnavailable
+
+        module = _completion_provenance_module()
+        record = module.load_observation(store, observation_id).to_dict()
+        reviewed_tree = _git(execution_path, "rev-parse", f"{reviewed_head}^{{tree}}").strip()
+        tree_listing = subprocess.run(
+            ["git", "-C", str(execution_path), "ls-tree", "-rz", "--full-tree", reviewed_head],
+            capture_output=True,
+            text=True,
+        )
+        if tree_listing.returncode or record.get("product_tree") != reviewed_tree:
+            raise _ObservationUnavailable
+        index = []
+        for entry in filter(None, tree_listing.stdout.split("\0")):
+            metadata, path = entry.split("\t", 1)
+            mode, kind, oid = metadata.split(" ", 2)
+            if kind != "blob":
+                raise _ObservationUnavailable
+            index.append((path, f"{mode} {oid} 0"))
+        definition = {
+            key: item.get(key)
+            for key in (
+                "id", "kind", "command", "mechanism", "expected",
+                "acceptable_results", "invariant_ids", "digest", "proves",
+            )
+        }
+        helper_dir = Path(module.__file__).parent
+        runners = {
+            name: hashlib.sha256((helper_dir / name).read_bytes()).hexdigest()
+            for name in (
+                "completion_provenance.py", "execution_context.py",
+                "evaluation_identity.py", "repository_preflight.py",
+            )
+        }
+        authority = {
+            key: task.get(key)
+            for key in (
+                "source_ids", "requirements", "constraints", "interfaces",
+                "truth_basis", "files", "evidence_capability",
+            )
+        }
+        bound = {
+            key: binding[key]
+            for key in (
+                "workspace_id", "execution_id", "repository_id", "plan_id",
+                "task_id", "execution_path",
+            )
+        }
+        source = {
+            "tree": reviewed_tree,
+            "index_digest": module._canonical_digest(index),
+        }
+        expected_state = module._canonical_digest(
+            {
+                "source": source,
+                "environment": module.validation_environment_identity(execution_path, policy),
+                "binding": bound,
+                "head": reviewed_head if policy["include_head"] else None,
+            }
+        )
+        expected_oracle = module._canonical_digest(
+            {
+                "authority": authority,
+                "check": definition,
+                "runner": runners,
+                "freshness_policy": policy,
+            }
+        )
+        if (
+            record.get("command_digest") != module._canonical_digest(definition)
+            or record.get("state_digest") != expected_state
+            or record.get("oracle_digest") != expected_oracle
+            or record.get("mutation_epoch") != store.mutation_epoch
+            or datetime.fromisoformat(str(record.get("freshness_deadline")).replace("Z", "+00:00"))
+            < datetime.now(timezone.utc)
+        ):
+            raise _ObservationUnavailable
+        return record
+
     matched: list[dict[str, Any]] = []
     for position, item in enumerate(validation_items, start=1):
         try:
@@ -1894,9 +2009,19 @@ def _claim_bound_validation_observations(
                 store, str(observation.get("observation_id") or "")
             ).to_dict()
         except (_ObservationUnavailable, _completion_provenance_module().CompletionProvenanceError) as error:
-            raise SystemExit(
-                "an existing current claim-bound validation observation is required"
-            ) from error
+            try:
+                record = reviewed_observation(item, ids[position - 1])
+                observation = {"observation_id": record["observation_id"]}
+            except (
+                _ObservationUnavailable,
+                _completion_provenance_module().CompletionProvenanceError,
+                KeyError,
+                TypeError,
+                ValueError,
+            ) as fallback_error:
+                raise SystemExit(
+                    "an existing current claim-bound validation observation is required"
+                ) from fallback_error
         if record["result"]["exit_code"] != 0:
             raise SystemExit("validation evidence is not a passing observation")
         matched.append(
@@ -2140,6 +2265,7 @@ def materialize_accepted_task_review(
             task,
             evidence,
             validation_evidence_ids or prior["validation_evidence_ids"],
+            reviewed_head=reviewed_head,
         )
         current_validation_ids = sorted(item["observation_id"] for item in matched_validation)
 
