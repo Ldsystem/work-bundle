@@ -1962,6 +1962,23 @@ def _claim_bound_validation_observations(
 
         module = _completion_provenance_module()
         record = module.load_observation(store, observation_id).to_dict()
+        if policy["max_age_seconds"] == 0:
+            finalization_prefix = (
+                f"initial-acceptance:{task.get('plan_id')}:{task.get('task_id')}:"
+            )
+            consumed_by = record.get("consumed_by_finalization")
+            if (
+                not isinstance(consumed_by, str)
+                or not consumed_by.startswith(finalization_prefix)
+                or consumed_by == finalization_prefix
+            ):
+                raise _ObservationUnavailable
+            producer_item = dict(item)
+            producer_item["evidence_reuse"] = {
+                **policy,
+                "max_age_seconds": 86400,
+            }
+            policy = module.validation_reuse_policy(producer_item)
         reviewed_tree = _git(execution_path, "rev-parse", f"{reviewed_head}^{{tree}}").strip()
         tree_listing = subprocess.run(
             ["git", "-C", str(execution_path), "ls-tree", "-rz", "--full-tree", reviewed_head],
