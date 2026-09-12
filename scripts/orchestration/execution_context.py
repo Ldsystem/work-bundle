@@ -3779,7 +3779,7 @@ def _observe_completed_validation(
             finalization_id=finalization_id,
         )
         command = str(item.get("command")).strip()
-        reported_item = reported_commands[command] if reported_commands is not None else None
+        reported_item = reported_commands.get(command) if reported_commands is not None else None
         if reported_item is not None and reported_item.get("result") != observed["result"]:
             raise SystemExit(
                 f"Executor result validation for {command} does not match observed {observed['result']}"

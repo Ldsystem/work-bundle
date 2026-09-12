@@ -165,6 +165,16 @@ def test_handoff_validation_reuses_current_observation(tmp_path: Path) -> None:
     assert first["observed_validation"][0]["observation_id"] == second["observed_validation"][0]["reuse_of"]
 
 
+def test_terminal_observation_accepts_omitted_executor_corroboration(tmp_path: Path) -> None:
+    _, _, brief, handoff, counter = _counted_validation(tmp_path)
+    handoff.pop("validation")
+
+    validated = _validate_observed(handoff, brief)
+
+    assert validated["observed_validation"][0]["result"] == "passed"
+    assert counter.read_text() == "1"
+
+
 def test_observe_task_validation_records_before_handoff(tmp_path: Path, capsys) -> None:
     root, task, brief, handoff, counter = _counted_validation(tmp_path)
     execution_context.cmd_observe_task_validation(args(root, task))
