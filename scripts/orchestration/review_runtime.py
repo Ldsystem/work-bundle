@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from artifact_inputs import _as_list, _input_path, _read_structured, _resolve_spec_paths, parse_yaml_subset
+import bounded_closure
 
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
@@ -1456,6 +1457,29 @@ def publish_review(
     current = dict(_target_identity(current_target_identity, "current_target_identity"))
     if validated.target_identity != current:
         raise ReviewContractError("review publication target is not current")
+    authority = bounded_closure.resolve_working_workspace(root)
+    try:
+        if authority is not None:
+            bounded_closure.require_orchestration_admission(
+                authority,
+                operation=("round_completion" if validated.stage == "integrated_implementation"
+                           and record.get("review_target_kind", "stage") == "stage" else "ordinary_new"),
+                flow_id=str(current.get("artifact_id") or ""),
+            )
+    except bounded_closure.BoundedClosureError as error:
+        raise ReviewContractError(str(error)) from error
+    if (
+        validated.stage == "integrated_implementation"
+        and record.get("review_target_kind", "stage") == "stage"
+    ):
+        try:
+            bounded_closure.review_round_publication_binding(
+                root,
+                review_id=validated.review_id,
+                target_identity=current,
+            )
+        except bounded_closure.BoundedClosureError as error:
+            raise ReviewContractError(str(error)) from error
     _validate_reviewer_run(root.expanduser().resolve(), record)
     path = _review_store_path(root, validated.review_id)
     content = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
@@ -1468,7 +1492,27 @@ def publish_review(
         with path.open("xb") as stream:
             stream.write(content)
         path.chmod(0o444)
-    return {"review_id": validated.review_id, "sha256": digest}
+    reference = {"review_id": validated.review_id, "sha256": digest}
+    if (
+        validated.stage == "integrated_implementation"
+        and record.get("review_target_kind", "stage") == "stage"
+    ):
+        outcome = {
+            "accepted": "accepted",
+            "repair": "findings",
+            "blocked": "blocked",
+        }[validated.verdict]
+        try:
+            bounded_closure.complete_published_review_round(
+                root,
+                review_id=validated.review_id,
+                target_identity=current,
+                outcome=outcome,
+                review_reference=reference,
+            )
+        except bounded_closure.BoundedClosureError as error:
+            raise ReviewContractError(str(error)) from error
+    return reference
 
 
 def load_stored_review(

@@ -265,8 +265,23 @@ def prepare_worktree(
     cleanup_policy: str = "after_integration",
     hydration_profile: str = "default",
     profile: dict[str, object] | None = None,
+    workspace_root: Path | None = None,
+    flow_id: str | None = None,
 ) -> dict[str, object]:
     source_repository = source_repository.expanduser().resolve()
+    import importlib.util
+    module_path = Path(__file__).resolve().parents[1] / "orchestration" / "bounded_closure.py"
+    spec = importlib.util.spec_from_file_location("_wb_execution_admission", module_path)
+    if spec is None or spec.loader is None:
+        raise ExecutionWorkspaceError("WB_ORCHESTRATION_ADMISSION_UNAVAILABLE")
+    admission = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(admission)
+    authority = Path(workspace_root).expanduser().resolve() if workspace_root else admission.resolve_working_workspace(source_repository, workspace_id=workspace_id)
+    if authority is not None:
+        try:
+            admission.require_orchestration_admission(authority, operation="ordinary_new", flow_id=flow_id)
+        except admission.BoundedClosureError as error:
+            raise ExecutionWorkspaceError(error.code, {"detail": error.detail or str(error)}) from error
     runtime_root = (runtime_root or default_runtime_root()).expanduser().resolve()
     target = workspace_path(runtime_root, workspace_id, execution_id, repository_id)
     record = state_path(runtime_root, workspace_id, execution_id, repository_id)
@@ -696,6 +711,7 @@ def cmd_execution_workspace(action: str, argv: list[str]) -> int:
         parser.add_argument("--repository-id", required=True)
         parser.add_argument("--branch")
         parser.add_argument("--created-for", required=True)
+        parser.add_argument("--flow-id")
         parser.add_argument("--profile", default="default")
         parser.add_argument("--cleanup-policy", choices=sorted(CLEANUP_POLICIES))
         parser.add_argument("--kind", choices=sorted(KINDS), default="worktree")
@@ -746,6 +762,8 @@ def cmd_execution_workspace(action: str, argv: list[str]) -> int:
                     cleanup_policy=parsed.cleanup_policy or "after_integration",
                     hydration_profile=parsed.profile,
                     profile=profile,
+                    workspace_root=parsed.workspace_root,
+                    flow_id=parsed.flow_id,
                 )
         elif action == "status":
             result = workspace_status(

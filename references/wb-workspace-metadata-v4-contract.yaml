@@ -64,5 +64,24 @@ attachment:
 control_plane:
   sync_policy: manual
   automatic_push_pull: false
+orchestration_control:
+  optional_for_legacy_workspaces: true
+  schema_version: 1
+  post_execution_review_round_limit: 5
+  rejected_execution_policy: review_revision_limit
+  portable_state:
+    post_execution_review_flows: stable_flow_projection
+    blockers: active_evidence_references
+    closed_flows: administrative_outcomes
+    implementation_exemptions: exact_flow_and_blocker_only
+  admission:
+    operation_classes: [ordinary_new, reconciliation, round_completion, read_only, blocker_recording, knowledge_return, finalization]
+    mutation_failure_mode: fail_closed
+    blocker_evidence: workspace_relative_existing_regular_file
+    refusal_guidance: [metadata_path, blocker_id, specification, orch-bounded-closure]
+  exception_restoration:
+    backup: exact_bytes_and_sha256
+    merge_preserves: [newer_fields, unrelated_blockers, closed_flows, corrected_round_policy]
+    removes: named_flow_and_blocker_exception_only
 security:
   portable_forbidden: [credentials, git, runtime, orchestration/execution-state, machine_bindings]

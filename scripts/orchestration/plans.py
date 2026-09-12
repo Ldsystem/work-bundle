@@ -15,6 +15,7 @@ from execution_context import (
     _observation_kwargs,
     _parse_scalar,
     _execution_workspace_module,
+    _iter_task_bindings,
     _persist_binding,
     has_persisted_accepted_task_result,
     load_task_execution_binding,
@@ -812,6 +813,10 @@ def cmd_index_plans(args: argparse.Namespace) -> None:
 
 
 def cmd_write_plan(args: argparse.Namespace) -> None:
+    from bounded_closure import require_orchestration_admission, resolve_working_workspace
+    authority = resolve_working_workspace(resolve_workspace_root(args))
+    if authority is not None:
+        require_orchestration_admission(authority, operation="ordinary_new", flow_id=args.id)
     init_dirs(args)
     if args.status not in PLAN_STATUSES:
         raise SystemExit(f"Invalid plan status: {args.status}")
@@ -1132,6 +1137,113 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
     index_plans(args)
     for path in moved:
         print(rel(path, args))
+
+
+def archive_plan_for_forced_finalization(args: argparse.Namespace, plan_id: str) -> list[Path]:
+    """Move one origin plan tree without running acceptance observation.
+
+    Bounded forced closure has already recorded the unresolved product truth.
+    This helper performs only retry-safe administrative moves and indexing.
+    """
+
+    rows = index_plans(args)
+    plan_matches = [
+        row for row in rows if row.get("type") == "plan" and row.get("id") == plan_id
+    ]
+    active_root = orchestration_root(args) / "plan" / "active"
+    archived_root = orchestration_root(args) / "plan" / "archived"
+    active = [row for row in plan_matches if is_relative_to(artifact_path_from_row(row, args), active_root)]
+    archived = [row for row in plan_matches if is_relative_to(artifact_path_from_row(row, args), archived_root)]
+    if len(active) > 1 or len(archived) > 1 or (active and archived):
+        raise SystemExit(f"Forced finalization plan archive collision: {plan_id}")
+    if not active and not archived:
+        raise SystemExit(f"Forced finalization origin plan not found: {plan_id}")
+
+    root_path = artifact_path_from_row((active or archived)[0], args)
+    sibling_plan_dir = root_path.with_suffix("")
+    indexed_active_dirs = {
+        active_root / artifact_path_from_row(row, args).relative_to(active_root).parts[0]
+        for row in rows
+        if row.get("type") == "task"
+        and row.get("plan_id") == plan_id
+        and is_relative_to(artifact_path_from_row(row, args), active_root)
+    }
+    indexed_archived_dirs = {
+        archived_root / artifact_path_from_row(row, args).relative_to(archived_root).parts[0]
+        for row in rows
+        if row.get("type") == "task"
+        and row.get("plan_id") == plan_id
+        and is_relative_to(artifact_path_from_row(row, args), archived_root)
+    }
+    if len(indexed_active_dirs) > 1 or len(indexed_archived_dirs) > 1 or (
+        indexed_active_dirs and indexed_archived_dirs
+    ):
+        raise SystemExit(f"Forced finalization plan directory collision: {plan_id}")
+    if active and sibling_plan_dir.is_dir() and is_relative_to(sibling_plan_dir, active_root):
+        active_plan_dir = sibling_plan_dir
+    elif len(indexed_active_dirs) == 1:
+        active_plan_dir = next(iter(indexed_active_dirs))
+    else:
+        active_plan_dir = active_root / plan_id
+
+    targets = []
+    if active:
+        targets.append(archived_root / root_path.relative_to(active_root))
+    if active_plan_dir.exists():
+        targets.append(archived_root / active_plan_dir.relative_to(active_root))
+    collisions = [path for path in targets if path.exists()]
+    if collisions:
+        raise SystemExit(f"Forced finalization plan archive collision: {collisions[0]}")
+
+    moved = []
+    if active:
+        moved.append(move_to_archive(root_path, active_root, archived_root))
+    else:
+        moved.append(root_path)
+    if active_plan_dir.exists():
+        moved.append(move_to_archive(active_plan_dir, active_root, archived_root))
+    elif indexed_archived_dirs:
+        moved.append(next(iter(indexed_archived_dirs)))
+    index_plans(args)
+    return moved
+
+
+def release_plan_bindings_for_forced_finalization(
+    control_root: Path, plan_id: str
+) -> dict[str, object]:
+    """Release only bindings whose current ownership can truthfully terminate."""
+
+    store = ManagedProvenanceStore(
+        control_root / ".work-bundle/runtime/completion-provenance"
+    )
+    released: list[str] = []
+    incomplete: list[dict[str, str]] = []
+    for binding in _iter_task_bindings(control_root):
+        if binding.get("plan_id") != plan_id:
+            continue
+        ownership = binding.get("ownership")
+        if not isinstance(ownership, dict):
+            incomplete.append({"task_id": str(binding.get("task_id") or "unknown"), "reason": "ownership-invalid"})
+            continue
+        state = str(ownership.get("state") or "")
+        if state == "released":
+            released.append(str(binding.get("task_id") or ""))
+            continue
+        if state not in {"active", "releasable"}:
+            incomplete.append({"task_id": str(binding.get("task_id") or "unknown"), "reason": f"ownership-{state}"})
+            continue
+        try:
+            updated_ownership = release_completion_binding(
+                store,
+                str(ownership["binding_id"]),
+                owner=str(ownership["original_owner"]),
+            ).to_dict()
+        except (KeyError, CompletionProvenanceError) as error:
+            incomplete.append({"task_id": str(binding.get("task_id") or "unknown"), "reason": str(error)})
+            continue
+        _persist_binding({**binding, "ownership": updated_ownership}, control_root)
+        released.append(str(binding.get("task_id") or ""))
+    return {"released": sorted(value for value in released if value), "incomplete": incomplete}
 
 
 def cmd_write_phase(args: argparse.Namespace) -> None:

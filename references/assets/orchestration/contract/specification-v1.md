@@ -210,6 +210,8 @@ Choose policy only; specification creation does not provision a worktree.
 - `required` for risky large features or migrations.
 - Name the hydration profile and cleanup policy. Planning carries them into task and executor context; execution owns selection, preparation, hydration, and provenance.
 
+Specification authoring and repair are pre-execution activities: plan and specification revisions do not consume post-execution review rounds. A forced-closure residual specification records unresolved product claims and portable clean source-baseline identities; it remains active blocker evidence and does not authorize reconciliation, executor repair, or another review round for the exhausted flow.
+
 ## 11. Open Questions
 
 [List unresolved decisions, uncertainty, conflicts, and material non-authority evidence that affects requirements, architecture, workflow, API, persistence, validation, execution behavior, or user purpose.]
@@ -262,6 +264,7 @@ Do not instruct specification authors or executors to write durable knowledge di
 - The source context records neutral cross-stage retrieval anchors or a retrieval gap, and any named retrieval policy is used only for classification/output grouping.
 - The specification carries accepted authority context forward so downstream planning and execution do not need to read `.work-bundle/knowledge/`.
 - The specification records project metadata preflight evidence including `working_branch`, `last_commit_id`, branch status, baseline status, and CodeGraph no-index fallback when applicable.
+- The specification does not encode artifact-version counting as post-execution review policy; any residual forced-closure specification preserves unresolved claims without reopening product work.
 - WorkBundle project specifications record related active defects and expected review closure when applicable.
 - Material non-authority or opposing evidence is visible without shaping requirements unless resolved by user decision or accepted authority.
 

@@ -4118,6 +4118,22 @@ assert callable(getattr(module, "load_state", None))
     assert completed.returncode == 0, completed.stderr
 
 
+def test_execution_context_rebinds_sibling_core_after_work_bundle_core() -> None:
+    script = (
+        "import sys; "
+        f"sys.path.insert(0, {str(REPO_ROOT / 'scripts/work-bundle')!r}); "
+        "import core; "
+        f"sys.path.insert(0, {str(ORCHESTRATION)!r}); "
+        "import execution_context; "
+        "assert execution_context.resolve_workspace_root.__module__ == 'core'; "
+        f"assert sys.modules['core'].__file__ == {str(ORCHESTRATION / 'core.py')!r}"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_structured_validation_without_kind_fails_closed_without_subprocess(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

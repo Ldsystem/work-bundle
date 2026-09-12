@@ -98,15 +98,20 @@ Knowledge closure gates final completion and archive; it never precedes specific
 
 Keep audit judgment and deterministic finalization together in this skill for now; do not create `orch-finalize-plan`. After every audit gate passes, invoke the smallest existing helper for allowed commit, CodeGraph sync, project metadata update, archive, and index refresh. Clean only a WorkBundle-owned execution workspace when policy and proven Git identity allow it.
 
+For post-execution integrated review, first confirm every executor attempt is terminal, then call `begin-review-round` before evidence preparation or reviewer dispatch. Complete the reserved round with `complete-review-round` using the immutable stored product review reference, or a factual controller audit-block when no product review artifact exists. The audit-block records controller failure only and must not impersonate a product verdict. Use `review-round-status` to report the current frozen target, completed count, finalization requirement, and blocker route.
+
+An accepted post-execution review round follows the normal final audit, knowledge, repository, archive, and index gates above. Findings below the fifth completed round route to scoped repair. The fifth unresolved or blocked round routes to `finalize-with-blockers`: persist finalization-required state, validate the residual specification and clean source baselines, persist the active workspace blocker, validate and record the review-owned knowledge return, archive the origin specification and plan and update their indexes without collision overwrite, release owned bindings, and persist terminal closure. Retry an incomplete administrative stage without reopening product work or rerunning review.
+
 Archive remains blocked while any required knowledge, validation, review, handoff, repository, workspace, or unsettled decision evidence is incomplete or contradictory.
 
 ## Runtime Rules
 
 - `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
 - `orch-review-completion`: `rules/orchestration/orch-review-completion.md`
+- `orch-bounded-closure`: `rules/orchestration/orch-bounded-closure.md`
 
 Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules above when their indexed conditions apply.
 
 ## Boundary
 
-Follow `orch-orchestration-boundary` and `orch-review-completion`.
+Follow `orch-orchestration-boundary`, `orch-review-completion`, and `orch-bounded-closure`.

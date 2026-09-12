@@ -253,6 +253,20 @@ A task becomes `Completed` only when implementation criteria, fresh validation, 
 
 `write-handoff` resolves the compiled task and runs its pure creation-safe projection before artifact or handoff-index mutation. This admits structurally complete executor facts before independent observation or review while rejecting wrong-owner review, receipt, publication, accepted-result, and audit fields. New handoffs use `lifecycle_authority: location-v1`: status directories own current lifecycle state, status changes move identical bytes, and same-state requests write nothing. Unmarked legacy artifacts retain embedded/location fallback until their first explicit status change creates the bounded digest/type/plan/task/status override; no historical bytes are rewritten.
 
+## Bounded post-execution review and closure
+
+The optional workspace policy in `.work-bundle/project.yaml#orchestration_control` fixes the post-execution review round limit at five and projects stable per-flow state. The append-only controller ledger under `.work-bundle/runtime/orchestration-control/` owns round history. Plan and specification revisions do not consume post-execution review rounds; neither do task reviews, reviewer/provider retries, publication retries, resumes, or branches. Legacy workspaces without this policy keep their existing behavior.
+
+Once all executor attempts are terminal, the controller runs `begin-review-round` before integrated-review evidence preparation or dispatch. An exact request ID and target identity is idempotent; a different target identity reserves a new round. After publication, `complete-review-round` consumes the immutable store-owned product review reference. If no product artifact exists because the controller was blocked, a factual audit-block may complete the attempt as blocked, but it must not impersonate a product verdict. Duplicate exact completion does not increment. `review-round-status` reports the frozen target, reserved/completed counts, and finalization state.
+
+An accepted round continues through the normal final workflow audit, knowledge gate, archive, and index refresh. Findings below the fifth completed round route through admission-controlled scoped repair. The fifth unresolved or blocked completion stops reconciliation and invokes `finalize-with-blockers`: persist finalization-required state, validate the supplied residual specification and clean source baselines, persist an active workspace blocker, finalize the review-owned knowledge disposition, archive the origin specification and plan and update their indexes without collision overwrite, release owned bindings, and persist terminal closure. Incomplete administrative stages remain explicit and retryable, but retry must not reopen product work.
+
+Shared admission uses operation classes instead of caller-selected labels. An exhausted flow refuses reconciliation before its blocker is written. An active workspace blocker refuses ordinary new work and other unexempted reconciliation; read-only diagnosis, round completion, blocker recording, knowledge return, and finalization remain available. Any bounded implementation exemption names the exact flow and blocker and restores its exact backed-up blocker without losing newer unrelated metadata.
+
+The builtin `orch-bounded-closure` rule and its index entry are the deployment target. If an already-installed workspace has a project-scope shim with that same rule ID, retain the project shim until builtin deployment is ready, then remove only that owned shim in the same bounded migration. Never enable both copies or mutate unrelated project rules.
+
+Current metadata migration renames only the legacy policy key to `post_execution_review_round_limit: 5`; it never scans or rewrites historical specifications, plans, handoffs, reviews, or evidence.
+
 ## Failure routing
 
 Use only these blocker classes:

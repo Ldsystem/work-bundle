@@ -1,4 +1,5 @@
 from core import *
+from bounded_closure import require_orchestration_admission, resolve_working_workspace
 from review_runtime import require_specification_review
 
 def index_specs(args: argparse.Namespace) -> list[dict[str, object]]:
@@ -31,6 +32,9 @@ def cmd_index_specs(args: argparse.Namespace) -> None:
 
 
 def cmd_write_spec(args: argparse.Namespace) -> None:
+    authority = resolve_working_workspace(resolve_workspace_root(args))
+    if authority is not None:
+        require_orchestration_admission(authority, operation="ordinary_new", flow_id=args.id)
     init_dirs(args)
     if args.status not in SPEC_STATUSES:
         raise SystemExit(f"Invalid spec status: {args.status}")
@@ -114,3 +118,34 @@ def cmd_set_spec_status(args: argparse.Namespace) -> None:
         shutil.move(str(path), str(target))
     index_specs(args)
     print(args.id)
+
+
+def archive_spec_for_forced_finalization(args: argparse.Namespace, spec_id: str) -> Path:
+    """Move one origin specification without asserting product acceptance.
+
+    This narrow helper is owned by the bounded-closure finalizer.  An already
+    moved artifact is a retry-safe success; simultaneous active and archived
+    identities are an explicit collision.
+    """
+
+    rows = index_specs(args)
+    matches = [row for row in rows if row.get("id") == spec_id]
+    active = [row for row in matches if "/spec/active/" in f"/{row.get('path', '')}"]
+    archived = [row for row in matches if "/spec/archived/" in f"/{row.get('path', '')}"]
+    if len(active) > 1 or len(archived) > 1 or (active and archived):
+        raise SystemExit(f"Forced finalization spec archive collision: {spec_id}")
+    if archived:
+        return project_root(args) / str(archived[0]["path"])
+    if not active:
+        raise SystemExit(f"Forced finalization origin spec not found: {spec_id}")
+    path = project_root(args) / str(active[0]["path"])
+    target = orchestration_root(args) / "spec" / "archived" / path.name
+    if target.exists():
+        raise SystemExit(f"Forced finalization spec archive collision: {target}")
+    moved = move_to_archive(
+        path,
+        orchestration_root(args) / "spec" / "active",
+        orchestration_root(args) / "spec" / "archived",
+    )
+    index_specs(args)
+    return moved

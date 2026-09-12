@@ -474,9 +474,23 @@ def run_native_reviewer(workspace: Path, executable: Path, *, model: str, review
         )
     if not review_instructions.strip():
         raise ReviewerWorkspaceError("WB_REVIEW_COMMAND_INVALID")
-    packet, _ = _load_workspace(workspace)
+    packet, state = _load_workspace(workspace)
     if not ("stage_review_context" in packet or "task_review_context" in packet):
         raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_CONTEXT_REQUIRED")
+    round_state = state.get("post_execution_review")
+    context = packet.get("stage_review_context") or packet.get("task_review_context")
+    authority_value = state.get("admission_workspace")
+    authority = Path(str(authority_value)) if isinstance(authority_value, str) else None
+    try:
+        if authority is not None:
+            _bounded_closure().require_orchestration_admission(
+                authority,
+                operation="round_completion" if isinstance(round_state, dict) else "ordinary_new",
+                flow_id=(str(round_state["flow_id"]) if isinstance(round_state, dict)
+                         else str(context["target_identity"].get("artifact_id"))),
+            )
+    except _bounded_closure().BoundedClosureError as error:
+        raise ReviewerWorkspaceError(error.code, {"detail": error.detail or str(error)}) from error
     control_evidence = []
     for item in packet["artifacts"]:
         if str(item.get("locator") or "").startswith("control:"):
@@ -531,6 +545,26 @@ def _review_runtime():
         raise
     finally:
         sys.path[:] = original_path
+    return module
+
+
+def _bounded_closure():
+    orchestration = Path(__file__).resolve().parents[1] / "orchestration"
+    existing = sys.modules.get("bounded_closure")
+    if existing is not None:
+        if Path(existing.__file__).resolve() != orchestration / "bounded_closure.py":
+            raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_MODULE_COLLISION")
+        return existing
+    spec = importlib.util.spec_from_file_location(
+        "bounded_closure", orchestration / "bounded_closure.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["bounded_closure"] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop("bounded_closure", None)
+        raise
     return module
 
 
@@ -1002,6 +1036,32 @@ def create_reviewer_workspace(
     elif "task_review_context" in packet:
         context = _validate_task_context(packet["task_review_context"])
         _validate_task_source_identity(effective_source, context)
+    review_round = None
+    if (
+        "stage_review_context" in packet
+        and isinstance(context, dict)
+        and context.get("stage") == "integrated_implementation"
+    ):
+        try:
+            review_round = _bounded_closure().review_round_binding(
+                effective_control,
+                review_id=review_id,
+                target_identity=context["target_identity"],
+            )
+        except _bounded_closure().BoundedClosureError as error:
+            raise ReviewerWorkspaceError(error.code) from error
+    authority = _bounded_closure().resolve_working_workspace(effective_control)
+    try:
+        if authority is not None:
+            _bounded_closure().require_orchestration_admission(
+                authority,
+                operation="round_completion" if review_round is not None else "ordinary_new",
+                flow_id=(str(review_round["flow_id"]) if review_round is not None
+                         else str(context["target_identity"].get("artifact_id"))
+                         if "context" in locals() and isinstance(context, dict) else None),
+            )
+    except _bounded_closure().BoundedClosureError as error:
+        raise ReviewerWorkspaceError(error.code, {"detail": error.detail or str(error)}) from error
     try:
         workspace.mkdir(parents=True)
         scope_digests: dict[str, list[str]] = {"source": [], "control": []}
@@ -1060,10 +1120,21 @@ def create_reviewer_workspace(
                 effective_source, effective_control, effective_protected
             ),
             "status": "active",
+            **({"admission_workspace": str(authority)} if authority is not None else {}),
+            **({"post_execution_review": review_round} if review_round is not None else {}),
             **previous_review_state,
         }
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        if review_round is not None:
+            try:
+                _bounded_closure().mark_review_round_prepared(
+                    effective_control,
+                    flow_id=str(review_round["flow_id"]),
+                    round_id=str(review_round["round_id"]),
+                )
+            except _bounded_closure().BoundedClosureError as error:
+                raise ReviewerWorkspaceError(error.code) from error
     except Exception:
         shutil.rmtree(workspace, ignore_errors=True)
         state_path.unlink(missing_ok=True)
@@ -1376,7 +1447,24 @@ def _run_reviewer(
 ) -> dict[str, object]:
     workspace = workspace.expanduser().resolve()
     runtime_root, review_id, state = _runtime_identity(workspace)
+    if state.get("post_execution_review") is not None and state.get("status") == "judged":
+        raise ReviewerWorkspaceError("WB_POST_EXECUTION_JUDGMENT_ALREADY_RECORDED")
     packet, _ = _load_workspace(workspace)
+    round_state = state.get("post_execution_review")
+    context = packet.get("stage_review_context") or packet.get("task_review_context")
+    authority_value = state.get("admission_workspace")
+    authority = Path(str(authority_value)) if isinstance(authority_value, str) else None
+    try:
+        if authority is not None:
+            _bounded_closure().require_orchestration_admission(
+                authority,
+                operation="round_completion" if isinstance(round_state, dict) else "ordinary_new",
+                flow_id=(str(round_state["flow_id"]) if isinstance(round_state, dict)
+                         else str(context["target_identity"].get("artifact_id"))
+                         if isinstance(context, dict) else None),
+            )
+    except _bounded_closure().BoundedClosureError as error:
+        raise ReviewerWorkspaceError(error.code, {"detail": error.detail or str(error)}) from error
     if _canonical_digest(packet) != state.get("packet_sha256") or _artifact_digest(workspace, packet) != state.get("evidence_digest"):
         raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
     if "stage_review_context" in packet:
@@ -1515,6 +1603,13 @@ def _run_reviewer(
             receipt["review_result"] = review
         if not native:
             receipt["isolation"] = {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
+    if state.get("post_execution_review") is not None:
+        state["status"] = "judged"
+        state["judgment_sha256"] = receipt.get("review_result_sha256")
+        state_path = runtime_root / ".state" / f"{review_id}.json"
+        temporary = state_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(temporary, state_path)
     receipt_path = (runtime_root / "receipts" / "reviewer-process" / f"{run_id}.json").resolve(strict=False)
     if not _inside(runtime_root, receipt_path):
         raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_PATH_ESCAPE")

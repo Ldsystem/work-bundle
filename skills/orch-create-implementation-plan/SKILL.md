@@ -21,6 +21,7 @@ Plan only from a verified active specification with converged semantics, resolve
 8. When execution proves a task materially under-decomposed, return to the plan and reslice only the affected region around the newly evidenced seam. Preserve the original binding, baseline, and accepted unaffected regions; do not repeatedly enlarge the task.
 9. Use the canonical semantic plan projection for review identity and freshness; status-only or append-only evidence changes do not require plan review or reslicing, while authority, scope, dependency, acceptance, decomposition, or validation-allocation changes do.
 10. Before plan acceptance, invoke canonical static task admission for every task through the task compiler. Do not duplicate its admission predicates in the planner.
+11. Keep planning revision policy separate from post-execution control: plan and specification revisions do not consume post-execution review rounds. Do not allocate a plan-version counter, reviewer retry, task review, or publication retry against the workspace round limit. When planning remediation for an existing flow, preserve its stable flow identity and let shared admission refuse exhausted or workspace-blocked reconciliation.
 
 ## Methodology allocation
 
@@ -94,6 +95,7 @@ Repair generated drift in the same turn and record compact `semantic_loop` resul
 - `orch-handoff-required`: `rules/orchestration/orch-handoff-required.md`
 - `orch-open-questions`: `rules/orchestration/orch-open-questions.md`
 - `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
+- `orch-bounded-closure`: `rules/orchestration/orch-bounded-closure.md` when planning or repairing an existing post-execution flow
 
 Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules above when their indexed conditions apply.
 

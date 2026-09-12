@@ -29,6 +29,9 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Missing exact stored `accept` review authority blocks only a task whose compiled `review_required` is true. Do not require universal task-review evidence or embedded handoff verdicts.
 - Keep approved `ks-*` persistence delegation review-owned; executor disposition evidence never authorizes knowledge retrieval or writes.
 - Knowledge closure gates final completion and archive; it never precedes specification, plan, task, or integrated-implementation review.
+- After all executor attempts are terminal, reserve each post-execution review round with `begin-review-round` before integrated-review evidence preparation or dispatch. Complete it with `complete-review-round` only from the stored product review reference, or from a factual controller audit-block that must not impersonate a product verdict; use `review-round-status` for diagnostics.
+- Treat an accepted post-execution review round as input to the normal final audit and archive gates. On the fifth completed round with unresolved findings or a blocked attempt, stop repair/reconciliation and invoke `finalize-with-blockers` to preserve a residual specification and active workspace blocker.
+- During forced closure, require the controller sequence to persist finalization-required state, validate residual-specification and source-baseline inputs, record the blocker, finalize the review-owned knowledge return, archive origin artifacts and update their indexes, release owned bindings, and persist terminal closure. Retry incomplete administrative steps without reopening product work.
 
 - Audit spec, plan, phase, task, handoff, and required optional-review status coherence.
 - Require fresh planned validation evidence and an `accept` task-review verdict wherever review is explicitly required.
@@ -64,6 +67,8 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Do not infer an empty evidence-capability map from a WOR-61 `none_relevant` impact result.
 - Do not impose a universal browser, E2E, production, or runtime gate.
 - Do not directly write durable knowledge from orchestration.
+- Do not count plan/specification revisions, task review, reviewer/provider retries, publication retries, or resumes as post-execution review rounds.
+- Do not use forced blocker closure for an accepted outcome or allow a sixth post-execution review round.
 
 ## Validation
 
@@ -74,6 +79,7 @@ Keep final review focused on whether the WorkBundle workflow completed correctly
 - Confirm this pre-closure oracle-capability check remains distinct from `RuntimeVerificationClassificationV1` and that WOR-59 G9 remains the unchanged post-execution classifier.
 - Confirm blocker routing names the owning resume path instead of restarting the lifecycle.
 - Confirm finalization and archive occur only after knowledge disposition and deterministic gates resolve.
+- Confirm post-execution review-round reservation/completion evidence, the fifth-round boundary, and normal-versus-forced finalization route match `orch-bounded-closure`.
 
 ## On Violation
 

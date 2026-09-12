@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -118,7 +119,27 @@ RECOGNIZED_COMMANDS = frozenset(
     | COMMAND_ALIASES.keys()
     | LEGACY_DEFECT_COMMANDS.keys()
     | LEGACY_COMMAND_MIGRATIONS.keys()
-)
+) | frozenset({
+    'begin-review-round', 'complete-review-round', 'review-round-status',
+    'finalize-with-blockers',
+})
+
+
+def _run_orchestration_controller(command: str, arguments: list[str]) -> int:
+    """Route the second public CLI family to the canonical controller owner."""
+
+    dispatcher = Path(__file__).resolve().parents[1] / 'orchestration' / 'dispatcher.py'
+    completed = subprocess.run(
+        [sys.executable, str(dispatcher), command, *arguments],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.stdout:
+        sys.stdout.write(completed.stdout)
+    if completed.stderr:
+        sys.stderr.write(completed.stderr)
+    return completed.returncode
 
 
 def main() -> int:
@@ -137,6 +158,11 @@ def main() -> int:
     if command in LEGACY_COMMAND_MIGRATIONS:
         return cmd_legacy_command_removed(command, LEGACY_COMMAND_MIGRATIONS[command])
     command = COMMAND_ALIASES.get(command, command)
+    if command in {
+        'begin-review-round', 'complete-review-round', 'review-round-status',
+        'finalize-with-blockers',
+    }:
+        return _run_orchestration_controller(command, parsed.args)
     if command == 'migrate-work-bundle-config':
         return cmd_migrate_work_bundle_config(parsed.args)
     if command in {'init-project', 'initialize-project'}:

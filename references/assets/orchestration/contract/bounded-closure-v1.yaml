@@ -1,0 +1,36 @@
+schema: bounded-closure-v1
+status: active
+policy:
+  owner: .work-bundle/project.yaml#orchestration_control
+  field: post_execution_review_round_limit
+  value: 5
+  rejected_execution_policy: review_revision_limit
+state:
+  owner: .work-bundle/runtime/orchestration-control/post-execution-review-rounds-v1.json
+  schema: post-execution-review-ledger-v1
+  portable_projection: orchestration_control.post_execution_review_flows
+  identity:
+    - workspace
+    - flow_id
+  independent_of:
+    - plan_revision
+    - branch
+    - reviewer
+    - resume
+round:
+  boundary: all_executor_attempts_terminal
+  terminal_attempt_states: [completed, blocked, partial, failed, cancelled]
+  outcomes: [accepted, findings, blocked]
+  idempotency: exact_request_id_and_target_identity
+  reserve_before: [evidence_preparation, reviewer_dispatch]
+  complete_evidence:
+    product: immutable_stored_review_reference
+    controller_blocked: factual_audit_block
+  finalization_required_when:
+    - accepted_outcome
+    - fifth_round_completed
+  forbidden_after_finalization_required:
+    - review_preparation
+    - review_dispatch
+    - reconciliation
+    - executor_repair

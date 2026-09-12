@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATION = REPO_ROOT / "scripts" / "orchestration"
 sys.path.insert(0, str(ORCHESTRATION))
 import review_runtime  # noqa: E402
+import bounded_closure  # noqa: E402
 
 from review_runtime import (  # noqa: E402
     ReviewContractError,
@@ -311,6 +312,73 @@ def test_review_store_is_required_before_public_finding_routing(
         finding_id=item["finding_id"],
     )
     assert routed["return_to"] == "task_owner"
+
+
+def test_finalization_required_refuses_direct_publication_before_store_side_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    metadata = tmp_path / ".work-bundle/project.yaml"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text(
+        "metadata_version: 4\n"
+        "workspace: {id: workspace-final, slug: final, mode: single-repository}\n"
+        "orchestration_control:\n"
+        "  schema_version: 1\n"
+        "  post_execution_review_round_limit: 5\n",
+        encoding="utf-8",
+    )
+    current = stage_review("integrated_implementation")["target_identity"]
+    reserved = bounded_closure.begin_review_round(
+        tmp_path,
+        flow_id="flow-final",
+        request_id="request-1",
+        review_id="review-counted",
+        target_identity=current,
+        executor_attempts=[{"execution_id": "executor-1", "state": "completed"}],
+        known_missing_evidence=[],
+    )
+    bounded_closure.mark_review_round_prepared(
+        tmp_path,
+        flow_id="flow-final",
+        round_id=str(reserved["round_id"]),
+    )
+    counted_path = (
+        tmp_path / ".work-bundle/orchestration/reviews/review-counted.json"
+    )
+    counted_path.parent.mkdir(parents=True)
+    counted_path.write_text('{"verdict":"accepted"}\n', encoding="utf-8")
+    counted_path.chmod(0o444)
+    bounded_closure.complete_review_round(
+        tmp_path,
+        flow_id="flow-final",
+        round_id=reserved["round_id"],
+        outcome="accepted",
+        review_reference={
+            "review_id": "review-counted",
+            "sha256": hashlib.sha256(counted_path.read_bytes()).hexdigest(),
+        },
+    )
+    blocked = stage_review("integrated_implementation")
+    blocked.update(
+        review_id="review-after-finalization",
+        review_mode="initial",
+        review_target_kind="stage",
+        repair_frontier=None,
+        review_reset=None,
+        reviewer_run={
+            "run_id": "reviewer-run-00000000-0000-0000-0000-000000000001",
+            "sha256": ZERO_SHA,
+        },
+    )
+    monkeypatch.setattr(review_runtime, "_validate_reviewer_run", lambda *_: None)
+
+    with pytest.raises(ReviewContractError, match="ROUND_REQUIRED|FINALIZATION_REQUIRED"):
+        publish_review(tmp_path, blocked, current_target_identity=current)
+
+    assert not (
+        tmp_path
+        / ".work-bundle/orchestration/reviews/review-after-finalization.json"
+    ).exists()
 
 
 @pytest.mark.parametrize("field", ["capabilities", "unavailable_evidence"])

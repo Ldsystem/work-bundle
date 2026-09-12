@@ -31,6 +31,8 @@ execution_workspace:
 
 Use `existing` for small/manual work, `preferred` for autonomous multi-task work, and `required` for risky large features or migrations unless evidence supports another choice.
 
+Specification repair remains pre-execution authoring: plan and specification revisions do not consume post-execution review rounds. A residual specification created for forced closure preserves unresolved claims and clean source-baseline identities; it does not reopen the exhausted flow or authorize another review round.
+
 ## Semantic convergence
 
 Use `dev-semantic-convergence` with these lenses:
@@ -68,6 +70,7 @@ The body must contain `Quality gate: verified|blocked`. Planning may proceed onl
 - `orch-knowledge-gateway`: `rules/orchestration/orch-knowledge-gateway.md`
 - `orch-open-questions`: `rules/orchestration/orch-open-questions.md`
 - `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
+- `orch-bounded-closure`: `rules/orchestration/orch-bounded-closure.md` when authoring or validating a residual specification for forced closure
 
 Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules above when their indexed conditions apply.
 

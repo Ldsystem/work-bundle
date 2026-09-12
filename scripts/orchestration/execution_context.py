@@ -16,6 +16,18 @@ from typing import Any, Iterable, Mapping
 from datetime import datetime, timezone
 
 
+# Both CLI families contain a top-level ``core.py``.  Mixed-process harnesses
+# must bind this module and its downstream imports to the orchestration sibling.
+_CORE_PATH = Path(__file__).with_name("core.py").resolve()
+_loaded_core = sys.modules.get("core")
+if _loaded_core is None or Path(str(getattr(_loaded_core, "__file__", ""))).resolve() != _CORE_PATH:
+    _core_spec = importlib.util.spec_from_file_location("core", _CORE_PATH)
+    if _core_spec is None or _core_spec.loader is None:
+        raise ImportError("cannot load orchestration core")
+    _loaded_core = importlib.util.module_from_spec(_core_spec)
+    sys.modules["core"] = _loaded_core
+    _core_spec.loader.exec_module(_loaded_core)
+
 from core import _member_roots, is_relative_to, read_front_matter, resolve_workspace_root
 from artifact_inputs import (_split_top_level, _split_key_value, _parse_scalar, parse_yaml_subset,
                              _read_structured, _as_list, _input_path, _resolve_spec_paths)
@@ -4808,6 +4820,17 @@ def _task_context(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any],
     return root, task_path, task_data, task_body, records, source_paths
 
 
+def task_flow_id(args: argparse.Namespace) -> str:
+    """Resolve a task's bound plan identity without compiling or writing artifacts."""
+
+    root = resolve_workspace_root(args)
+    task_path = _input_path(
+        args.task, root, root / ".work-bundle/orchestration/plan", "task"
+    )
+    task, _ = _read_structured(task_path)
+    return _artifact_id(task, "plan_id", task_path)
+
+
 def _contains_resolved_source_record(value: Any, record: str) -> bool:
     if isinstance(value, str):
         return record in value
@@ -5222,6 +5245,11 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
 
 def build_task_brief(args: argparse.Namespace) -> Path:
     target, brief = _compile_task_brief(args)
+    from bounded_closure import require_orchestration_admission
+    require_orchestration_admission(
+        resolve_workspace_root(args), operation="reconciliation",
+        flow_id=str(brief["task_brief"]["plan_id"]),
+    )
     _maybe_bind_execution_from_args(args, brief["task_brief"])
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(_dump_yaml(brief)) + "\n", encoding="utf-8")
@@ -5799,6 +5827,14 @@ def cmd_build_review_package(args: argparse.Namespace) -> None:
 def cmd_observe_task_validation(args: argparse.Namespace) -> None:
     _, brief_document = _compile_task_brief(args)
     task = brief_document["task_brief"]
+    from bounded_closure import require_orchestration_admission, resolve_working_workspace
+    authority = resolve_working_workspace(resolve_workspace_root(args))
+    if authority is not None:
+        require_orchestration_admission(
+            authority,
+            operation="reconciliation",
+            flow_id=str(task["plan_id"]),
+        )
     for item in task["validation"]:
         policy = _completion_provenance_module().validation_reuse_policy(item)
         if policy["max_age_seconds"] == 0:

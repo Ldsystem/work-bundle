@@ -77,13 +77,22 @@ review-blocked | knowledge-blocked | workspace-blocked
 
 Resume the owning step. Do not restart the lifecycle or create a repair specification for an ordinary task rejection.
 
+## Post-execution bounded review
+
+Task review remains optional and task-scoped; it never consumes the workspace's post-execution review round budget. After every executor attempt for the flow is terminal and the integrated candidate is ready, the controller runs `begin-review-round` before preparing evidence or dispatching integrated review. The exact request ID plus frozen target identity is idempotent; a different target identity reserves a new round.
+
+After immutable product review publication, the controller runs `complete-review-round` with its store-owned review reference. When controller preparation or dispatch is factually blocked before a product artifact exists, completion may instead carry an audit-block record; that record must not impersonate a product verdict. Use `review-round-status` to diagnose the count and finalization state.
+
+An accepted round proceeds to the normal final audit. Findings below the fifth completed round return to the existing task owner through admission-controlled reconciliation and claim-relevant repair. The fifth unresolved or factually blocked completion stops repair and requires `finalize-with-blockers`; the executor must not run a sixth round or reopen product work during an administrative retry.
+
 ## Runtime Rules
 
 - `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
 - `orch-handoff-required`: `rules/orchestration/orch-handoff-required.md`
+- `orch-bounded-closure`: `rules/orchestration/orch-bounded-closure.md`
 
 Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules above when their indexed conditions apply.
 
 ## Boundary
 
-Follow `orch-orchestration-boundary` and `orch-handoff-required`.
+Follow `orch-orchestration-boundary`, `orch-handoff-required`, and `orch-bounded-closure`.

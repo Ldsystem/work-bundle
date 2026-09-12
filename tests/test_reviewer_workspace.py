@@ -27,6 +27,11 @@ from reviewer_workspace import (  # noqa: E402
 )
 import reviewer_workspace  # noqa: E402
 
+ORCHESTRATION_SCRIPTS = REPO_ROOT / "scripts" / "orchestration"
+if str(ORCHESTRATION_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATION_SCRIPTS))
+import bounded_closure  # noqa: E402
+
 
 def native_events(result, *, thread_id="01a0821d-f359-7d60-a9bd-90dd0e006166"):
     return "\n".join(json.dumps(event) for event in [
@@ -676,6 +681,16 @@ def test_stage_evidence_survives_plan_lifecycle_markers_but_not_product_changes(
         encoding="utf-8",
     )
     runtime = reviewer_workspace._review_runtime()
+    metadata = control / ".work-bundle/project.yaml"
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    metadata.write_text(
+        "metadata_version: 4\n"
+        "workspace: {id: workspace-review, slug: review, mode: single-repository}\n"
+        "orchestration_control:\n"
+        "  schema_version: 1\n"
+        "  post_execution_review_round_limit: 5\n",
+        encoding="utf-8",
+    )
     identity = runtime.stage_target_identity(
         control, "integrated_implementation", plan, source_root=source
     )
@@ -711,9 +726,29 @@ def test_stage_evidence_survives_plan_lifecycle_markers_but_not_product_changes(
             network_state="denied",
             stage_review_context=context,
         )
+        with pytest.raises(
+            ReviewerWorkspaceError, match="WB_POST_EXECUTION_ROUND_REQUIRED"
+        ):
+            create_reviewer_workspace(
+                runtime.reviewer_runtime_root(control), "review-lifecycle", packet
+            )
+        reserved = bounded_closure.begin_review_round(
+            control,
+            flow_id="plan-lifecycle",
+            request_id="integrated-review-request-1",
+            review_id="review-lifecycle",
+            target_identity=identity,
+            executor_attempts=[
+                {"execution_id": "task-001-attempt-1", "state": "completed"}
+            ],
+            known_missing_evidence=[],
+        )
         created = create_reviewer_workspace(
             runtime.reviewer_runtime_root(control), "review-lifecycle", packet
         )
+        assert bounded_closure.review_round_status(
+            control, flow_id="plan-lifecycle"
+        )["latest_round"]["state"] == "prepared"
         judgment = {
             "task_review": {
                 "reviewed_head": identity["source_tree"],
@@ -732,8 +767,26 @@ def test_stage_evidence_survives_plan_lifecycle_markers_but_not_product_changes(
                 model="test-model",
                 review_instructions="Review the frozen product evidence.",
             )
+        with pytest.raises(
+            ReviewerWorkspaceError, match="WB_POST_EXECUTION_JUDGMENT_ALREADY_RECORDED"
+        ):
+            reviewer_workspace.run_native_reviewer(
+                Path(str(created["workspace_path"])),
+                Path(sys.executable),
+                model="test-model",
+                review_instructions="Review the frozen product evidence again.",
+            )
         review = {**receipt["review_result"], "reviewer_run": receipt["reviewer_run"]}
-        runtime.publish_review(control, review, current_target_identity=identity)
+        reference = runtime.publish_review(control, review, current_target_identity=identity)
+        assert runtime.publish_review(
+            control, review, current_target_identity=identity
+        ) == reference
+        completed_round = bounded_closure.review_round_status(
+            control, flow_id="plan-lifecycle"
+        )["latest_round"]
+        assert completed_round["round_id"] == reserved["round_id"]
+        assert completed_round["state"] == "completed"
+        assert completed_round["outcome"] == "accepted"
 
     request = json.loads(
         Path(receipt["receipt_path"]).with_suffix(".request.json").read_text()
