@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import argparse
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +12,53 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts/orchestration"))
 import bounded_closure as bounded  # noqa: E402
+import plans  # noqa: E402
+
+
+@pytest.mark.parametrize("writer", [plans.cmd_write_task, plans.cmd_write_phase])
+@pytest.mark.parametrize("condition", ["blocker", "exhausted", "exempt", "legacy"])
+@pytest.mark.parametrize("from_member", [False, True])
+def test_direct_plan_writers_enforce_admission_before_mutation(
+    tmp_path: Path, writer, condition: str, from_member: bool,
+) -> None:
+    control = None if condition == "legacy" else _control()
+    if condition == "exhausted":
+        control["blockers"] = []
+        control["post_execution_review_flows"] = [
+            {"flow_id": "allowed-flow", "finalization_required": True}
+        ]
+    root = _workspace(tmp_path, control=control)
+    spec = root / ".work-bundle/orchestration/spec/active/block.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("# unresolved\n", encoding="utf-8")
+    content = root / "input.md"
+    content.write_text("# Writer input\n", encoding="utf-8")
+    member = root / "member"
+    member.mkdir()
+    args = argparse.Namespace(
+        project_root=str(member if from_member else root),
+        content_file=str(content), plan_id="other-flow" if condition == "blocker" else "allowed-flow",
+        phase_id="phase-001", task_id="task-001", title="Direct", status="Planned",
+    )
+
+    def snapshot():
+        return {
+            str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+            for path in root.rglob("*")
+        }
+
+    before = snapshot()
+    if condition in {"blocker", "exhausted"}:
+        code = "WB_ORCHESTRATION_ADMISSION_BLOCKED" if condition == "blocker" else "WB_ORCHESTRATION_FINALIZATION_REQUIRED"
+        with pytest.raises(bounded.BoundedClosureError, match=code):
+            writer(args)
+        assert snapshot() == before
+    else:
+        writer(args)
+        outputs = list((root / ".work-bundle/orchestration/plan/active").rglob("*-direct.md"))
+        assert len(outputs) == 1
+        assert "Writer input" in outputs[0].read_text()
+        assert (root / ".work-bundle/orchestration/plan/index.jsonl").is_file()
 
 
 def _workspace(tmp_path: Path, *, control: dict[str, object] | None) -> Path:

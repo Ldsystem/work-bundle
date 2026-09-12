@@ -1247,6 +1247,10 @@ def release_plan_bindings_for_forced_finalization(
 
 
 def cmd_write_phase(args: argparse.Namespace) -> None:
+    from bounded_closure import require_orchestration_admission, resolve_working_workspace
+    authority = resolve_working_workspace(resolve_workspace_root(args))
+    if authority is not None:
+        require_orchestration_admission(authority, operation="reconciliation", flow_id=args.plan_id)
     content = Path(args.content_file).read_text(encoding="utf-8")
     content = ensure_front_matter(content, {"id": args.phase_id, "plan_id": args.plan_id, "name": args.title, "status": args.status, "date_created": now_date(), "last_updated": now_date()})
     target = orchestration_root(args) / "plan" / "active" / args.plan_id / f"{args.phase_id}-{slugify(args.title)}.md"
@@ -1256,6 +1260,10 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
 
 
 def cmd_write_task(args: argparse.Namespace) -> None:
+    from bounded_closure import require_orchestration_admission, resolve_working_workspace
+    authority = resolve_working_workspace(resolve_workspace_root(args))
+    if authority is not None:
+        require_orchestration_admission(authority, operation="reconciliation", flow_id=args.plan_id)
     content = Path(args.content_file).read_text(encoding="utf-8")
     content = ensure_front_matter(content, {"id": args.task_id, "phase_id": args.phase_id, "plan_id": args.plan_id, "name": args.title, "status": args.status, "date_created": now_date(), "last_updated": now_date()})
     plan_dir = orchestration_root(args) / "plan" / "active" / args.plan_id
