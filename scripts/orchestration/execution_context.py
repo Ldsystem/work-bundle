@@ -4151,12 +4151,16 @@ def validate_executor_result_for_task(
 
     task_ownership = None
     fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
+    requires_repair_continuity = (
+        fit.get("result") == "repaired"
+        and not preparing_review
+        and acceptance_review_sequence != "initial-reset"
+    )
     if (
         state == "completed"
         and required_items
         and observe
-        and fit.get("result") == "repaired"
-        and acceptance_review_sequence != "initial-reset"
+        and requires_repair_continuity
     ):
         if mutation_events is None:
             raise AcceptanceOwnershipError(
@@ -4229,7 +4233,7 @@ def validate_executor_result_for_task(
                 validations_passed=True,
                 operation=operation,
             )
-            if operation == "repair" and acceptance_review_sequence != "initial-reset":
+            if operation == "repair" and requires_repair_continuity:
                 _validate_repair_acceptance_continuity(
                     task=task,
                     handoff=handoff,

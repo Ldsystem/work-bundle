@@ -2856,6 +2856,22 @@ def _repair_completion_fixture() -> tuple[dict, dict]:
     return brief, handoff
 
 
+def test_initial_review_preparation_accepts_sparse_repaired_task_fit() -> None:
+    brief, handoff = _repair_completion_fixture()
+    handoff.pop("acceptance_review")
+
+    prepared = execution_context.validate_executor_result_for_task(
+        handoff,
+        brief,
+        observe=True,
+        preparing_review=True,
+        mutation_events=[],
+    )
+
+    assert prepared["result_state"] == "completed"
+    assert prepared["task_ownership"]["agent_id"] == "repair-fixture-agent"
+
+
 def test_rf_task_repair_completion_rejects_unsequenced_acceptance_review() -> None:
     brief, handoff = _repair_completion_fixture()
     with pytest.raises(SystemExit, match="repair.*review|review.*repair"):
