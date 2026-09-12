@@ -20,7 +20,9 @@ from execution_context import (
     evaluate_knowledge_closure_state,
     validate_executor_result_for_task,
 )
+import execution_context
 from handoffs import cmd_set_handoff_status, cmd_write_handoff, index_handoffs
+import handoffs
 from plans import _material_repository_root, _verified_handoff_tree
 
 
@@ -32,6 +34,12 @@ def accepted_stage_boundary_for_legacy_archive_unit_tests(monkeypatch):
     is tested without this stub in test_orchestration_reviews.py.
     """
     monkeypatch.setattr("plans.require_plan_reviews", lambda *args, **kwargs: None)
+
+
+@pytest.fixture
+def lower_level_handoff_writer(monkeypatch):
+    """Isolate lifecycle mechanics from managed creation admission."""
+    monkeypatch.setattr("handoffs._managed_creation_admission", lambda *_args: None)
 
 
 def read(path: str) -> str:
@@ -141,14 +149,42 @@ def _completed_executor_result(
     return handoff
 
 
-def test_handoff_helper_indexes_sparse_executor_result(tmp_path: Path) -> None:
+def test_handoff_helper_rejects_unsupported_unmanaged_executor_creation(tmp_path: Path) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text("result:\n  state: completed\n  summary: ok\n", encoding="utf-8")
-    cmd_write_handoff(handoff_args(tmp_path, content_file=str(content)))
-    row = next(item for item in index_handoffs(handoff_args(tmp_path)) if item["id"] == "handoff-exec-20990101-001")
-    assert row["type"] == "executor-result"
-    assert row["related_task"] == "task-001"
-    assert row["path"].endswith("handoff-exec-20990101-001-task-result.yaml")
+    with pytest.raises(SystemExit, match="managed WorkBundle workspace"):
+        cmd_write_handoff(handoff_args(tmp_path, content_file=str(content)))
+    assert not list((tmp_path / ".work-bundle/orchestration/handoff/executor").glob("*/*.yaml"))
+
+
+def test_managed_handoff_creation_runs_complete_creation_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = tmp_path / ".work-bundle/project.yaml"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text("metadata_version: 4\n", encoding="utf-8")
+    task = tmp_path / ".work-bundle/orchestration/plan/active/plan-001/phase-001/task-001.md"
+    task.parent.mkdir(parents=True)
+    task.write_text("---\nid: task-001\nplan_id: plan-001\n---\n", encoding="utf-8")
+    observed: list[tuple[dict[str, object], dict[str, object]]] = []
+    monkeypatch.setattr(
+        execution_context,
+        "_compile_task_brief",
+        lambda _args: (task, {"task_brief": {"task_id": "task-001", "plan_id": "plan-001"}}),
+    )
+    monkeypatch.setattr(
+        execution_context,
+        "validate_executor_result_creation_for_task",
+        lambda result, brief: observed.append((result, brief)),
+    )
+
+    handoffs._managed_creation_admission(
+        handoff_args(tmp_path),
+        "type: executor-result\nrelated: {plan: plan-001, task: task-001}\nresult: {state: completed}\n",
+    )
+
+    assert observed[0][0]["result"]["state"] == "completed"
+    assert observed[0][1] == {"task_id": "task-001", "plan_id": "plan-001"}
 
 
 def test_handoff_creation_rejects_conflicting_writer_identity_before_mutation(
@@ -169,7 +205,9 @@ def test_handoff_creation_rejects_conflicting_writer_identity_before_mutation(
     assert not (handoff_root / "index.jsonl").read_text(encoding="utf-8")
 
 
-def test_handoff_lifecycle_preserves_marked_bytes_and_rebuilds_status(tmp_path: Path) -> None:
+def test_handoff_lifecycle_preserves_marked_bytes_and_rebuilds_status(
+    tmp_path: Path, lower_level_handoff_writer,
+) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text("result:\n  state: completed\n  summary: ok\n", encoding="utf-8")
     args = handoff_args(tmp_path, content_file=str(content))
@@ -391,7 +429,7 @@ def test_handoff_status_change_rejects_ambiguous_legacy_duplicate(
 
 
 def test_handoff_creation_rejects_identity_owned_by_legacy_duplicates(
-    tmp_path: Path,
+    tmp_path: Path, lower_level_handoff_writer,
 ) -> None:
     first = _write_unmarked_legacy_handoff(
         tmp_path, name="legacy-first", project="project-first"
@@ -422,7 +460,7 @@ def test_handoff_creation_rejects_identity_owned_by_legacy_duplicates(
 
 @pytest.mark.parametrize("target_status", ["active", "reviewed", "superseded", "archived"])
 def test_marked_handoff_supports_every_target_status(
-    tmp_path: Path, target_status: str
+    tmp_path: Path, target_status: str, lower_level_handoff_writer,
 ) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text("result:\n  state: blocked\n", encoding="utf-8")
@@ -626,7 +664,9 @@ def test_material_repository_rejects_material_handoff_without_repository_provena
         )
 
 
-def test_write_handoff_fills_missing_task_plan_from_authorized_args(tmp_path: Path) -> None:
+def test_write_handoff_fills_missing_task_plan_from_authorized_args(
+    tmp_path: Path, lower_level_handoff_writer,
+) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text(
         "related:\n  task: task-001\nresult:\n  state: completed\n  summary: ok\n",
@@ -641,7 +681,9 @@ def test_write_handoff_fills_missing_task_plan_from_authorized_args(tmp_path: Pa
     assert "task: task-001" in written
 
 
-def test_write_handoff_rejects_conflicting_plan_identity(tmp_path: Path) -> None:
+def test_write_handoff_rejects_conflicting_plan_identity(
+    tmp_path: Path, lower_level_handoff_writer,
+) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text(
         "related:\n  plan: plan-A\n  task: task-001\nresult:\n  state: completed\n  summary: ok\n",
@@ -653,7 +695,9 @@ def test_write_handoff_rejects_conflicting_plan_identity(tmp_path: Path) -> None
         )
 
 
-def test_write_handoff_rejects_nested_and_flat_plan_conflict(tmp_path: Path) -> None:
+def test_write_handoff_rejects_nested_and_flat_plan_conflict(
+    tmp_path: Path, lower_level_handoff_writer,
+) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text(
         "related:\n  plan: plan-B\n  task: task-001\nrelated_plan: plan-A\n"

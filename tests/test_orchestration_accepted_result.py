@@ -172,6 +172,93 @@ def _validated() -> dict[str, object]:
     }
 
 
+def _build_accepted_task_result(
+    task: dict[str, object],
+    binding: dict[str, object],
+    handoff: dict[str, object],
+    validated: dict[str, object],
+    **kwargs: object,
+) -> dict[str, object]:
+    review = handoff.get("acceptance_review")
+    assert isinstance(review, dict)
+    return execution_context.build_accepted_task_result(
+        task, binding, handoff, validated, accepted_review=review, **kwargs
+    )
+
+
+def test_common_accepted_result_path_rejects_embedded_handoff_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_context,
+        "capture_repository_evidence",
+        lambda _root: {"head": OID_A, "tree": OID_B, "entries": {}, "status": "clean"},
+    )
+
+    with pytest.raises(SystemExit, match="accepted mandatory review"):
+        execution_context.build_accepted_task_result(
+            _task(tmp_path), _binding(tmp_path), _handoff(), _validated()
+        )
+
+
+def test_repair_review_preparation_derives_exact_stored_controller_frontier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous_identity = {
+        "artifact_id": "task-001",
+        "revision": OID_A,
+        "sha256": "1" * 64,
+        "source_tree": OID_B,
+    }
+    previous = {
+        "review_id": "review-prior",
+        "review_target_kind": "task",
+        "verdict": "repair",
+        "target_identity": previous_identity,
+        "evidence": {"mode": "direct", "capabilities": [], "commands": [], "artifacts": [], "unavailable_evidence": []},
+        "reviewer_run": {"run_id": "reviewer-run-prior", "sha256": "2" * 64},
+        "findings": [
+            {
+                "finding_id": "F-001",
+                "severity": "blocking",
+                "recommended_owner": "task_owner",
+                "evidence": [{"locator": "source:src/a.py"}],
+            }
+        ],
+    }
+    store = tmp_path / ".work-bundle/orchestration/reviews"
+    store.mkdir(parents=True)
+    path = store / "review-prior.json"
+    path.write_text(__import__("json").dumps(previous), encoding="utf-8")
+    path.chmod(0o444)
+    validated = SimpleNamespace(review_id="review-prior", target_identity=previous_identity)
+    monkeypatch.setattr(
+        review_runtime,
+        "load_stored_review",
+        lambda *_args, **_kwargs: (previous, validated),
+    )
+    repaired_identity = {
+        "artifact_id": "task-001",
+        "revision": OID_C,
+        "sha256": "3" * 64,
+        "source_tree": OID_D,
+    }
+
+    loaded, frontier = execution_context._stored_task_repair_preparation(
+        tmp_path, _task(tmp_path), base=OID_A, repaired_identity=repaired_identity
+    )
+
+    assert loaded == previous
+    assert frontier == {
+        "prior_review_id": "review-prior",
+        "blocking_finding_ids": ["F-001"],
+        "previous_reviewed_identity": previous_identity,
+        "repaired_identity": repaired_identity,
+        "affected_boundaries": ["source:src/a.py"],
+        "frozen_evidence_reference": review_runtime.review_evidence_identity(previous),
+    }
+
+
 def test_shared_scope_canonicalizer_normalizes_equivalent_paths_and_rejects_unsafe() -> None:
     assert canonical_relative_path("src/./a.py") == "src/a.py"
     assert canonical_relative_path("src//a.py") == "src/a.py"
@@ -213,12 +300,12 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
         lambda _root: {"head": OID_A, "tree": OID_B, "entries": {}, "status": "dirty"},
     )
 
-    first = execution_context.build_accepted_task_result(
+    first = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
     appended = deepcopy(binding)
     appended["ownership"]["history"].append({"event": "audit-appended"})
-    second = execution_context.build_accepted_task_result(
+    second = _build_accepted_task_result(
         task, appended, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
 
@@ -303,7 +390,7 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
     task = _task(tmp_path)
     binding = _binding(tmp_path)
     binding["baseline"] = {"head": accepted_head, "tree": accepted_tree}
-    prior = execution_context.build_accepted_task_result(
+    prior = _build_accepted_task_result(
         task,
         binding,
         _handoff(),
@@ -512,7 +599,7 @@ def test_standalone_review_recomposes_changed_task_authority_without_executor_re
         "capture_repository_evidence",
         lambda _root: {"head": OID_A, "tree": OID_B, "status": "clean", "entries": {}},
     )
-    prior = execution_context.build_accepted_task_result(
+    prior = _build_accepted_task_result(
         old_task, binding, _handoff(), _validated(), accepted_at="2026-09-08T02:00:00Z"
     )
     binding["accepted_result"] = prior
@@ -633,7 +720,7 @@ def test_legacy_accepted_result_without_disposition_remains_current_for_nonknowl
         "capture_repository_evidence",
         lambda _root: {"head": OID_A, "tree": OID_B, "entries": {}, "status": "clean"},
     )
-    accepted = execution_context.build_accepted_task_result(
+    accepted = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
     legacy = deepcopy(accepted)
@@ -661,7 +748,7 @@ def test_actual_accepted_repair_review_mode_and_frontier_are_digest_authority(
     )
     task = _task(tmp_path)
     binding = _binding(tmp_path)
-    initial = execution_context.build_accepted_task_result(
+    initial = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
     repaired_handoff = deepcopy(_handoff())
@@ -674,7 +761,7 @@ def test_actual_accepted_repair_review_mode_and_frontier_are_digest_authority(
             },
         }
     )
-    repaired = execution_context.build_accepted_task_result(
+    repaired = _build_accepted_task_result(
         task, binding, repaired_handoff, _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
 
@@ -701,7 +788,7 @@ def test_unrelated_repository_advance_does_not_stale_accepted_task_result(
     monkeypatch.setattr(execution_context, "capture_repository_evidence", lambda _root: repository)
     task = _task(tmp_path)
     binding = _binding(tmp_path)
-    accepted = execution_context.build_accepted_task_result(
+    accepted = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
 
@@ -719,7 +806,7 @@ def test_dependency_topology_change_invalidates_accepted_task_result(
     )
     task = _task(tmp_path)
     binding = _binding(tmp_path)
-    accepted = execution_context.build_accepted_task_result(
+    accepted = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
 
@@ -748,6 +835,7 @@ def test_materialize_persists_one_result_in_existing_binding(
         task,
         _handoff(),
         _validated(),
+        accepted_review=_handoff()["acceptance_review"],
         accepted_at="2026-09-06T10:00:00Z",
     )
 

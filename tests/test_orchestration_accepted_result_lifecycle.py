@@ -16,7 +16,13 @@ sys.path.insert(0, str(ORCHESTRATION))
 
 import execution_context  # noqa: E402
 import plans  # noqa: E402
-from test_orchestration_accepted_result import _binding, _handoff, _task, _validated  # noqa: E402
+from test_orchestration_accepted_result import (  # noqa: E402
+    _binding,
+    _build_accepted_task_result,
+    _handoff,
+    _task,
+    _validated,
+)
 
 
 def _dispatcher():
@@ -51,7 +57,7 @@ def test_current_accepted_result_does_not_read_handoff_or_replay_validation(
         "capture_repository_evidence",
         lambda _root: {"head": "a" * 40, "tree": "b" * 40, "entries": {}, "status": "clean"},
     )
-    accepted = execution_context.build_accepted_task_result(
+    accepted = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-07T00:00:00Z"
     )
     binding["accepted_result"] = accepted

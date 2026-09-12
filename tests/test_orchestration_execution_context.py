@@ -231,6 +231,7 @@ def test_live_validation_allows_one_continuity_checked_source_repair(
         mutation_events=[{"actor_kind": "subagent", "paths": [WRITE_SCOPE_FILE]}],
         prior_ownership={str(brief["task_id"]): handoff["delegation_evidence"]},
         repair_continuity={str(brief["task_id"]): continuity},
+        review_repair_frontier=repaired["acceptance_review"]["repair_frontier"],
     )
 
     assert repaired_result["result_state"] == "completed"
@@ -2870,6 +2871,23 @@ def test_initial_review_preparation_accepts_sparse_repaired_task_fit() -> None:
 
     assert prepared["result_state"] == "completed"
     assert prepared["task_ownership"]["agent_id"] == "repair-fixture-agent"
+
+
+def test_repair_review_preparation_requires_prior_owner_continuity() -> None:
+    brief, handoff = _repair_completion_fixture()
+    handoff.pop("acceptance_review")
+
+    with pytest.raises(
+        execution_context.AcceptanceOwnershipError, match="repair lacks prior owner"
+    ):
+        execution_context.validate_executor_result_for_task(
+            handoff,
+            brief,
+            observe=True,
+            preparing_review=True,
+            repair_review_preparation=True,
+            mutation_events=[],
+        )
 
 
 def test_rf_task_repair_completion_rejects_unsequenced_acceptance_review() -> None:

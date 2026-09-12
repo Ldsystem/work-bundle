@@ -348,7 +348,9 @@ def _atomic_text(path: Path, content: str) -> None:
 def _managed_creation_admission(args: argparse.Namespace, content: str) -> None:
     root = resolve_workspace_root(args)
     if not (root / ".work-bundle/project.yaml").is_file():
-        return
+        raise SystemExit(
+            "Executor-result creation requires a managed WorkBundle workspace"
+        )
     from artifact_inputs import parse_yaml_subset
     from execution_context import _compile_task_brief, validate_executor_result_creation_for_task
 

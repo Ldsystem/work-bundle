@@ -1593,13 +1593,7 @@ def build_accepted_task_result(
         accepted_ownership = normalize_subagent_provenance(ownership)
     except OwnershipBlocker as error:
         raise SystemExit(f"accepted task result ownership is invalid: {error.reason}") from error
-    review = (
-        dict(accepted_review)
-        if isinstance(accepted_review, Mapping)
-        else handoff.get("acceptance_review")
-        if isinstance(handoff.get("acceptance_review"), Mapping)
-        else {}
-    )
+    review = dict(accepted_review) if isinstance(accepted_review, Mapping) else {}
     if task.get("review_required") is True and (
         review.get("required") is not True or review.get("verdict") not in {"accept", "accepted"}
     ):
@@ -1774,13 +1768,21 @@ def materialize_accepted_task_result(
     handoff: Mapping[str, Any],
     validated: Mapping[str, Any],
     *,
+    accepted_review: Mapping[str, Any] | None = None,
     accepted_at: str | None = None,
 ) -> dict[str, Any]:
     """Persist exactly one current accepted result in the existing task binding."""
 
     root = control_root.expanduser().resolve()
     binding = load_task_execution_binding(root, str(task.get("plan_id") or ""), str(task.get("task_id") or ""))
-    accepted = build_accepted_task_result(task, binding, handoff, validated, accepted_at=accepted_at)
+    accepted = build_accepted_task_result(
+        task,
+        binding,
+        handoff,
+        validated,
+        accepted_review=accepted_review,
+        accepted_at=accepted_at,
+    )
     updated = dict(binding)
     updated["accepted_result"] = accepted
     _persist_binding(updated, root)
@@ -4021,10 +4023,14 @@ def validate_executor_result_for_task(
     accepted_dependency_deltas: Iterable[Mapping[str, object]] | None = None,
     prior_ownership: Mapping[str, Mapping[str, object]] | None = None,
     repair_continuity: Mapping[str, Mapping[str, object] | RepairContinuity] | None = None,
+    review_repair_frontier: Mapping[str, object] | None = None,
     authorized_replacements: Iterable[str] | None = None,
     preparing_review: bool = False,
+    repair_review_preparation: bool = False,
     creation_safe: bool = False,
 ) -> dict[str, Any]:
+    if repair_review_preparation and not preparing_review:
+        raise SystemExit("repair review preparation requires preparing_review")
     if handoff.get("type") != "executor-result":
         raise SystemExit("Handoff is not executor-result")
     for field in FORBIDDEN_EXECUTOR_RESULT_FIELDS:
@@ -4153,7 +4159,7 @@ def validate_executor_result_for_task(
     fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
     requires_repair_continuity = (
         fit.get("result") == "repaired"
-        and not preparing_review
+        and (repair_review_preparation or not preparing_review)
         and acceptance_review_sequence != "initial-reset"
     )
     if (
@@ -4183,10 +4189,10 @@ def validate_executor_result_for_task(
             )
             _validate_repair_acceptance_continuity(
                 task=task,
-                handoff=handoff,
                 current_ownership=task_ownership,
                 prior_ownership=prior_ownership,
                 repair_continuity=repair_continuity,
+                review_repair_frontier=review_repair_frontier,
                 authorized_replacements=authorized_replacements,
             )
         except OwnershipBlocker as error:
@@ -4236,10 +4242,10 @@ def validate_executor_result_for_task(
             if operation == "repair" and requires_repair_continuity:
                 _validate_repair_acceptance_continuity(
                     task=task,
-                    handoff=handoff,
                     current_ownership=task_ownership,
                     prior_ownership=prior_ownership,
                     repair_continuity=repair_continuity,
+                    review_repair_frontier=review_repair_frontier,
                     authorized_replacements=authorized_replacements,
                 )
         except OwnershipBlocker as error:
@@ -4268,10 +4274,10 @@ def validate_executor_result_creation_for_task(
 def _validate_repair_acceptance_continuity(
     *,
     task: Mapping[str, object],
-    handoff: Mapping[str, object],
     current_ownership: Mapping[str, object],
     prior_ownership: Mapping[str, Mapping[str, object]] | None,
     repair_continuity: Mapping[str, Mapping[str, object] | RepairContinuity] | None,
+    review_repair_frontier: Mapping[str, object] | None,
     authorized_replacements: Iterable[str] | None,
 ) -> None:
     """Bind repair acceptance to the scheduler's original owner and identities."""
@@ -4311,8 +4317,7 @@ def _validate_repair_acceptance_continuity(
     baseline = binding.get("baseline")
     if not isinstance(baseline, Mapping) or not baseline.get("head"):
         raise OwnershipBlocker("review-blocked", f"{task_id} repair baseline identity is unavailable")
-    review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), Mapping) else {}
-    frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), Mapping) else {}
+    frontier = review_repair_frontier or {}
     ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
     try:
         expected = RepairContinuity(
@@ -5196,6 +5201,106 @@ def build_product_review_candidate(
     return candidate
 
 
+def _task_review_target_identity(
+    task: Mapping[str, Any], head: str, source_tree: str | None
+) -> dict[str, Any]:
+    identity = {
+        "artifact_id": str(task.get("task_id") or ""),
+        "revision": head,
+        "source_tree": source_tree,
+    }
+    return {
+        **identity,
+        "sha256": semantic_digest(
+            {"task": _accepted_task_projection(task), "source": identity}
+        ),
+    }
+
+
+def _stored_task_repair_preparation(
+    root: Path,
+    task: Mapping[str, Any],
+    *,
+    base: str,
+    repaired_identity: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Derive one repair frontier from immutable published controller authority."""
+
+    from review_runtime import (
+        ReviewContractError,
+        _repair_frontier,
+        load_stored_review,
+        review_evidence_identity,
+    )
+
+    task_id = str(task.get("task_id") or "")
+    matches: list[tuple[dict[str, Any], Any]] = []
+    store = root / ".work-bundle/orchestration/reviews"
+    for path in sorted(store.glob("*.json")) if store.is_dir() else []:
+        try:
+            raw = path.read_bytes()
+            candidate = json.loads(raw)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(candidate, dict):
+            continue
+        identity = candidate.get("target_identity")
+        if (
+            candidate.get("review_target_kind") != "task"
+            or candidate.get("verdict") != "repair"
+            or not isinstance(identity, Mapping)
+            or identity.get("artifact_id") != task_id
+            or identity.get("revision") != base
+        ):
+            continue
+        reference = {
+            "review_id": str(candidate.get("review_id") or ""),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+        try:
+            record, validated = load_stored_review(
+                root, reference, current_target_identity=identity
+            )
+        except (ReviewContractError, KeyError, TypeError, ValueError) as error:
+            raise SystemExit(f"review-blocked: prior task review is invalid: {error}") from error
+        matches.append((record, validated))
+    if not matches:
+        return None, None
+    if len(matches) != 1:
+        raise SystemExit("review-blocked: prior task repair review is ambiguous")
+    previous, validated = matches[0]
+    blocking = [
+        item
+        for item in _as_list(previous.get("findings"))
+        if isinstance(item, Mapping)
+        and item.get("severity") == "blocking"
+        and item.get("recommended_owner") == "task_owner"
+    ]
+    finding_ids = [str(item.get("finding_id") or "") for item in blocking]
+    boundaries = sorted(
+        {
+            str(evidence.get("locator") or "")
+            for item in blocking
+            for evidence in _as_list(item.get("evidence"))
+            if isinstance(evidence, Mapping) and evidence.get("locator")
+        }
+    )
+    if not finding_ids or any(not value for value in finding_ids) or not boundaries:
+        raise SystemExit("review-blocked: prior repair review lacks closed blocking boundaries")
+    frontier = {
+        "prior_review_id": validated.review_id,
+        "blocking_finding_ids": finding_ids,
+        "previous_reviewed_identity": dict(validated.target_identity),
+        "repaired_identity": dict(repaired_identity),
+        "affected_boundaries": boundaries,
+        "frozen_evidence_reference": review_evidence_identity(previous),
+    }
+    try:
+        return previous, dict(_repair_frontier(frontier))
+    except (ReviewContractError, KeyError, TypeError, ValueError) as error:
+        raise SystemExit(f"review-blocked: invalid derived repair frontier: {error}") from error
+
+
 def build_review_package(args: argparse.Namespace) -> Path:
     if not args.base or not args.head:
         raise SystemExit("build-review-package requires --base and --head")
@@ -5220,30 +5325,19 @@ def build_review_package(args: argparse.Namespace) -> Path:
         execution_root = Path(str(binding["execution_path"])).resolve()
         if _resolve_commit(execution_root, str(args.base)) != accepted_source["head"]:
             raise SystemExit("review-blocked: accepted-task repair base must be the accepted source")
-        review_request = {}
         review_mode = "repair"
     elif args.handoff:
         handoff_root = root / ".work-bundle/orchestration/handoff"
         handoff_path = _input_path(args.handoff, root, handoff_root, "handoff")
         handoff, _ = _read_structured(handoff_path)
-        validated = validate_executor_result_for_task(
-            handoff, task, observe=True, preparing_review=True, **_observation_kwargs(args)
-        )
-        review_request = {}
+        # Reject malformed immutable executor facts before controller-runtime
+        # lookup can obscure the actual creation/admission owner.
+        validate_executor_result_creation_for_task(handoff, task)
         review_mode = "initial"
     else:
         raise SystemExit("build-review-package requires an initial executor handoff or accepted task result")
     if review_mode not in {"initial", "repair"}:
         raise SystemExit("review-blocked: review_mode must be initial or repair")
-    repair_frontier: dict[str, Any] | None = None
-    if review_mode == "repair" and accepted is None:
-        try:
-            from review_runtime import ReviewContractError, _repair_frontier
-            repair_frontier = dict(_repair_frontier(review_request.get("repair_frontier")))
-        except (ReviewContractError, TypeError, ValueError) as error:
-            raise SystemExit(f"review-blocked: invalid repair frontier: {error}") from error
-    elif review_request.get("repair_frontier") not in (None, {}):
-        raise SystemExit("review-blocked: initial review cannot carry repair_frontier")
     if accepted is None:
         binding = load_task_execution_binding(root, plan_id, task_id)
     execution_root = Path(str(binding["execution_path"])).resolve()
@@ -5253,6 +5347,28 @@ def build_review_package(args: argparse.Namespace) -> Path:
     head, diff, name_status, out_of_scope = _review_diff(
         execution_root, base, str(args.head), write_paths
     )
+    head_tree = (
+        None
+        if head.startswith("worktree:")
+        else _git(execution_root, "rev-parse", f"{head}^{{tree}}").strip()
+    )
+    target_identity = _task_review_target_identity(task, head, head_tree)
+    previous_review: dict[str, Any] | None = None
+    repair_frontier: dict[str, Any] | None = None
+    if accepted is None:
+        previous_review, repair_frontier = _stored_task_repair_preparation(
+            root, task, base=base, repaired_identity=target_identity
+        )
+        review_mode = "repair" if repair_frontier is not None else "initial"
+        validated = validate_executor_result_for_task(
+            handoff,
+            task,
+            observe=True,
+            preparing_review=True,
+            repair_review_preparation=review_mode == "repair",
+            review_repair_frontier=repair_frontier,
+            **_observation_kwargs(args),
+        )
     if repair_frontier is not None:
         base_tree = _git(execution_root, "rev-parse", f"{base}^{{tree}}").strip()
         if head.startswith("worktree:"):
@@ -5427,6 +5543,18 @@ def build_review_package(args: argparse.Namespace) -> Path:
     review_target = target.with_name("review-package.md")
     review_target.parent.mkdir(parents=True, exist_ok=True)
     review_target.write_text(package, encoding="utf-8")
+    if accepted is None:
+        preparation = {
+            "review_mode": review_mode,
+            "review_target_kind": "task",
+            "repair_frontier": repair_frontier,
+            "review_reset": None,
+            "target_identity": target_identity,
+            **({"previous_review": previous_review} if previous_review is not None else {}),
+        }
+        review_target.with_name("review-preparation.json").write_text(
+            json.dumps(preparation, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     metrics = compiled_context_metrics(
         task,
         review_package=package,
