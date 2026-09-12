@@ -156,6 +156,101 @@ def test_duplicate_completion_does_not_increment_or_change_judgment(tmp_path: Pa
         )
 
 
+def test_reviewer_execution_requires_exact_live_prepared_unjudged_round(
+    tmp_path: Path,
+) -> None:
+    root = _workspace(tmp_path)
+    reserved = _begin(root)
+
+    with pytest.raises(
+        bounded_closure.BoundedClosureError,
+        match="WB_POST_EXECUTION_ROUND_BINDING_INVALID",
+    ):
+        bounded_closure.require_review_round_execution(root, binding=reserved)
+
+    prepared = bounded_closure.mark_review_round_prepared(
+        root,
+        flow_id="flow-stable",
+        round_id=str(reserved["round_id"]),
+    )
+    assert bounded_closure.require_review_round_execution(
+        root, binding=reserved
+    ) == prepared
+
+    bounded_closure.complete_review_round(
+        root,
+        flow_id="flow-stable",
+        round_id=str(reserved["round_id"]),
+        outcome="blocked",
+        audit_block={"code": "controller-blocked", "missing": ["review"]},
+    )
+    with pytest.raises(
+        bounded_closure.BoundedClosureError,
+        match="WB_POST_EXECUTION_JUDGMENT_ALREADY_RECORDED",
+    ):
+        bounded_closure.require_review_round_execution(root, binding=reserved)
+
+
+def test_fifth_prepared_round_can_dispatch_but_other_accepted_round_closes_flow(
+    tmp_path: Path,
+) -> None:
+    fifth_root = _workspace(tmp_path / "fifth")
+    for number in range(1, 5):
+        reserved = _begin(fifth_root, number)
+        bounded_closure.complete_review_round(
+            fifth_root,
+            flow_id="flow-stable",
+            round_id=str(reserved["round_id"]),
+            outcome="blocked",
+            audit_block={"code": "controller-blocked", "missing": ["review"]},
+        )
+    fifth = _begin(fifth_root, 5)
+    bounded_closure.mark_review_round_prepared(
+        fifth_root,
+        flow_id="flow-stable",
+        round_id=str(fifth["round_id"]),
+    )
+    assert bounded_closure.require_review_round_execution(
+        fifth_root, binding=fifth
+    )["round_number"] == 5
+
+    accepted_root = _workspace(tmp_path / "accepted")
+    first = _begin(accepted_root, 1)
+    bounded_closure.mark_review_round_prepared(
+        accepted_root,
+        flow_id="flow-stable",
+        round_id=str(first["round_id"]),
+    )
+    second = _begin(accepted_root, 2)
+    bounded_closure.mark_review_round_prepared(
+        accepted_root,
+        flow_id="flow-stable",
+        round_id=str(second["round_id"]),
+    )
+    review_path = accepted_root / ".work-bundle/orchestration/reviews/review-1.json"
+    review_path.parent.mkdir(parents=True)
+    review_path.write_text('{"verdict":"accepted"}\n', encoding="utf-8")
+    review_path.chmod(0o444)
+    bounded_closure.complete_review_round(
+        accepted_root,
+        flow_id="flow-stable",
+        round_id=str(first["round_id"]),
+        outcome="accepted",
+        review_reference={
+            "review_id": "review-1",
+            "sha256": hashlib.sha256(review_path.read_bytes()).hexdigest(),
+        },
+    )
+
+    with pytest.raises(
+        bounded_closure.BoundedClosureError,
+        match="WB_POST_EXECUTION_FINALIZATION_REQUIRED",
+    ):
+        bounded_closure.require_review_round_execution(
+            accepted_root, binding=second
+        )
+
+
 def test_accepted_round_stops_further_review_before_limit(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     reserved = _begin(root)

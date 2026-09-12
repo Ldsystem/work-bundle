@@ -575,6 +575,41 @@ def mark_review_round_prepared(root: Path, *, flow_id: str, round_id: str) -> di
         return _public_round(record)
 
 
+def require_review_round_execution(
+    root: Path, *, binding: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Admit reviewer execution only for its exact live, unjudged round."""
+
+    workspace = _workspace_root(root)
+    if not isinstance(binding, Mapping):
+        raise BoundedClosureError("WB_POST_EXECUTION_ROUND_BINDING_INVALID")
+    flow_id = _identifier(binding.get("flow_id"), "binding.flow_id")
+    round_id = _identifier(binding.get("round_id"), "binding.round_id")
+    review_id = _identifier(binding.get("review_id"), "binding.review_id")
+    request_id = _identifier(binding.get("request_id"), "binding.request_id")
+    target = _target_identity(binding.get("target_identity"))
+    with _locked(workspace):
+        metadata = _load_metadata(workspace)
+        _policy(metadata, required=True)
+        ledger = _load_ledger(workspace)
+        record = _find_round(ledger, flow_id, round_id)
+        if (
+            record.get("review_id") != review_id
+            or record.get("request_id") != request_id
+            or record.get("target_identity") != target
+            or record.get("round_number") != binding.get("round_number")
+        ):
+            raise BoundedClosureError("WB_POST_EXECUTION_ROUND_BINDING_INVALID")
+        if record.get("state") == "completed":
+            raise BoundedClosureError("WB_POST_EXECUTION_JUDGMENT_ALREADY_RECORDED")
+        flow = ledger["flows"][flow_id]
+        if flow.get("finalization_required") is True:
+            raise BoundedClosureError("WB_POST_EXECUTION_FINALIZATION_REQUIRED")
+        if record.get("state") != "prepared":
+            raise BoundedClosureError("WB_POST_EXECUTION_ROUND_BINDING_INVALID")
+        return _public_round(record)
+
+
 def review_round_publication_binding(
     root: Path, *, review_id: str, target_identity: Mapping[str, Any]
 ) -> dict[str, Any] | None:

@@ -1476,6 +1476,19 @@ def _run_reviewer(
             )
         except (ValueError, OSError, SystemExit) as error:
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_EVIDENCE_INCOMPLETE") from error
+    if isinstance(round_state, dict):
+        if authority is None:
+            raise ReviewerWorkspaceError("WB_POST_EXECUTION_ROUND_BINDING_INVALID")
+        try:
+            _bounded_closure().require_review_round_execution(
+                authority,
+                binding=round_state,
+            )
+        except _bounded_closure().BoundedClosureError as error:
+            raise ReviewerWorkspaceError(
+                error.code,
+                {"detail": error.detail or str(error)},
+            ) from error
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     run_id = f"reviewer-run-{uuid.uuid4()}"
     native = native_request is not None

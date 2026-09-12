@@ -129,6 +129,65 @@ def packet(source: Path, control: Path) -> dict[str, object]:
     )
 
 
+def test_reviewer_dispatch_rechecks_live_round_before_launch(
+    review_roots: tuple[Path, Path, Path],
+) -> None:
+    source, control, runtime = review_roots
+    metadata = control / ".work-bundle/project.yaml"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text(
+        "metadata_version: 4\n"
+        "workspace: {id: workspace-review, slug: review, mode: single-repository}\n"
+        "orchestration_control:\n"
+        "  schema_version: 1\n"
+        "  post_execution_review_round_limit: 5\n",
+        encoding="utf-8",
+    )
+    target = {
+        "artifact_id": "plan-live-round",
+        "revision": "a" * 40,
+        "sha256": "b" * 64,
+        "source_tree": "c" * 40,
+    }
+    reserved = bounded_closure.begin_review_round(
+        control,
+        flow_id="plan-live-round",
+        request_id="request-live-round",
+        review_id="review-live-round",
+        target_identity=target,
+        executor_attempts=[{"execution_id": "executor-1", "state": "completed"}],
+        known_missing_evidence=[],
+    )
+    bounded_closure.mark_review_round_prepared(
+        control,
+        flow_id="plan-live-round",
+        round_id=str(reserved["round_id"]),
+    )
+    created = create_reviewer_workspace(runtime, "review-live-round", packet(source, control))
+    state_path = Path(str(created["state_path"]))
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["admission_workspace"] = str(control)
+    state["post_execution_review"] = reserved
+    state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    bounded_closure.complete_review_round(
+        control,
+        flow_id="plan-live-round",
+        round_id=str(reserved["round_id"]),
+        outcome="blocked",
+        audit_block={"code": "repair-required"},
+    )
+
+    with patch.object(reviewer_workspace, "_run_sandboxed_process") as launch:
+        with pytest.raises(
+            ReviewerWorkspaceError,
+            match="WB_POST_EXECUTION_JUDGMENT_ALREADY_RECORDED",
+        ):
+            reviewer_workspace.run_sandboxed_reviewer(
+                Path(str(created["workspace_path"])), ["reviewer"]
+            )
+    launch.assert_not_called()
+
+
 def test_packet_rejects_protected_and_outside_reads(review_roots: tuple[Path, Path, Path]) -> None:
     source, control, _ = review_roots
 
