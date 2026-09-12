@@ -1820,7 +1820,8 @@ def test_postacceptance_review_package_ignores_stale_handoff_and_requires_curren
     binding = execution_context.load_task_execution_binding(root, "plan-001", "task-004")
     repository_evidence = execution_context.capture_repository_evidence(root)
     observed = execution_context._completion_provenance_module().observe_validation(
-        binding, brief, brief["validation"][0], repository_evidence,
+        binding, execution_context._validation_observation_task(brief),
+        brief["validation"][0], repository_evidence,
         lambda receipt: execution_context._observe_validation_item(
             brief["validation"][0], root, brief, receipt
         ),
@@ -1835,7 +1836,8 @@ def test_postacceptance_review_package_ignores_stale_handoff_and_requires_curren
 
     unrelated_check = {**brief["validation"][0], "id": "VAL-UNRELATED", "command": "true"}
     unrelated_observed = execution_context._completion_provenance_module().observe_validation(
-        binding, brief, unrelated_check, execution_context.capture_repository_evidence(root),
+        binding, execution_context._validation_observation_task(brief),
+        unrelated_check, execution_context.capture_repository_evidence(root),
         lambda receipt: execution_context._observe_validation_item(
             unrelated_check, root, brief, receipt
         ),

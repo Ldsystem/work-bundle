@@ -1851,6 +1851,24 @@ def _load_materialized_accepted_task_result(
     return binding, dict(prior)
 
 
+def _validation_observation_task(task: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind the complete compiled validation definition into observation authority."""
+
+    projected = dict(task)
+    capability = (
+        dict(task.get("evidence_capability"))
+        if isinstance(task.get("evidence_capability"), Mapping)
+        else {}
+    )
+    capability["validation_definition_projection"] = [
+        dict(item)
+        for item in _as_list(task.get("validation"))
+        if isinstance(item, Mapping)
+    ]
+    projected["evidence_capability"] = capability
+    return projected
+
+
 def _claim_bound_validation_observations(
     binding: Mapping[str, Any],
     task: Mapping[str, Any],
@@ -1896,12 +1914,15 @@ def _claim_bound_validation_observations(
             capture_output=True,
             text=True,
         )
-        changed = subprocess.run(
-            ["git", "-C", str(execution_path), "diff", "--name-only", reviewed_head, current_head],
+        history = subprocess.run(
+            [
+                "git", "-C", str(execution_path), "rev-list", "--first-parent",
+                "--reverse", f"{reviewed_head}..{current_head}",
+            ],
             capture_output=True,
             text=True,
         )
-        if ancestor.returncode or changed.returncode:
+        if ancestor.returncode or history.returncode:
             raise _ObservationUnavailable
         policy = _completion_provenance_module().validation_reuse_policy(item)
         files = task.get("files") if isinstance(task.get("files"), Mapping) else {}
@@ -1910,12 +1931,20 @@ def _claim_bound_validation_observations(
             *_as_list(files.get("write")),
             *policy["dependency_files"],
         ]
-        if any(
-            _write_scope_match(path, [str(scope) for scope in claim_paths])
-            for path in changed.stdout.splitlines()
-            if path
-        ):
-            raise _ObservationUnavailable
+        previous = reviewed_head
+        for commit in filter(None, history.stdout.splitlines()):
+            changed = subprocess.run(
+                ["git", "-C", str(execution_path), "diff", "--name-only", previous, commit],
+                capture_output=True,
+                text=True,
+            )
+            if changed.returncode or any(
+                _write_scope_match(path, [str(scope) for scope in claim_paths])
+                for path in changed.stdout.splitlines()
+                if path
+            ):
+                raise _ObservationUnavailable
+            previous = commit
 
         module = _completion_provenance_module()
         record = module.load_observation(store, observation_id).to_dict()
@@ -1949,8 +1978,9 @@ def _claim_bound_validation_observations(
                 "evaluation_identity.py", "repository_preflight.py",
             )
         }
+        claim_task = _validation_observation_task(task)
         authority = {
-            key: task.get(key)
+            key: claim_task.get(key)
             for key in (
                 "source_ids", "requirements", "constraints", "interfaces",
                 "truth_basis", "files", "evidence_capability",
@@ -1999,7 +2029,7 @@ def _claim_bound_validation_observations(
         try:
             observation = _completion_provenance_module().observe_validation(
                 binding,
-                task,
+                _validation_observation_task(task),
                 item,
                 evidence,
                 no_validation_replay,
@@ -3899,7 +3929,7 @@ def _observe_completed_validation(
                 f"{finalization_identity}"
             )
         observed = _completion_provenance_module().observe_validation(
-            binding, task, observed_item, pre_batch,
+            binding, _validation_observation_task(task), observed_item, pre_batch,
             lambda receipt: _observe_validation_item(item, execution_root, task, receipt),
             lambda: capture_repository_evidence(execution_root),
             finalization_id=finalization_id,

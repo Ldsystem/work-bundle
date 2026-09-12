@@ -127,13 +127,13 @@ def _record_validation_observation(
         }
 
     observed = execution_context._completion_provenance_module().observe_validation(
-        binding, task, item, evidence, observe,
+        binding, execution_context._validation_observation_task(task), item, evidence, observe,
         lambda: execution_context.capture_repository_evidence(root),
     )
     return str(observed["observation_id"])
 
 
-def test_claim_bound_observation_survives_only_orthogonal_head_progress(tmp_path: Path) -> None:
+def _orthogonally_advanced_observation(tmp_path: Path) -> tuple[dict, dict, str, str]:
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "test@example.com")
     _git(tmp_path, "config", "user.name", "Test")
@@ -160,6 +160,11 @@ def test_claim_bound_observation_survives_only_orthogonal_head_progress(tmp_path
     (tmp_path / "orthogonal.py").write_text("VALUE = 1\n", encoding="utf-8")
     _git(tmp_path, "add", "orthogonal.py")
     _git(tmp_path, "commit", "-qm", "integrate orthogonal task")
+    return task, binding, observation_id, reviewed_head
+
+
+def test_claim_bound_observation_survives_only_orthogonal_head_progress(tmp_path: Path) -> None:
+    task, binding, observation_id, reviewed_head = _orthogonally_advanced_observation(tmp_path)
     matched = execution_context._claim_bound_validation_observations(
         binding,
         task,
@@ -180,9 +185,34 @@ def test_claim_bound_observation_survives_only_orthogonal_head_progress(tmp_path
             reviewed_head=reviewed_head,
         )
 
+
+def test_claim_bound_observation_rejects_intermediate_dependency_change_reverted_at_head(
+    tmp_path: Path,
+) -> None:
+    task, binding, observation_id, reviewed_head = _orthogonally_advanced_observation(tmp_path)
+    original = (tmp_path / "config/test.ini").read_text(encoding="utf-8")
     (tmp_path / "config/test.ini").write_text("changed=true\n", encoding="utf-8")
     _git(tmp_path, "add", "config/test.ini")
     _git(tmp_path, "commit", "-qm", "change validation dependency")
+    (tmp_path / "config/test.ini").write_text(original, encoding="utf-8")
+    _git(tmp_path, "add", "config/test.ini")
+    _git(tmp_path, "commit", "-qm", "restore validation dependency")
+    with pytest.raises(SystemExit, match="claim-bound"):
+        execution_context._claim_bound_validation_observations(
+            binding,
+            task,
+            execution_context.capture_repository_evidence(tmp_path),
+            [observation_id],
+            reviewed_head=reviewed_head,
+        )
+
+
+def test_claim_bound_observation_rejects_unprojected_validation_field_drift(
+    tmp_path: Path,
+) -> None:
+    task, binding, observation_id, reviewed_head = _orthogonally_advanced_observation(tmp_path)
+    task["validation"][0]["capability_reason"] = "A changed claim-bearing reason."
+
     with pytest.raises(SystemExit, match="claim-bound"):
         execution_context._claim_bound_validation_observations(
             binding,
