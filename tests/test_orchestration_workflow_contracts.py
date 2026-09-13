@@ -20,7 +20,9 @@ from execution_context import (
     evaluate_knowledge_closure_state,
     validate_executor_result_for_task,
 )
-from handoffs import cmd_write_handoff, index_handoffs
+import execution_context
+from handoffs import cmd_set_handoff_status, cmd_write_handoff, index_handoffs
+import handoffs
 from plans import _material_repository_root, _verified_handoff_tree
 
 
@@ -32,6 +34,12 @@ def accepted_stage_boundary_for_legacy_archive_unit_tests(monkeypatch):
     is tested without this stub in test_orchestration_reviews.py.
     """
     monkeypatch.setattr("plans.require_plan_reviews", lambda *args, **kwargs: None)
+
+
+@pytest.fixture
+def lower_level_handoff_writer(monkeypatch):
+    """Isolate lifecycle mechanics from managed creation admission."""
+    monkeypatch.setattr("handoffs._managed_creation_admission", lambda *_args: None)
 
 
 def read(path: str) -> str:
@@ -141,14 +149,369 @@ def _completed_executor_result(
     return handoff
 
 
-def test_handoff_helper_indexes_sparse_executor_result(tmp_path: Path) -> None:
+def test_handoff_helper_rejects_unsupported_unmanaged_executor_creation(tmp_path: Path) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text("result:\n  state: completed\n  summary: ok\n", encoding="utf-8")
-    cmd_write_handoff(handoff_args(tmp_path, content_file=str(content)))
-    row = next(item for item in index_handoffs(handoff_args(tmp_path)) if item["id"] == "handoff-exec-20990101-001")
-    assert row["type"] == "executor-result"
-    assert row["related_task"] == "task-001"
-    assert row["path"].endswith("handoff-exec-20990101-001-task-result.yaml")
+    with pytest.raises(SystemExit, match="managed WorkBundle workspace"):
+        cmd_write_handoff(handoff_args(tmp_path, content_file=str(content)))
+    assert not list((tmp_path / ".work-bundle/orchestration/handoff/executor").glob("*/*.yaml"))
+
+
+def test_managed_handoff_creation_runs_complete_creation_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = tmp_path / ".work-bundle/project.yaml"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text("metadata_version: 4\n", encoding="utf-8")
+    task = tmp_path / ".work-bundle/orchestration/plan/active/plan-001/phase-001/task-001.md"
+    task.parent.mkdir(parents=True)
+    task.write_text("---\nid: task-001\nplan_id: plan-001\n---\n", encoding="utf-8")
+    observed: list[tuple[dict[str, object], dict[str, object]]] = []
+    monkeypatch.setattr(
+        execution_context,
+        "_compile_task_brief",
+        lambda _args: (task, {"task_brief": {"task_id": "task-001", "plan_id": "plan-001"}}),
+    )
+    monkeypatch.setattr(
+        execution_context,
+        "validate_executor_result_creation_for_task",
+        lambda result, brief: observed.append((result, brief)),
+    )
+
+    handoffs._managed_creation_admission(
+        handoff_args(tmp_path),
+        "type: executor-result\nrelated: {plan: plan-001, task: task-001}\nresult: {state: completed}\n",
+    )
+
+    assert observed[0][0]["result"]["state"] == "completed"
+    assert observed[0][1] == {"task_id": "task-001", "plan_id": "plan-001"}
+
+
+def test_handoff_creation_rejects_conflicting_writer_identity_before_mutation(
+    tmp_path: Path,
+) -> None:
+    content = tmp_path / "handoff-content.txt"
+    content.write_text(
+        "id: conflicting-id\nresult:\n  state: completed\n  summary: no\n",
+        encoding="utf-8",
+    )
+    args = handoff_args(tmp_path, content_file=str(content))
+
+    with pytest.raises(SystemExit, match="metadata mismatch for id"):
+        cmd_write_handoff(args)
+
+    handoff_root = tmp_path / ".work-bundle/orchestration/handoff"
+    assert not list((handoff_root / "executor").glob("*/*.yaml"))
+    assert not (handoff_root / "index.jsonl").read_text(encoding="utf-8")
+
+
+def test_handoff_lifecycle_preserves_marked_bytes_and_rebuilds_status(
+    tmp_path: Path, lower_level_handoff_writer,
+) -> None:
+    content = tmp_path / "handoff-content.txt"
+    content.write_text("result:\n  state: completed\n  summary: ok\n", encoding="utf-8")
+    args = handoff_args(tmp_path, content_file=str(content))
+    cmd_write_handoff(args)
+    initial = next(item for item in index_handoffs(args) if item["id"] == args.id)
+    initial_path = tmp_path / str(initial["path"])
+    initial_bytes = initial_path.read_bytes()
+    assert b"lifecycle_authority: location-v1" in initial_bytes
+
+    cmd_set_handoff_status(handoff_args(tmp_path, id=args.id, status="reviewed"))
+    reviewed = next(item for item in index_handoffs(args) if item["id"] == args.id)
+    reviewed_path = tmp_path / str(reviewed["path"])
+    assert reviewed["status"] == "reviewed"
+    assert "/reviewed/" in reviewed_path.as_posix()
+    assert reviewed_path.read_bytes() == initial_bytes
+
+    index_before = (tmp_path / ".work-bundle/orchestration/handoff/index.jsonl").read_bytes()
+    cmd_set_handoff_status(handoff_args(tmp_path, id=args.id, status="reviewed"))
+    assert reviewed_path.read_bytes() == initial_bytes
+    assert (tmp_path / ".work-bundle/orchestration/handoff/index.jsonl").read_bytes() == index_before
+
+
+def test_legacy_explicit_return_to_active_uses_digest_bound_override(tmp_path: Path) -> None:
+    path = (
+        tmp_path
+        / ".work-bundle/orchestration/handoff/executor/active/legacy-result.yaml"
+    )
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "id: legacy-result\ntype: executor-result\nstatus: reviewed\n"
+        "related:\n  plan: plan-001\n  task: task-001\n",
+        encoding="utf-8",
+    )
+    original = path.read_bytes()
+    args = handoff_args(tmp_path, id="legacy-result")
+    assert next(item for item in index_handoffs(args) if item["id"] == "legacy-result")["status"] == "reviewed"
+
+    cmd_set_handoff_status(handoff_args(tmp_path, id="legacy-result", status="active"))
+    override = (
+        tmp_path
+        / ".work-bundle/orchestration/handoff/legacy-status-overrides/legacy-result.json"
+    )
+    record = json.loads(override.read_text(encoding="utf-8"))
+    assert record == {
+        "handoff_id": "legacy-result",
+        "related_plan": "plan-001",
+        "related_task": "task-001",
+        "sha256": __import__("hashlib").sha256(original).hexdigest(),
+        "status": "active",
+        "type": "executor-result",
+    }
+    assert path.read_bytes() == original
+    assert next(item for item in index_handoffs(args) if item["id"] == "legacy-result")["status"] == "active"
+
+
+def test_handoff_index_fails_closed_on_duplicate_identity(tmp_path: Path) -> None:
+    active = tmp_path / ".work-bundle/orchestration/handoff/executor/active/result.yaml"
+    reviewed = tmp_path / ".work-bundle/orchestration/handoff/executor/reviewed/result.yaml"
+    active.parent.mkdir(parents=True)
+    reviewed.parent.mkdir(parents=True)
+    content = "id: duplicate\ntype: executor-result\nstatus: active\nlifecycle_authority: location-v1\n"
+    active.write_text(content, encoding="utf-8")
+    reviewed.write_text(content, encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Duplicate handoff identity"):
+        index_handoffs(handoff_args(tmp_path))
+
+
+def _write_unmarked_legacy_handoff(
+    tmp_path: Path,
+    *,
+    name: str,
+    project: str,
+    status_location: str = "active",
+    phase: str = "phase-legacy",
+    task: str = "task-legacy",
+) -> Path:
+    path = (
+        tmp_path
+        / f".work-bundle/orchestration/handoff/executor/{status_location}/{name}.yaml"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "id: legacy-duplicate\n"
+        "type: executor-result\n"
+        "status: active\n"
+        f"project: {project}\n"
+        "related:\n"
+        "  plan: plan-legacy\n"
+        f"  phase: {phase}\n"
+        f"  task: {task}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_handoff_index_preserves_unrelated_colocated_unmarked_legacy_duplicates(
+    tmp_path: Path,
+) -> None:
+    first = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-first", project="project-first"
+    )
+    second = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-second", project="project-second"
+    )
+
+    rows = [
+        row
+        for row in index_handoffs(handoff_args(tmp_path))
+        if row["id"] == "legacy-duplicate"
+    ]
+
+    assert {row["project"] for row in rows} == {"project-first", "project-second"}
+    assert {tmp_path / str(row["path"]) for row in rows} == {first, second}
+
+
+def test_handoff_index_preserves_same_project_colocated_unmarked_legacy_duplicate(
+    tmp_path: Path,
+) -> None:
+    first = _write_unmarked_legacy_handoff(
+        tmp_path,
+        name="legacy-first",
+        project="same-project",
+        status_location="archived",
+        phase="phase-first",
+        task="task-first",
+    )
+    second = _write_unmarked_legacy_handoff(
+        tmp_path,
+        name="legacy-second",
+        project="same-project",
+        status_location="archived",
+        phase="phase-second",
+        task="task-second",
+    )
+
+    rows = [
+        row
+        for row in index_handoffs(handoff_args(tmp_path))
+        if row["id"] == "legacy-duplicate"
+    ]
+
+    assert {row["project"] for row in rows} == {"same-project"}
+    assert {row["related_phase"] for row in rows} == {"phase-first", "phase-second"}
+    assert {row["related_task"] for row in rows} == {"task-first", "task-second"}
+    assert {tmp_path / str(row["path"]) for row in rows} == {first, second}
+
+
+def test_handoff_index_rejects_cross_location_unmarked_legacy_duplicate(
+    tmp_path: Path,
+) -> None:
+    _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-first", project="project-first"
+    )
+    _write_unmarked_legacy_handoff(
+        tmp_path,
+        name="legacy-second",
+        project="project-second",
+        status_location="reviewed",
+    )
+
+    with pytest.raises(SystemExit, match="Duplicate handoff identity"):
+        index_handoffs(handoff_args(tmp_path))
+
+
+def test_handoff_index_rejects_override_for_unmarked_legacy_duplicates(
+    tmp_path: Path,
+) -> None:
+    first = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-first", project="project-first"
+    )
+    _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-second", project="project-second"
+    )
+    override = (
+        tmp_path
+        / ".work-bundle/orchestration/handoff/legacy-status-overrides/legacy-duplicate.json"
+    )
+    override.parent.mkdir(parents=True)
+    override.write_text(
+        json.dumps(
+            {
+                "handoff_id": "legacy-duplicate",
+                "sha256": __import__("hashlib").sha256(first.read_bytes()).hexdigest(),
+                "type": "executor-result",
+                "related_plan": "plan-legacy",
+                "related_task": "task-legacy",
+                "status": "active",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="Duplicate handoff identity"):
+        index_handoffs(handoff_args(tmp_path))
+
+
+def test_handoff_status_change_rejects_ambiguous_legacy_duplicate(
+    tmp_path: Path,
+) -> None:
+    first = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-first", project="project-first"
+    )
+    second = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-second", project="project-second"
+    )
+    originals = {first: first.read_bytes(), second: second.read_bytes()}
+
+    with pytest.raises(SystemExit, match="ambiguous"):
+        cmd_set_handoff_status(
+            handoff_args(tmp_path, id="legacy-duplicate", status="reviewed")
+        )
+
+    assert {path: path.read_bytes() for path in originals} == originals
+    assert not (
+        tmp_path
+        / ".work-bundle/orchestration/handoff/legacy-status-overrides/legacy-duplicate.json"
+    ).exists()
+
+
+def test_handoff_creation_rejects_identity_owned_by_legacy_duplicates(
+    tmp_path: Path, lower_level_handoff_writer,
+) -> None:
+    first = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-first", project="project-first"
+    )
+    second = _write_unmarked_legacy_handoff(
+        tmp_path, name="legacy-second", project="project-second"
+    )
+    content = tmp_path / "handoff-content.txt"
+    content.write_text("result:\n  state: completed\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Duplicate handoff identity"):
+        cmd_write_handoff(
+            handoff_args(
+                tmp_path,
+                id="legacy-duplicate",
+                content_file=str(content),
+            )
+        )
+
+    assert first.is_file()
+    assert second.is_file()
+    assert not list(
+        (tmp_path / ".work-bundle/orchestration/handoff/executor/active").glob(
+            "legacy-duplicate-task-result.*"
+        )
+    )
+
+
+@pytest.mark.parametrize("target_status", ["active", "reviewed", "superseded", "archived"])
+def test_marked_handoff_supports_every_target_status(
+    tmp_path: Path, target_status: str, lower_level_handoff_writer,
+) -> None:
+    content = tmp_path / "handoff-content.txt"
+    content.write_text("result:\n  state: blocked\n", encoding="utf-8")
+    args = handoff_args(tmp_path, content_file=str(content))
+    cmd_write_handoff(args)
+    original_row = next(item for item in index_handoffs(args) if item["id"] == args.id)
+    original = (tmp_path / str(original_row["path"])).read_bytes()
+
+    cmd_set_handoff_status(handoff_args(tmp_path, id=args.id, status=target_status))
+    row = next(item for item in index_handoffs(args) if item["id"] == args.id)
+    assert row["status"] == target_status
+    assert f"/{target_status}/" in f"/{row['path']}"
+    assert (tmp_path / str(row["path"])).read_bytes() == original
+
+
+def test_legacy_nonactive_to_active_survives_reindex_and_restart(tmp_path: Path) -> None:
+    path = tmp_path / ".work-bundle/orchestration/handoff/executor/superseded/legacy.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "id: legacy-moved\ntype: executor-result\nstatus: reviewed\n"
+        "related:\n  plan: plan-001\n  task: task-001\n",
+        encoding="utf-8",
+    )
+    original = path.read_bytes()
+    args = handoff_args(tmp_path, id="legacy-moved")
+    assert next(item for item in index_handoffs(args) if item["id"] == "legacy-moved")["status"] == "superseded"
+
+    cmd_set_handoff_status(handoff_args(tmp_path, id="legacy-moved", status="active"))
+    active = tmp_path / ".work-bundle/orchestration/handoff/executor/active/legacy.yaml"
+    assert active.read_bytes() == original
+    assert next(item for item in index_handoffs(args) if item["id"] == "legacy-moved")["status"] == "active"
+
+
+def test_legacy_override_digest_or_location_contradiction_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / ".work-bundle/orchestration/handoff/executor/active/legacy.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "id: legacy-invalid\ntype: executor-result\nstatus: reviewed\n"
+        "related:\n  plan: plan-001\n  task: task-001\n",
+        encoding="utf-8",
+    )
+    override = tmp_path / ".work-bundle/orchestration/handoff/legacy-status-overrides/legacy-invalid.json"
+    override.parent.mkdir(parents=True)
+    override.write_text(json.dumps({
+        "handoff_id": "legacy-invalid", "sha256": "0" * 64,
+        "type": "executor-result", "related_plan": "plan-001",
+        "related_task": "task-001", "status": "reviewed",
+    }), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="contradicts digest, binding, or location"):
+        index_handoffs(handoff_args(tmp_path))
 
 
 def test_handoff_tree_resolves_recorded_repository_instead_of_control_root(tmp_path: Path) -> None:
@@ -301,7 +664,9 @@ def test_material_repository_rejects_material_handoff_without_repository_provena
         )
 
 
-def test_write_handoff_fills_missing_task_plan_from_authorized_args(tmp_path: Path) -> None:
+def test_write_handoff_fills_missing_task_plan_from_authorized_args(
+    tmp_path: Path, lower_level_handoff_writer,
+) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text(
         "related:\n  task: task-001\nresult:\n  state: completed\n  summary: ok\n",
@@ -316,7 +681,9 @@ def test_write_handoff_fills_missing_task_plan_from_authorized_args(tmp_path: Pa
     assert "task: task-001" in written
 
 
-def test_write_handoff_rejects_conflicting_plan_identity(tmp_path: Path) -> None:
+def test_write_handoff_rejects_conflicting_plan_identity(
+    tmp_path: Path, lower_level_handoff_writer,
+) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text(
         "related:\n  plan: plan-A\n  task: task-001\nresult:\n  state: completed\n  summary: ok\n",
@@ -328,7 +695,9 @@ def test_write_handoff_rejects_conflicting_plan_identity(tmp_path: Path) -> None
         )
 
 
-def test_write_handoff_rejects_nested_and_flat_plan_conflict(tmp_path: Path) -> None:
+def test_write_handoff_rejects_nested_and_flat_plan_conflict(
+    tmp_path: Path, lower_level_handoff_writer,
+) -> None:
     content = tmp_path / "handoff-content.txt"
     content.write_text(
         "related:\n  plan: plan-B\n  task: task-001\nrelated_plan: plan-A\n"
@@ -941,15 +1310,15 @@ def test_task_contract_defines_material_review_freshness_without_identity_rotati
     assert "may not reuse the repair reviewer identity" not in contract
 
 
-def test_executor_result_contract_carries_acceptance_review() -> None:
+def test_executor_result_contract_keeps_review_authority_outside_handoff() -> None:
     contract = read("references/assets/orchestration/contract/handoff-executor-result-v1.md")
     for token in [
         "acceptance_review:",
-        "reviewer_independent: true | false",
-        "verdict: pending | accept | repair | blocked",
-        "reviewed_head: commit-or-tree-identity",
-        "scope: specification | correctness | quality | validation | rule",
-        "Full specification, root-plan, and phase inspection is an escalation path",
+        "lifecycle_authority: location-v1",
+        "wrong-owner fields",
+        "accepted-result materialization later joins",
+        "complete bytes never change after creation",
+        "legacy-status-overrides/<handoff-id>.json",
         "knowledge_disposition:",
         "none | update | supersede | reclassify",
         "review owns any approved persistence follow-up",
@@ -959,7 +1328,7 @@ def test_executor_result_contract_carries_acceptance_review() -> None:
         "related.plan",
         "must equal the assigned task's `plan_id` and `id`",
         "fails closed before `Completed` and before `build-review-package`",
-        "A review-required task cannot become `Completed` until the verdict is `accept`",
+        "current lifecycle status comes from the status-specific location",
     ]:
         assert token in contract
 
@@ -996,8 +1365,8 @@ def test_workflow_assigns_review_ownership_and_repair_loop() -> None:
         "dispatch before any wait",
         "one scoped rereview",
         "A task becomes `Completed` only when",
-        "`Completed` does not require `verdict: accept` unless review was required",
-        "optional task review when acceptance_review.required: true",
+        "Review-required tasks additionally require exact stored `accept` authority",
+        "optional task review when compiled review_required: true",
         "accepted Truth Basis",
         "normalized validation observations",
     ]:
@@ -1114,8 +1483,8 @@ def test_evals_cover_twenty_migration_behaviors() -> None:
 def test_no_review_completed_handoff_does_not_require_accept_or_reviewer() -> None:
     execute = read("skills/orch-execute-plan/SKILL.md")
     for token in [
-        "`Completed` does not require `verdict: accept` unless review was required",
-        "assign `dev-code-review` only when `acceptance_review.required: true`",
+        "A review-required task additionally needs exact stored `accept` authority",
+        "assign `dev-code-review` only when compiled `review_required: true`",
         "Skip this hop when review is not required",
     ]:
         assert token in execute
@@ -1148,7 +1517,9 @@ def test_execute_plan_requires_bound_observation_and_isolate_or_serialize() -> N
     assert "not independent proof" in contract or "not authority" in contract
 
 
-def test_optional_review_package_does_not_absorb_sibling_task_files(tmp_path: Path) -> None:
+def test_optional_review_package_does_not_absorb_sibling_task_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from test_orchestration_execution_context import (
         WRITE_SCOPE_FILE,
         args as review_args,
@@ -1171,6 +1542,7 @@ def test_optional_review_package_does_not_absorb_sibling_task_files(tmp_path: Pa
     task_a_file.write_text("TASK_A_NEW = 2\n", encoding="utf-8")
     from test_orchestration_execution_context import _bind_passing_observation
 
+    monkeypatch.setattr("review_runtime.require_plan_reviews", lambda *_args: None)
     handoff = _bind_passing_observation(root, task_b)
 
     package = build_review_package(
@@ -1201,7 +1573,7 @@ def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer
     for token in [
         "declared plan-level/integration acceptance is recorded",
         "It does not redo task code review, reread implementation for code quality, or start another implementation-review agent",
-        "Missing review verdicts are not a blocker when no task set `acceptance_review.required: true`",
+        "Missing stored review authority is not a blocker when no compiled task set `review_required: true`",
     ]:
         assert token in workflow
 
@@ -1239,7 +1611,9 @@ def test_failing_declared_plan_acceptance_blocks_archive_without_second_reviewer
     assert (tmp_path / ".work-bundle/orchestration/plan/active/plan-B.md").is_file()
 
 
-def _mapped_archive_workspace(tmp_path: Path):
+def _mapped_archive_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     from test_orchestration_execution_context import (
         PASSING_PROCESS,
         _bind_task_execution,
@@ -1276,6 +1650,7 @@ def _mapped_archive_workspace(tmp_path: Path):
     git(root, "add", ".")
     git(root, "commit", "-qm", "mapped archive workspace")
     brief = _compiled_brief(root, task)
+    monkeypatch.setattr("review_runtime.require_plan_reviews", lambda *_args: None)
     binding = _bind_task_execution(root, brief)
     handoff = _handoff_for_command(root, PASSING_PROCESS)
     handoff.write_text(
@@ -1293,20 +1668,24 @@ def _mapped_archive_workspace(tmp_path: Path):
     return root, binding, command
 
 
-def test_archive_plan_accepts_mapped_invariant_handoff_with_harness_observation(tmp_path: Path) -> None:
+def test_archive_plan_accepts_mapped_invariant_handoff_with_harness_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from plans import cmd_archive_plan
 
-    root, _binding, _command = _mapped_archive_workspace(tmp_path)
+    root, _binding, _command = _mapped_archive_workspace(tmp_path, monkeypatch)
 
     cmd_archive_plan(archive_args(root, "plan-001"))
 
     assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
 
 
-def test_archive_plan_does_not_replay_task_validation_from_execution_binding(tmp_path: Path) -> None:
+def test_archive_plan_does_not_replay_task_validation_from_execution_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from plans import cmd_archive_plan
 
-    root, binding, command = _mapped_archive_workspace(tmp_path)
+    root, binding, command = _mapped_archive_workspace(tmp_path, monkeypatch)
 
     cmd_archive_plan(
         archive_args(
@@ -1322,7 +1701,9 @@ def test_archive_plan_does_not_replay_task_validation_from_execution_binding(tmp
 
     restored = tmp_path / "restored-mapped"
     restored.mkdir()
-    restored_root, restored_binding, _command = _mapped_archive_workspace(restored)
+    restored_root, restored_binding, _command = _mapped_archive_workspace(
+        restored, monkeypatch
+    )
     cmd_archive_plan(
         archive_args(
             restored_root,
@@ -1862,9 +2243,10 @@ def test_archive_plan_review_required_cannot_downgrade_via_omitted_required(tmp_
         f"  action: update\n  reason: Task-local evidence.\n  affected_authority: [{ACCEPTED_AUTHORITY}]\n",
     )
 
-    cmd_archive_plan(archive_args(root, "plan-001"))
+    with pytest.raises(SystemExit, match="knowledge-blocked"):
+        cmd_archive_plan(archive_args(root, "plan-001"))
 
-    assert (root / ".work-bundle/orchestration/plan/archived/compiler-plan.md").is_file()
+    assert (root / ".work-bundle/orchestration/plan/active/compiler-plan.md").is_file()
 
 
 def test_missing_or_wrong_plan_identity_cannot_complete_without_review_package() -> None:
@@ -1883,15 +2265,15 @@ def test_review_required_task_fails_closed_until_independent_accept() -> None:
     contract = read("references/assets/orchestration/contract/handoff-executor-result-v1.md")
     for token in [
         "Do not perform acceptance judgment or mark a review-required task complete",
-        "`Completed` does not require `verdict: accept` unless review was required",
+        "A review-required task additionally needs exact stored `accept` authority",
     ]:
         assert token in execute
     for token in [
-        "missing `acceptance_review.verdict` blocks only a task that explicitly required independent review",
-        "`acceptance_review.verdict: accept` only for those explicitly required reviews",
+        "missing stored `accept` review authority blocks only a task whose compiled `review_required` is true",
+        "exact stored `accept` authority only for those explicitly required reviews",
     ]:
         assert token in review
-    assert "A review-required task cannot become `Completed` until the verdict is `accept`" in contract
+    assert "accepted-result materialization later joins it with the exact published review" in contract
 
     pending = {
         "related": {"plan": "plan-001", "task": "task-001"},
@@ -1927,6 +2309,61 @@ def test_review_required_task_fails_closed_until_independent_accept() -> None:
         mutation_events=[],
     )
     assert validated["result_state"] == "completed"
+
+
+def test_workflow_distinguishes_native_and_legacy_process_review_provenance() -> None:
+    workflow = read("references/assets/orchestration/workflow.md")
+
+    for token in [
+        "`reviewer-native-receipt-v1` for native host runs",
+        "`reviewer-process-receipt-v1` for legacy sandboxed process runs",
+        "`run_native_reviewer` for the ordinary plugin-independent native path",
+        "native host read-only policy is not OS process isolation",
+        "provider-specific execution boundary",
+        "Publication validates the provider-specific reviewer-run receipt once",
+        "Later lifecycle consumers use the immutable direct current-authority binding",
+    ]:
+        assert token in workflow
+    for process_only_claim in [
+        "referencing a native `reviewer-process-receipt-v1`",
+        "Run the worker with `reviewer-process-run` using that runtime root",
+        "completion, sandbox/network/write boundary, and immutable packet/profile/event",
+        "recheck its receipt",
+    ]:
+        assert process_only_claim not in workflow
+
+
+def test_current_orchestration_instructions_do_not_depend_on_execution_flow() -> None:
+    owners = [
+        read("references/assets/orchestration/workflow.md"),
+        read("skills/orch-execute-plan/SKILL.md"),
+        read("skills/orch-review-plan/SKILL.md"),
+    ]
+    for owner in owners:
+        assert "host-native execution is sufficient" in owner
+        assert "Execution Flow is optional" in owner
+
+
+def test_review_contract_owners_use_common_provenance_and_final_knowledge_gate() -> None:
+    provenance_owners = [
+        "skills/orch-execute-plan/SKILL.md",
+        "skills/orch-review-plan/SKILL.md",
+        "references/assets/orchestration/contract/task-v1.md",
+        "rules/orchestration/orch-review-completion.md",
+        "references/assets/orchestration/workflow.md",
+    ]
+    for owner in provenance_owners:
+        assert "provider-specific reviewer-run receipt" in read(owner), owner
+
+    final_gate_owners = [
+        "skills/orch-review-plan/SKILL.md",
+        "rules/orchestration/orch-review-completion.md",
+        "references/assets/orchestration/workflow.md",
+    ]
+    for owner in final_gate_owners:
+        text = read(owner)
+        assert "Knowledge closure gates final completion and archive" in text, owner
+        assert "never precedes specification, plan, task, or integrated-implementation review" in text, owner
 
 
 def test_overlapping_writes_are_not_parallelizable() -> None:

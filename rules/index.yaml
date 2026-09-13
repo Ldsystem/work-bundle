@@ -99,6 +99,15 @@ rules:
     enforcement: must
     load: conditional
     requires: []
+  - id: orch-bounded-closure
+    path: orchestration/orch-bounded-closure.md
+    applies_when:
+      - all executor attempts for an orchestration flow are terminal and post-execution integrated review is about to begin, complete, or report status
+      - a post-execution orchestration flow reaches its fifth completed review round or must be administratively closed with unresolved blockers
+      - orchestration dispatch or reconciliation encounters finalization-required state or an active workspace blocker
+    enforcement: must
+    load: conditional
+    requires: []
   - id: orch-handoff-required
     path: orchestration/orch-handoff-required.md
     applies_when:

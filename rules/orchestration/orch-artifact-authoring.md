@@ -29,6 +29,7 @@ Keep orchestration artifacts human-readable, contract-compliant, and executable 
 - Create phases only for an actual barrier or convergence boundary. Reject speculative splits unsupported by current authority, repository, dependency, ownership, validation, or acceptance evidence.
 - When execution proves a task materially under-decomposed, return to the plan and reslice only the affected region while preserving the original binding, baseline, and accepted unaffected regions; do not repeatedly enlarge the task.
 - Bind review freshness to one canonical semantic plan projection shared by all consumers. Status-only lifecycle fields and append-only evidence references do not change that projection; requirements, scope, dependencies, validation allocation, acceptance, or authority changes do.
+- Keep pre-execution artifact revision separate from bounded post-execution review: plan and specification revisions do not consume post-execution review rounds. Do not encode a plan-version or specification-version counter as execution policy.
 - Run the compiler's canonical static task admission for every plan task before plan acceptance so missing dependencies, inconsistent authority, unsafe scope, and source-local execution artifacts fail before execution.
 - When plans contain contract-decoupled parallel tasks, include common contract groups, barrier participant maps, readiness criteria, release conditions, convergence owners, and task-level forbidden peer validation instructions.
 - Keep source-context, extra-evidence-loop, open-question, Knowledge Base Update, and body-level `Quality gate: verified|blocked` sections in specifications when required by the specification contract.
@@ -56,6 +57,7 @@ Contract loading by artifact type:
 - Do not reslice a plan or request a fresh plan review for status-only or append-only evidence changes.
 - Split phases or tasks solely because of template habit, lifecycle labels, duplicated prose, a task-count target, or another cardinality preference when the coherent artifact remains complete and executable.
 - Encode sibling in-progress implementation files as dependencies for contract-decoupled parallel task validation; use common contracts, accepted prior handoffs, and post-barrier convergence instead.
+- Use a legacy plan-version limit field in a current specification, plan, phase, or task, or describe artifact revisions as post-execution review rounds.
 - Create phases or tasks whose target files are `.work-bundle/knowledge/**`.
 - Embed implementation plan tasks inside specifications.
 - Write raw chat logs, unsupported facts, or hidden reasoning into orchestration artifacts.

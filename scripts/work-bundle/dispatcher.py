@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +42,22 @@ from registry_layout import cmd_migrate_registered_projects
 
 def _load_review_runtime():
     return _load_reviewer_workspace()._review_runtime()
+
+
+def _load_legacy_wor107_migration():
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / 'orchestration'
+        / 'legacy_wor107_migration.py'
+    )
+    spec = importlib.util.spec_from_file_location(
+        '_wb_legacy_wor107_migration', module_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f'Unable to load legacy migration utility: {module_path}')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _load_reviewer_workspace():
@@ -118,7 +135,27 @@ RECOGNIZED_COMMANDS = frozenset(
     | COMMAND_ALIASES.keys()
     | LEGACY_DEFECT_COMMANDS.keys()
     | LEGACY_COMMAND_MIGRATIONS.keys()
-)
+) | frozenset({
+    'begin-review-round', 'complete-review-round', 'review-round-status',
+    'finalize-with-blockers',
+})
+
+
+def _run_orchestration_controller(command: str, arguments: list[str]) -> int:
+    """Route the second public CLI family to the canonical controller owner."""
+
+    dispatcher = Path(__file__).resolve().parents[1] / 'orchestration' / 'dispatcher.py'
+    completed = subprocess.run(
+        [sys.executable, str(dispatcher), command, *arguments],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.stdout:
+        sys.stdout.write(completed.stdout)
+    if completed.stderr:
+        sys.stderr.write(completed.stderr)
+    return completed.returncode
 
 
 def main() -> int:
@@ -137,6 +174,11 @@ def main() -> int:
     if command in LEGACY_COMMAND_MIGRATIONS:
         return cmd_legacy_command_removed(command, LEGACY_COMMAND_MIGRATIONS[command])
     command = COMMAND_ALIASES.get(command, command)
+    if command in {
+        'begin-review-round', 'complete-review-round', 'review-round-status',
+        'finalize-with-blockers',
+    }:
+        return _run_orchestration_controller(command, parsed.args)
     if command == 'migrate-work-bundle-config':
         return cmd_migrate_work_bundle_config(parsed.args)
     if command in {'init-project', 'initialize-project'}:
@@ -175,11 +217,12 @@ def main() -> int:
         return cmd_provision_member(parsed.args)
     if command == 'cleanup-member':
         return cmd_cleanup_member(parsed.args)
-    if command in {'validate-contract', 'assert-migration-stop'}:
-        review_runtime = _load_review_runtime()
-        if command == 'validate-contract':
-            return review_runtime.cmd_validate_contract(parsed.args)
-        return review_runtime.cmd_assert_migration_stop(parsed.args)
+    if command == 'validate-contract':
+        return _load_review_runtime().cmd_validate_contract(parsed.args)
+    if command == 'assert-migration-stop':
+        legacy = _load_legacy_wor107_migration()
+        print(legacy.DEPRECATION_DIAGNOSTIC, file=sys.stderr)
+        return legacy.cmd_assert_migration_stop(parsed.args)
     if command in {'reviewer-workspace-create', 'reviewer-workspace-operation', 'reviewer-workspace-cleanup', 'reviewer-process-run'}:
         return _load_reviewer_workspace().cmd_reviewer_workspace(command, parsed.args)
     if command in {'evaluation-identity-freeze', 'evaluation-identity-complete', 'evaluation-identity-transition'}:

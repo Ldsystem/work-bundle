@@ -78,10 +78,30 @@ def _legacy_plan_identity(root: Path, plan: Path) -> dict[str, object]:
     return identity
 
 
-def test_semantic_projector_preserves_accepted_legacy_baseline_identity(tmp_path: Path) -> None:
+def test_legacy_semantic_projector_preserves_accepted_baseline_identity(tmp_path: Path) -> None:
     plan, _phase, _task = _plan_graph(tmp_path)
 
-    assert review_runtime.plan_review_identity(tmp_path, plan) == _legacy_plan_identity(tmp_path, plan)
+    assert review_runtime.legacy_plan_review_identity(tmp_path, plan) == _legacy_plan_identity(
+        tmp_path, plan
+    )
+    assert review_runtime.plan_review_identity(tmp_path, plan) != _legacy_plan_identity(
+        tmp_path, plan
+    )
+
+
+def test_legacy_identity_preserves_missing_knowledge_closure_compatibility(tmp_path: Path) -> None:
+    plan, _phase, _task = _plan_graph(tmp_path)
+    plan.write_text(
+        plan.read_text()
+        + "\n## Knowledge Base Update Carry Forward\n\n"
+        "- Disposition: required\n- Closure return: missing\n"
+        "- Source: accepted specification\n- Review Gate: resolve before archive\n",
+        encoding="utf-8",
+    )
+
+    assert review_runtime.legacy_plan_review_identity(tmp_path, plan) == _legacy_plan_identity(
+        tmp_path, plan
+    )
 
 
 def test_active_to_archived_rotation_preserves_semantic_plan_identity(tmp_path: Path) -> None:
@@ -128,6 +148,60 @@ def test_progress_and_append_only_evidence_do_not_change_semantic_plan_identity(
     )
 
     assert review_runtime.plan_review_identity(tmp_path, plan) == original
+
+
+@pytest.mark.parametrize(
+    ("heading", "label"),
+    [
+        ("## 2.1 Knowledge Base Update Carry Forward", "**Closure return**"),
+        ("## Knowledge Base Update Carry Forward", "Closure return"),
+    ],
+)
+def test_knowledge_closure_lifecycle_change_is_v2_and_legacy_compatible(
+    tmp_path: Path, heading: str, label: str
+) -> None:
+    plan, _phase, _task = _plan_graph(tmp_path)
+    plan.write_text(
+        plan.read_text()
+        + f"\n{heading}\n\n- **Disposition**: required\n- {label}: missing\n",
+        encoding="utf-8",
+    )
+    original = review_runtime.plan_review_identity(tmp_path, plan)
+    legacy = review_runtime.legacy_plan_review_identity(tmp_path, plan)
+
+    plan.write_text(plan.read_text().replace(f"{label}: missing", f"{label}: completed"))
+
+    assert review_runtime.plan_review_identity(tmp_path, plan) == original
+    assert review_runtime.legacy_plan_review_identity(tmp_path, plan) == legacy
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("Disposition: not-needed", "Disposition: required"),
+        ("Source: no durable update", "Source: accepted task findings"),
+        ("Review Gate: no follow-up", "Review Gate: persist accepted findings"),
+    ],
+)
+def test_substantive_knowledge_change_invalidates_plan_review_identity(
+    tmp_path: Path, before: str, after: str
+) -> None:
+    plan, _phase, _task = _plan_graph(tmp_path)
+    plan.write_text(
+        plan.read_text()
+        + "\n## Knowledge Base Update Carry Forward\n\n"
+        "- Disposition: not-needed\n- Closure return: missing\n"
+        "- Source: no durable update\n- Review Gate: no follow-up\n",
+        encoding="utf-8",
+    )
+    original = review_runtime.plan_review_identity(tmp_path, plan)
+
+    plan.write_text(
+        plan.read_text().replace(before, after),
+        encoding="utf-8",
+    )
+
+    assert review_runtime.plan_review_identity(tmp_path, plan) != original
 
 
 @pytest.mark.parametrize(

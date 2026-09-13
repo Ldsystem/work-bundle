@@ -128,9 +128,9 @@ def test_execute_skill_uses_compiler_independent_review_and_typed_blockers() -> 
         "there is no controller or single-agent fallback",
         "must not implement or repair task write scope",
         "one scoped rereview",
-        "acceptance_review.required: true",
         "review_required: true",
-        "does not require `verdict: accept`",
+        "validate initial executor facts without demanding or embedding the future review verdict",
+        "stored required-review authority",
         "context-blocked",
         "repository-blocked",
         "decision-blocked",
@@ -325,8 +325,8 @@ def test_workflow_makes_task_review_optional_on_the_chain() -> None:
     for token in [
         "optional task review",
         "validate-executor-result",
-        "does not require `verdict: accept`",
-        "acceptance_review.required: true",
+        "optional task review when compiled review_required: true",
+        "accepted-result materialization joins executor facts, observations, and stored review authority",
     ]:
         assert token in text
     assert "-> independent dev-code-review" not in text
@@ -358,3 +358,76 @@ def test_orch_doctor_remains_read_only() -> None:
     text = read("skills/orch-doctor/SKILL.md")
     assert "## Read-Only Constraints (skill-owned)" in text
     assert "Files changed: none" in text
+
+
+def test_bounded_closure_contract_converges_policy_controller_and_consumers() -> None:
+    rule = read("rules/orchestration/orch-bounded-closure.md")
+    index = read("rules/index.yaml")
+    execute = read("skills/orch-execute-plan/SKILL.md")
+    review = read("skills/orch-review-plan/SKILL.md")
+    review_rule = read("rules/orchestration/orch-review-completion.md")
+    artifact_rule = read("rules/orchestration/orch-artifact-authoring.md")
+    boundary_rule = read("rules/orchestration/orch-orchestration-boundary.md")
+    planner = read("skills/orch-create-implementation-plan/SKILL.md")
+    specification = read("skills/orch-create-specification/SKILL.md")
+    workflow = read("references/assets/orchestration/workflow.md")
+    plan_contract = read("references/assets/orchestration/contract/plan-v1.md")
+    specification_contract = read(
+        "references/assets/orchestration/contract/specification-v1.md"
+    )
+    metadata_template = read("references/assets/template/project.yaml")
+
+    assert "id: orch-bounded-closure" in rule
+    assert "path: orchestration/orch-bounded-closure.md" in index
+    for token in [
+        "all executor attempts are terminal",
+        "begin-review-round",
+        "complete-review-round",
+        "review-round-status",
+        "finalize-with-blockers",
+        "exact request ID and target identity",
+        "different target identity",
+        "factual controller audit-block",
+        "must not impersonate a product verdict",
+        "fifth completed round",
+        "normal final audit",
+        "persist finalization-required state",
+        "persist an active workspace blocker",
+        "finalize the knowledge disposition",
+        "archive the origin specification and plan",
+        "release owned bindings",
+        "persist terminal closure",
+        "must not reopen product work",
+    ]:
+        assert token in rule, token
+
+    for text in (execute, review, review_rule, workflow):
+        assert "post-execution review round" in text
+        assert "fifth" in text
+        assert "finalize-with-blockers" in text
+
+    for text in (artifact_rule, planner, specification, plan_contract, specification_contract):
+        assert "plan and specification revisions do not consume" in text
+        assert "review_revision_limit" not in text
+
+    for token in [
+        "metadata_version: 3",
+        "authority: workspace-working-state",
+        "workspace_root: <absolute-path-to-workspace-root>",
+        "project_root: <absolute-path-to-project-root>",
+        "orchestration_control:",
+        "post_execution_review_round_limit: 5",
+        "post_execution_review_flows: []",
+        "blockers: []",
+        "closed_flows: []",
+        "implementation_exemptions: []",
+    ]:
+        assert token in metadata_template, token
+    assert "prefer_subagent" not in metadata_template
+
+    for text in (boundary_rule, workflow):
+        assert "exhausted flow refuses reconciliation before its blocker is written" in text
+        assert "active workspace blocker refuses ordinary new work" in text
+
+    assert "retain the project shim until builtin deployment" in workflow
+    assert "remove only that owned shim" in workflow

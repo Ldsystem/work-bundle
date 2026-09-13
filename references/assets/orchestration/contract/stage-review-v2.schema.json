@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:work-bundle:orchestration:stage-review:v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "current_authority", "authority_sha256"],
+  "properties": {
+    "schema": {"const": "stage-review-v2"},
+    "authority_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "current_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["review_id", "record_sha256", "stage", "review_target_kind", "review_mode", "verdict", "target_identity"],
+      "properties": {
+        "review_id": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+        "record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "stage": {"enum": ["specification", "plan", "integrated_implementation"]},
+        "review_target_kind": {"enum": ["task", "stage"]},
+        "review_mode": {"enum": ["initial", "repair"]},
+        "verdict": {"enum": ["accept", "accepted", "repair", "blocked"]},
+        "target_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifact_id", "revision", "sha256", "source_tree"],
+          "properties": {
+            "artifact_id": {"type": "string", "minLength": 1},
+            "revision": {"type": "string", "minLength": 1},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "source_tree": {"type": ["string", "null"]}
+          }
+        }
+      }
+    }
+  }
+}

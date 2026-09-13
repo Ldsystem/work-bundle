@@ -16,6 +16,7 @@ sys.path.insert(0, str(ORCHESTRATION))
 from review_runtime import (  # noqa: E402
     ReviewContractError,
     plan_review_identity,
+    publish_review,
     resume_plan_return,
     _route_review_finding as route_review_verdict,
 )
@@ -203,13 +204,17 @@ def test_pd_03_executor_acceptance_path_has_explicit_controller_authority(
             "status": "clean",
         },
     )
+    handoff = _handoff()
+    stored_review = handoff.pop("acceptance_review")
     accepted = execution_context.materialize_accepted_task_result(
         tmp_path,
         task,
-        _handoff(),
+        handoff,
         _validated(),
+        accepted_review=stored_review,
         accepted_at="2026-09-07T00:00:00Z",
     )
+    assert "acceptance_review" not in handoff
     assert persisted == [{**binding, "accepted_result": accepted}]
     assert accepted["schema"] == "accepted-task-result-v1"
     assert accepted["owner_identity"]["owner_kind"] == "subagent"
@@ -403,9 +408,7 @@ def test_pd_09_under_decomposition_returns_only_the_affected_plan_region(
         "staleness": {"is_stale": False, "reason": None, "supersedes": None},
     }
     review = bind_review_receipt(tmp_path, review)
-    reviews = orch / "reviews"
-    reviews.mkdir()
-    (reviews / "plan.json").write_text(json.dumps(review), encoding="utf-8")
+    publish_review(tmp_path, review, current_target_identity=review["target_identity"])
 
     resumed = resume_plan_return(
         routed,
@@ -581,9 +584,7 @@ def test_pd_14_equivalent_under_decomposition_routes_by_lane_without_widening(
         "staleness": {"is_stale": False, "reason": None, "supersedes": None},
     }
     review = bind_review_receipt(tmp_path, review)
-    reviews = orch / "reviews"
-    reviews.mkdir()
-    (reviews / "pd14-plan.json").write_text(json.dumps(review), encoding="utf-8")
+    publish_review(tmp_path, review, current_target_identity=review["target_identity"])
 
     resumed = resume_plan_return(
         routed,

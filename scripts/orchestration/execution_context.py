@@ -16,6 +16,18 @@ from typing import Any, Iterable, Mapping
 from datetime import datetime, timezone
 
 
+# Both CLI families contain a top-level ``core.py``.  Mixed-process harnesses
+# must bind this module and its downstream imports to the orchestration sibling.
+_CORE_PATH = Path(__file__).with_name("core.py").resolve()
+_loaded_core = sys.modules.get("core")
+if _loaded_core is None or Path(str(getattr(_loaded_core, "__file__", ""))).resolve() != _CORE_PATH:
+    _core_spec = importlib.util.spec_from_file_location("core", _CORE_PATH)
+    if _core_spec is None or _core_spec.loader is None:
+        raise ImportError("cannot load orchestration core")
+    _loaded_core = importlib.util.module_from_spec(_core_spec)
+    sys.modules["core"] = _loaded_core
+    _core_spec.loader.exec_module(_loaded_core)
+
 from core import _member_roots, is_relative_to, read_front_matter, resolve_workspace_root
 from artifact_inputs import (_split_top_level, _split_key_value, _parse_scalar, parse_yaml_subset,
                              _read_structured, _as_list, _input_path, _resolve_spec_paths)
@@ -107,6 +119,22 @@ FORBIDDEN_EXECUTOR_RESULT_FIELDS = {
     "baseline",
     "mutation_events",
     "accepted_dependency_deltas",
+}
+FORBIDDEN_CREATION_CONTROL_FIELDS = {
+    "acceptance_review",
+    "accepted_result",
+    "accepted_result_id",
+    "accepted_at",
+    "accepted_observations",
+    "reviewer",
+    "verdict",
+    "target_identity",
+    "review_mode",
+    "repair_frontier",
+    "review_reset",
+    "reviewer_run",
+    "publication",
+    "receipt",
 }
 VALID_RESULT_STATES = {"completed", "blocked", "partial", "failed"}
 TASK_FIT_RESULTS = {"clean", "repaired", "unresolved", "skipped"}
@@ -1007,6 +1035,8 @@ def _validate_evidence_closure(
     state: str,
     reported_commands: dict[str, dict[str, Any]],
     observed_validation: list[dict[str, Any]] | None,
+    *,
+    creation_safe: bool = False,
 ) -> dict[str, Any]:
     capability = task.get("evidence_capability")
     if not isinstance(capability, dict):
@@ -1015,7 +1045,7 @@ def _validate_evidence_closure(
         return {"result": "no_validation_bearing_obligation", "invariants": []}
     if capability.get("result") != "mapped" or state != "completed":
         return {"result": "not-terminal", "invariants": []}
-    if observed_validation is None:
+    if observed_validation is None and not creation_safe:
         raise SystemExit("evidence-closure-blocked: completed mapped invariants require independent harness observation")
     closure = handoff.get("evidence_closure")
     if not isinstance(closure, dict):
@@ -1067,13 +1097,12 @@ def _validate_evidence_closure(
                 raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} is missing; route plan")
             command = str(validation.get("command") or "").strip()
             reported = reported_commands.get(command)
-            if not isinstance(reported, dict):
-                raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} is unexecuted; route task")
-            if str(reported.get("id") or "") != evidence_id or invariant_id not in _as_list(reported.get("invariant_ids")):
-                raise SystemExit(f"evidence-closure-blocked: reported evidence identity for {invariant_id} is missing; route task")
-            if reported.get("result") != "passed":
-                raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} failed; route task")
-            if observed_validation is not None:
+            if isinstance(reported, dict):
+                if str(reported.get("id") or "") != evidence_id or invariant_id not in _as_list(reported.get("invariant_ids")):
+                    raise SystemExit(f"evidence-closure-blocked: reported evidence identity for {invariant_id} is missing; route task")
+                if reported.get("result") != "passed":
+                    raise SystemExit(f"evidence-closure-blocked: {invariant_id} evidence {evidence_id} failed; route task")
+            if not creation_safe:
                 observed = observed_by_id.get(evidence_id)
                 if not isinstance(observed, dict) or invariant_id not in _as_list(observed.get("invariant_ids")):
                     raise SystemExit(f"evidence-closure-blocked: harness evidence for {invariant_id} is missing; route task")
@@ -1559,6 +1588,7 @@ def build_accepted_task_result(
     handoff: Mapping[str, Any],
     validated: Mapping[str, Any],
     *,
+    accepted_review: Mapping[str, Any] | None = None,
     accepted_at: str | None = None,
 ) -> dict[str, Any]:
     """Project a strongly validated executor result into compact durable authority."""
@@ -1576,7 +1606,7 @@ def build_accepted_task_result(
         accepted_ownership = normalize_subagent_provenance(ownership)
     except OwnershipBlocker as error:
         raise SystemExit(f"accepted task result ownership is invalid: {error.reason}") from error
-    review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), Mapping) else {}
+    review = dict(accepted_review) if isinstance(accepted_review, Mapping) else {}
     if task.get("review_required") is True and (
         review.get("required") is not True or review.get("verdict") not in {"accept", "accepted"}
     ):
@@ -1751,13 +1781,21 @@ def materialize_accepted_task_result(
     handoff: Mapping[str, Any],
     validated: Mapping[str, Any],
     *,
+    accepted_review: Mapping[str, Any] | None = None,
     accepted_at: str | None = None,
 ) -> dict[str, Any]:
     """Persist exactly one current accepted result in the existing task binding."""
 
     root = control_root.expanduser().resolve()
     binding = load_task_execution_binding(root, str(task.get("plan_id") or ""), str(task.get("task_id") or ""))
-    accepted = build_accepted_task_result(task, binding, handoff, validated, accepted_at=accepted_at)
+    accepted = build_accepted_task_result(
+        task,
+        binding,
+        handoff,
+        validated,
+        accepted_review=accepted_review,
+        accepted_at=accepted_at,
+    )
     updated = dict(binding)
     updated["accepted_result"] = accepted
     _persist_binding(updated, root)
@@ -1825,11 +1863,47 @@ def _load_materialized_accepted_task_result(
     return binding, dict(prior)
 
 
+def _validation_observation_task(task: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind the complete compiled validation definition into observation authority."""
+
+    projected = dict(task)
+    capability = (
+        dict(task.get("evidence_capability"))
+        if isinstance(task.get("evidence_capability"), Mapping)
+        else {}
+    )
+    capability["validation_definition_projection"] = [
+        dict(item)
+        for item in _as_list(task.get("validation"))
+        if isinstance(item, Mapping)
+    ]
+    projected["evidence_capability"] = capability
+    return projected
+
+
+def _transition_changed_paths(root: Path, previous: str, current: str) -> set[str]:
+    """Return both sides of every changed path without rename coalescing."""
+
+    changed = subprocess.run(
+        [
+            "git", "-C", str(root), "diff", "--no-renames", "--name-only",
+            previous, current,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if changed.returncode:
+        raise RuntimeError("Git transition paths are unavailable")
+    return {path for path in changed.stdout.splitlines() if path}
+
+
 def _claim_bound_validation_observations(
     binding: Mapping[str, Any],
     task: Mapping[str, Any],
     evidence: Mapping[str, Any],
     observation_ids: Sequence[str],
+    *,
+    reviewed_head: str | None = None,
 ) -> list[dict[str, Any]]:
     """Resolve existing observations against current validation claim identities without replay."""
 
@@ -1853,12 +1927,152 @@ def _claim_bound_validation_observations(
         Path(str(binding.get("control_root") or task.get("workspace", {}).get("root") or ""))
         / ".work-bundle/runtime/completion-provenance"
     )
+
+    def reviewed_observation(item: Mapping[str, Any], observation_id: str) -> dict[str, Any]:
+        if (
+            not reviewed_head
+            or evidence.get("status") != "clean"
+            or evidence.get("entries")
+            or _as_list(task.get("depends_on"))
+        ):
+            raise _ObservationUnavailable
+        current_head = str(evidence.get("head") or "")
+        ancestor = subprocess.run(
+            ["git", "-C", str(execution_path), "merge-base", "--is-ancestor", reviewed_head, current_head],
+            capture_output=True,
+            text=True,
+        )
+        history = subprocess.run(
+            [
+                "git", "-C", str(execution_path), "rev-list", "--first-parent",
+                "--reverse", f"{reviewed_head}..{current_head}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if ancestor.returncode or history.returncode:
+            raise _ObservationUnavailable
+        policy = _completion_provenance_module().validation_reuse_policy(item)
+        files = task.get("files") if isinstance(task.get("files"), Mapping) else {}
+        claim_paths = [
+            *_as_list(files.get("read")),
+            *_as_list(files.get("write")),
+            *policy["dependency_files"],
+        ]
+        previous = reviewed_head
+        for commit in filter(None, history.stdout.splitlines()):
+            try:
+                changed_paths = _transition_changed_paths(execution_path, previous, commit)
+            except RuntimeError as error:
+                raise _ObservationUnavailable from error
+            if any(
+                _write_scope_match(path, [str(scope) for scope in claim_paths])
+                for path in changed_paths
+            ):
+                raise _ObservationUnavailable
+            previous = commit
+
+        module = _completion_provenance_module()
+        record = module.load_observation(store, observation_id).to_dict()
+        if policy["max_age_seconds"] == 0:
+            finalization_prefix = (
+                f"initial-acceptance:{task.get('plan_id')}:{task.get('task_id')}:"
+            )
+            consumed_by = record.get("consumed_by_finalization")
+            if (
+                not isinstance(consumed_by, str)
+                or not consumed_by.startswith(finalization_prefix)
+                or consumed_by == finalization_prefix
+            ):
+                raise _ObservationUnavailable
+            producer_item = dict(item)
+            producer_item["evidence_reuse"] = {
+                **policy,
+                "max_age_seconds": 86400,
+            }
+            policy = module.validation_reuse_policy(producer_item)
+        reviewed_tree = _git(execution_path, "rev-parse", f"{reviewed_head}^{{tree}}").strip()
+        tree_listing = subprocess.run(
+            ["git", "-C", str(execution_path), "ls-tree", "-rz", "--full-tree", reviewed_head],
+            capture_output=True,
+            text=True,
+        )
+        if tree_listing.returncode or record.get("product_tree") != reviewed_tree:
+            raise _ObservationUnavailable
+        index = []
+        for entry in filter(None, tree_listing.stdout.split("\0")):
+            metadata, path = entry.split("\t", 1)
+            mode, kind, oid = metadata.split(" ", 2)
+            if kind != "blob":
+                raise _ObservationUnavailable
+            index.append((path, f"{mode} {oid} 0"))
+        definition = {
+            key: item.get(key)
+            for key in (
+                "id", "kind", "command", "mechanism", "expected",
+                "acceptable_results", "invariant_ids", "digest", "proves",
+            )
+        }
+        helper_dir = Path(module.__file__).parent
+        runners = {
+            name: hashlib.sha256((helper_dir / name).read_bytes()).hexdigest()
+            for name in (
+                "completion_provenance.py", "execution_context.py",
+                "evaluation_identity.py", "repository_preflight.py",
+            )
+        }
+        claim_task = _validation_observation_task(task)
+        authority = {
+            key: claim_task.get(key)
+            for key in (
+                "source_ids", "requirements", "constraints", "interfaces",
+                "truth_basis", "files", "evidence_capability",
+            )
+        }
+        bound = {
+            key: binding[key]
+            for key in (
+                "workspace_id", "execution_id", "repository_id", "plan_id",
+                "task_id", "execution_path",
+            )
+        }
+        source = {
+            "tree": reviewed_tree,
+            "index_digest": module._canonical_digest(index),
+        }
+        expected_state = module._canonical_digest(
+            {
+                "source": source,
+                "environment": module.validation_environment_identity(execution_path, policy),
+                "binding": bound,
+                "head": reviewed_head if policy["include_head"] else None,
+            }
+        )
+        expected_oracle = module._canonical_digest(
+            {
+                "authority": authority,
+                "check": definition,
+                "runner": runners,
+                "freshness_policy": policy,
+            }
+        )
+        if (
+            record.get("command_digest") != module._canonical_digest(definition)
+            or record.get("state_digest") != expected_state
+            or record.get("oracle_digest") != expected_oracle
+            or record.get("mutation_epoch") != store.mutation_epoch
+            or datetime.fromisoformat(str(record.get("freshness_deadline")).replace("Z", "+00:00"))
+            < datetime.now(timezone.utc)
+        ):
+            raise _ObservationUnavailable
+        return record
+
     matched: list[dict[str, Any]] = []
     for position, item in enumerate(validation_items, start=1):
         try:
             observation = _completion_provenance_module().observe_validation(
                 binding,
-                task,
+                _validation_observation_task(task),
                 item,
                 evidence,
                 no_validation_replay,
@@ -1868,9 +2082,19 @@ def _claim_bound_validation_observations(
                 store, str(observation.get("observation_id") or "")
             ).to_dict()
         except (_ObservationUnavailable, _completion_provenance_module().CompletionProvenanceError) as error:
-            raise SystemExit(
-                "an existing current claim-bound validation observation is required"
-            ) from error
+            try:
+                record = reviewed_observation(item, ids[position - 1])
+                observation = {"observation_id": record["observation_id"]}
+            except (
+                _ObservationUnavailable,
+                _completion_provenance_module().CompletionProvenanceError,
+                KeyError,
+                TypeError,
+                ValueError,
+            ) as fallback_error:
+                raise SystemExit(
+                    "an existing current claim-bound validation observation is required"
+                ) from fallback_error
         if record["result"]["exit_code"] != 0:
             raise SystemExit("validation evidence is not a passing observation")
         matched.append(
@@ -1896,10 +2120,93 @@ def materialize_accepted_task_review(
     *,
     accepted_at: str | None = None,
     validation_evidence_ids: Sequence[str] | None = None,
+    executor_handoff: Mapping[str, Any] | None = None,
+    validated_executor_result: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Compose prior executor authority with one standalone current review."""
+    """Compose executor authority with one published current task review."""
 
     root = control_root.expanduser().resolve()
+    initial_acceptance = (
+        executor_handoff is not None or validated_executor_result is not None
+    )
+    if initial_acceptance:
+        expected_initial = {
+            "causal_class": "initial_acceptance",
+            "affected_task": str(task.get("task_id") or ""),
+            "authorized_lifecycle_action": "materialize_accepted_result",
+        }
+        if (
+            not isinstance(executor_handoff, Mapping)
+            or not isinstance(validated_executor_result, Mapping)
+            or not isinstance(causal_classification, Mapping)
+            or dict(causal_classification) != expected_initial
+            or validation_evidence_ids is not None
+        ):
+            raise SystemExit(
+                "initial accepted task review requires exact executor result authority"
+            )
+        binding = load_task_execution_binding(
+            root, str(task.get("plan_id") or ""), str(task.get("task_id") or "")
+        )
+        try:
+            from review_runtime import (
+                ReviewContractError,
+                load_stored_review,
+                stored_review_target_identity,
+            )
+
+            target_identity = stored_review_target_identity(root, review_reference)
+            review, validated_review = load_stored_review(
+                root,
+                review_reference,
+                current_target_identity=target_identity,
+            )
+        except (ReviewContractError, KeyError, TypeError, ValueError) as error:
+            raise SystemExit(f"Accepted initial task review is invalid: {error}") from error
+        task_id = str(task.get("task_id") or "")
+        if (
+            task.get("review_required") is not True
+            or validated_review.verdict != "accepted"
+            or validated_review.review_mode != "initial"
+            or validated_review.repair_frontier is not None
+            or validated_review.review_reset is not None
+            or validated_review.target_identity.get("artifact_id") != task_id
+        ):
+            raise SystemExit("accepted initial task review must bind the exact current task")
+        owner = validated_executor_result.get("task_ownership")
+        if not isinstance(owner, Mapping):
+            raise SystemExit("accepted initial task review requires validated executor ownership")
+        if validated_review.reviewer.get("agent_id") == owner.get("agent_id"):
+            raise SystemExit("accepted initial task review must be independent from the executor owner")
+        execution_path = Path(str(binding.get("execution_path") or "")).expanduser().resolve()
+        try:
+            evidence = capture_repository_evidence(execution_path)
+        except RuntimeError as error:
+            raise SystemExit("accepted initial task review Git identity is unavailable") from error
+        identity = validated_review.target_identity
+        if (
+            evidence.get("status") != "clean"
+            or evidence.get("entries")
+            or evidence.get("head") != identity.get("revision")
+            or evidence.get("tree") != identity.get("source_tree")
+            or review.get("reviewed_head") != identity.get("revision")
+        ):
+            raise SystemExit(
+                "accepted initial task review does not match the clean exact source identity"
+            )
+        accepted = build_accepted_task_result(
+            task,
+            binding,
+            executor_handoff,
+            validated_executor_result,
+            accepted_review=review,
+            accepted_at=accepted_at,
+        )
+        updated = dict(binding)
+        updated["accepted_result"] = accepted
+        _persist_binding(updated, root)
+        return accepted
+
     expected_classification = {
         "causal_class", "affected_task", "authorized_lifecycle_action",
     }
@@ -2031,6 +2338,7 @@ def materialize_accepted_task_review(
             task,
             evidence,
             validation_evidence_ids or prior["validation_evidence_ids"],
+            reviewed_head=reviewed_head,
         )
         current_validation_ids = sorted(item["observation_id"] for item in matched_validation)
 
@@ -3603,6 +3911,14 @@ def _observe_completed_validation(
     from review_runtime import require_plan_reviews
     require_plan_reviews(control_root, _find_plan(control_root, str(task["plan_id"]))[0])
     binding = load_task_execution_binding(control_root, str(task["plan_id"]), str(task["task_id"]))
+    fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), Mapping) else {}
+    if (
+        isinstance(binding.get("accepted_result"), Mapping)
+        and fit.get("result") != "repaired"
+    ):
+        raise SystemExit(
+            "accepted task result already exists; consume it without rerunning validation"
+        )
     if workspace_id and str(binding.get("workspace_id") or "") != str(workspace_id):
         raise SystemExit("Task execution binding workspace_id mismatch")
     if execution_id and str(binding.get("execution_id") or "") != str(execution_id):
@@ -3630,13 +3946,39 @@ def _observe_completed_validation(
         accepted_dependency_paths=accepted_paths,
     )
     for item in required_items:
+        policy = _completion_provenance_module().validation_reuse_policy(item)
+        observed_item = item
+        finalization_id = None
+        if policy["max_age_seconds"] == 0:
+            # A live check cannot be reusable by later lifecycle consumers, but
+            # initial acceptance still needs one immutable producer-to-consumer
+            # observation. Keep it recoverable for the atomic acceptance call;
+            # the stable finalization claim and accepted-result guard prevent a
+            # later validation dispatch from treating it as reusable evidence.
+            observed_item = dict(item)
+            observed_item["evidence_reuse"] = {
+                **policy,
+                "max_age_seconds": 86400,
+            }
+            finalization_identity = semantic_digest(
+                {
+                    "command": str(item.get("command") or "").strip(),
+                    "repair": fit.get("result") == "repaired",
+                    "source": pre_batch,
+                }
+            )
+            finalization_id = (
+                f"initial-acceptance:{task['plan_id']}:{task['task_id']}:"
+                f"{finalization_identity}"
+            )
         observed = _completion_provenance_module().observe_validation(
-            binding, task, item, pre_batch,
+            binding, _validation_observation_task(task), observed_item, pre_batch,
             lambda receipt: _observe_validation_item(item, execution_root, task, receipt),
             lambda: capture_repository_evidence(execution_root),
+            finalization_id=finalization_id,
         )
         command = str(item.get("command")).strip()
-        reported_item = reported_commands[command] if reported_commands is not None else None
+        reported_item = reported_commands.get(command) if reported_commands is not None else None
         if reported_item is not None and reported_item.get("result") != observed["result"]:
             raise SystemExit(
                 f"Executor result validation for {command} does not match observed {observed['result']}"
@@ -3881,14 +4223,23 @@ def validate_executor_result_for_task(
     accepted_dependency_deltas: Iterable[Mapping[str, object]] | None = None,
     prior_ownership: Mapping[str, Mapping[str, object]] | None = None,
     repair_continuity: Mapping[str, Mapping[str, object] | RepairContinuity] | None = None,
+    review_repair_frontier: Mapping[str, object] | None = None,
     authorized_replacements: Iterable[str] | None = None,
     preparing_review: bool = False,
+    repair_review_preparation: bool = False,
+    creation_safe: bool = False,
 ) -> dict[str, Any]:
+    if repair_review_preparation and not preparing_review:
+        raise SystemExit("repair review preparation requires preparing_review")
     if handoff.get("type") != "executor-result":
         raise SystemExit("Handoff is not executor-result")
     for field in FORBIDDEN_EXECUTOR_RESULT_FIELDS:
         if field in handoff:
             raise SystemExit(f"Executor result contains forbidden field {field}")
+    if creation_safe or preparing_review:
+        for field in FORBIDDEN_CREATION_CONTROL_FIELDS:
+            if field in handoff:
+                raise SystemExit(f"Executor result contains wrong-owner field {field}")
     task_id = str(task.get("task_id") or "")
     plan_id = str(task.get("plan_id") or "")
     if not task_id or not plan_id:
@@ -3915,10 +4266,7 @@ def validate_executor_result_for_task(
     if state in {"completed", "partial"}:
         _assert_task_fit_check(handoff, task_id, state)
         _assert_changed_paths_in_write_scope(handoff, task_files)
-    if preparing_review:
-        review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
-        if (task.get("review_required") is True) != (review.get("required") is True):
-            raise SystemExit("Executor result acceptance_review.required must match compiled review_required")
+    if preparing_review or creation_safe or "acceptance_review" not in handoff:
         acceptance_review_sequence = None
     else:
         acceptance_review_sequence = _assert_handoff_review_matches_task(handoff, task, state)
@@ -3927,19 +4275,32 @@ def validate_executor_result_for_task(
         for item in _as_list(task.get("validation"))
         if isinstance(item, dict) and item.get("command")
     ]
+    capability = task.get("evidence_capability") if isinstance(task.get("evidence_capability"), dict) else {}
     observed_validation = None
     evidence_closure = None
     reported_commands: dict[str, dict[str, Any]] = {}
     if state == "completed" and required_items:
-        reported = handoff.get("validation") if isinstance(handoff.get("validation"), dict) else {}
-        reported_commands = {
-            str(item.get("command", "")).strip(): item
-            for item in _as_list(reported.get("commands"))
-            if isinstance(item, dict)
-        }
+        reported_value = handoff.get("validation")
+        if reported_value is not None and not isinstance(reported_value, dict):
+            raise SystemExit("Executor result validation report must be a mapping")
+        reported = reported_value if isinstance(reported_value, dict) else {}
+        reported_items = reported.get("commands", [])
+        if not isinstance(reported_items, list):
+            raise SystemExit("Executor result validation commands must be a list")
+        for reported_item in reported_items:
+            if not isinstance(reported_item, dict):
+                raise SystemExit("Executor result validation commands must contain mappings")
+            command = str(reported_item.get("command") or "").strip()
+            if not command or command in reported_commands:
+                raise SystemExit("Executor result reported validation command is missing or duplicated")
+            if reported_item.get("result") not in {"passed", "failed", "skipped"}:
+                raise SystemExit("Executor result reported validation result is invalid")
+            reported_commands[command] = reported_item
         for item in required_items:
             command = str(item.get("command")).strip()
             if command not in reported_commands:
+                if creation_safe or observe or capability.get("result") == "mapped":
+                    continue
                 raise SystemExit(f"Executor result is missing fresh required validation: {command}")
             reported_item = reported_commands[command]
             compiled_kind = str(item.get("kind") or "").strip().lower()
@@ -3957,11 +4318,19 @@ def validate_executor_result_for_task(
                 raise SystemExit(
                     f"Executor result validation for {command} must be {allowed_text}; got {result_value}"
                 )
-    capability = task.get("evidence_capability") if isinstance(task.get("evidence_capability"), dict) else {}
     if state == "completed" and capability.get("result") == "mapped":
-        if not observe:
+        if not observe and not creation_safe:
             raise SystemExit(
                 "evidence-closure-blocked: completed mapped invariants require independent harness observation"
+            )
+        if creation_safe:
+            evidence_closure = _validate_evidence_closure(
+                handoff,
+                task,
+                state,
+                reported_commands,
+                None,
+                creation_safe=True,
             )
     else:
         evidence_closure = _validate_evidence_closure(
@@ -3979,6 +4348,21 @@ def validate_executor_result_for_task(
         repository_entries = _validated_repository_evidence(handoff, True)
     if evidence_applicability["codegraph"]["required"]:
         codegraph_entries = _validated_codegraph_evidence(handoff, repository_entries)
+    if creation_safe:
+        delegation = handoff.get("delegation_evidence")
+        if not isinstance(delegation, Mapping):
+            raise SystemExit("Executor result is missing delegation_evidence")
+        try:
+            normalize_subagent_provenance(delegation)
+        except OwnershipBlocker as error:
+            raise SystemExit(str(error)) from error
+        return {
+            "knowledge_disposition": knowledge_disposition,
+            "unresolved": unresolved,
+            "result_state": state,
+            "evidence_applicability": evidence_applicability,
+            "evidence_closure": evidence_closure,
+        }
     if observe and (repository_entries or codegraph_entries):
         _observe_repository_and_codegraph_evidence(
             task,
@@ -3987,6 +4371,49 @@ def validate_executor_result_for_task(
                 codegraph_required=evidence_applicability["codegraph"]["required"],
                 accepted_dependency_deltas=accepted_dependency_deltas,
             )
+
+    task_ownership = None
+    fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
+    requires_repair_continuity = (
+        fit.get("result") == "repaired"
+        and (repair_review_preparation or not preparing_review)
+        and acceptance_review_sequence != "initial-reset"
+    )
+    if (
+        state == "completed"
+        and required_items
+        and observe
+        and requires_repair_continuity
+    ):
+        if mutation_events is None:
+            raise AcceptanceOwnershipError(
+                "review-blocked: completed task requires harness-owned mutation_events evidence"
+            )
+        runtime_mutation_events = list(mutation_events)
+        if any(not isinstance(event, Mapping) for event in runtime_mutation_events):
+            raise AcceptanceOwnershipError("Runtime mutation_events must contain mappings")
+        try:
+            task_ownership = validate_task_acceptance_ownership(
+                delegation_evidence=(
+                    handoff.get("delegation_evidence")
+                    if isinstance(handoff.get("delegation_evidence"), dict)
+                    else None
+                ),
+                mutation_events=runtime_mutation_events,
+                write_scope=_as_list(task_files.get("write")),
+                validations_passed=True,
+                operation="repair",
+            )
+            _validate_repair_acceptance_continuity(
+                task=task,
+                current_ownership=task_ownership,
+                prior_ownership=prior_ownership,
+                repair_continuity=repair_continuity,
+                review_repair_frontier=review_repair_frontier,
+                authorized_replacements=authorized_replacements,
+            )
+        except OwnershipBlocker as error:
+            raise AcceptanceOwnershipError(str(error)) from error
 
     if state == "completed" and required_items and observe:
         observed_validation = _observe_completed_validation(
@@ -4008,7 +4435,6 @@ def validate_executor_result_for_task(
             raise SystemExit(
                 "evidence-closure-blocked: completed mapped invariants require produced harness observations and passed evidence closure"
             )
-    task_ownership = None
     if state == "completed":
         if mutation_events is None:
             raise AcceptanceOwnershipError(
@@ -4017,7 +4443,6 @@ def validate_executor_result_for_task(
         runtime_mutation_events = list(mutation_events)
         if any(not isinstance(event, Mapping) for event in runtime_mutation_events):
             raise AcceptanceOwnershipError("Runtime mutation_events must contain mappings")
-        fit = handoff.get("task_fit_check") if isinstance(handoff.get("task_fit_check"), dict) else {}
         operation = "repair" if fit.get("result") == "repaired" else "implementation"
         try:
             task_ownership = validate_task_acceptance_ownership(
@@ -4031,13 +4456,13 @@ def validate_executor_result_for_task(
                 validations_passed=True,
                 operation=operation,
             )
-            if operation == "repair" and acceptance_review_sequence != "initial-reset":
+            if operation == "repair" and requires_repair_continuity:
                 _validate_repair_acceptance_continuity(
                     task=task,
-                    handoff=handoff,
                     current_ownership=task_ownership,
                     prior_ownership=prior_ownership,
                     repair_continuity=repair_continuity,
+                    review_repair_frontier=review_repair_frontier,
                     authorized_replacements=authorized_replacements,
                 )
         except OwnershipBlocker as error:
@@ -4053,13 +4478,23 @@ def validate_executor_result_for_task(
     }
 
 
+def validate_executor_result_creation_for_task(
+    handoff: dict[str, Any], task: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate immutable executor facts without observation, review, or acceptance."""
+
+    return validate_executor_result_for_task(
+        handoff, task, observe=False, preparing_review=False, creation_safe=True
+    )
+
+
 def _validate_repair_acceptance_continuity(
     *,
     task: Mapping[str, object],
-    handoff: Mapping[str, object],
     current_ownership: Mapping[str, object],
     prior_ownership: Mapping[str, Mapping[str, object]] | None,
     repair_continuity: Mapping[str, Mapping[str, object] | RepairContinuity] | None,
+    review_repair_frontier: Mapping[str, object] | None,
     authorized_replacements: Iterable[str] | None,
 ) -> None:
     """Bind repair acceptance to the scheduler's original owner and identities."""
@@ -4099,8 +4534,7 @@ def _validate_repair_acceptance_continuity(
     baseline = binding.get("baseline")
     if not isinstance(baseline, Mapping) or not baseline.get("head"):
         raise OwnershipBlocker("review-blocked", f"{task_id} repair baseline identity is unavailable")
-    review = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), Mapping) else {}
-    frontier = review.get("repair_frontier") if isinstance(review.get("repair_frontier"), Mapping) else {}
+    frontier = review_repair_frontier or {}
     ownership = binding.get("ownership") if isinstance(binding.get("ownership"), Mapping) else {}
     try:
         expected = RepairContinuity(
@@ -4155,6 +4589,9 @@ def _assert_task_fit_check(handoff: dict[str, Any], task_id: str, state: str) ->
 
 def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: dict[str, Any]) -> None:
     try:
+        read_scope = {
+            canonical_relative_path(str(path)) for path in _as_list(task_files.get("read"))
+        }
         write_scope = {
             canonical_relative_path(str(path)) for path in _as_list(task_files.get("write"))
         }
@@ -4163,13 +4600,19 @@ def _assert_changed_paths_in_write_scope(handoff: dict[str, Any], task_files: di
     changes = handoff.get("changes") if isinstance(handoff.get("changes"), dict) else {}
     for item in _as_list(changes.get("files")):
         if not isinstance(item, dict):
-            continue
+            raise SystemExit("Executor result file entry must be a mapping with a non-empty path")
         path = str(item.get("path") or "").strip()
+        if not path:
+            raise SystemExit("Executor result file entry must provide a non-empty path")
         try:
-            canonical = canonical_relative_path(path) if path else ""
+            canonical = canonical_relative_path(path)
         except OwnershipBlocker as error:
             raise SystemExit(f"Executor result changed path is unsafe: {path}") from error
-        if canonical and canonical not in write_scope:
+        if item.get("action") == "inspected" and canonical not in read_scope | write_scope:
+            raise SystemExit(
+                f"Executor result inspected path is outside task inspection scope: {path}"
+            )
+        if item.get("action") != "inspected" and canonical not in write_scope:
             raise SystemExit(f"Executor result changed path is outside task write scope: {path}")
 
 
@@ -4375,6 +4818,17 @@ def _task_context(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any],
                 raise SystemExit(f"Ambiguous source ID {identifier} across linked specifications")
             records[identifier] = value
     return root, task_path, task_data, task_body, records, source_paths
+
+
+def task_flow_id(args: argparse.Namespace) -> str:
+    """Resolve a task's bound plan identity without compiling or writing artifacts."""
+
+    root = resolve_workspace_root(args)
+    task_path = _input_path(
+        args.task, root, root / ".work-bundle/orchestration/plan", "task"
+    )
+    task, _ = _read_structured(task_path)
+    return _artifact_id(task, "plan_id", task_path)
 
 
 def _contains_resolved_source_record(value: Any, record: str) -> bool:
@@ -4791,6 +5245,11 @@ def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
 
 def build_task_brief(args: argparse.Namespace) -> Path:
     target, brief = _compile_task_brief(args)
+    from bounded_closure import require_orchestration_admission
+    require_orchestration_admission(
+        resolve_workspace_root(args), operation="reconciliation",
+        flow_id=str(brief["task_brief"]["plan_id"]),
+    )
     _maybe_bind_execution_from_args(args, brief["task_brief"])
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(_dump_yaml(brief)) + "\n", encoding="utf-8")
@@ -4984,6 +5443,106 @@ def build_product_review_candidate(
     return candidate
 
 
+def _task_review_target_identity(
+    task: Mapping[str, Any], head: str, source_tree: str | None
+) -> dict[str, Any]:
+    identity = {
+        "artifact_id": str(task.get("task_id") or ""),
+        "revision": head,
+        "source_tree": source_tree,
+    }
+    return {
+        **identity,
+        "sha256": semantic_digest(
+            {"task": _accepted_task_projection(task), "source": identity}
+        ),
+    }
+
+
+def _stored_task_repair_preparation(
+    root: Path,
+    task: Mapping[str, Any],
+    *,
+    base: str,
+    repaired_identity: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Derive one repair frontier from immutable published controller authority."""
+
+    from review_runtime import (
+        ReviewContractError,
+        _repair_frontier,
+        load_stored_review,
+        review_evidence_identity,
+    )
+
+    task_id = str(task.get("task_id") or "")
+    matches: list[tuple[dict[str, Any], Any]] = []
+    store = root / ".work-bundle/orchestration/reviews"
+    for path in sorted(store.glob("*.json")) if store.is_dir() else []:
+        try:
+            raw = path.read_bytes()
+            candidate = json.loads(raw)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(candidate, dict):
+            continue
+        identity = candidate.get("target_identity")
+        if (
+            candidate.get("review_target_kind") != "task"
+            or candidate.get("verdict") != "repair"
+            or not isinstance(identity, Mapping)
+            or identity.get("artifact_id") != task_id
+            or identity.get("revision") != base
+        ):
+            continue
+        reference = {
+            "review_id": str(candidate.get("review_id") or ""),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+        try:
+            record, validated = load_stored_review(
+                root, reference, current_target_identity=identity
+            )
+        except (ReviewContractError, KeyError, TypeError, ValueError) as error:
+            raise SystemExit(f"review-blocked: prior task review is invalid: {error}") from error
+        matches.append((record, validated))
+    if not matches:
+        return None, None
+    if len(matches) != 1:
+        raise SystemExit("review-blocked: prior task repair review is ambiguous")
+    previous, validated = matches[0]
+    blocking = [
+        item
+        for item in _as_list(previous.get("findings"))
+        if isinstance(item, Mapping)
+        and item.get("severity") == "blocking"
+        and item.get("recommended_owner") == "task_owner"
+    ]
+    finding_ids = [str(item.get("finding_id") or "") for item in blocking]
+    boundaries = sorted(
+        {
+            str(evidence.get("locator") or "")
+            for item in blocking
+            for evidence in _as_list(item.get("evidence"))
+            if isinstance(evidence, Mapping) and evidence.get("locator")
+        }
+    )
+    if not finding_ids or any(not value for value in finding_ids) or not boundaries:
+        raise SystemExit("review-blocked: prior repair review lacks closed blocking boundaries")
+    frontier = {
+        "prior_review_id": validated.review_id,
+        "blocking_finding_ids": finding_ids,
+        "previous_reviewed_identity": dict(validated.target_identity),
+        "repaired_identity": dict(repaired_identity),
+        "affected_boundaries": boundaries,
+        "frozen_evidence_reference": review_evidence_identity(previous),
+    }
+    try:
+        return previous, dict(_repair_frontier(frontier))
+    except (ReviewContractError, KeyError, TypeError, ValueError) as error:
+        raise SystemExit(f"review-blocked: invalid derived repair frontier: {error}") from error
+
+
 def build_review_package(args: argparse.Namespace) -> Path:
     if not args.base or not args.head:
         raise SystemExit("build-review-package requires --base and --head")
@@ -5008,30 +5567,19 @@ def build_review_package(args: argparse.Namespace) -> Path:
         execution_root = Path(str(binding["execution_path"])).resolve()
         if _resolve_commit(execution_root, str(args.base)) != accepted_source["head"]:
             raise SystemExit("review-blocked: accepted-task repair base must be the accepted source")
-        review_request = {}
         review_mode = "repair"
     elif args.handoff:
         handoff_root = root / ".work-bundle/orchestration/handoff"
         handoff_path = _input_path(args.handoff, root, handoff_root, "handoff")
         handoff, _ = _read_structured(handoff_path)
-        validated = validate_executor_result_for_task(
-            handoff, task, observe=True, preparing_review=True, **_observation_kwargs(args)
-        )
-        review_request = handoff.get("acceptance_review") if isinstance(handoff.get("acceptance_review"), dict) else {}
-        review_mode = str(review_request.get("review_mode") or "initial")
+        # Reject malformed immutable executor facts before controller-runtime
+        # lookup can obscure the actual creation/admission owner.
+        validate_executor_result_creation_for_task(handoff, task)
+        review_mode = "initial"
     else:
         raise SystemExit("build-review-package requires an initial executor handoff or accepted task result")
     if review_mode not in {"initial", "repair"}:
         raise SystemExit("review-blocked: review_mode must be initial or repair")
-    repair_frontier: dict[str, Any] | None = None
-    if review_mode == "repair" and accepted is None:
-        try:
-            from review_runtime import ReviewContractError, _repair_frontier
-            repair_frontier = dict(_repair_frontier(review_request.get("repair_frontier")))
-        except (ReviewContractError, TypeError, ValueError) as error:
-            raise SystemExit(f"review-blocked: invalid repair frontier: {error}") from error
-    elif review_request.get("repair_frontier") not in (None, {}):
-        raise SystemExit("review-blocked: initial review cannot carry repair_frontier")
     if accepted is None:
         binding = load_task_execution_binding(root, plan_id, task_id)
     execution_root = Path(str(binding["execution_path"])).resolve()
@@ -5041,6 +5589,28 @@ def build_review_package(args: argparse.Namespace) -> Path:
     head, diff, name_status, out_of_scope = _review_diff(
         execution_root, base, str(args.head), write_paths
     )
+    head_tree = (
+        None
+        if head.startswith("worktree:")
+        else _git(execution_root, "rev-parse", f"{head}^{{tree}}").strip()
+    )
+    target_identity = _task_review_target_identity(task, head, head_tree)
+    previous_review: dict[str, Any] | None = None
+    repair_frontier: dict[str, Any] | None = None
+    if accepted is None:
+        previous_review, repair_frontier = _stored_task_repair_preparation(
+            root, task, base=base, repaired_identity=target_identity
+        )
+        review_mode = "repair" if repair_frontier is not None else "initial"
+        validated = validate_executor_result_for_task(
+            handoff,
+            task,
+            observe=True,
+            preparing_review=True,
+            repair_review_preparation=review_mode == "repair",
+            review_repair_frontier=repair_frontier,
+            **_observation_kwargs(args),
+        )
     if repair_frontier is not None:
         base_tree = _git(execution_root, "rev-parse", f"{base}^{{tree}}").strip()
         if head.startswith("worktree:"):
@@ -5215,6 +5785,18 @@ def build_review_package(args: argparse.Namespace) -> Path:
     review_target = target.with_name("review-package.md")
     review_target.parent.mkdir(parents=True, exist_ok=True)
     review_target.write_text(package, encoding="utf-8")
+    if accepted is None:
+        preparation = {
+            "review_mode": review_mode,
+            "review_target_kind": "task",
+            "repair_frontier": repair_frontier,
+            "review_reset": None,
+            "target_identity": target_identity,
+            **({"previous_review": previous_review} if previous_review is not None else {}),
+        }
+        review_target.with_name("review-preparation.json").write_text(
+            json.dumps(preparation, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     metrics = compiled_context_metrics(
         task,
         review_package=package,
@@ -5245,6 +5827,21 @@ def cmd_build_review_package(args: argparse.Namespace) -> None:
 def cmd_observe_task_validation(args: argparse.Namespace) -> None:
     _, brief_document = _compile_task_brief(args)
     task = brief_document["task_brief"]
+    from bounded_closure import require_orchestration_admission, resolve_working_workspace
+    authority = resolve_working_workspace(resolve_workspace_root(args))
+    if authority is not None:
+        require_orchestration_admission(
+            authority,
+            operation="reconciliation",
+            flow_id=str(task["plan_id"]),
+        )
+    for item in task["validation"]:
+        policy = _completion_provenance_module().validation_reuse_policy(item)
+        if policy["max_age_seconds"] == 0:
+            raise SystemExit(
+                "non-reusable validation must use validate-executor-result so its "
+                "single observation is captured by initial acceptance"
+            )
     runtime = _observation_kwargs(args)
     observed = _observe_completed_validation(
         {},
@@ -5277,7 +5874,7 @@ def cmd_validate_executor_result(args: argparse.Namespace) -> None:
     validated = validate_executor_result_for_task(
         handoff, task, observe=True, **_observation_kwargs(args)
     )
-    if validated.get("result_state") == "completed":
+    if validated.get("result_state") == "completed" and task.get("review_required") is not True:
         materialize_accepted_task_result(root, task, handoff, validated)
     print(handoff_path.relative_to(root).as_posix())
 

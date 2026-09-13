@@ -4,13 +4,23 @@ from __future__ import annotations
 import argparse
 import json
 
-from core import HANDOFF_TYPES
+from core import HANDOFF_TYPES, resolve_workspace_root
+from bounded_closure import (
+    BoundedClosureError,
+    configure_begin_review_round_parser,
+    configure_complete_review_round_parser,
+    configure_finalize_with_blockers_parser,
+    configure_review_round_status_parser,
+    require_orchestration_admission,
+    resolve_working_workspace,
+)
 from doctor import cmd_doctor
 from documents import cmd_git_status, cmd_next_action_candidates, cmd_related, cmd_state, cmd_write_doc
 from execution_context import (
     cmd_build_review_package,
     cmd_build_task_brief,
     cmd_observe_task_validation,
+    task_flow_id,
     cmd_validate_executor_result,
 )
 from handoffs import cmd_index_handoffs, cmd_list_handoffs, cmd_set_handoff_status, cmd_write_handoff
@@ -27,6 +37,8 @@ RECOGNIZED_COMMANDS = frozenset({
     "list-specs", "set-spec-status", "index-specs", "write-plan", "list-plans",
     "set-plan-status", "archive-plan", "index-plans", "write-phase", "write-task",
     "write-handoff", "list-handoffs", "set-handoff-status", "index-handoffs",
+    "begin-review-round", "complete-review-round", "review-round-status",
+    "finalize-with-blockers",
 })
 
 
@@ -178,12 +190,53 @@ def build_parser() -> argparse.ArgumentParser:
     set_handoff.add_argument("--status", required=True)
     set_handoff.set_defaults(func=cmd_set_handoff_status)
     sub.add_parser("index-handoffs", parents=[parent]).set_defaults(func=cmd_index_handoffs)
+    begin_round = sub.add_parser("begin-review-round", parents=[parent])
+    configure_begin_review_round_parser(begin_round)
+    complete_round = sub.add_parser("complete-review-round", parents=[parent])
+    configure_complete_review_round_parser(complete_round)
+    round_status = sub.add_parser("review-round-status", parents=[parent])
+    configure_review_round_status_parser(round_status)
+    forced_finalization = sub.add_parser("finalize-with-blockers", parents=[parent])
+    configure_finalize_with_blockers_parser(forced_finalization)
     return parser
+
+
+def _require_public_admission(args: argparse.Namespace) -> None:
+    operation = {
+        "write-spec": "ordinary_new", "write-plan": "ordinary_new",
+        "write-phase": "reconciliation", "write-task": "reconciliation",
+        "build-task-brief": "reconciliation", "build-review-package": "reconciliation",
+        "observe-task-validation": "reconciliation",
+        "begin-review-round": "reconciliation",
+        "complete-review-round": "round_completion",
+        "review-round-status": "read_only",
+        "finalize-with-blockers": "finalization",
+        "archive-plan": "finalization", "set-spec-status": "finalization",
+        "set-plan-status": "finalization", "set-handoff-status": "finalization",
+    }.get(args.command)
+    if operation is not None:
+        root = resolve_working_workspace(resolve_workspace_root(args))
+        flow_id = (
+            getattr(args, "flow_id", None)
+            or getattr(args, "plan_id", None)
+            or getattr(args, "id", None)
+        )
+        if flow_id is None and getattr(args, "task", None):
+            flow_id = task_flow_id(args)
+        try:
+            if root is not None:
+                require_orchestration_admission(root, operation=operation, flow_id=flow_id)
+        except BoundedClosureError as error:
+            raise SystemExit(str(error)) from error
 
 
 def main() -> int:
     args = build_parser().parse_args()
-    args.func(args)
+    _require_public_admission(args)
+    try:
+        args.func(args)
+    except BoundedClosureError as error:
+        raise SystemExit(str(error)) from error
     return 0
 
 

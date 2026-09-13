@@ -169,6 +169,49 @@ def write_v4_registry(
     )
 
 
+@pytest.mark.parametrize("indentless", [False, True])
+def test_v4_repository_entries_accept_yaml_sequence_indentation_and_merge_device_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    indentless: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repo = repository(tmp_path)
+    registry = tmp_path / "projects.yaml"
+    marker = "- " if indentless else "  - "
+    child = "  " if indentless else "    "
+    metadata = workspace / ".work-bundle/project.yaml"
+    metadata.parent.mkdir()
+    metadata.write_text(
+        "metadata_version: 4\n"
+        "workspace:\n"
+        "  id: wb-test\n"
+        "  mode: multi-repository\n"
+        "source_repositories:\n"
+        f"{marker}id: repo-main\n"
+        f"{child}role: source\n"
+        f"{child}remote:\n"
+        f"{child}  canonical: https://example.com/repo.git\n"
+        f"{child}default_branch: main\n"
+        f"{child}materialization:\n"
+        f"{child}  required: true\n",
+        encoding="utf-8",
+    )
+    head = git(repo, "rev-parse", "HEAD")
+    write_v4_registry(registry, repo, observed_head=head)
+    monkeypatch.setattr(preflight_module, "project_registry_path", lambda: registry)
+
+    entries = preflight_module._metadata_repository_entries(workspace)
+
+    assert len(entries) == 1
+    assert entries[0]["id"] == "repo-main"
+    assert entries[0]["remote"] == "https://example.com/repo.git"
+    assert entries[0]["materialization_required"] is True
+    assert entries[0]["project_root"] == str(repo.resolve())
+    assert entries[0]["observed_head"] == head
+
+
 def test_v4_preflight_keeps_missing_device_observation_as_typed_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

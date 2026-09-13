@@ -3,14 +3,29 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from artifact_inputs import _as_list, _input_path, _read_structured, _resolve_spec_paths, parse_yaml_subset
+import bounded_closure
+from review_identity import (
+    STRUCTURAL_PLAN_PROJECTION_SCHEMA,
+    legacy_semantic_plan_artifact,
+    plan_artifact_projection_digest,
+    semantic_plan_member_key,
+    structural_plan_artifact_v2,
+)
+from current_review_authority import (
+    authority_path as _current_review_authority_path,
+    load_authority as _load_current_review_authority,
+    write_authority as _write_current_review_authority,
+)
 
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
@@ -67,6 +82,14 @@ ROUTES: dict[str, tuple[str, str, str]] = {
     "environment_failure": ("environment", "environment_owner", "recover_environment"),
     "advisory_enhancement": ("implementation", "backlog_owner", "record_advisory"),
 }
+FINDING_CLASSES = frozenset(ROUTES)
+FINDING_ARTIFACTS = frozenset(
+    {"specification", "plan", "task", "implementation", "validation_oracle", "environment"}
+)
+FINDING_OWNERS = frozenset(
+    {"specification_owner", "plan_owner", "task_owner", "oracle_owner", "environment_owner", "backlog_owner"}
+)
+FINDING_ACTIONS = frozenset(value[2] for value in ROUTES.values())
 
 FINDING_KEYS = frozenset(
     {
@@ -81,6 +104,21 @@ FINDING_KEYS = frozenset(
         "summary",
         "recommended_owner",
         "disposition",
+    }
+)
+FINDING_V2_KEYS = frozenset(
+    {
+        "schema", "finding_id", "stage", "reviewer_observation", "evidence",
+        "target_identity", "summary", "controller_decision",
+    }
+)
+REVIEWER_OBSERVATION_KEYS = frozenset(
+    {"finding_id", "severity", "requirement_id", "boundary", "evidence", "expected", "observed", "owner"}
+)
+CONTROLLER_DECISION_KEYS = frozenset(
+    {
+        "classification", "first_broken_artifact", "affected_owner", "action",
+        "obligation_basis", "evidence_basis",
     }
 )
 TARGET_KEYS = frozenset({"artifact_id", "revision", "sha256", "source_tree"})
@@ -424,7 +462,10 @@ def stage_evidence_manifest(root: Path, source_root: Path, context: Mapping[str,
             continue
         entry = {"locator": key, "role": role, "sha256": available[key]["sha256"]}
         if role in {"target", "plan_member", "verified_specification"}:
-            entry["identity"] = artifact_review_identity(root / key[8:])
+            path = root / key[8:]
+            entry["identity"] = _stage_authority_identity(
+                path, stage=str(context["stage"]), role=role
+            )
         entries.append(entry)
     return {"schema": "stage-evidence-manifest-v1", "stage": context["stage"],
             "target_identity": context["target_identity"], "entries": entries,
@@ -433,7 +474,29 @@ def stage_evidence_manifest(root: Path, source_root: Path, context: Mapping[str,
                if context.get("review_mode") == "repair" else {})}
 
 
-def validate_stage_evidence(root: Path, context: Mapping[str, Any], packet: Mapping[str, Any]) -> None:
+def _stage_authority_identity(
+    path: Path,
+    *,
+    stage: str,
+    role: str,
+    content: str | None = None,
+) -> dict[str, Any]:
+    if stage != "specification" and role in {"target", "plan_member"}:
+        identity = artifact_review_identity(path, content=content)
+        identity["sha256"] = plan_artifact_projection_digest(
+            structural_plan_artifact_v2(path, content=content)
+        )
+        return identity
+    return artifact_review_identity(path, content=content)
+
+
+def validate_stage_evidence(
+    root: Path,
+    context: Mapping[str, Any],
+    packet: Mapping[str, Any],
+    *,
+    frozen_control_evidence: Mapping[str, str] | None = None,
+) -> None:
     manifest = packet.get("stage_evidence_manifest")
     if (not isinstance(manifest, dict) or manifest.get("schema") != "stage-evidence-manifest-v1"
             or manifest.get("stage") != context["stage"] or manifest.get("target_identity") != context["target_identity"]
@@ -468,7 +531,31 @@ def validate_stage_evidence(root: Path, context: Mapping[str, Any], packet: Mapp
         if entry.get("role") != role or locator not in artifacts or entry.get("sha256") != artifacts[locator].get("sha256"):
             raise ReviewContractError("stage evidence artifact binding mismatch")
         if role in {"target", "plan_member", "verified_specification"}:
-            if entry.get("identity") != artifact_review_identity(root / locator[8:]):
+            path = root / locator[8:]
+            current_identity = _stage_authority_identity(
+                path, stage=str(context["stage"]), role=role
+            )
+            if entry.get("identity") == current_identity:
+                continue
+            frozen_content = (frozen_control_evidence or {}).get(locator)
+            if frozen_content is None:
+                raise ReviewContractError("stage evidence authority identity changed")
+            if (
+                hashlib.sha256(frozen_content.encode()).hexdigest()
+                != artifacts[locator].get("sha256")
+            ):
+                raise ReviewContractError("stage evidence artifact binding mismatch")
+            frozen_raw_identity = artifact_review_identity(path, content=frozen_content)
+            frozen_semantic_identity = _stage_authority_identity(
+                path,
+                stage=str(context["stage"]),
+                role=role,
+                content=frozen_content,
+            )
+            if (
+                entry.get("identity") != frozen_raw_identity
+                or frozen_semantic_identity != current_identity
+            ):
                 raise ReviewContractError("stage evidence authority identity changed")
 
 
@@ -512,6 +599,111 @@ def _known_task_execution_ids(root: Path, task_id: str) -> set[str]:
     return ids
 
 
+def _native_reviewer_module():
+    path = Path(__file__).resolve().parents[1] / "work-bundle/reviewer_workspace.py"
+    existing = sys.modules.get("reviewer_workspace")
+    if existing is not None:
+        if Path(existing.__file__).resolve() != path:
+            raise ReviewContractError("native reviewer module collision")
+        return existing
+    spec = importlib.util.spec_from_file_location("reviewer_workspace", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _validate_native_run_proof(receipt, packet, result, path, immutable_file, canonical):
+    """Re-derive observed host identity/result from immutable actual run input/output."""
+    runtime = _native_reviewer_module()
+    try:
+        stdout = immutable_file(path.with_suffix(".stdout.jsonl"))
+        stderr = immutable_file(path.with_suffix(".stderr.txt"))
+        request_bytes = immutable_file(path.with_suffix(".request.json"))
+        request = json.loads(request_bytes)
+        controller_path = path.with_suffix(".controller.json")
+        controller_evidence = (
+            json.loads(immutable_file(controller_path)) if controller_path.exists() else None
+        )
+        combined_evidence = [
+            *request.get("evidence", []),
+            *(controller_evidence or []),
+        ]
+        launch = json.loads(immutable_file(path.with_suffix(".launch.json")))
+        argv = launch["argv"]
+        host_id, worker = runtime.parse_native_reviewer_transcript(stdout.decode(), stderr.decode())
+        if (receipt.get("host_run_id") != host_id or receipt.get("isolation") != runtime.NATIVE_ISOLATION
+                or receipt.get("stdout_sha256") != hashlib.sha256(stdout).hexdigest()
+                or receipt.get("stderr_sha256") != hashlib.sha256(stderr).hexdigest()
+                or receipt.get("request_sha256") != hashlib.sha256(request_bytes).hexdigest()
+                or receipt.get("argv_sha256") != canonical(argv)
+                or receipt.get("executable_sha256") != launch.get("executable_sha256")
+                or not SHA256_RE.fullmatch(str(receipt.get("executable_sha256", "")))
+                or not Path(argv[0]).is_absolute()
+                or argv != runtime._native_reviewer_argv(Path(argv[0]), Path(argv[9]), argv[11])
+                or set(request) != {"instructions", "review_input", "evidence"}
+                or request["review_input"] != runtime._native_review_input(
+                    packet, combined_evidence if controller_evidence is not None else None
+                ) or not isinstance(request["instructions"], str)
+                or not request["instructions"].strip()):
+            raise ValueError("native launch/input mismatch")
+        evidence = request["evidence"]
+        artifacts = runtime._native_review_artifacts(packet, combined_evidence)
+        if len(evidence) != len(artifacts):
+            raise ValueError("native input evidence mismatch")
+        for expected, actual in zip(artifacts, evidence):
+            if (set(actual) != {*expected, "content"} or any(actual[key] != value for key, value in expected.items())
+                    or hashlib.sha256(actual["content"].encode()).hexdigest() != expected["sha256"]):
+                raise ValueError("native input evidence mismatch")
+        if controller_evidence is not None:
+            controller_locators = runtime._controller_only_artifact_locators(
+                packet, combined_evidence
+            )
+            controller_artifacts = [
+                item for item in packet["artifacts"]
+                if item.get("locator") in controller_locators
+            ]
+            if len(controller_evidence) != len(controller_artifacts):
+                raise ValueError("native controller evidence mismatch")
+            for expected, actual in zip(controller_artifacts, controller_evidence):
+                if (
+                    set(actual) != {*expected, "content"}
+                    or any(actual[key] != value for key, value in expected.items())
+                    or hashlib.sha256(actual["content"].encode()).hexdigest() != expected["sha256"]
+                ):
+                    raise ValueError("native controller evidence mismatch")
+        key = "task_review_context" if result.get("review_target_kind", "stage") == "task" else "stage_review_context"
+        context = {**packet[key], "agent_id": host_id, "execution_id": host_id}
+        compact = key == "task_review_context" or (context.get("stage") == "integrated_implementation" and "task_review" in worker)
+        if compact:
+            observed = runtime._task_product_judgment_review(
+                worker, review_id=receipt["review_id"], context=context, packet=packet,
+                started_at=receipt["started_at"], completed_at=receipt["completed_at"],
+                previous_review=result.get("previous_review"), integrated_stage=key == "stage_review_context")
+        else:
+            observed = runtime._stage_product_judgment_review(
+                worker, review_id=receipt["review_id"], context=context, packet=packet,
+                started_at=receipt["started_at"], completed_at=receipt["completed_at"],
+                previous_review=result.get("previous_review"))
+        if (
+            observed != _reviewer_bound_review(result)
+            or receipt.get("review_result") != observed
+            or receipt.get(key) != context
+        ):
+            raise ValueError("native judgment/result mismatch")
+        frozen_control_evidence: dict[str, str] = {}
+        for item in combined_evidence:
+            locator = item.get("locator")
+            content = item.get("content")
+            if not isinstance(locator, str) or not locator.startswith("control:"):
+                continue
+            if not isinstance(content, str) or locator in frozen_control_evidence:
+                raise ValueError("native control evidence is invalid")
+            frozen_control_evidence[locator] = content
+        return context, frozen_control_evidence
+    except (ValueError, TypeError, KeyError, IndexError, AttributeError, runtime.ReviewerWorkspaceError) as error:
+        raise ReviewContractError("native reviewer-run provenance does not bind this accepted review") from error
+
+
 def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     reference = review.get("reviewer_run")
     if not isinstance(reference, dict) or set(reference) != {"run_id", "sha256"}:
@@ -538,9 +730,18 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
     def canonical(value: Any) -> str:
         return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     result = {key: value for key, value in review.items() if key != "reviewer_run"}
+    bound_result = _reviewer_bound_review(result)
+    receipt_result = receipt.get("review_result", result)
     kind = str(review.get("review_target_kind") or "stage")
     context_key = "task_review_context" if kind == "task" else "stage_review_context"
     context = _mapping(receipt.get(context_key, {}), "reviewer-run provenance context")
+    native = receipt.get("schema") == "reviewer-native-receipt-v1"
+    packet_context = packet.get(context_key)
+    frozen_control_evidence: dict[str, str] = {}
+    if native:
+        packet_context, frozen_control_evidence = _validate_native_run_proof(
+            receipt, packet, result, path, immutable_file, canonical
+        )
     mode = "direct_source" if review["evidence"]["mode"] == "direct" else review["evidence"]["mode"]
     review_context = {
         "review_mode": review.get("review_mode", "initial"),
@@ -554,19 +755,22 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
         "repair_frontier": context.get("repair_frontier"),
         "review_reset": context.get("review_reset"),
     }
-    if (receipt.get("schema") != "reviewer-process-receipt-v1" or receipt.get("run_id") != run_id
+    if (receipt.get("schema") not in {"reviewer-process-receipt-v1", "reviewer-native-receipt-v1"} or receipt.get("run_id") != run_id
             or receipt.get("review_id") != review["review_id"] or receipt.get("status") != "passed"
-            or receipt.get("exit_code") != 0 or receipt.get("review_result_sha256") != canonical(result)
-            or receipt.get("packet_sha256") != canonical(packet) or packet.get(context_key) != context
+            or receipt.get("exit_code") != 0
+            or receipt.get("review_result_sha256") != canonical(receipt_result)
+            or ("review_result" in receipt and receipt_result != bound_result)
+            or ("review_result" not in receipt and result != bound_result)
+            or receipt.get("packet_sha256") != canonical(packet) or packet_context != context
             or context.get("target_identity") != review["target_identity"]
             or (kind == "stage" and context.get("stage") != review["stage"])
             or context.get("agent_id") != review["reviewer"]["agent_id"]
             or context.get("evidence_mode") != review["reviewer"]["context_origin"]
             or context.get("capability") != review["reviewer"]["capability"] or context.get("evidence_mode") != mode
             or review_context != receipt_context
-            or receipt.get("isolation") != {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
+            or (not native and receipt.get("isolation") != {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"})
             or not context.get("execution_id")
-            or receipt.get("sandbox_profile_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".profile.sb"))).hexdigest()
+            or (not native and receipt.get("sandbox_profile_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".profile.sb"))).hexdigest())
             or receipt.get("event_log_sha256") != hashlib.sha256(immutable_file(path.with_suffix(".events.jsonl"))).hexdigest()):
         raise ReviewContractError("reviewer-run provenance does not bind this accepted review")
     known = (
@@ -575,7 +779,12 @@ def _validate_reviewer_run(root: Path, review: Mapping[str, Any]) -> None:
         else _known_execution_ids(root, str(review["stage"]), review["target_identity"])
     )
     if kind == "stage":
-        validate_stage_evidence(root, context, packet)
+        validate_stage_evidence(
+            root,
+            context,
+            packet,
+            frozen_control_evidence=frozen_control_evidence,
+        )
     if run_id in known or context["execution_id"] in known:
         raise ReviewContractError("reviewer-run provenance overlaps author/repair execution")
 
@@ -601,91 +810,24 @@ def artifact_review_identity(path: Path, *, content: str | None = None) -> dict[
             "sha256": hashlib.sha256(payload.encode()).hexdigest(), "source_tree": None}
 
 
-PLAN_APPEND_ONLY_FIELDS = frozenset(
-    {
-        "accepted_result",
-        "accepted_results",
-        "accepted_result_reference",
-        "accepted_result_references",
-        "evidence_reference",
-        "evidence_references",
-        "review_id",
-        "target_identity",
-        "review_mode",
-        "repair_frontier",
-        "review_reset",
-    }
-)
-
-
-def _semantic_plan_value(value: Any, *, top_level: bool = False) -> Any:
-    if isinstance(value, dict):
-        projected: dict[str, Any] = {}
-        created = value.get("date_created")
-        for key, child in sorted(value.items()):
-            if key in PLAN_APPEND_ONLY_FIELDS:
-                continue
-            if top_level and key in {"status", "last_updated", "updated_at"}:
-                continue
-            if key == "status":
-                projected[key] = "Planned"
-            elif key in {"last_updated", "updated_at"} and created is not None:
-                projected[key] = _semantic_plan_value(created)
-            elif key == "verdict":
-                projected[key] = "pending"
-            elif key == "reviewed_head":
-                projected[key] = ""
-            elif key == "findings":
-                projected[key] = []
-            else:
-                projected[key] = _semantic_plan_value(child)
-        return projected
-    if isinstance(value, list):
-        return [_semantic_plan_value(child) for child in value]
-    return value
-
-
-def _semantic_plan_artifact(path: Path, *, content: str | None = None) -> dict[str, Any]:
-    text = path.read_text(encoding="utf-8") if content is None else content.rstrip() + "\n"
-    if not text.startswith("---\n") or "\n---\n" not in text[4:]:
-        raise SystemExit(f"stage review: missing artifact front matter: {path}")
-    raw, body = text[4:].split("\n---\n", 1)
-    metadata = parse_yaml_subset(raw)
-    if not isinstance(metadata, dict) or not metadata.get("id"):
-        raise SystemExit(f"stage review: missing artifact identity: {path}")
-    return {"metadata": _semantic_plan_value(metadata, top_level=True), "body": body}
-
-
-def _semantic_plan_artifact_digest(projection: Mapping[str, Any]) -> str:
-    payload = json.dumps(
-        [projection["metadata"], projection["body"]],
-        sort_keys=True,
-        default=str,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()
-
-
-def _semantic_plan_member_key(plan_root: Path, path: Path) -> str:
-    parts = list(path.relative_to(plan_root).parts)
-    if parts and parts[0] == "archived":
-        parts[0] = "active"
-    return Path(*parts).as_posix()
-
-
-def semantic_plan_projection(
-    root: Path, plan_path: Path, *, content: str | None = None
+def _plan_projection(
+    root: Path,
+    plan_path: Path,
+    *,
+    content: str | None,
+    artifact_projector: Any,
+    schema: str | None,
 ) -> dict[str, Any]:
-    """Return the canonical executable projection used by plan review freshness."""
+    """Build a plan graph projection with a selected versioned artifact projector."""
 
     plan_root = root / ".work-bundle/orchestration/plan"
     if not plan_path.resolve().is_relative_to(plan_root.resolve()):
         raise SystemExit("stage review: root plan escapes plan store")
-    root_projection = _semantic_plan_artifact(plan_path, content=content)
+    root_projection = artifact_projector(plan_path, content=content)
     plan_data = root_projection["metadata"]
     plan_id = str(plan_data["id"])
     members = {
-        _semantic_plan_member_key(plan_root, plan_path): _semantic_plan_artifact_digest(
+        semantic_plan_member_key(plan_root, plan_path): plan_artifact_projection_digest(
             root_projection
         )
     }
@@ -697,27 +839,64 @@ def semantic_plan_projection(
         data, _ = _read_structured(path)
         if str(data.get("plan_id", "")) != plan_id:
             continue
-        members[_semantic_plan_member_key(plan_root, path)] = _semantic_plan_artifact_digest(
-            _semantic_plan_artifact(path)
+        members[semantic_plan_member_key(plan_root, path)] = plan_artifact_projection_digest(
+            artifact_projector(path)
         )
     specifications = [
         artifact_review_identity(path) for path in _resolve_spec_paths(root, {}, plan_data)
     ]
-    return {
+    projection = {
         "members": members,
         "specifications": specifications,
     }
+    if schema is not None:
+        projection["schema"] = schema
+    return projection
+
+
+def legacy_semantic_plan_projection(
+    root: Path, plan_path: Path, *, content: str | None = None
+) -> dict[str, Any]:
+    """Return the original projection exclusively for interpreting legacy identities."""
+
+    return _plan_projection(
+        root,
+        plan_path,
+        content=content,
+        artifact_projector=legacy_semantic_plan_artifact,
+        schema=None,
+    )
+
+
+def structural_plan_projection_v2(
+    root: Path, plan_path: Path, *, content: str | None = None
+) -> dict[str, Any]:
+    """Return the documented V2 structural projection."""
+
+    return _plan_projection(
+        root,
+        plan_path,
+        content=content,
+        artifact_projector=structural_plan_artifact_v2,
+        schema=STRUCTURAL_PLAN_PROJECTION_SCHEMA,
+    )
+
+
+def semantic_plan_projection(
+    root: Path, plan_path: Path, *, content: str | None = None
+) -> dict[str, Any]:
+    """Compatibility entry point; all current callers receive V2."""
+
+    return structural_plan_projection_v2(root, plan_path, content=content)
 
 
 def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any]) -> None:
-    """Read native records; historical prose is not an acceptance envelope."""
+    """Consume one current direct record; publication owns historical verification."""
     accepted = []
-    matching_values = []
     review_ids: set[str] = set()
-    historical: dict[str, Mapping[str, Any]] = {}
+    unsupported_legacy = False
     review_root = root / ".work-bundle/orchestration/reviews"
     try:
-        documents = []
         for path in sorted(review_root.rglob("*")):
             if path.suffix not in {".json", ".yaml", ".yml"} or not path.is_file():
                 continue
@@ -728,46 +907,34 @@ def _require_current_review(root: Path, stage: str, identity: Mapping[str, Any])
                 continue
             if value["stage"] == stage:
                 review_key = str(value["review_id"])
-                if review_key in historical:
+                if review_key in review_ids:
                     raise ReviewContractError("stage review IDs must be globally unique")
-                historical[review_key] = value
-            documents.append(value)
-        for value in documents:
+                review_ids.add(review_key)
             # Old target records remain history, not current acceptance candidates.
-            # In particular, a superseded legacy evidence mode must not poison a
-            # valid replacement review for the actual current artifact.
-            if value["stage"] != stage or value.get("target_identity") != identity:
-                continue
-            record = validate_stage_review(value)
-            if record.review_mode == "repair":
-                frontier = record.repair_frontier
-                assert frontier is not None
-                prior = historical.get(str(frontier["prior_review_id"]))
-                if prior is None:
-                    raise ReviewContractError("repair review predecessor is missing")
-                record = validate_review_sequence(value, previous_review=prior)
-            elif record.review_reset is not None:
-                prior = historical.get(str(record.review_reset["prior_review_id"]))
-                if prior is None:
-                    raise ReviewContractError("initial review reset predecessor is missing")
-                record = validate_review_sequence(
-                    value, previous_review=prior, material_change=str(record.review_reset["reason_class"])
-                )
-            if record.review_id in review_ids:
-                raise ReviewContractError("stage review IDs must be globally unique")
-            review_ids.add(record.review_id)
-            if record.stage == stage and record.target_identity == identity:
-                accepted.append(record)
-                matching_values.append(value)
+                if value.get("target_identity") == identity:
+                    record = _validated_current_review_envelope(value)
+                    raw_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                    direct = _load_current_review_authority(root, value, raw_digest)
+                    if direct is None:
+                        try:
+                            if path.stat().st_mode & 0o222:
+                                raise ReviewContractError(
+                                    "legacy current review lacks direct immutable authority"
+                                )
+                            _validate_legacy_current_record(value)
+                        except ReviewContractError:
+                            unsupported_legacy = True
+                            continue
+                    if record.stage == stage and record.target_identity == identity:
+                        accepted.append(record)
         latest_time = max((_rfc3339_utc(item.completed_at, "completed_at") for item in accepted), default=None)
         latest = [item for item in accepted if _rfc3339_utc(item.completed_at, "completed_at") == latest_time]
         if latest and all(item.verdict == "accepted" and not item.staleness["is_stale"] for item in latest):
-            for item in latest:
-                value = next(value for value in matching_values if value["review_id"] == item.review_id)
-                _validate_reviewer_run(root, value)
             return
     except (ValueError, OSError) as error:
         raise SystemExit(f"stage review blocked: {error}") from error
+    if unsupported_legacy:
+        raise SystemExit("stage review blocked: legacy current review lacks direct immutable authority")
     raise SystemExit(f"stage review blocked: fresh accepted {stage} review required for {dict(identity)}")
 
 
@@ -779,6 +946,18 @@ def require_specification_review(root: Path, path: Path, *, content: str | None 
 
 def plan_review_identity(root: Path, plan_path: Path, *, content: str | None = None) -> dict[str, Any]:
     projection = semantic_plan_projection(root, plan_path, content=content)
+    identity = artifact_review_identity(plan_path, content=content)
+    payload = json.dumps(projection, sort_keys=True, default=str)
+    identity["sha256"] = hashlib.sha256(payload.encode()).hexdigest()
+    return identity
+
+
+def legacy_plan_review_identity(
+    root: Path, plan_path: Path, *, content: str | None = None
+) -> dict[str, Any]:
+    """Interpret a pre-V2 identity without using it for new review writes."""
+
+    projection = legacy_semantic_plan_projection(root, plan_path, content=content)
     identity = artifact_review_identity(plan_path, content=content)
     payload = json.dumps(projection, sort_keys=True, default=str)
     identity["sha256"] = hashlib.sha256(payload.encode()).hexdigest()
@@ -823,6 +1002,49 @@ class ReviewFindingV1:
 
 
 @dataclass(frozen=True)
+class ReviewFindingV2:
+    finding_id: str
+    stage: str
+    reviewer_observation: Mapping[str, Any]
+    evidence: tuple[Mapping[str, Any], ...]
+    target_identity: Mapping[str, Any]
+    summary: str
+    controller_decision: Mapping[str, Any] | None
+
+    @property
+    def severity(self) -> str:
+        return str(self.reviewer_observation["severity"])
+
+    @property
+    def finding_class(self) -> str | None:
+        return (
+            str(self.controller_decision["classification"])
+            if self.controller_decision is not None else None
+        )
+
+    @property
+    def first_broken_artifact(self) -> str | None:
+        return (
+            str(self.controller_decision["first_broken_artifact"])
+            if self.controller_decision is not None else None
+        )
+
+    @property
+    def recommended_owner(self) -> str | None:
+        return (
+            str(self.controller_decision["affected_owner"])
+            if self.controller_decision is not None else None
+        )
+
+    @property
+    def disposition(self) -> str | None:
+        return (
+            str(self.controller_decision["action"])
+            if self.controller_decision is not None else None
+        )
+
+
+@dataclass(frozen=True)
 class EvidenceCausalClassificationV1:
     """Agent-authored causal judgment required before evidence can route action."""
 
@@ -847,7 +1069,7 @@ class StageReviewV1:
     reviewer: Mapping[str, Any]
     evidence: Mapping[str, Any]
     verdict: str
-    findings: tuple[ReviewFindingV1, ...]
+    findings: tuple[ReviewFindingV1 | ReviewFindingV2, ...]
     started_at: str
     completed_at: str
     staleness: Mapping[str, Any]
@@ -1058,7 +1280,21 @@ def _baseline_identity(value: Any) -> dict[str, str]:
     return {"head": str(identity["head"]), "tree": str(identity["tree"])}
 
 
-def validate_review_finding(value: Mapping[str, Any]) -> ReviewFindingV1:
+def _validate_finding_evidence(value: Any) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, list):
+        raise ReviewContractError("evidence must be a list")
+    evidence: list[Mapping[str, Any]] = []
+    for index, raw_item in enumerate(value):
+        item = _mapping(raw_item, f"evidence[{index}]")
+        _closed(item, EVIDENCE_ITEM_KEYS, f"evidence[{index}]")
+        _enum(item["kind"], {"authority", "source", "test", "runtime", "environment"}, f"evidence[{index}].kind")
+        for key in ("locator", "digest_or_identity", "observation"):
+            _nonempty(item[key], f"evidence[{index}].{key}")
+        evidence.append(item)
+    return tuple(evidence)
+
+
+def _validate_review_finding_v1(value: Mapping[str, Any]) -> ReviewFindingV1:
     record = _mapping(value, "review_finding_v1")
     _closed(record, FINDING_KEYS, "review_finding_v1")
     finding_id = _identifier(record["finding_id"], "finding_id")
@@ -1074,17 +1310,7 @@ def validate_review_finding(value: Mapping[str, Any]) -> ReviewFindingV1:
         {expected_disposition, *TERMINAL_FINDING_DISPOSITIONS},
         "disposition",
     )
-    evidence_raw = record["evidence"]
-    if not isinstance(evidence_raw, list):
-        raise ReviewContractError("evidence must be a list")
-    evidence: list[Mapping[str, Any]] = []
-    for index, raw_item in enumerate(evidence_raw):
-        item = _mapping(raw_item, f"evidence[{index}]")
-        _closed(item, EVIDENCE_ITEM_KEYS, f"evidence[{index}]")
-        _enum(item["kind"], {"authority", "source", "test", "runtime", "environment"}, f"evidence[{index}].kind")
-        for key in ("locator", "digest_or_identity", "observation"):
-            _nonempty(item[key], f"evidence[{index}].{key}")
-        evidence.append(item)
+    evidence = _validate_finding_evidence(record["evidence"])
     if severity == "blocking" and (obligation_basis == "none" or not evidence):
         raise ReviewContractError("blocking finding requires a non-none obligation basis and evidence")
     if finding_class == "advisory_enhancement" and severity == "blocking":
@@ -1098,12 +1324,118 @@ def validate_review_finding(value: Mapping[str, Any]) -> ReviewFindingV1:
         severity,
         expected_artifact,
         obligation_basis,
-        tuple(evidence),
+        evidence,
         target,
         summary,
         expected_owner,
         disposition,
     )
+
+
+def _validate_review_finding_v2(value: Mapping[str, Any]) -> ReviewFindingV2:
+    record = _mapping(value, "review_finding_v2")
+    _closed(record, FINDING_V2_KEYS, "review_finding_v2")
+    if record["schema"] != "review-finding-v2":
+        raise ReviewContractError("review_finding_v2.schema is invalid")
+    finding_id = _identifier(record["finding_id"], "finding_id")
+    stage = _enum(record["stage"], FINDING_STAGES, "stage")
+    observation = _mapping(record["reviewer_observation"], "reviewer_observation")
+    _closed(observation, REVIEWER_OBSERVATION_KEYS, "reviewer_observation")
+    if observation["finding_id"] != finding_id:
+        raise ReviewContractError("reviewer_observation finding_id does not match finding identity")
+    _enum(observation["severity"], FINDING_SEVERITIES, "reviewer_observation.severity")
+    for field in REVIEWER_OBSERVATION_KEYS - {"severity"}:
+        _nonempty(observation[field], f"reviewer_observation.{field}")
+    evidence = _validate_finding_evidence(record["evidence"])
+    target = _target_identity(record["target_identity"])
+    summary = _nonempty(record["summary"], "summary")
+    decision_raw = record["controller_decision"]
+    decision: Mapping[str, Any] | None = None
+    if decision_raw is not None:
+        supplied = _mapping(decision_raw, "controller_decision")
+        _closed(supplied, CONTROLLER_DECISION_KEYS, "controller_decision")
+        classification = _enum(supplied["classification"], FINDING_CLASSES, "controller_decision.classification")
+        artifact = _enum(supplied["first_broken_artifact"], FINDING_ARTIFACTS, "controller_decision.first_broken_artifact")
+        owner = _enum(supplied["affected_owner"], FINDING_OWNERS, "controller_decision.affected_owner")
+        action = _enum(
+            supplied["action"], {*FINDING_ACTIONS, *TERMINAL_FINDING_DISPOSITIONS},
+            "controller_decision.action",
+        )
+        obligation = _enum(supplied["obligation_basis"], OBLIGATION_BASES, "controller_decision.obligation_basis")
+        basis = _nonempty(supplied["evidence_basis"], "controller_decision.evidence_basis")
+        if observation["severity"] == "blocking" and (obligation == "none" or not evidence):
+            raise ReviewContractError("blocking controller decision requires obligation and evidence")
+        decision = {
+            "classification": classification, "first_broken_artifact": artifact,
+            "affected_owner": owner, "action": action,
+            "obligation_basis": obligation, "evidence_basis": basis,
+        }
+    return ReviewFindingV2(
+        finding_id=finding_id, stage=stage, reviewer_observation=dict(observation),
+        evidence=evidence, target_identity=target, summary=summary,
+        controller_decision=decision,
+    )
+
+
+def validate_review_finding(value: Mapping[str, Any]) -> ReviewFindingV1 | ReviewFindingV2:
+    """Validate v2 agent-owned findings or preserve the exact legacy v1 interpretation."""
+    if value.get("schema") == "review-finding-v2":
+        return _validate_review_finding_v2(value)
+    return _validate_review_finding_v1(value)
+
+
+def classify_review_observation(
+    value: Mapping[str, Any], decision: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Attach one controller-authored decision without inferring it from observation fields."""
+    finding = _validate_review_finding_v2(value)
+    if finding.controller_decision is not None:
+        raise ReviewContractError("controller decision is already present")
+    classified = {**dict(value), "controller_decision": dict(decision)}
+    _validate_review_finding_v2(classified)
+    return classified
+
+
+def apply_review_finding_decisions(
+    review: Mapping[str, Any], decisions: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Apply controller decisions to every unclassified v2 observation in one review."""
+    record = dict(_mapping(review, "review"))
+    findings = record.get("findings")
+    if not isinstance(findings, list) or not isinstance(decisions, Mapping):
+        raise ReviewContractError("review findings and controller decisions must be collections")
+    required = {
+        str(item.get("finding_id"))
+        for item in findings
+        if isinstance(item, Mapping)
+        and item.get("schema") == "review-finding-v2"
+        and item.get("controller_decision") is None
+    }
+    if set(decisions) != required:
+        raise ReviewContractError("controller decisions must match unclassified v2 findings exactly")
+    classified = []
+    for item in findings:
+        if isinstance(item, Mapping) and item.get("finding_id") in required:
+            classified.append(classify_review_observation(item, decisions[str(item["finding_id"])]))
+        else:
+            classified.append(item)
+    result = {**record, "findings": classified}
+    _validated_review_envelope(result)
+    return result
+
+
+def _reviewer_bound_review(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Project controller decisions out of a review while retaining reviewer observations."""
+    record = dict(value)
+    findings = record.get("findings")
+    if isinstance(findings, list):
+        record["findings"] = [
+            {**dict(item), "controller_decision": None}
+            if isinstance(item, Mapping) and item.get("schema") == "review-finding-v2"
+            else item
+            for item in findings
+        ]
+    return record
 
 
 def _route_review_finding(
@@ -1112,12 +1444,23 @@ def _route_review_finding(
     unaffected_evidence_identities: Sequence[Mapping[str, Any]] = (),
     original_binding_identity: Mapping[str, Any] | None = None,
     original_baseline_identity: Mapping[str, Any] | None = None,
+    controller_decision: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    finding = validate_review_finding(value)
-    expected_action = ROUTES[finding.finding_class][2]
+    candidate = (
+        classify_review_observation(value, controller_decision)
+        if controller_decision is not None else value
+    )
+    finding = validate_review_finding(candidate)
+    if isinstance(finding, ReviewFindingV2):
+        if finding.controller_decision is None:
+            raise ReviewContractError("v2 routing requires a controller decision")
+        expected_action = finding.disposition
+        assert expected_action is not None
+    else:
+        expected_action = ROUTES[finding.finding_class][2]
     if finding.disposition in TERMINAL_FINDING_DISPOSITIONS:
         raise ReviewContractError("terminal adjudicator disposition cannot authorize repair mutation")
-    if finding.disposition != expected_action:
+    if isinstance(finding, ReviewFindingV1) and finding.disposition != expected_action:
         raise ReviewContractError("review finding routing disposition is invalid")
     if (
         not isinstance(previous_scope_expansions, int)
@@ -1174,21 +1517,112 @@ def _validated_review_envelope(value: Mapping[str, Any]) -> StageReviewV1:
 
     if value.get("review_target_kind") == "task":
         return validate_task_acceptance_review(value)
-    current = validate_stage_review(value)
     previous = value.get("previous_review")
+    envelope = {key: item for key, item in value.items() if key != "previous_review"}
+    current = validate_stage_review(envelope)
     if current.review_mode == "repair":
         if not isinstance(previous, Mapping) or "previous_review" in previous:
             raise ReviewContractError("stage repair review requires exactly one previous_review")
-        return validate_review_sequence(value, previous_review=previous)
+        return validate_review_sequence(envelope, previous_review=previous)
     if current.review_reset is not None:
         if not isinstance(previous, Mapping) or "previous_review" in previous:
             raise ReviewContractError("stage reset review requires exactly one previous_review")
         return validate_review_sequence(
-            value,
+            envelope,
             previous_review=previous,
             material_change=str(current.review_reset["reason_class"]),
         )
-    return validate_review_sequence(value)
+    return validate_review_sequence(envelope)
+
+
+def _validated_current_review_envelope(value: Mapping[str, Any]) -> StageReviewV1:
+    """Interpret one digest-bound current record without predecessor traversal."""
+
+    record = {key: item for key, item in value.items() if key != "previous_review"}
+    if record.get("review_target_kind") == "task":
+        return validate_task_review_record(record)
+    return validate_stage_review(record)
+
+
+def _validate_legacy_current_record(value: Mapping[str, Any]) -> None:
+    """Admit a legacy current record only when it retains its sealed run binding."""
+
+    reviewer_run = value.get("reviewer_run")
+    if (
+        not isinstance(reviewer_run, Mapping)
+        or set(reviewer_run) != {"run_id", "sha256"}
+        or not isinstance(reviewer_run.get("run_id"), str)
+        or not ID_RE.fullmatch(str(reviewer_run["run_id"]))
+        or not isinstance(reviewer_run.get("sha256"), str)
+        or not SHA256_RE.fullmatch(str(reviewer_run["sha256"]))
+    ):
+        raise ReviewContractError(
+            "legacy current review lacks direct immutable authority"
+        )
+
+
+def _bounded_stage_predecessor(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one stored predecessor without recursively embedding its history."""
+
+    return {key: item for key, item in value.items() if key != "previous_review"}
+
+
+def _stage_review_predecessor_id(record: StageReviewV1) -> str | None:
+    if record.review_mode == "repair":
+        assert record.repair_frontier is not None
+        return str(record.repair_frontier["prior_review_id"])
+    if record.review_reset is not None:
+        return str(record.review_reset["prior_review_id"])
+    return None
+
+
+def _validate_stored_stage_chain(
+    value: Mapping[str, Any],
+    historical: Mapping[str, Mapping[str, Any]],
+    *,
+    visiting: frozenset[str] = frozenset(),
+) -> StageReviewV1:
+    """Validate bounded predecessor projections against complete stored history."""
+
+    record = _validated_review_envelope(value)
+    review_id = record.review_id
+    if review_id in visiting:
+        raise ReviewContractError("stage review predecessor chain contains a cycle")
+    predecessor_id = _stage_review_predecessor_id(record)
+    if predecessor_id is None:
+        return record
+    predecessor = historical.get(predecessor_id)
+    if predecessor is None:
+        raise ReviewContractError("stage re-review predecessor is missing")
+    _validate_stored_stage_chain(
+        predecessor,
+        historical,
+        visiting=visiting | {review_id},
+    )
+    supplied = value.get("previous_review")
+    if supplied != _bounded_stage_predecessor(predecessor):
+        raise ReviewContractError(
+            "stage re-review predecessor projection does not match stored predecessor"
+        )
+    return record
+
+
+def _stored_stage_history(root: Path, stage: str) -> dict[str, Mapping[str, Any]]:
+    review_root = root.expanduser().resolve() / ".work-bundle/orchestration/reviews"
+    historical: dict[str, Mapping[str, Any]] = {}
+    for path in sorted(review_root.rglob("*")):
+        if path.suffix not in {".json", ".yaml", ".yml"} or not path.is_file():
+            continue
+        if not path.resolve().is_relative_to(review_root.resolve()):
+            raise ReviewContractError("review record escapes review store")
+        value = _read_document(path)
+        if not isinstance(value, dict) or value.get("stage") != stage or "review_id" not in value:
+            continue
+        review_id = str(value["review_id"])
+        if review_id in historical:
+            raise ReviewContractError("stage review IDs must be globally unique")
+        historical[review_id] = value
+    return historical
 
 
 def _review_store_path(root: Path, review_id: str) -> Path:
@@ -1197,6 +1631,15 @@ def _review_store_path(root: Path, review_id: str) -> Path:
     if not path.is_relative_to(store.resolve()):
         raise ReviewContractError("stored review path escapes review store")
     return path
+
+
+def current_review_authority_path(root: Path, review_id: str) -> Path:
+    """Return the safe v2 direct-authority path for diagnostics and tests."""
+
+    try:
+        return _current_review_authority_path(root, review_id)
+    except ValueError as error:
+        raise ReviewContractError(str(error)) from error
 
 
 def publish_review(
@@ -1209,9 +1652,43 @@ def publish_review(
 
     record = dict(_mapping(review, "review publication"))
     validated = _validated_review_envelope(record)
+    if validated.verdict == "repair" and any(
+        isinstance(item, ReviewFindingV2) and item.controller_decision is None
+        for item in validated.findings
+    ):
+        raise ReviewContractError(
+            "repair publication requires a controller decision for every v2 observation"
+        )
+    if record.get("review_target_kind", "stage") == "stage" and _stage_review_predecessor_id(validated):
+        validated = _validate_stored_stage_chain(
+            record, _stored_stage_history(root, validated.stage)
+        )
     current = dict(_target_identity(current_target_identity, "current_target_identity"))
     if validated.target_identity != current:
         raise ReviewContractError("review publication target is not current")
+    authority = bounded_closure.resolve_working_workspace(root)
+    try:
+        if authority is not None:
+            bounded_closure.require_orchestration_admission(
+                authority,
+                operation=("round_completion" if validated.stage == "integrated_implementation"
+                           and record.get("review_target_kind", "stage") == "stage" else "ordinary_new"),
+                flow_id=str(current.get("artifact_id") or ""),
+            )
+    except bounded_closure.BoundedClosureError as error:
+        raise ReviewContractError(str(error)) from error
+    if (
+        validated.stage == "integrated_implementation"
+        and record.get("review_target_kind", "stage") == "stage"
+    ):
+        try:
+            bounded_closure.review_round_publication_binding(
+                root,
+                review_id=validated.review_id,
+                target_identity=current,
+            )
+        except bounded_closure.BoundedClosureError as error:
+            raise ReviewContractError(str(error)) from error
     _validate_reviewer_run(root.expanduser().resolve(), record)
     path = _review_store_path(root, validated.review_id)
     content = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
@@ -1224,7 +1701,31 @@ def publish_review(
         with path.open("xb") as stream:
             stream.write(content)
         path.chmod(0o444)
-    return {"review_id": validated.review_id, "sha256": digest}
+    reference = {"review_id": validated.review_id, "sha256": digest}
+    try:
+        _write_current_review_authority(root, record, digest)
+    except ValueError as error:
+        raise ReviewContractError(str(error)) from error
+    if (
+        validated.stage == "integrated_implementation"
+        and record.get("review_target_kind", "stage") == "stage"
+    ):
+        outcome = {
+            "accepted": "accepted",
+            "repair": "findings",
+            "blocked": "blocked",
+        }[validated.verdict]
+        try:
+            bounded_closure.complete_published_review_round(
+                root,
+                review_id=validated.review_id,
+                target_identity=current,
+                outcome=outcome,
+                review_reference=reference,
+            )
+        except bounded_closure.BoundedClosureError as error:
+            raise ReviewContractError(str(error)) from error
+    return reference
 
 
 def load_stored_review(
@@ -1248,11 +1749,16 @@ def load_stored_review(
     if hashlib.sha256(raw).hexdigest() != reference.get("sha256"):
         raise ReviewContractError("stored review digest mismatch")
     record = dict(_mapping(json.loads(raw), "stored review"))
-    validated = _validated_review_envelope(record)
+    validated = _validated_current_review_envelope(record)
+    try:
+        direct = _load_current_review_authority(root, record, str(reference["sha256"]))
+        if direct is None:
+            _validate_legacy_current_record(record)
+    except ValueError as error:
+        raise ReviewContractError(str(error)) from error
     current = dict(_target_identity(current_target_identity, "current_target_identity"))
     if validated.target_identity != current:
         raise ReviewContractError("stored review target is not current")
-    _validate_reviewer_run(root.expanduser().resolve(), record)
     return record, validated
 
 
@@ -1284,6 +1790,7 @@ def route_stored_review_verdict(
     unaffected_evidence_identities: Sequence[Mapping[str, Any]] = (),
     original_binding_identity: Mapping[str, Any] | None = None,
     original_baseline_identity: Mapping[str, Any] | None = None,
+    controller_decision: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Expose a verdict or route one finding only from stored current authority."""
 
@@ -1309,6 +1816,7 @@ def route_stored_review_verdict(
         unaffected_evidence_identities=unaffected_evidence_identities,
         original_binding_identity=original_binding_identity,
         original_baseline_identity=original_baseline_identity,
+        controller_decision=controller_decision,
     )
 
 
@@ -1693,8 +2201,14 @@ def validate_stage_reviews(
     return countable
 
 
-def validate_contract_instance(definition: str, value: Mapping[str, Any]) -> ReviewFindingV1 | StageReviewV1:
-    if definition in {"reviewFinding", "review_finding_v1", "API-001"}:
+def validate_contract_instance(
+    definition: str, value: Mapping[str, Any]
+) -> ReviewFindingV1 | ReviewFindingV2 | StageReviewV1:
+    if definition in {"reviewFinding", "review_finding_v1"}:
+        return _validate_review_finding_v1(value)
+    if definition in {"reviewFindingV2", "review_finding_v2"}:
+        return _validate_review_finding_v2(value)
+    if definition == "API-001":
         return validate_review_finding(value)
     if definition in {"stageReview", "stage_review_v1", "API-002"}:
         return validate_stage_review(value)
@@ -1718,12 +2232,12 @@ def _validate_schema_definition(schema: Mapping[str, Any], definition: str, valu
     definitions = _mapping(schema.get("$defs"), "$defs")
     if definition not in definitions:
         raise ReviewContractError(f"schema definition not found: {definition}")
-    if definition in {"reviewFinding", "stageReview"}:
+    if definition in {"reviewFinding", "reviewFindingV2", "stageReview"}:
         validate_contract_instance(definition, value)
     try:
         from jsonschema import Draft202012Validator
     except ImportError as error:
-        if definition in {"reviewFinding", "stageReview"}:
+        if definition in {"reviewFinding", "reviewFindingV2", "stageReview"}:
             return
         raise ReviewContractError(f"contract definition requires jsonschema: {definition}") from error
     document = dict(schema)
@@ -1751,25 +2265,19 @@ def cmd_validate_contract(argv: list[str]) -> int:
 
 
 def cmd_assert_migration_stop(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="review_runtime.py assert-migration-stop")
-    parser.add_argument("--instance", type=Path, required=True)
-    parser.add_argument("--required-excluded", nargs="+", required=True)
-    parsed = parser.parse_args(argv)
-    try:
-        instance = _read_document(parsed.instance)
-        if instance.get("issue") != "WOR-107":
-            raise ReviewContractError("migration handoff issue must be WOR-107")
-        excluded = instance.get("excluded_work")
-        if not isinstance(excluded, list) or any(not isinstance(item, str) for item in excluded):
-            raise ReviewContractError("excluded_work must be a list of strings")
-        missing = [item for item in parsed.required_excluded if item not in excluded]
-        if missing:
-            raise ReviewContractError(f"migration stop boundary missing exclusions: {', '.join(missing)}")
-    except (OSError, ReviewContractError) as error:
-        print(json.dumps({"status": "blocked", "failure_code": "WB_MIGRATION_STOP_BOUNDARY_INVALID", "detail": str(error)}, sort_keys=True))
-        return 1
-    print(json.dumps({"status": "passed", "issue": "WOR-107", "excluded_work": parsed.required_excluded}, sort_keys=True))
-    return 0
+    """Deprecated compatibility alias for the isolated legacy validator."""
+
+    module_path = Path(__file__).with_name("legacy_wor107_migration.py")
+    spec = importlib.util.spec_from_file_location(
+        "_wb_legacy_wor107_migration", module_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load legacy migration utility: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    print(module.DEPRECATION_DIAGNOSTIC, file=sys.stderr)
+    return module.cmd_assert_migration_stop(argv)
 
 
 def main(argv: list[str] | None = None) -> int:

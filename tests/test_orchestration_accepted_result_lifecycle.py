@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,7 +17,14 @@ sys.path.insert(0, str(ORCHESTRATION))
 
 import execution_context  # noqa: E402
 import plans  # noqa: E402
-from test_orchestration_accepted_result import _binding, _handoff, _task, _validated  # noqa: E402
+import repository_preflight  # noqa: E402
+from test_orchestration_accepted_result import (  # noqa: E402
+    _binding,
+    _build_accepted_task_result,
+    _handoff,
+    _task,
+    _validated,
+)
 
 
 def _dispatcher():
@@ -51,7 +59,7 @@ def test_current_accepted_result_does_not_read_handoff_or_replay_validation(
         "capture_repository_evidence",
         lambda _root: {"head": "a" * 40, "tree": "b" * 40, "entries": {}, "status": "clean"},
     )
-    accepted = execution_context.build_accepted_task_result(
+    accepted = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-07T00:00:00Z"
     )
     binding["accepted_result"] = accepted
@@ -202,7 +210,9 @@ def test_archive_switches_irreversibly_to_accepted_results_without_handoff_repla
         )
     ]
     calls: list[object] = []
-    monkeypatch.setattr(plans, "require_plan_reviews", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        plans, "require_plan_reviews", lambda *_args, **_kwargs: calls.append("review")
+    )
     monkeypatch.setattr(
         plans,
         "_accepted_plan_task_results",
@@ -222,8 +232,321 @@ def test_archive_switches_irreversibly_to_accepted_results_without_handoff_repla
 
     plans.cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-001"))
 
-    assert calls == ["accepted", accepted, accepted]
+    assert calls == ["review", "accepted", accepted, accepted]
     assert (tmp_path / ".work-bundle/orchestration/plan/archived/plan.md").is_file()
+
+
+def test_archive_consumes_bound_validation_observation_without_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = "pytest -q tests/test_claim.py"
+    item = {
+        "id": "VAL-001",
+        "kind": "process",
+        "command": command,
+        "expected": "passed",
+        "invariant_ids": ["INV-001"],
+    }
+    definition = {
+        key: item.get(key)
+        for key in (
+            "id", "kind", "command", "mechanism", "expected",
+            "acceptable_results", "invariant_ids", "digest", "proves",
+        )
+    }
+    accepted = {
+        "schema": "accepted-task-result-v1",
+        "plan_id": "plan-001",
+        "task_id": "task-001",
+        "validation_evidence_ids": ["observation-001"],
+        "accepted_source": {"tree": "b" * 40},
+    }
+    record = {
+        "observation_id": "observation-001",
+        "product_tree": "b" * 40,
+        "command_digest": execution_context.semantic_digest(definition),
+        "result": {"exit_code": 0},
+    }
+    monkeypatch.setattr(
+        plans, "load_observation", lambda *_args: SimpleNamespace(to_dict=lambda: record)
+    )
+    observed = plans._observe_archive_obligations(
+        tmp_path,
+        command,
+        tmp_path,
+        [(accepted, {"plan_id": "plan-001", "task_id": "task-001", "validation": [item]})],
+    )
+
+    assert observed == [{"id": "VAL-001", "observation_id": "observation-001", "result": "passed"}]
+
+
+def _write_multi_repository_workspace(root: Path, members: dict[str, Path]) -> None:
+    metadata = root / ".work-bundle/project.yaml"
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "metadata_version: 3",
+        f"workspace_root: {root}",
+        "workspace_mode: multi-repository",
+        "source_repositories:",
+    ]
+    for repository_id, project_root in members.items():
+        project_root.mkdir(parents=True, exist_ok=True)
+        lines.extend(
+            [
+                f"  - id: {repository_id}",
+                f"    project_root: {project_root}",
+                f"    origin: /origin/{repository_id}.git",
+            ]
+        )
+    metadata.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_final_plan_workspace_uses_unanimous_accepted_repository_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    members = {
+        "work-bundle-main": tmp_path / "work-bundle-main",
+        "execution-flow": tmp_path / "execution-flow",
+        "work-bundle-mcp": tmp_path / "work-bundle-mcp",
+    }
+    _write_multi_repository_workspace(tmp_path, members)
+    rows = [
+        {
+            "type": "task",
+            "id": f"task-00{number}",
+            "plan_id": "plan-001",
+            "status": "Completed",
+            "path": f"task-00{number}.md",
+        }
+        for number in range(1, 4)
+    ]
+    monkeypatch.setattr(plans, "index_plans", lambda _args: rows)
+    monkeypatch.setattr(plans, "has_persisted_accepted_task_result", lambda *_args: True)
+    monkeypatch.setattr(
+        plans,
+        "artifact_path_from_row",
+        lambda row, _args: tmp_path / str(row["path"]),
+    )
+    monkeypatch.setattr(
+        plans,
+        "_load_current_task_acceptance",
+        lambda _args, path: (
+            {
+                "workspace_id": "workspace-001",
+                "execution_id": f"exec-{path.stem}",
+                "repository_id": "work-bundle-main",
+                "runtime_root": str(tmp_path / "runtime"),
+            },
+            {"schema": "accepted-task-result-v1"},
+        ),
+    )
+
+    selected = plans._resolve_final_plan_workspace(
+        argparse.Namespace(
+            project_root=str(tmp_path),
+            workspace_id="workspace-001",
+            execution_id="exec-task-003",
+            repository_id=None,
+            execution_runtime_root=str(tmp_path / "runtime"),
+        ),
+        "plan-001",
+    )
+
+    assert selected == members["work-bundle-main"].resolve()
+    assert selected != Path("/origin/work-bundle-main.git")
+
+
+@pytest.mark.parametrize(
+    ("repository_ids", "selector", "message"),
+    [
+        (
+            ["work-bundle-main", "execution-flow"],
+            None,
+            "accepted task repository authority disagrees",
+        ),
+        (
+            ["work-bundle-main", "work-bundle-main"],
+            "execution-flow",
+            "repository selector conflicts with accepted task authority",
+        ),
+        (
+            ["missing-member", "missing-member"],
+            None,
+            "authorized final plan repository is not a registered local member",
+        ),
+    ],
+)
+def test_final_plan_workspace_rejects_conflict_or_missing_member(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    repository_ids: list[str],
+    selector: str | None,
+    message: str,
+) -> None:
+    members = {
+        "work-bundle-main": tmp_path / "work-bundle-main",
+        "execution-flow": tmp_path / "execution-flow",
+        "work-bundle-mcp": tmp_path / "work-bundle-mcp",
+    }
+    _write_multi_repository_workspace(tmp_path, members)
+    rows = [
+        {
+            "type": "task",
+            "id": f"task-00{number}",
+            "plan_id": "plan-001",
+            "status": "Completed",
+            "path": f"task-00{number}.md",
+        }
+        for number in range(1, 3)
+    ]
+    monkeypatch.setattr(plans, "index_plans", lambda _args: rows)
+    monkeypatch.setattr(plans, "has_persisted_accepted_task_result", lambda *_args: True)
+    monkeypatch.setattr(
+        plans,
+        "artifact_path_from_row",
+        lambda row, _args: tmp_path / str(row["path"]),
+    )
+    monkeypatch.setattr(
+        plans,
+        "_load_current_task_acceptance",
+        lambda _args, path: (
+            {
+                "workspace_id": "workspace-001",
+                "execution_id": f"exec-{path.stem}",
+                "repository_id": repository_ids[int(path.stem[-1]) - 1],
+                "runtime_root": str(tmp_path / "runtime"),
+            },
+            {"schema": "accepted-task-result-v1"},
+        ),
+    )
+
+    with pytest.raises(SystemExit, match=message):
+        plans._resolve_final_plan_workspace(
+            argparse.Namespace(project_root=str(tmp_path), repository_id=selector),
+            "plan-001",
+        )
+
+
+def test_final_plan_workspace_rejects_selectors_split_across_accepted_bindings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    members = {
+        "work-bundle-main": tmp_path / "work-bundle-main",
+        "execution-flow": tmp_path / "execution-flow",
+        "work-bundle-mcp": tmp_path / "work-bundle-mcp",
+    }
+    _write_multi_repository_workspace(tmp_path, members)
+    rows = [
+        {
+            "type": "task",
+            "id": f"task-00{number}",
+            "plan_id": "plan-001",
+            "status": "Completed",
+            "path": f"task-00{number}.md",
+        }
+        for number in range(1, 3)
+    ]
+    monkeypatch.setattr(plans, "index_plans", lambda _args: rows)
+    monkeypatch.setattr(plans, "has_persisted_accepted_task_result", lambda *_args: True)
+    monkeypatch.setattr(
+        plans,
+        "artifact_path_from_row",
+        lambda row, _args: tmp_path / str(row["path"]),
+    )
+    monkeypatch.setattr(
+        plans,
+        "_load_current_task_acceptance",
+        lambda _args, path: (
+            {
+                "workspace_id": "workspace-A" if path.stem.endswith("1") else "workspace-B",
+                "execution_id": "execution-A" if path.stem.endswith("1") else "execution-B",
+                "repository_id": "work-bundle-main",
+                "runtime_root": str(
+                    tmp_path / ("runtime-A" if path.stem.endswith("1") else "runtime-B")
+                ),
+            },
+            {"schema": "accepted-task-result-v1"},
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="selector tuple conflicts"):
+        plans._resolve_final_plan_workspace(
+            argparse.Namespace(
+                project_root=str(tmp_path),
+                workspace_id="workspace-A",
+                execution_id="execution-B",
+                repository_id=None,
+                execution_runtime_root=str(tmp_path / "runtime-A"),
+            ),
+            "plan-001",
+        )
+
+
+def test_registered_repository_roots_rejects_duplicate_identity_at_same_root(
+    tmp_path: Path,
+) -> None:
+    shared = tmp_path / "work-bundle-main"
+    members = {
+        "work-bundle-main": shared,
+        "execution-flow": tmp_path / "execution-flow",
+    }
+    _write_multi_repository_workspace(tmp_path, members)
+    metadata = tmp_path / ".work-bundle/project.yaml"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8")
+        + "  - id: work-bundle-main\n"
+        + f"    project_root: {shared}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="registered repository identity is duplicated"):
+        plans._registered_repository_roots(tmp_path)
+
+
+def test_final_plan_workspace_resolves_indentless_v4_registered_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    members = {
+        "work-bundle-main": tmp_path / "work-bundle-main",
+        "execution-flow": tmp_path / "execution-flow",
+    }
+    for member in members.values():
+        member.mkdir()
+    metadata = tmp_path / ".work-bundle/project.yaml"
+    metadata.parent.mkdir()
+    metadata.write_text(
+        "metadata_version: 4\n"
+        "workspace:\n"
+        "  id: workspace-v4\n"
+        "  mode: multi-repository\n"
+        "source_repositories:\n"
+        "- id: work-bundle-main\n"
+        "  role: source\n"
+        "  default_branch: main\n"
+        "- id: execution-flow\n"
+        "  role: source\n"
+        "  default_branch: main\n",
+        encoding="utf-8",
+    )
+    registry = tmp_path / "projects.yaml"
+    registry.write_text(
+        "device_bindings:\n"
+        "  workspace-v4:\n"
+        "    repositories:\n"
+        "      work-bundle-main:\n"
+        f"        project_root: {members['work-bundle-main']}\n"
+        "      execution-flow:\n"
+        f"        project_root: {members['execution-flow']}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(repository_preflight, "project_registry_path", lambda: registry)
+    monkeypatch.setattr(plans, "_member_roots", lambda _workspace: list(members.values()))
+
+    selected = plans._resolve_final_plan_workspace(
+        argparse.Namespace(project_root=str(tmp_path), repository_id="work-bundle-main"),
+    )
+
+    assert selected == members["work-bundle-main"].resolve()
 
 
 def test_archive_knowledge_gate_aggregates_new_results_and_bounds_legacy_bridge(
@@ -268,6 +591,175 @@ def test_archive_knowledge_gate_aggregates_new_results_and_bounds_legacy_bridge(
         encoding="utf-8",
     )
     plans._assert_archive_knowledge_gate(args, "plan-001", plan, [(legacy, brief)])
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        "## 2.1 Knowledge Base Update Carry Forward\n\n"
+        "- **Disposition**: required\n- **Closure return**: completed\n",
+        "## Knowledge Base Update Carry Forward\n\n"
+        "- Disposition: required\n- Closure return: completed\n",
+    ],
+)
+def test_plan_knowledge_fields_accept_settled_numbered_and_plain_syntax(section: str) -> None:
+    assert plans._plan_knowledge_field(section, "Disposition") == "required"
+    assert plans._plan_knowledge_field(section, "Closure return") == "completed"
+
+
+def test_archive_knowledge_gate_consumes_plain_completed_closure(tmp_path: Path) -> None:
+    plan = tmp_path / "plan.md"
+    plan.write_text(
+        "---\nid: plan-001\n---\n\n## Knowledge Base Update Carry Forward\n\n"
+        "- Disposition: required\n- Closure return: completed\n",
+        encoding="utf-8",
+    )
+    legacy = {"schema": "accepted-task-result-v1", "task_id": "task-001"}
+
+    plans._assert_archive_knowledge_gate(
+        argparse.Namespace(),
+        "plan-001",
+        plan,
+        [(legacy, {"task_id": "task-001", "review_required": True})],
+    )
+
+
+def _write_mixed_layout_plan(root: Path) -> tuple[Path, Path, Path, Path, Path]:
+    active = root / ".work-bundle/orchestration/plan/active"
+    plan = active / "plan-direct.md"
+    plan_dir = active / "plan-direct"
+    phase_direct = plan_dir / "phase-001.md"
+    task_direct = plan_dir / "task-001.md"
+    phase_nested = plan_dir / "phase-002.md"
+    task_nested = plan_dir / "phase-002/task-002.md"
+    task_nested.parent.mkdir(parents=True)
+    plan.write_text(
+        '---\nid: "plan-direct"\nstatus: "Completed"\n---\n', encoding="utf-8"
+    )
+    phase_direct.write_text(
+        "---\nid: 'phase-001'\nplan_id: \"plan-direct\"\nstatus: 'Completed'\n---\n",
+        encoding="utf-8",
+    )
+    phase_nested.write_text(
+        "---\nid: phase-002\nplan_id: plan-direct\nstatus: Completed\n---\n",
+        encoding="utf-8",
+    )
+    task_direct.write_text(
+        '---\nid: "task-001"\nplan_id: "plan-direct"\nphase_id: "phase-001"\n'
+        'status: "Planned"\ndepends_on: []\n---\n',
+        encoding="utf-8",
+    )
+    task_nested.write_text(
+        "---\nid: 'task-002'\nplan_id: 'plan-direct'\nphase_id: 'phase-002'\n"
+        "status: 'Completed'\ndepends_on: []\n---\n",
+        encoding="utf-8",
+    )
+    return plan, phase_direct, task_direct, phase_nested, task_nested
+
+
+def test_plan_index_and_status_support_direct_and_nested_task_layouts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan, _phase_direct, task_direct, _phase_nested, task_nested = _write_mixed_layout_plan(
+        tmp_path
+    )
+    args = argparse.Namespace(project_root=str(tmp_path))
+
+    rows = plans.index_plans(args)
+    tasks = [row for row in rows if row["type"] == "task"]
+
+    assert sorted((row["id"], row["plan_id"], row["phase_id"]) for row in tasks) == [
+        ("task-001", "plan-direct", "phase-001"),
+        ("task-002", "plan-direct", "phase-002"),
+    ]
+    assert {Path(str(row["path"])).name for row in tasks} == {
+        task_direct.name,
+        task_nested.name,
+    }
+    monkeypatch.setattr(plans, "_assert_task_dependencies_current", lambda *_args: None)
+    monkeypatch.setattr(plans, "_assert_completed_task_authority", lambda *_args: {})
+    monkeypatch.setattr(plans, "_release_completed_task_binding", lambda *_args: {})
+    plans.cmd_set_plan_status(
+        argparse.Namespace(
+            project_root=str(tmp_path),
+            id="task-001",
+            plan_id="plan-direct",
+            kind="task",
+            status="Completed",
+        )
+    )
+    assert "status: Completed" in task_direct.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "plan_id: other-plan\nphase_id: phase-001\n",
+        "plan_id: plan-direct\n",
+    ],
+)
+def test_direct_task_index_rejects_ambiguous_identity(tmp_path: Path, identity: str) -> None:
+    task = tmp_path / ".work-bundle/orchestration/plan/active/plan-direct/task-001.md"
+    task.parent.mkdir(parents=True)
+    task.write_text(f"---\nid: task-001\n{identity}---\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Invalid direct task identity"):
+        plans.index_plans(argparse.Namespace(project_root=str(tmp_path)))
+
+
+def test_phase_and_archive_consumers_include_direct_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan, _phase_direct, task_direct, _phase_nested, _task_nested = _write_mixed_layout_plan(
+        tmp_path
+    )
+    args = argparse.Namespace(project_root=str(tmp_path))
+    with pytest.raises(SystemExit, match="task task-001 is not completed"):
+        plans._assert_phase_tasks_accepted(args, "phase-001", "plan-direct")
+
+    task_direct.write_text(
+        task_direct.read_text(encoding="utf-8").replace(
+            'status: "Planned"', 'status: "Completed"'
+        ),
+        encoding="utf-8",
+    )
+    accepted: list[str] = []
+    monkeypatch.setattr(
+        plans,
+        "_load_current_task_acceptance",
+        lambda _args, path: accepted.append(path.name) or ({}, {}),
+    )
+    plans._assert_phase_tasks_accepted(args, "phase-001", "plan-direct")
+    assert accepted == ["task-001.md"]
+
+    accepted.clear()
+    monkeypatch.setattr(
+        plans,
+        "_task_brief_at",
+        lambda _args, path: {"task_id": path.stem},
+    )
+    results = plans._accepted_plan_task_results(args, "plan-direct")
+    assert {brief["task_id"] for _result, brief in results} == {"task-001", "task-002"}
+    assert set(accepted) == {"task-001.md", "task-002.md"}
+
+    monkeypatch.setattr(plans, "require_plan_reviews", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plans, "_plan_uses_accepted_result_authority", lambda *_args: False)
+    monkeypatch.setattr(plans, "_validated_plan_task_handoffs", lambda *_args: [])
+    monkeypatch.setattr(plans, "_assert_archive_knowledge_gate", lambda *_args: None)
+    monkeypatch.setattr(plans, "_assert_archive_plan_acceptance", lambda *_args: None)
+    plans.cmd_archive_plan(argparse.Namespace(project_root=str(tmp_path), id="plan-direct"))
+
+    archived_rows = plans.index_plans(args)
+    assert {
+        (row["id"], row["type"])
+        for row in archived_rows
+        if row.get("plan_id") == "plan-direct"
+    } == {
+        ("phase-001", "phase"),
+        ("phase-002", "phase"),
+        ("task-001", "task"),
+        ("task-002", "task"),
+    }
 
 
 def test_declared_integration_commands_follow_table_headers() -> None:

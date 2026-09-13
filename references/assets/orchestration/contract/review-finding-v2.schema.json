@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:work-bundle:orchestration:review-finding:v2",
+  "$ref": "#/$defs/reviewFindingV2",
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "targetIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "revision", "sha256", "source_tree"],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/id"},
+        "revision": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "source_tree": {"anyOf": [{"$ref": "#/$defs/gitOid"}, {"type": "null"}]}
+      }
+    },
+    "evidenceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "locator", "digest_or_identity", "observation"],
+      "properties": {
+        "kind": {"enum": ["authority", "source", "test", "runtime", "environment"]},
+        "locator": {"type": "string", "minLength": 1},
+        "digest_or_identity": {"type": "string", "minLength": 1},
+        "observation": {"type": "string", "minLength": 1}
+      }
+    },
+    "reviewerObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "severity", "requirement_id", "boundary", "evidence", "expected", "observed", "owner"],
+      "properties": {
+        "finding_id": {"$ref": "#/$defs/id"},
+        "severity": {"enum": ["blocking", "non_blocking", "advisory"]},
+        "requirement_id": {"type": "string", "minLength": 1},
+        "boundary": {"type": "string", "minLength": 1},
+        "evidence": {"type": "string", "minLength": 1},
+        "expected": {"type": "string", "minLength": 1},
+        "observed": {"type": "string", "minLength": 1},
+        "owner": {"type": "string", "minLength": 1}
+      }
+    },
+    "controllerDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "first_broken_artifact", "affected_owner", "action", "obligation_basis", "evidence_basis"],
+      "properties": {
+        "classification": {"enum": ["specification_gap", "decomposition_gap", "allocation_gap", "implementation_defect", "validation_oracle_defect", "environment_failure", "advisory_enhancement"]},
+        "first_broken_artifact": {"enum": ["specification", "plan", "task", "implementation", "validation_oracle", "environment"]},
+        "affected_owner": {"enum": ["specification_owner", "plan_owner", "task_owner", "oracle_owner", "environment_owner", "backlog_owner"]},
+        "action": {"enum": ["reopen_specification", "repair_plan", "reslice_plan", "repair_task", "repair_oracle", "recover_environment", "record_advisory", "accepted", "rejected"]},
+        "obligation_basis": {"enum": ["accepted_requirement", "essential_safety", "evidence_integrity", "none"]},
+        "evidence_basis": {"type": "string", "minLength": 1}
+      }
+    },
+    "reviewFindingV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "finding_id", "stage", "reviewer_observation", "evidence", "target_identity", "summary", "controller_decision"],
+      "properties": {
+        "schema": {"const": "review-finding-v2"},
+        "finding_id": {"$ref": "#/$defs/id"},
+        "stage": {"enum": ["specification", "plan", "implementation", "validation", "environment"]},
+        "reviewer_observation": {"$ref": "#/$defs/reviewerObservation"},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+        "target_identity": {"$ref": "#/$defs/targetIdentity"},
+        "summary": {"type": "string", "minLength": 1},
+        "controller_decision": {"anyOf": [{"$ref": "#/$defs/controllerDecision"}, {"type": "null"}]}
+      }
+    }
+  }
+}

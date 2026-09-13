@@ -103,14 +103,29 @@ def _binding(root: Path) -> dict[str, object]:
 
 
 def _record_validation_observation(
-    root: Path, binding: dict[str, object], task: dict[str, object]
+    root: Path,
+    binding: dict[str, object],
+    task: dict[str, object],
+    *,
+    live_initial_acceptance: bool = False,
 ) -> str:
     item = task["validation"][0]
     assert isinstance(item, dict)
-    item["evidence_reuse"] = {
-        "mode": "deterministic", "max_age_seconds": 3600,
-        "environment_inputs": [], "include_head": False,
-    }
+    if live_initial_acceptance:
+        item["evidence_reuse"] = {
+            "mode": "live", "max_age_seconds": 0,
+            "environment_inputs": [], "include_head": True,
+        }
+        observed_item = {
+            **item,
+            "evidence_reuse": {**item["evidence_reuse"], "max_age_seconds": 86400},
+        }
+    else:
+        item.setdefault("evidence_reuse", {
+            "mode": "deterministic", "max_age_seconds": 3600,
+            "environment_inputs": [], "include_head": False,
+        })
+        observed_item = item
     evidence = execution_context.capture_repository_evidence(root)
 
     def observe(receipt: dict[str, object]) -> dict[str, object]:
@@ -127,10 +142,143 @@ def _record_validation_observation(
         }
 
     observed = execution_context._completion_provenance_module().observe_validation(
-        binding, task, item, evidence, observe,
+        binding, execution_context._validation_observation_task(task), observed_item, evidence, observe,
         lambda: execution_context.capture_repository_evidence(root),
+        finalization_id=(
+            f"initial-acceptance:{task['plan_id']}:{task['task_id']}:fixture"
+            if live_initial_acceptance else None
+        ),
     )
     return str(observed["observation_id"])
+
+
+def _orthogonally_advanced_observation(tmp_path: Path) -> tuple[dict, dict, str, str]:
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    for relative in ("src/read.py", "src/a.py", "config/test.ini"):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"# {relative}\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "reviewed task source")
+    reviewed_head = _git(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / ".git/info/exclude").write_text(".work-bundle/\n", encoding="utf-8")
+    task = _task(tmp_path)
+    task["depends_on"] = []
+    task["validation"][0]["evidence_reuse"] = {
+        "mode": "deterministic",
+        "max_age_seconds": 3600,
+        "environment_inputs": [],
+        "dependency_files": ["config/test.ini"],
+        "include_head": False,
+    }
+    binding = _binding(tmp_path)
+    observation_id = _record_validation_observation(tmp_path, binding, task)
+
+    (tmp_path / "orthogonal.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "orthogonal.py")
+    _git(tmp_path, "commit", "-qm", "integrate orthogonal task")
+    return task, binding, observation_id, reviewed_head
+
+
+def test_claim_bound_observation_survives_only_orthogonal_head_progress(tmp_path: Path) -> None:
+    task, binding, observation_id, reviewed_head = _orthogonally_advanced_observation(tmp_path)
+    matched = execution_context._claim_bound_validation_observations(
+        binding,
+        task,
+        execution_context.capture_repository_evidence(tmp_path),
+        [observation_id],
+        reviewed_head=reviewed_head,
+    )
+    assert [item["observation_id"] for item in matched] == [observation_id]
+
+    dependent_task = deepcopy(task)
+    dependent_task["depends_on"] = ["task-upstream"]
+    with pytest.raises(SystemExit, match="claim-bound"):
+        execution_context._claim_bound_validation_observations(
+            binding,
+            dependent_task,
+            execution_context.capture_repository_evidence(tmp_path),
+            [observation_id],
+            reviewed_head=reviewed_head,
+        )
+
+
+def test_claim_bound_observation_rejects_intermediate_dependency_change_reverted_at_head(
+    tmp_path: Path,
+) -> None:
+    task, binding, observation_id, reviewed_head = _orthogonally_advanced_observation(tmp_path)
+    original = (tmp_path / "config/test.ini").read_text(encoding="utf-8")
+    (tmp_path / "config/test.ini").write_text("changed=true\n", encoding="utf-8")
+    _git(tmp_path, "add", "config/test.ini")
+    _git(tmp_path, "commit", "-qm", "change validation dependency")
+    (tmp_path / "config/test.ini").write_text(original, encoding="utf-8")
+    _git(tmp_path, "add", "config/test.ini")
+    _git(tmp_path, "commit", "-qm", "restore validation dependency")
+    with pytest.raises(SystemExit, match="claim-bound"):
+        execution_context._claim_bound_validation_observations(
+            binding,
+            task,
+            execution_context.capture_repository_evidence(tmp_path),
+            [observation_id],
+            reviewed_head=reviewed_head,
+        )
+
+
+def test_transition_changed_paths_exposes_both_sides_of_claim_path_rename(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    claim_path = tmp_path / "config/test.ini"
+    claim_path.parent.mkdir(parents=True)
+    claim_path.write_text("enabled=true\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "claim source")
+    previous = _git(tmp_path, "rev-parse", "HEAD")
+    _git(tmp_path, "mv", "config/test.ini", "orthogonal.ini")
+    _git(tmp_path, "commit", "-qm", "rename claim source")
+
+    assert execution_context._transition_changed_paths(
+        tmp_path, previous, _git(tmp_path, "rev-parse", "HEAD")
+    ) == {"config/test.ini", "orthogonal.ini"}
+
+
+def test_claim_bound_observation_rejects_claim_path_rename_then_revert(
+    tmp_path: Path,
+) -> None:
+    task, binding, observation_id, reviewed_head = _orthogonally_advanced_observation(tmp_path)
+    _git(tmp_path, "mv", "config/test.ini", "temporary.ini")
+    _git(tmp_path, "commit", "-qm", "rename validation dependency")
+    _git(tmp_path, "mv", "temporary.ini", "config/test.ini")
+    _git(tmp_path, "commit", "-qm", "restore validation dependency path")
+
+    with pytest.raises(SystemExit, match="claim-bound"):
+        execution_context._claim_bound_validation_observations(
+            binding,
+            task,
+            execution_context.capture_repository_evidence(tmp_path),
+            [observation_id],
+            reviewed_head=reviewed_head,
+        )
+
+
+def test_claim_bound_observation_rejects_unprojected_validation_field_drift(
+    tmp_path: Path,
+) -> None:
+    task, binding, observation_id, reviewed_head = _orthogonally_advanced_observation(tmp_path)
+    task["validation"][0]["capability_reason"] = "A changed claim-bearing reason."
+
+    with pytest.raises(SystemExit, match="claim-bound"):
+        execution_context._claim_bound_validation_observations(
+            binding,
+            task,
+            execution_context.capture_repository_evidence(tmp_path),
+            [observation_id],
+            reviewed_head=reviewed_head,
+        )
 
 
 def _handoff() -> dict[str, object]:
@@ -169,6 +317,93 @@ def _validated() -> dict[str, object]:
             "mechanism": "host-native",
         },
         "observed_validation": [{"id": "VAL-001", "observation_id": "obs-001", "result": "passed"}],
+    }
+
+
+def _build_accepted_task_result(
+    task: dict[str, object],
+    binding: dict[str, object],
+    handoff: dict[str, object],
+    validated: dict[str, object],
+    **kwargs: object,
+) -> dict[str, object]:
+    review = handoff.get("acceptance_review")
+    assert isinstance(review, dict)
+    return execution_context.build_accepted_task_result(
+        task, binding, handoff, validated, accepted_review=review, **kwargs
+    )
+
+
+def test_common_accepted_result_path_rejects_embedded_handoff_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_context,
+        "capture_repository_evidence",
+        lambda _root: {"head": OID_A, "tree": OID_B, "entries": {}, "status": "clean"},
+    )
+
+    with pytest.raises(SystemExit, match="accepted mandatory review"):
+        execution_context.build_accepted_task_result(
+            _task(tmp_path), _binding(tmp_path), _handoff(), _validated()
+        )
+
+
+def test_repair_review_preparation_derives_exact_stored_controller_frontier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous_identity = {
+        "artifact_id": "task-001",
+        "revision": OID_A,
+        "sha256": "1" * 64,
+        "source_tree": OID_B,
+    }
+    previous = {
+        "review_id": "review-prior",
+        "review_target_kind": "task",
+        "verdict": "repair",
+        "target_identity": previous_identity,
+        "evidence": {"mode": "direct", "capabilities": [], "commands": [], "artifacts": [], "unavailable_evidence": []},
+        "reviewer_run": {"run_id": "reviewer-run-prior", "sha256": "2" * 64},
+        "findings": [
+            {
+                "finding_id": "F-001",
+                "severity": "blocking",
+                "recommended_owner": "task_owner",
+                "evidence": [{"locator": "source:src/a.py"}],
+            }
+        ],
+    }
+    store = tmp_path / ".work-bundle/orchestration/reviews"
+    store.mkdir(parents=True)
+    path = store / "review-prior.json"
+    path.write_text(__import__("json").dumps(previous), encoding="utf-8")
+    path.chmod(0o444)
+    validated = SimpleNamespace(review_id="review-prior", target_identity=previous_identity)
+    monkeypatch.setattr(
+        review_runtime,
+        "load_stored_review",
+        lambda *_args, **_kwargs: (previous, validated),
+    )
+    repaired_identity = {
+        "artifact_id": "task-001",
+        "revision": OID_C,
+        "sha256": "3" * 64,
+        "source_tree": OID_D,
+    }
+
+    loaded, frontier = execution_context._stored_task_repair_preparation(
+        tmp_path, _task(tmp_path), base=OID_A, repaired_identity=repaired_identity
+    )
+
+    assert loaded == previous
+    assert frontier == {
+        "prior_review_id": "review-prior",
+        "blocking_finding_ids": ["F-001"],
+        "previous_reviewed_identity": previous_identity,
+        "repaired_identity": repaired_identity,
+        "affected_boundaries": ["source:src/a.py"],
+        "frozen_evidence_reference": review_runtime.review_evidence_identity(previous),
     }
 
 
@@ -213,12 +448,12 @@ def test_accepted_result_is_deterministic_current_authority_not_handoff_history(
         lambda _root: {"head": OID_A, "tree": OID_B, "entries": {}, "status": "dirty"},
     )
 
-    first = execution_context.build_accepted_task_result(
+    first = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
     appended = deepcopy(binding)
     appended["ownership"]["history"].append({"event": "audit-appended"})
-    second = execution_context.build_accepted_task_result(
+    second = _build_accepted_task_result(
         task, appended, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
 
@@ -301,9 +536,10 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
     accepted_head = _git(tmp_path, "rev-parse", "HEAD")
     accepted_tree = _git(tmp_path, "rev-parse", "HEAD^{tree}")
     task = _task(tmp_path)
+    task["depends_on"] = []
     binding = _binding(tmp_path)
     binding["baseline"] = {"head": accepted_head, "tree": accepted_tree}
-    prior = execution_context.build_accepted_task_result(
+    prior = _build_accepted_task_result(
         task,
         binding,
         _handoff(),
@@ -410,6 +646,10 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
         "started_at": "2026-09-08T01:03:00Z",
         "completed_at": "2026-09-08T01:04:00Z",
     }
+    (tmp_path / ".git/info/exclude").write_text(".work-bundle/\n", encoding="utf-8")
+    observation_id = _record_validation_observation(
+        tmp_path, binding, task, live_initial_acceptance=True
+    )
     (tmp_path / "unrelated.py").write_text("UNCHANGED_FRONTIER = True\n")
     _git(tmp_path, "add", "unrelated.py")
     _git(tmp_path, "commit", "-qm", "later unrelated lifecycle progress")
@@ -423,11 +663,9 @@ def test_standalone_repair_review_rematerializes_compact_result_without_executor
     )
 
     monkeypatch.setattr(review_runtime, "_validate_reviewer_run", lambda *_: None)
-    (tmp_path / ".git/info/exclude").write_text(".work-bundle/\n", encoding="utf-8")
     review_reference = review_runtime.publish_review(
         tmp_path, repair_review, current_target_identity=repaired_identity
     )
-    observation_id = _record_validation_observation(tmp_path, binding, task)
     repaired = execution_context.materialize_accepted_task_repair_review(
         tmp_path,
         task,
@@ -512,7 +750,7 @@ def test_standalone_review_recomposes_changed_task_authority_without_executor_re
         "capture_repository_evidence",
         lambda _root: {"head": OID_A, "tree": OID_B, "status": "clean", "entries": {}},
     )
-    prior = execution_context.build_accepted_task_result(
+    prior = _build_accepted_task_result(
         old_task, binding, _handoff(), _validated(), accepted_at="2026-09-08T02:00:00Z"
     )
     binding["accepted_result"] = prior
@@ -592,7 +830,7 @@ def test_standalone_review_recomposes_changed_task_authority_without_executor_re
     monkeypatch.setattr(
         execution_context,
         "_claim_bound_validation_observations",
-        lambda *_args: [{"observation_id": "obs-current"}],
+        lambda *_args, **_kwargs: [{"observation_id": "obs-current"}],
     )
 
     accepted = execution_context.materialize_accepted_task_review(
@@ -633,7 +871,7 @@ def test_legacy_accepted_result_without_disposition_remains_current_for_nonknowl
         "capture_repository_evidence",
         lambda _root: {"head": OID_A, "tree": OID_B, "entries": {}, "status": "clean"},
     )
-    accepted = execution_context.build_accepted_task_result(
+    accepted = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
     legacy = deepcopy(accepted)
@@ -661,7 +899,7 @@ def test_actual_accepted_repair_review_mode_and_frontier_are_digest_authority(
     )
     task = _task(tmp_path)
     binding = _binding(tmp_path)
-    initial = execution_context.build_accepted_task_result(
+    initial = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
     repaired_handoff = deepcopy(_handoff())
@@ -674,7 +912,7 @@ def test_actual_accepted_repair_review_mode_and_frontier_are_digest_authority(
             },
         }
     )
-    repaired = execution_context.build_accepted_task_result(
+    repaired = _build_accepted_task_result(
         task, binding, repaired_handoff, _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
 
@@ -701,7 +939,7 @@ def test_unrelated_repository_advance_does_not_stale_accepted_task_result(
     monkeypatch.setattr(execution_context, "capture_repository_evidence", lambda _root: repository)
     task = _task(tmp_path)
     binding = _binding(tmp_path)
-    accepted = execution_context.build_accepted_task_result(
+    accepted = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
 
@@ -719,7 +957,7 @@ def test_dependency_topology_change_invalidates_accepted_task_result(
     )
     task = _task(tmp_path)
     binding = _binding(tmp_path)
-    accepted = execution_context.build_accepted_task_result(
+    accepted = _build_accepted_task_result(
         task, binding, _handoff(), _validated(), accepted_at="2026-09-06T10:00:00Z"
     )
 
@@ -748,6 +986,7 @@ def test_materialize_persists_one_result_in_existing_binding(
         task,
         _handoff(),
         _validated(),
+        accepted_review=_handoff()["acceptance_review"],
         accepted_at="2026-09-06T10:00:00Z",
     )
 

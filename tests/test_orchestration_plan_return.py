@@ -19,6 +19,7 @@ for path in (ORCHESTRATION, WORK_BUNDLE):
 from review_runtime import (  # noqa: E402
     ReviewContractError,
     classify_first_broken_owner,
+    publish_review,
     resume_plan_return,
     _route_review_finding as route_review_verdict,
 )
@@ -191,9 +192,7 @@ def test_pd_07_resume_waits_for_current_accepted_plan_review_and_exact_preserved
         "staleness": {"is_stale": False, "reason": None, "supersedes": None},
     }
     review = bind_review_receipt(tmp_path, review)
-    reviews = orch / "reviews"
-    reviews.mkdir()
-    (reviews / "plan.json").write_text(json.dumps(review))
+    publish_review(tmp_path, review, current_target_identity=review["target_identity"])
 
     changed = deepcopy(preserved)
     changed[0]["revision"] = "2"

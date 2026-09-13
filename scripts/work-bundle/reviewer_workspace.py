@@ -21,6 +21,555 @@ SCOPES = frozenset({"source", "control"})
 NETWORK_STATES = frozenset({"denied"})
 VALIDATOR_KINDS = frozenset({"json", "sha256", "command"})
 TERMINAL_VERDICTS = frozenset({"accepted", "repair", "blocked"})
+NATIVE_DISABLED_FEATURES = (
+    "shell_tool", "unified_exec", "code_mode", "code_mode_host", "apps", "hooks",
+    "browser_use", "browser_use_external", "browser_use_full_cdp_access", "computer_use",
+    "in_app_browser", "image_generation", "multi_agent", "view_image", "workspace_dependencies",
+    "tool_suggest", "skill_search", "sleep_tool", "goals", "memories", "remote_plugin", "recommended_plugins",
+)
+NATIVE_ISOLATION = {
+    "mechanism": "native-host-read-only", "network": "model-transport",
+    "write_scope": "read-only", "context": "fresh-native-host-context-with-explicit-evidence",
+    "host_skill_catalog": "may-be-present",
+    "tools": "disabled-and-no-observed-activity", "os_process_isolation": False,
+}
+NATIVE_REVIEW_REQUEST_MAX_CHARS = 1_048_576
+
+
+def _structured_evidence(content: str) -> dict[str, object] | None:
+    try:
+        value = json.loads(content)
+    except json.JSONDecodeError:
+        try:
+            value = _review_runtime().parse_yaml_subset(content)
+        except (SystemExit, ValueError, TypeError):
+            return None
+    return value if isinstance(value, dict) else None
+
+
+def _integrated_change_manifest(
+    packet: dict[str, object], evidence: list[dict[str, object]],
+) -> tuple[dict[str, object], set[str], dict[str, str] | None] | None:
+    context = packet.get("stage_review_context")
+    if not isinstance(context, dict) or context.get("stage") != "integrated_implementation":
+        return None
+    target = context.get("target_identity")
+    target_tree = target.get("source_tree") if isinstance(target, dict) else None
+    candidates: list[tuple[dict[str, object], set[str], dict[str, str] | None]] = []
+    for item in evidence:
+        if not str(item.get("locator") or "").startswith("control:"):
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        value = _structured_evidence(content)
+        if not isinstance(value, dict):
+            continue
+        baseline = value.get("baseline")
+        endpoint = value.get("endpoint")
+        comparison = value.get("comparison")
+        if not all(isinstance(part, dict) for part in (baseline, endpoint, comparison)):
+            continue
+        paths = comparison.get("paths")
+        if endpoint.get("tree") != target_tree or not isinstance(paths, list):
+            continue
+        exact_diff = comparison.get("exact_diff")
+        normalized_diff = None
+        if exact_diff is not None:
+            if (
+                not isinstance(exact_diff, dict)
+                or set(exact_diff) != {"command", "locator", "sha256"}
+                or not str(exact_diff.get("locator") or "").startswith("control:")
+                or not re.fullmatch(r"[0-9a-f]{64}", str(exact_diff.get("sha256") or ""))
+                or not isinstance(exact_diff.get("command"), str)
+            ):
+                raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
+            normalized_diff = {
+                "command": exact_diff["command"],
+                "locator": exact_diff["locator"],
+                "sha256": exact_diff["sha256"],
+            }
+        locators: set[str] = set()
+        valid = True
+        for raw in paths:
+            if not isinstance(raw, dict) or set(raw) != {"status", "path"}:
+                valid = False
+                break
+            path = Path(str(raw.get("path") or ""))
+            if (
+                raw.get("status") not in {"added", "modified", "deleted"}
+                or path.is_absolute()
+                or not path.parts
+                or ".." in path.parts
+            ):
+                valid = False
+                break
+            if raw["status"] != "deleted":
+                locators.add("source:" + path.as_posix())
+        if valid:
+            candidates.append((value, locators, normalized_diff))
+    if len(candidates) > 1:
+        raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_AMBIGUOUS")
+    return candidates[0] if candidates else None
+
+
+def _stage_evidence_roles(packet: dict[str, object]) -> dict[str, str]:
+    manifest = packet.get("stage_evidence_manifest")
+    entries = manifest.get("entries") if isinstance(manifest, dict) else []
+    return {
+        str(item.get("locator") or ""): str(item.get("role") or "")
+        for item in entries
+        if isinstance(item, dict)
+    }
+
+
+def _controller_only_artifact_locators(
+    packet: dict[str, object], evidence: list[dict[str, object]],
+) -> set[str]:
+    context = packet.get("stage_review_context")
+    if not isinstance(context, dict) or context.get("stage") != "integrated_implementation":
+        return set()
+    roles = _stage_evidence_roles(packet)
+    result: set[str] = set()
+    for item in evidence:
+        locator = str(item.get("locator") or "")
+        if roles.get(locator) in {"accepted_task_result", "validation_observation"}:
+            result.add(locator)
+            continue
+        if "/handoff/" in locator:
+            result.add(locator)
+            continue
+        content = item.get("content")
+        value = _structured_evidence(content) if isinstance(content, str) else None
+        schema = str(value.get("schema") or "") if isinstance(value, dict) else ""
+        if (
+            isinstance(value, dict)
+            and (
+                value.get("type") == "executor-result"
+                or "lifecycle" in schema
+                or {"execution_id", "ownership", "accepted_result"}.issubset(value)
+            )
+        ):
+            result.add(locator)
+    return result
+
+
+def _integrated_product_evidence(
+    packet: dict[str, object], evidence: list[dict[str, object]],
+) -> dict[str, object]:
+    roles = _stage_evidence_roles(packet)
+    accepted_results: list[dict[str, object]] = []
+    accepted_observation_ids: set[str] = set()
+    observation_stores: list[dict[str, object]] = []
+    unresolved: list[object] = []
+    for item in evidence:
+        locator = str(item.get("locator") or "")
+        content = item.get("content")
+        value = _structured_evidence(content) if isinstance(content, str) else None
+        if not isinstance(value, dict):
+            continue
+        if roles.get(locator) == "accepted_task_result":
+            accepted = value.get("accepted_result")
+            if not isinstance(accepted, dict):
+                continue
+            ids = [str(value) for value in accepted.get("validation_evidence_ids", [])]
+            accepted_observation_ids.update(ids)
+            accepted_results.append(
+                {
+                    "task_id": accepted.get("task_id"),
+                    "accepted_source": accepted.get("accepted_source"),
+                    "validation_evidence_ids": ids,
+                    "review_id": accepted.get("review_id"),
+                    "invalidation": accepted.get("invalidation"),
+                }
+            )
+        elif roles.get(locator) == "validation_observation":
+            observation_stores.append(value)
+        elif locator not in _controller_only_artifact_locators(packet, [item]):
+            unresolved.extend(value.get("unresolved", []) if isinstance(value.get("unresolved"), list) else [])
+    observations = []
+    for store in observation_stores:
+        for item in store.get("observations", []):
+            if not isinstance(item, dict) or item.get("observation_id") not in accepted_observation_ids:
+                continue
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            observations.append(
+                {
+                    "observation_id": item.get("observation_id"),
+                    "product_tree": item.get("product_tree"),
+                    "command_digest": item.get("command_digest"),
+                    "oracle_digest": item.get("oracle_digest"),
+                    "result": {
+                        key: result.get(key)
+                        for key in (
+                            "exit_code", "stdout_digest", "stderr_digest",
+                            "started_at", "completed_at",
+                        )
+                    },
+                }
+            )
+    return {
+        "accepted_results": sorted(accepted_results, key=lambda item: str(item.get("task_id") or "")),
+        "validation_observations": sorted(
+            observations, key=lambda item: str(item.get("observation_id") or "")
+        ),
+        "unresolved_product_concerns": unresolved,
+    }
+
+
+def _native_review_artifacts(
+    packet: dict[str, object], evidence: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    manifest = _integrated_change_manifest(packet, evidence)
+    artifacts = packet.get("artifacts")
+    if not isinstance(artifacts, list) or manifest is None:
+        return [item for item in artifacts or [] if isinstance(item, dict)]
+    _, changed, exact_diff = manifest
+    if exact_diff is not None:
+        matching = [
+            item
+            for item in artifacts
+            if isinstance(item, dict) and item.get("locator") == exact_diff["locator"]
+        ]
+        if len(matching) != 1 or matching[0].get("sha256") != exact_diff["sha256"]:
+            raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
+        changed = set()
+    controller_only = _controller_only_artifact_locators(packet, evidence)
+    return [
+        item
+        for item in artifacts
+        if isinstance(item, dict)
+        and item.get("locator") not in controller_only
+        and (
+            not str(item.get("locator") or "").startswith("source:")
+            or item.get("locator") in changed
+        )
+    ]
+
+
+def _validate_integrated_change_manifest(
+    source_root: Path, packet: dict[str, object], evidence: list[dict[str, object]],
+) -> None:
+    selected = _integrated_change_manifest(packet, evidence)
+    if selected is None:
+        return
+    manifest, changed, exact_diff = selected
+    baseline = manifest["baseline"]
+    endpoint = manifest["endpoint"]
+    comparison = manifest["comparison"]
+    baseline_head = str(baseline.get("head") or "")
+    endpoint_head = str(endpoint.get("head") or "")
+    expected_command = f"git diff --name-status {baseline_head}..{endpoint_head}"
+    if comparison.get("command") != expected_command:
+        raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
+    head = subprocess.run(
+        ["git", "-C", str(source_root), "rev-parse", "HEAD"], capture_output=True, text=True
+    )
+    tree = subprocess.run(
+        ["git", "-C", str(source_root), "rev-parse", f"{endpoint_head}^{{tree}}"],
+        capture_output=True,
+        text=True,
+    )
+    ancestor = subprocess.run(
+        ["git", "-C", str(source_root), "merge-base", "--is-ancestor", baseline_head, endpoint_head],
+        capture_output=True,
+    )
+    diff = subprocess.run(
+        ["git", "-C", str(source_root), "diff", "--name-status", baseline_head, endpoint_head],
+        capture_output=True,
+        text=True,
+    )
+    binary_diff = subprocess.run(
+        ["git", "-C", str(source_root), "diff", "--binary", baseline_head, endpoint_head],
+        capture_output=True,
+    )
+    status_names = {"A": "added", "M": "modified", "D": "deleted"}
+    actual: list[dict[str, str]] = []
+    if not diff.returncode:
+        for row in diff.stdout.splitlines():
+            columns = row.split("\t")
+            if len(columns) != 2 or columns[0] not in status_names:
+                raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
+            actual.append({"status": status_names[columns[0]], "path": columns[1]})
+    paths = comparison.get("paths")
+    packet_locators = {
+        str(item.get("locator") or "")
+        for item in packet.get("artifacts", [])
+        if isinstance(item, dict)
+    }
+    exact_diff_valid = True
+    if exact_diff is not None:
+        supplied = [item for item in evidence if item.get("locator") == exact_diff["locator"]]
+        expected_binary_command = f"git diff --binary {baseline_head}..{endpoint_head}"
+        exact_diff_valid = (
+            len(supplied) == 1
+            and exact_diff["command"] == expected_binary_command
+            and not binary_diff.returncode
+            and supplied[0].get("sha256") == exact_diff["sha256"]
+            and hashlib.sha256(binary_diff.stdout).hexdigest() == exact_diff["sha256"]
+            and str(supplied[0].get("content") or "").encode("utf-8") == binary_diff.stdout
+        )
+    if (
+        head.returncode
+        or head.stdout.strip() != endpoint_head
+        or tree.returncode
+        or tree.stdout.strip() != endpoint.get("tree")
+        or ancestor.returncode
+        or diff.returncode
+        or comparison.get("path_count") != len(actual)
+        or paths != actual
+        or not changed.issubset(packet_locators)
+        or not exact_diff_valid
+    ):
+        raise ReviewerWorkspaceError("WB_REVIEW_CHANGE_MANIFEST_INVALID")
+
+
+def _stderr_reports_forbidden_native_activity(stderr: str) -> bool:
+    """Recognize protocol evidence on stderr without interpreting free-form logs."""
+    for line in stderr.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        kind = event.get("type")
+        if kind in {"turn.failed", "turn.cancelled", "error"}:
+            return True
+        if kind == "item.completed":
+            item = event.get("item")
+            if not isinstance(item, dict) or item.get("type") not in {"agent_message", "reasoning"}:
+                return True
+    return False
+
+
+def parse_native_reviewer_transcript(raw: str, stderr: str = "") -> tuple[str, dict[str, object]]:
+    """Accept one completed fresh host turn, never a supplied verdict or tool run."""
+    thread_id = None
+    phase = "new"
+    judgment = None
+    model_activity = False
+    try:
+        if _stderr_reports_forbidden_native_activity(stderr):
+            raise ValueError("stderr contains forbidden structured activity")
+        for line in raw.splitlines():
+            event = json.loads(line)
+            kind = event["type"]
+            if kind == "thread.started" and phase == "new":
+                thread_id = str(uuid.UUID(event["thread_id"]))
+                phase = "ready"
+            elif kind == "turn.started" and phase == "ready":
+                phase = "running"
+            elif kind == "item.completed" and phase in {"ready", "running"}:
+                item = event["item"]
+                if phase == "ready" and item["type"] == "error" and (
+                    str(item.get("message", "")).startswith("Under-development features enabled: skip_host_skill_discovery.")
+                    or str(item.get("message", "")).startswith("Code Mode is unavailable because code-mode host is disabled.")
+                ):
+                    continue
+                if (phase == "running" and not model_activity and item["type"] == "error"
+                        and item.get("message") == "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."):
+                    # Observed host initialization notice, not an attempted tool
+                    # or model failure. Native catalog metadata may be present.
+                    continue
+                if phase != "running" or item["type"] not in {"agent_message", "reasoning"}:
+                    raise ValueError("unexpected host activity")
+                model_activity = True
+                if item["type"] == "agent_message":
+                    if judgment is not None:
+                        raise ValueError("substantive judgment must be terminal")
+                    try:
+                        candidate = json.loads(item["text"])
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(candidate, dict):
+                        raise ValueError("judgment must be an object")
+                    judgment = candidate
+                elif judgment is not None:
+                    raise ValueError("substantive judgment must be terminal")
+            elif kind == "turn.completed" and phase == "running" and judgment is not None:
+                phase = "complete"
+            else:
+                raise ValueError("unexpected host activity")
+        if phase != "complete" or not thread_id:
+            raise ValueError("incomplete host run")
+        return thread_id, judgment
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_TRANSCRIPT_INVALID") from error
+
+
+def _native_reviewer_argv(executable: Path, workspace: Path, model: str) -> list[str]:
+    return [str(executable), "exec", "--ignore-user-config", "--sandbox", "read-only", "--ephemeral",
+            "--json", "--skip-git-repo-check", "-C", str(workspace), "-m", model,
+            "-c", 'model_reasoning_effort="medium"', "-c", "project_doc_max_bytes=0",
+            "-c", 'web_search="disabled"', "--enable", "skip_host_skill_discovery",
+            *[part for feature in NATIVE_DISABLED_FEATURES for part in ("--disable", feature)], "-"]
+
+
+def _run_native_process(workspace: Path, argv: list[str], request: str) -> subprocess.CompletedProcess[str]:
+    # Desktop transport/session variables would reconnect the reviewer to author
+    # capabilities even when native user config is suppressed. Never inherit them.
+    environment = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(Path.home()),
+                   "TMPDIR": str(workspace / "scratch")}
+    if os.environ.get("CODEX_HOME"):
+        environment["CODEX_HOME"] = os.environ["CODEX_HOME"]
+    return subprocess.run(argv, cwd=workspace, env=environment, input=request, text=True,
+                          capture_output=True, check=False, timeout=1800)
+
+
+def _retain_native_diagnostics(
+    runtime_root, run_id, review_id, argv, request_bytes, executable_digest, completed,
+    *, started_at, completed_at, packet, state, sealed, native_controller_evidence,
+    executable_unchanged,
+):
+    """Freeze one complete native run before admission; this is never a receipt."""
+    directory = runtime_root / "diagnostics/reviewer-native" / run_id
+    if not _inside(runtime_root, directory):
+        raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_PATH_ESCAPE")
+    directory.mkdir(parents=True, exist_ok=False)
+    items = {
+        "request.json": request_bytes,
+        "stdout.jsonl": completed.stdout.encode(),
+        "stderr.txt": completed.stderr.encode(),
+        "launch.json": json.dumps({"argv": argv, "executable_sha256": executable_digest}, sort_keys=True).encode(),
+        "packet.json": json.dumps(packet, sort_keys=True).encode(),
+        "events.jsonl": Path(str(sealed["event_log_path"])).read_bytes(),
+        "control.json": json.dumps({
+            key: state.get(key)
+            for key in (
+                "task_review_previous_review", "stage_review_previous_review",
+                "post_execution_review",
+            )
+            if state.get(key) is not None
+        }, sort_keys=True, ensure_ascii=False).encode(),
+    }
+    if native_controller_evidence is not None:
+        items["controller.json"] = json.dumps(
+            native_controller_evidence, sort_keys=True, ensure_ascii=False
+        ).encode()
+    items["capture.json"] = json.dumps({
+        "schema": "reviewer-native-capture-v2", "status": "captured-unadmitted",
+        "run_id": run_id, "review_id": review_id, "exit_code": completed.returncode,
+        "started_at": started_at, "completed_at": completed_at,
+        "packet_sha256": _canonical_digest(packet),
+        "event_log_sha256": sealed["event_log_sha256"],
+        "event_log_mode": sealed["event_log_mode"],
+        "executable_unchanged": executable_unchanged,
+        "artifacts": {name: _sha256_bytes(content) for name, content in items.items()},
+    }, sort_keys=True).encode()
+    for name, content in items.items():
+        target = directory / name
+        with target.open("xb") as stream:
+            stream.write(content)
+        target.chmod(0o400)
+    return str(directory)
+
+
+def _native_review_input(
+    packet: dict[str, object], evidence: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    key = "task_review_context" if "task_review_context" in packet else "stage_review_context"
+    context = packet[key]
+    artifacts = packet["artifacts"]
+    integrated = key == "stage_review_context" and context.get("stage") == "integrated_implementation"
+    if integrated and evidence is not None:
+        controller_only = _controller_only_artifact_locators(packet, evidence)
+        artifacts = [
+            item
+            for item in artifacts
+            if isinstance(item, dict) and item.get("locator") not in controller_only
+        ]
+        result = {
+            "target_identity": context["target_identity"],
+            "artifacts": artifacts,
+            "product_evidence": _integrated_product_evidence(packet, evidence),
+        }
+        if context.get("repair_frontier") is not None:
+            result["repair_frontier"] = context["repair_frontier"]
+        return result
+    if key == "task_review_context" or context.get("stage") == "integrated_implementation":
+        return {"target_identity": context["target_identity"], "artifacts": artifacts}
+    result = {
+        "stage": context["stage"],
+        "target_identity": context["target_identity"],
+        "artifacts": artifacts,
+    }
+    if context.get("repair_frontier") is not None:
+        result["repair_frontier"] = context["repair_frontier"]
+    return result
+
+
+def run_native_reviewer(workspace: Path, executable: Path, *, model: str, review_instructions: str) -> dict[str, object]:
+    """Run a fresh native host judgment over explicit evidence; no plugin required.
+
+    Native read-only policy is not the legacy OS process sandbox. The host may
+    use its authentication/model transport; no author thread transport propagates,
+    and any observed tool activity makes the result inadmissible.
+    """
+    executable = executable.expanduser().resolve()
+    workspace = workspace.expanduser().resolve()
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_CAPABILITY_UNAVAILABLE",
+            {"capability": "native_reviewer_executable"},
+        )
+    if not model:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_CAPABILITY_UNAVAILABLE",
+            {"capability": "native_reviewer_model"},
+        )
+    if not review_instructions.strip():
+        raise ReviewerWorkspaceError("WB_REVIEW_COMMAND_INVALID")
+    packet, state = _load_workspace(workspace)
+    if not ("stage_review_context" in packet or "task_review_context" in packet):
+        raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_CONTEXT_REQUIRED")
+    round_state = state.get("post_execution_review")
+    context = packet.get("stage_review_context") or packet.get("task_review_context")
+    authority_value = state.get("admission_workspace")
+    authority = Path(str(authority_value)) if isinstance(authority_value, str) else None
+    try:
+        if authority is not None:
+            _bounded_closure().require_orchestration_admission(
+                authority,
+                operation="round_completion" if isinstance(round_state, dict) else "ordinary_new",
+                flow_id=(str(round_state["flow_id"]) if isinstance(round_state, dict)
+                         else str(context["target_identity"].get("artifact_id"))),
+            )
+    except _bounded_closure().BoundedClosureError as error:
+        raise ReviewerWorkspaceError(error.code, {"detail": error.detail or str(error)}) from error
+    control_evidence = []
+    for item in packet["artifacts"]:
+        if str(item.get("locator") or "").startswith("control:"):
+            content = _evidence_path(workspace, item["locator"]).read_bytes().decode("utf-8")
+            control_evidence.append({**item, "content": content})
+    controller_locators = _controller_only_artifact_locators(packet, control_evidence)
+    controller_evidence = [
+        item for item in control_evidence if item.get("locator") in controller_locators
+    ]
+    selected_artifacts = _native_review_artifacts(packet, control_evidence)
+    evidence = []
+    for item in selected_artifacts:
+        # Text-mode reads normalize CRLF. The model input must preserve the exact
+        # frozen bytes whose digest will be revalidated during publication.
+        content = _evidence_path(workspace, item["locator"]).read_bytes().decode("utf-8")
+        if _sha256_bytes(content.encode("utf-8")) != item["sha256"]:
+            raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
+        evidence.append({**item, "content": content})
+    request = {
+        "instructions": review_instructions,
+        "review_input": _native_review_input(packet, control_evidence),
+        "evidence": evidence,
+    }
+    if len(json.dumps(request, sort_keys=True, ensure_ascii=False)) > NATIVE_REVIEW_REQUEST_MAX_CHARS:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_INPUT_TOO_LARGE",
+            {"max_chars": NATIVE_REVIEW_REQUEST_MAX_CHARS},
+        )
+    argv = _native_reviewer_argv(executable, workspace, model)
+    return _run_reviewer(
+        workspace, argv, native_request=request,
+        native_controller_evidence=controller_evidence,
+    )
 
 
 def _review_runtime():
@@ -45,10 +594,37 @@ def _review_runtime():
     return module
 
 
-def _validate_stage_context(context: object) -> dict[str, object]:
+def _bounded_closure():
+    orchestration = Path(__file__).resolve().parents[1] / "orchestration"
+    existing = sys.modules.get("bounded_closure")
+    if existing is not None:
+        if Path(existing.__file__).resolve() != orchestration / "bounded_closure.py":
+            raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_MODULE_COLLISION")
+        return existing
+    spec = importlib.util.spec_from_file_location(
+        "bounded_closure", orchestration / "bounded_closure.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["bounded_closure"] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop("bounded_closure", None)
+        raise
+    return module
+
+
+def _validate_stage_context(
+    context: object, *, require_re_review_predecessor: bool = False,
+) -> dict[str, object]:
     fields = {"stage", "target_identity", "target_locator", "agent_id", "capability", "execution_id", "evidence_mode"}
     repair_fields = {"review_mode", "review_target_kind", "repair_frontier", "review_reset"}
-    if not isinstance(context, dict) or frozenset(context) not in {frozenset(fields), frozenset(fields | repair_fields)}:
+    allowed = {
+        frozenset(fields),
+        frozenset(fields | repair_fields),
+        frozenset(fields | repair_fields | {"previous_review"}),
+    }
+    if not isinstance(context, dict) or frozenset(context) not in allowed:
         raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID")
     if (context["stage"] not in {"specification", "plan", "integrated_implementation"}
             or context["capability"] not in {"standard", "judgment"}
@@ -66,6 +642,15 @@ def _validate_stage_context(context: object) -> dict[str, object]:
                     raise ValueError("repair reset")
             elif context["repair_frontier"] is not None:
                 raise ValueError("initial frontier")
+            re_review = mode == "repair" or context["review_reset"] is not None
+            if "previous_review" in context:
+                previous = context.get("previous_review")
+                if not isinstance(previous, dict) or "previous_review" in previous:
+                    raise ValueError("re-review predecessor")
+            if require_re_review_predecessor and re_review and "previous_review" not in context:
+                raise ValueError("missing re-review predecessor")
+            if not re_review and "previous_review" in context:
+                raise ValueError("unexpected predecessor")
         except (ValueError, TypeError):
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTEXT_INVALID") from None
     return context
@@ -276,7 +861,11 @@ def build_direct_evidence_packet(
         raise ReviewerWorkspaceError("WB_REVIEW_CONTEXT_AMBIGUOUS")
     stage_fields = {}
     if stage_review_context is not None:
-        context = dict(_validate_stage_context(stage_review_context))
+        context = dict(
+            _validate_stage_context(
+                stage_review_context, require_re_review_predecessor=True
+            )
+        )
         manifest = _review_runtime().stage_evidence_manifest(control_root, source_root, context, records)
         # This runtime denies live source access. Only a complete frozen closure
         # is a reproducible snapshot; a caller's direct-source label grants nothing.
@@ -324,11 +913,12 @@ def _public_packet(packet: dict[str, object]) -> dict[str, object]:
             if isinstance(item, dict)
         ],
     }
-    context = result.get("task_review_context")
-    if isinstance(context, dict) and "previous_review" in context:
-        result["task_review_context"] = {
-            key: value for key, value in context.items() if key != "previous_review"
-        }
+    for context_key in ("stage_review_context", "task_review_context"):
+        context = result.get(context_key)
+        if isinstance(context, dict) and "previous_review" in context:
+            result[context_key] = {
+                key: value for key, value in context.items() if key != "previous_review"
+            }
     return result
 
 
@@ -474,9 +1064,50 @@ def create_reviewer_workspace(
         mode = "packet_only" if manifest["missing"] else "reproducible_snapshot"
         if packet.get("stage_evidence_manifest") != manifest or context["evidence_mode"] != mode:
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_EVIDENCE_MISMATCH")
+        control_evidence = []
+        for raw in artifacts:
+            if not isinstance(raw, dict) or not str(raw.get("locator") or "").startswith("control:"):
+                continue
+            try:
+                content = base64.b64decode(str(raw.get("content_base64") or ""), validate=True).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                raise ReviewerWorkspaceError("WB_REVIEW_PACKET_INVALID") from None
+            control_evidence.append(
+                {
+                    **{key: value for key, value in raw.items() if key != "content_base64"},
+                    "content": content,
+                }
+            )
+        _validate_integrated_change_manifest(effective_source, public_packet, control_evidence)
     elif "task_review_context" in packet:
         context = _validate_task_context(packet["task_review_context"])
         _validate_task_source_identity(effective_source, context)
+    review_round = None
+    if (
+        "stage_review_context" in packet
+        and isinstance(context, dict)
+        and context.get("stage") == "integrated_implementation"
+    ):
+        try:
+            review_round = _bounded_closure().review_round_binding(
+                effective_control,
+                review_id=review_id,
+                target_identity=context["target_identity"],
+            )
+        except _bounded_closure().BoundedClosureError as error:
+            raise ReviewerWorkspaceError(error.code) from error
+    authority = _bounded_closure().resolve_working_workspace(effective_control)
+    try:
+        if authority is not None:
+            _bounded_closure().require_orchestration_admission(
+                authority,
+                operation="round_completion" if review_round is not None else "ordinary_new",
+                flow_id=(str(review_round["flow_id"]) if review_round is not None
+                         else str(context["target_identity"].get("artifact_id"))
+                         if "context" in locals() and isinstance(context, dict) else None),
+            )
+    except _bounded_closure().BoundedClosureError as error:
+        raise ReviewerWorkspaceError(error.code, {"detail": error.detail or str(error)}) from error
     try:
         workspace.mkdir(parents=True)
         scope_digests: dict[str, list[str]] = {"source": [], "control": []}
@@ -511,6 +1142,14 @@ def create_reviewer_workspace(
         sentinel_digest = _sentinel_digest(
             effective_source, effective_control, effective_protected, list(public_packet.get("sentinels", []))
         )
+        previous_review_state = {}
+        for context_key, state_key in (
+            ("task_review_context", "task_review_previous_review"),
+            ("stage_review_context", "stage_review_previous_review"),
+        ):
+            context = packet.get(context_key)
+            if isinstance(context, dict) and "previous_review" in context:
+                previous_review_state[state_key] = context["previous_review"]
         state = {
             "schema": "reviewer-workspace-state-v1",
             "owner": "work-bundle",
@@ -527,12 +1166,21 @@ def create_reviewer_workspace(
                 effective_source, effective_control, effective_protected
             ),
             "status": "active",
-            **({"task_review_previous_review": packet["task_review_context"]["previous_review"]}
-               if isinstance(packet.get("task_review_context"), dict)
-               and "previous_review" in packet["task_review_context"] else {}),
+            **({"admission_workspace": str(authority)} if authority is not None else {}),
+            **({"post_execution_review": review_round} if review_round is not None else {}),
+            **previous_review_state,
         }
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        if review_round is not None:
+            try:
+                _bounded_closure().mark_review_round_prepared(
+                    effective_control,
+                    flow_id=str(review_round["flow_id"]),
+                    round_id=str(review_round["round_id"]),
+                )
+            except _bounded_closure().BoundedClosureError as error:
+                raise ReviewerWorkspaceError(error.code) from error
     except Exception:
         shutil.rmtree(workspace, ignore_errors=True)
         state_path.unlink(missing_ok=True)
@@ -715,7 +1363,7 @@ def _task_product_judgment_review(
     previous_review: object = None,
     integrated_stage: bool = False,
 ) -> dict[str, object]:
-    """Compose controller-owned review authority around a compact product judgment."""
+    """Preserve compact reviewer observations inside a controller-decidable envelope."""
     if not isinstance(judgment, dict) or set(judgment) != {"task_review"}:
         raise ReviewerWorkspaceError("WB_REVIEW_TASK_OUTPUT_INVALID")
     product = judgment["task_review"]
@@ -731,33 +1379,29 @@ def _task_product_judgment_review(
         or not isinstance(product["findings"], list)
     ):
         raise ReviewerWorkspaceError("WB_REVIEW_TASK_OUTPUT_INVALID")
+    if product["verdict"] == "repair" and not product["findings"]:
+        raise ReviewerWorkspaceError("WB_REVIEW_TASK_OUTPUT_INVALID")
     findings = []
     for item in product["findings"]:
         expected = {"finding_id", "severity", "requirement_id", "boundary", "evidence", "expected", "observed", "owner"}
         if (
             not isinstance(item, dict) or set(item) != expected
             or item["severity"] not in {"blocking", "advisory"}
-            or item["owner"] != "task_owner"
             or not all(isinstance(item[key], str) and item[key].strip() for key in expected - {"severity"})
         ):
             raise ReviewerWorkspaceError("WB_REVIEW_TASK_OUTPUT_INVALID")
-        advisory = item["severity"] == "advisory"
         findings.append({
+            "schema": "review-finding-v2",
             "finding_id": item["finding_id"], "stage": "implementation",
-            "class": "advisory_enhancement" if advisory else "implementation_defect",
-            "severity": item["severity"], "first_broken_artifact": "implementation",
-            "obligation_basis": "none" if advisory else "accepted_requirement",
+            "reviewer_observation": dict(item),
             "evidence": [{
                 "kind": "source", "locator": item["boundary"],
-                "digest_or_identity": _canonical_digest({
-                    "requirement_id": item["requirement_id"], "evidence": item["evidence"]
-                }),
+                "digest_or_identity": _canonical_digest(item),
                 "observation": f"{item['evidence']} Expected: {item['expected']} Observed: {item['observed']}",
             }],
             "target_identity": identity,
             "summary": f"{item['requirement_id']}: {item['observed']}",
-            "recommended_owner": "backlog_owner" if advisory else "task_owner",
-            "disposition": "record_advisory" if advisory else "repair_task",
+            "controller_decision": None,
         })
     artifacts = [
         {"path": item["locator"], "sha256": item["sha256"]}
@@ -796,11 +1440,310 @@ def _task_product_judgment_review(
     return result
 
 
+def _stage_product_judgment_review(
+    judgment, *, review_id, context, packet, started_at, completed_at,
+    previous_review=None,
+):
+    """Compose native stage authority without asking the reviewer to invent it."""
+    if not isinstance(judgment, dict) or set(judgment) != {"stage_review"}:
+        raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_INVALID")
+    product = judgment["stage_review"]
+    if (not isinstance(product, dict) or set(product) != {"target_identity", "verdict", "findings"}
+            or product["target_identity"] != context["target_identity"]
+            or product["verdict"] not in TERMINAL_VERDICTS or not isinstance(product["findings"], list)):
+        raise ReviewerWorkspaceError("WB_REVIEW_STAGE_OUTPUT_INVALID")
+    result = {
+        "review_id": review_id, "stage": context["stage"], "target_identity": context["target_identity"],
+        "review_mode": context.get("review_mode", "initial"), "review_target_kind": "stage",
+        "repair_frontier": context.get("repair_frontier"), "review_reset": context.get("review_reset"),
+        "reviewer": {"agent_id": context["agent_id"], "capability": context["capability"],
+                     "authorship": "none", "repair_participation": "none", "decision_participation": "none",
+                     "deliberation_participation": "none", "context_origin": context["evidence_mode"]},
+        "evidence": {"mode": context["evidence_mode"], "capabilities": ["product review judgment"],
+                     "unavailable_evidence": [], "commands": [],
+                     "artifacts": [{"path": item["locator"], "sha256": item["sha256"]} for item in packet["artifacts"]]},
+        "verdict": product["verdict"], "findings": product["findings"],
+        "started_at": started_at, "completed_at": completed_at,
+        "staleness": {"is_stale": False, "reason": None, "supersedes": None},
+    }
+    if context.get("review_mode", "initial") == "repair" or context.get("review_reset") is not None:
+        if not isinstance(previous_review, dict):
+            raise ReviewerWorkspaceError("WB_REVIEW_STAGE_CONTROL_INPUT_INVALID")
+        result["previous_review"] = previous_review
+    return result
+
+
+def _native_capture_artifacts(runtime_root: Path, run_id: str) -> tuple[Path, dict[str, object], dict[str, bytes]]:
+    """Load a complete immutable v2 run capture; legacy diagnostics are not promotable."""
+    runtime_root = runtime_root.expanduser().resolve()
+    run_id = _safe_id(run_id)
+    directory = (runtime_root / "diagnostics/reviewer-native" / run_id).resolve(strict=False)
+    if not _inside(runtime_root, directory):
+        raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_PATH_ESCAPE")
+    capture_path = directory / "capture.json"
+    try:
+        if capture_path.is_symlink() or not capture_path.is_file() or capture_path.stat().st_mode & 0o222:
+            raise ValueError("mutable capture")
+        capture = json.loads(capture_path.read_bytes())
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_CAPTURE_INCOMPLETE") from None
+    required = {
+        "request.json", "stdout.jsonl", "stderr.txt", "launch.json", "packet.json",
+        "events.jsonl", "control.json",
+    }
+    artifacts = capture.get("artifacts") if isinstance(capture, dict) else None
+    if (
+        capture.get("schema") != "reviewer-native-capture-v2"
+        or capture.get("status") != "captured-unadmitted"
+        or capture.get("run_id") != run_id
+        or not re.fullmatch(r"reviewer-run-[0-9a-f-]{36}", run_id)
+        or not isinstance(capture.get("review_id"), str)
+        or _safe_id(capture["review_id"]) != capture["review_id"]
+        or not isinstance(capture.get("started_at"), str)
+        or not isinstance(capture.get("completed_at"), str)
+        or not isinstance(artifacts, dict)
+        or not required.issubset(artifacts)
+        or capture.get("event_log_mode") != "0400"
+    ):
+        raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_CAPTURE_INCOMPLETE")
+    contents: dict[str, bytes] = {}
+    try:
+        for name, digest in artifacts.items():
+            if not isinstance(name, str) or Path(name).name != name:
+                raise ValueError("invalid artifact name")
+            path = directory / name
+            if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o222:
+                raise ValueError("mutable artifact")
+            content = path.read_bytes()
+            if _sha256_bytes(content) != digest:
+                raise ValueError("artifact digest mismatch")
+            contents[name] = content
+        packet = json.loads(contents["packet.json"])
+        if _canonical_digest(packet) != capture.get("packet_sha256"):
+            raise ValueError("packet digest mismatch")
+        if _sha256_bytes(contents["events.jsonl"]) != capture.get("event_log_sha256"):
+            raise ValueError("event log mismatch")
+        started = datetime.fromisoformat(capture["started_at"].replace("Z", "+00:00"))
+        completed = datetime.fromisoformat(capture["completed_at"].replace("Z", "+00:00"))
+        if started.tzinfo is None or completed.tzinfo is None or started > completed:
+            raise ValueError("invalid capture timing")
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_CAPTURE_INCOMPLETE") from None
+    return directory, capture, contents
+
+
+def _write_immutable_once(path: Path, content: bytes) -> None:
+    if path.exists():
+        if path.is_symlink() or not path.is_file() or path.read_bytes() != content or path.stat().st_mode & 0o222:
+            raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_RECEIPT_COLLISION")
+        return
+    with path.open("xb") as stream:
+        stream.write(content)
+    path.chmod(0o400)
+
+
+def complete_native_reviewer_capture(runtime_root: Path, run_id: str) -> dict[str, object]:
+    """Idempotently turn one complete future capture into the ordinary native receipt."""
+    runtime_root = runtime_root.expanduser().resolve()
+    diagnostic_path, capture, items = _native_capture_artifacts(runtime_root, run_id)
+    if capture.get("exit_code") != 0:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_PROCESS_FAILED",
+            {"exit_code": capture.get("exit_code"), "diagnostic_path": str(diagnostic_path)},
+        )
+    if capture.get("executable_unchanged") is not True:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_EXECUTABLE_MUTATED", {"diagnostic_path": str(diagnostic_path)}
+        )
+    try:
+        packet = json.loads(items["packet.json"])
+        request = json.loads(items["request.json"])
+        launch = json.loads(items["launch.json"])
+        control = json.loads(items["control.json"])
+        controller_evidence = (
+            json.loads(items["controller.json"]) if "controller.json" in items else None
+        )
+        combined_evidence = [*request["evidence"], *(controller_evidence or [])]
+        expected_input = _native_review_input(
+            packet, combined_evidence if controller_evidence is not None else None
+        )
+        expected_artifacts = _native_review_artifacts(packet, combined_evidence)
+        if (
+            set(request) != {"instructions", "review_input", "evidence"}
+            or not isinstance(request["instructions"], str)
+            or not request["instructions"].strip()
+            or request["review_input"] != expected_input
+            or len(request["evidence"]) != len(expected_artifacts)
+        ):
+            raise ValueError("native request mismatch")
+        for expected, supplied in zip(expected_artifacts, request["evidence"]):
+            if (
+                not isinstance(supplied, dict)
+                or set(supplied) != {*expected, "content"}
+                or any(supplied.get(key) != value for key, value in expected.items())
+                or _sha256_bytes(str(supplied["content"]).encode()) != expected["sha256"]
+            ):
+                raise ValueError("native evidence mismatch")
+        if controller_evidence is not None:
+            controller_locators = _controller_only_artifact_locators(packet, combined_evidence)
+            controller_artifacts = [
+                item for item in packet["artifacts"]
+                if item.get("locator") in controller_locators
+            ]
+            if len(controller_evidence) != len(controller_artifacts):
+                raise ValueError("native controller evidence mismatch")
+            for expected, supplied in zip(controller_artifacts, controller_evidence):
+                if (
+                    not isinstance(supplied, dict)
+                    or set(supplied) != {*expected, "content"}
+                    or any(supplied.get(key) != value for key, value in expected.items())
+                    or _sha256_bytes(str(supplied["content"]).encode()) != expected["sha256"]
+                ):
+                    raise ValueError("native controller evidence mismatch")
+        host_run_id, worker_output = parse_native_reviewer_transcript(
+            items["stdout.jsonl"].decode(), items["stderr.txt"].decode()
+        )
+        context_key = "stage_review_context" if "stage_review_context" in packet else "task_review_context"
+        context = (
+            _validate_stage_context(packet[context_key])
+            if context_key == "stage_review_context"
+            else _validate_task_context(packet[context_key])
+        )
+        context = {**context, "agent_id": host_run_id, "execution_id": host_run_id}
+        compact_integrated = (
+            context_key == "stage_review_context"
+            and context.get("stage") == "integrated_implementation"
+            and isinstance(worker_output, dict)
+            and "task_review" in worker_output
+        )
+        previous_key = (
+            "task_review_previous_review"
+            if context_key == "task_review_context"
+            else "stage_review_previous_review"
+        )
+        review = (
+            _task_product_judgment_review(
+                worker_output,
+                review_id=capture["review_id"], context=context, packet=packet,
+                started_at=capture["started_at"], completed_at=capture["completed_at"],
+                previous_review=control.get(previous_key), integrated_stage=compact_integrated,
+            )
+            if context_key == "task_review_context" or compact_integrated
+            else _stage_product_judgment_review(
+                worker_output,
+                review_id=capture["review_id"], context=context, packet=packet,
+                started_at=capture["started_at"], completed_at=capture["completed_at"],
+                previous_review=control.get(previous_key),
+            )
+        )
+        validated = (
+            _review_runtime()._validated_review_envelope(review)
+            if context_key == "stage_review_context"
+            else _review_runtime().validate_task_acceptance_review(review)
+        )
+        mode = "direct_source" if validated.evidence["mode"] == "direct" else validated.evidence["mode"]
+        if (
+            "reviewer_run" in review
+            or validated.review_id != capture["review_id"]
+            or (context_key == "stage_review_context" and validated.stage != context["stage"])
+            or validated.target_identity != context["target_identity"]
+            or validated.reviewer["agent_id"] != context["agent_id"]
+            or validated.reviewer["context_origin"] != context["evidence_mode"]
+            or validated.reviewer["capability"] != context["capability"]
+            or mode != context["evidence_mode"]
+        ):
+            raise ValueError("native judgment mismatch")
+    except ReviewerWorkspaceError as error:
+        raise ReviewerWorkspaceError(
+            error.code, {**error.result, "diagnostic_path": str(diagnostic_path)}
+        ) from error
+    except (ValueError, TypeError, KeyError, IndexError, AttributeError, json.JSONDecodeError) as error:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_CAPTURE_INVALID", {"diagnostic_path": str(diagnostic_path)}
+        ) from error
+
+    argv = launch["argv"]
+    if (
+        not isinstance(argv, list)
+        or len(argv) <= 11
+        or not re.fullmatch(r"[0-9a-f]{64}", str(launch.get("executable_sha256") or ""))
+        or not isinstance(argv[0], str)
+        or not Path(argv[0]).is_absolute()
+        or argv != _native_reviewer_argv(Path(argv[0]), Path(argv[9]), argv[11])
+    ):
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_NATIVE_CAPTURE_INVALID", {"diagnostic_path": str(diagnostic_path)}
+        )
+    receipt = {
+        "schema": "reviewer-native-receipt-v1", "run_id": run_id,
+        "review_id": capture["review_id"], "status": "passed",
+        "packet_sha256": capture["packet_sha256"], "sandbox_profile_sha256": None,
+        "argv_sha256": _canonical_digest(argv), "exit_code": 0,
+        "stdout_sha256": _sha256_bytes(items["stdout.jsonl"]),
+        "stderr_sha256": _sha256_bytes(items["stderr.txt"]),
+        "event_log_sha256": capture["event_log_sha256"],
+        "event_log_mode": capture["event_log_mode"],
+        "started_at": capture["started_at"], "completed_at": capture["completed_at"],
+        "host_run_id": host_run_id,
+        "request_sha256": _sha256_bytes(items["request.json"]),
+        "executable_sha256": launch["executable_sha256"],
+        "isolation": dict(NATIVE_ISOLATION), context_key: context,
+        "review_result_sha256": _canonical_digest(review), "review_result": review,
+    }
+    receipt_path = (
+        runtime_root / "receipts/reviewer-process" / f"{run_id}.json"
+    ).resolve(strict=False)
+    if not _inside(runtime_root, receipt_path):
+        raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_PATH_ESCAPE")
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    for suffix in (
+        "packet.json", "events.jsonl", "request.json", "stdout.jsonl", "stderr.txt",
+        "launch.json", "controller.json",
+    ):
+        if suffix in items:
+            _write_immutable_once(receipt_path.with_suffix(f".{suffix}"), items[suffix])
+    receipt_bytes = (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode()
+    _write_immutable_once(receipt_path, receipt_bytes)
+    reference = {"run_id": run_id, "sha256": _sha256_bytes(receipt_bytes)}
+    return {
+        **receipt, "receipt_path": str(receipt_path),
+        "event_log_path": str(receipt_path.with_suffix(".events.jsonl")),
+        "diagnostic_path": str(diagnostic_path), "reviewer_run": reference,
+    }
+
+
 def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object]:
     """Launch the entire reviewer under the frozen deny-default profile."""
+    return _run_reviewer(workspace, argv)
+
+
+def _run_reviewer(
+    workspace: Path,
+    argv: list[str],
+    *,
+    native_request: dict[str, object] | None = None,
+    native_controller_evidence: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     workspace = workspace.expanduser().resolve()
     runtime_root, review_id, state = _runtime_identity(workspace)
+    if state.get("post_execution_review") is not None and state.get("status") == "judged":
+        raise ReviewerWorkspaceError("WB_POST_EXECUTION_JUDGMENT_ALREADY_RECORDED")
     packet, _ = _load_workspace(workspace)
+    round_state = state.get("post_execution_review")
+    context = packet.get("stage_review_context") or packet.get("task_review_context")
+    authority_value = state.get("admission_workspace")
+    authority = Path(str(authority_value)) if isinstance(authority_value, str) else None
+    try:
+        if authority is not None:
+            _bounded_closure().require_orchestration_admission(
+                authority,
+                operation="round_completion" if isinstance(round_state, dict) else "ordinary_new",
+                flow_id=(str(round_state["flow_id"]) if isinstance(round_state, dict)
+                         else str(context["target_identity"].get("artifact_id"))
+                         if isinstance(context, dict) else None),
+            )
+    except _bounded_closure().BoundedClosureError as error:
+        raise ReviewerWorkspaceError(error.code, {"detail": error.detail or str(error)}) from error
     if _canonical_digest(packet) != state.get("packet_sha256") or _artifact_digest(workspace, packet) != state.get("evidence_digest"):
         raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
     if "stage_review_context" in packet:
@@ -812,8 +1755,55 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
             )
         except (ValueError, OSError, SystemExit) as error:
             raise ReviewerWorkspaceError("WB_REVIEW_STAGE_EVIDENCE_INCOMPLETE") from error
+    if isinstance(round_state, dict):
+        if authority is None:
+            raise ReviewerWorkspaceError("WB_POST_EXECUTION_ROUND_BINDING_INVALID")
+        try:
+            _bounded_closure().require_review_round_execution(
+                authority,
+                binding=round_state,
+            )
+        except _bounded_closure().BoundedClosureError as error:
+            raise ReviewerWorkspaceError(
+                error.code,
+                {"detail": error.detail or str(error)},
+            ) from error
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    completed = _run_sandboxed_process(workspace, argv)
+    run_id = f"reviewer-run-{uuid.uuid4()}"
+    native = native_request is not None
+    request_bytes = json.dumps(native_request, sort_keys=True, ensure_ascii=False).encode() if native else b""
+    executable_digest = _sha256_bytes(Path(argv[0]).read_bytes()) if native else None
+    completed = (_run_native_process(workspace, argv, request_bytes.decode()) if native
+                 else _run_sandboxed_process(workspace, argv))
+    if native:
+        if _artifact_digest(workspace, packet) != state.get("evidence_digest"):
+            raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
+        completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        sealed = _seal_event_log(runtime_root, review_id)
+        executable_unchanged = _sha256_bytes(Path(argv[0]).read_bytes()) == executable_digest
+        diagnostic_path = _retain_native_diagnostics(
+            runtime_root, run_id, review_id, argv, request_bytes, executable_digest, completed,
+            started_at=started_at, completed_at=completed_at, packet=packet, state=state,
+            sealed=sealed, native_controller_evidence=native_controller_evidence,
+            executable_unchanged=executable_unchanged,
+        )
+        if completed.returncode != 0:
+            raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_PROCESS_FAILED", {
+                "exit_code": completed.returncode, "diagnostic_path": diagnostic_path})
+        if not executable_unchanged:
+            raise ReviewerWorkspaceError("WB_REVIEW_NATIVE_EXECUTABLE_MUTATED", {"diagnostic_path": diagnostic_path})
+        try:
+            result = complete_native_reviewer_capture(runtime_root, run_id)
+        except ReviewerWorkspaceError as error:
+            raise ReviewerWorkspaceError(error.code, {**error.result, "diagnostic_path": diagnostic_path}) from error
+        if state.get("post_execution_review") is not None:
+            state["status"] = "judged"
+            state["judgment_sha256"] = result.get("review_result_sha256")
+            state_path = runtime_root / ".state" / f"{review_id}.json"
+            temporary = state_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            os.replace(temporary, state_path)
+        return result
     if _artifact_digest(workspace, packet) != state.get("evidence_digest"):
         raise ReviewerWorkspaceError("WB_REVIEW_EVIDENCE_MUTATED")
     denied = _sandbox_denied(completed)
@@ -825,7 +1815,6 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
         )
     sealed = _seal_event_log(runtime_root, review_id)
     sandbox_state = state.get("sandbox") if isinstance(state.get("sandbox"), dict) else {}
-    run_id = f"reviewer-run-{uuid.uuid4()}"
     receipt = {
         "schema": "reviewer-process-receipt-v1",
         "run_id": run_id,
@@ -862,14 +1851,18 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
                 _task_product_judgment_review(
                     worker_output, review_id=review_id, context=context, packet=packet,
                     started_at=started_at, completed_at=receipt["completed_at"],
-                    previous_review=state.get("task_review_previous_review"),
+                    previous_review=state.get(
+                        "task_review_previous_review"
+                        if context_key == "task_review_context"
+                        else "stage_review_previous_review"
+                    ),
                     integrated_stage=compact_integrated,
                 )
                 if context_key == "task_review_context" or compact_integrated
                 else worker_output
             )
             validated = (
-                _review_runtime().validate_stage_review(review)
+                _review_runtime()._validated_review_envelope(review)
                 if context_key == "stage_review_context"
                 else _review_runtime().validate_task_acceptance_review(review)
             )
@@ -907,14 +1900,22 @@ def run_sandboxed_reviewer(workspace: Path, argv: list[str]) -> dict[str, object
         if context_key == "task_review_context" or compact_integrated:
             receipt["review_result"] = review
         receipt["isolation"] = {"mechanism": "sandbox-exec", "network": "denied", "write_scope": "scratch"}
+    if state.get("post_execution_review") is not None:
+        state["status"] = "judged"
+        state["judgment_sha256"] = receipt.get("review_result_sha256")
+        state_path = runtime_root / ".state" / f"{review_id}.json"
+        temporary = state_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(temporary, state_path)
     receipt_path = (runtime_root / "receipts" / "reviewer-process" / f"{run_id}.json").resolve(strict=False)
     if not _inside(runtime_root, receipt_path):
         raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_PATH_ESCAPE")
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
     # Retain immutable run-scoped evidence after workspace cleanup or later runs.
-    for suffix, content in (("packet.json", json.dumps(packet, sort_keys=True).encode()),
-                            ("profile.sb", (workspace / "sandbox.sb").read_bytes()),
-                            ("events.jsonl", Path(str(sealed["event_log_path"])).read_bytes())):
+    retained_items = [("packet.json", json.dumps(packet, sort_keys=True).encode()),
+                      ("events.jsonl", Path(str(sealed["event_log_path"])).read_bytes())]
+    retained_items.append(("profile.sb", (workspace / "sandbox.sb").read_bytes()))
+    for suffix, content in retained_items:
         retained = receipt_path.with_suffix(f".{suffix}")
         with retained.open("xb") as stream:
             stream.write(content)

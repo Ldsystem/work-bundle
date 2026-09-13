@@ -91,6 +91,8 @@ Plan review identity uses the canonical semantic plan projection shared by all l
 
 Every executable task declares the same five-field Truth Basis. When a consequential simplification or compatibility assumption exists, make the earliest ordinary task cheaply falsify it before broad edits. Do not add a risk score, checkpoint phase, or parallel lifecycle.
 
+Planning remains outside the bounded post-execution counter: plan and specification revisions do not consume post-execution review rounds. A task that reconciles an existing post-execution flow preserves its stable flow identity and declares the existing blocker/finalization context; shared admission, not plan wording, decides whether reconciliation may proceed.
+
 ## 4. Desired Files
 
 | ID | File Type | Path | Purpose | Operation | Related Phase |
@@ -119,6 +121,8 @@ Every executable task declares the same five-field Truth Basis. When a consequen
 | TEST-001 | unit|integration|model-behavior|manual | `[file/module/function/API]` | phase-001 | - | `[command if applicable]` | [Measurable result.] |
 
 Harness-executed integration commands run against the final accepted plan workspace after ordinary task integration and must be Git-observable-state-neutral. Do not declare a plan-level `files.write` envelope.
+
+When post-execution integrated review applies, record controller commands as lifecycle operations rather than plan validation rows: `begin-review-round` before review preparation, `complete-review-round` from stored review or factual audit-block evidence, `review-round-status` for diagnosis, and `finalize-with-blockers` only for unresolved bounded closure. Task review and artifact revision are not review rounds.
 
 ## 7.1 Contract Groups, Barriers, And Convergence
 

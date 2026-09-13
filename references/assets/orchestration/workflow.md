@@ -103,7 +103,9 @@ retained for blocked/repair evidence, never sole acceptance. Accepted review req
 direct-source or reproducible-snapshot context and no unavailable claim-relevant
 evidence. Snapshot access additionally requires explicit snapshot artifact digests.
 The record describes evidence access; lifecycle acceptance additionally requires
-`reviewer_run: {run_id, sha256}` referencing a native `reviewer-process-receipt-v1`.
+`reviewer_run: {run_id, sha256}` referencing a provider-specific reviewer-run receipt:
+`reviewer-native-receipt-v1` for native host runs or
+`reviewer-process-receipt-v1` for legacy sandboxed process runs.
 Envelope validation alone (including historical records without that reference) is
 not lifecycle admission. The gate resolves the controller-owned store through
 `reviewer_runtime_root(workspace_root)` under `~/.work-bundle/reviewer-runtime/workspaces/`;
@@ -116,8 +118,11 @@ For task review it instead adds native `task_review_context`, binding the task t
 review mode/frontier or reset, reviewer identity/capability, execution identity, and
 evidence mode. Workspace creation admits it only when the source checkout is clean and
 its exact HEAD/tree still equal that task target.
-The current sandbox denies live source/control access, so its packet builder derives
-`evidence_mode`; requesting `direct_source` does not grant it. A mechanically complete
+The frozen packet builder derives `evidence_mode` from available evidence; requesting
+`direct_source` does not grant it. The legacy process sandbox denies live source/control
+access. The ordinary native host path consumes the same explicit frozen evidence,
+suppresses author transport and user configuration, disables tools, and rejects observed
+tool activity; native host read-only policy is not OS process isolation. A mechanically complete
 `stage-evidence-manifest-v1` yields `reproducible_snapshot`; missing evidence yields
 `packet_only`, which cannot grant acceptance, even with `unavailable_evidence: []`.
 The manifest binds stage/target identity, required locators, roles, artifact digests,
@@ -146,19 +151,24 @@ recomputing packet/receipt hashes cannot turn partial evidence into complete evi
 
 `stage_target_identity` computes the target from current source artifacts, and
 workspace creation checks it again. Complete stage evidence is checked before any
-reviewer process launch. Run the worker with `reviewer-process-run` using that runtime
-root. Specification and plan workers retain the stage-review contract; task and
+reviewer launch. Use `run_native_reviewer` for the ordinary plugin-independent native path;
+`reviewer-process-run` remains the legacy sandboxed process runner. Specification and
+plan workers retain the stage-review contract; task and
 integrated-implementation product workers return the compact `task_review` judgment
 defined by `dev-code-review`. The controller constructs the native envelope from frozen target, independence, and evidence context,
 then binds its canonical digest into the receipt. The controller then attaches the run
 ID and SHA-256 of the immutable receipt bytes to that exact result and publishes the
-task-or-stage envelope as a read-only review-store record. Verdict admission and
-named-finding routing resolve only that stored reference and recheck its receipt and
-current target; bare stdout, unattached receipts, and bare findings remain observations.
+task-or-stage envelope as a read-only review-store record. Publication validates the provider-specific reviewer-run receipt once and persists an immutable direct
+current-authority binding. Later lifecycle consumers use the immutable direct current-authority binding and recheck only its exact record and current target; they do
+not traverse predecessors or replay receipt completeness. Bare stdout, unattached
+receipts, and bare findings remain observations.
 
-The lifecycle gate verifies review ID, exact result/target/profile, successful
-completion, sandbox/network/write boundary, and immutable packet/profile/event
-digests. Run-scoped evidence remains available after workspace cleanup; full traces
+At publication, the lifecycle gate verifies review ID, exact result/target/profile,
+successful completion, the provider-specific execution boundary, and immutable
+packet/profile/event digests. Native receipts bind the executable, request, actual host run identity, sanitized
+context, read-only policy, and absence of observed tool activity. Legacy process receipts
+bind the sandbox, denied network, and scratch-only write boundary. Run-scoped evidence
+remains available after workspace cleanup; full traces
 are never embedded into the stage envelope. Missing, altered, failed, mutable, or
 mismatched provenance cannot grant acceptance. Known execution IDs are obtained
 from artifact `execution_id`, `author_execution_id(s)`, `repair_execution_id(s)` and
@@ -186,6 +196,15 @@ receipt/publication, status, and archive bookkeeping remain controller inputs an
 not enter product judgment. Controller/orchestration code is product when allocated
 by the accepted task.
 
+Reviewer observations remain intact. The controller owns their classification, the
+first broken owner or artifact, and the selected action through the agent-owned v2
+contract; current routing has no fixed class-to-remedy table or confirming-review step.
+
+Plan identity uses the documented `plan-structural-projection-v2`: lifecycle fields are
+excluded only at designated structural locations, while unknown or substantive nested
+fields and requirement text remain identity-bearing. The original projection remains
+callable only for explicit legacy interpretation; current writes always use v2.
+
 The **acceptance once** lifecycle rule makes the harness strongly verify binding,
 source/scope, subagent ownership, validation, and required review, then persists one
 compact accepted result. Dependency release, finalization, resume, and archive consume
@@ -212,18 +231,18 @@ scheduler selects executable task
   -> dispatch every planner-approved disjoint ready task before waiting
   -> subagent implements with declared methodology
   -> run fresh task-local validation
-  -> write executor-result handoff
-  -> validate-executor-result
-  -> optional task review when acceptance_review.required: true
+  -> creation-safe validation and atomic executor-result handoff write
+  -> optional task review when compiled review_required: true
      -> compile bounded review package
      -> independent `dev-code-review`
      -> accept | repair | blocked
+  -> accepted-result materialization joins executor facts, observations, and stored review authority
   -> Completed
 ```
 
 Subagent executors own every implementation and repair mutation, task-local verification, and executor-result evidence, including a task-local knowledge disposition of `none`, `update`, `supersede`, or `reclassify`. They never invoke persistence or read knowledge. Product reviewers judge accepted product requirements/boundaries, exact source/diff, correctness, edge cases, normalized validation observations, unresolved product concerns, and unnecessary complexity. Controllers own disposition, handoff, provenance, publication, and lifecycle mechanics. Schedulers own dependencies, barriers, context compilation, neutral subagent binding, validation routing, and evidence shape; they do not perform code-quality review or mutate task write scope.
 
-Selecting `orch-execute-plan` requires a subagent owner for every task without a separate user opt-in. The production `TaskOwnershipScheduler` admission entry consumes either a host-native or Execution-Flow adapter; evidence records only the minimum agent/run identity and mechanism. If none is available, execution fails closed before task mutation. Independent disjoint tasks in distinct execution workspaces dispatch before any wait; dependent, overlapping, or same-workspace tasks serialize. Acceptance uses the same scheduler entry to reject controller mutation, and repair dispatch uses `operation: repair` through the same adapter path.
+Selecting `orch-execute-plan` requires a subagent owner for every task without a separate user opt-in. The production `TaskOwnershipScheduler` admission entry consumes a host-native adapter or, when available, an Execution-Flow adapter; host-native execution is sufficient and Execution Flow is optional. Evidence records only the minimum agent/run identity and mechanism. If none is available, execution fails closed before task mutation. Independent disjoint tasks in distinct execution workspaces dispatch before any wait; dependent, overlapping, or same-workspace tasks serialize. Acceptance uses the same scheduler entry to reject controller mutation, and repair dispatch uses `operation: repair` through the same adapter path.
 
 On `repair`, return blocking findings to the existing task owner, repair from the exact
 previously reviewed source, rerun only claim-relevant invalidated validation, and
@@ -240,7 +259,23 @@ carries the previous finding/evidence frontier and reviews only repaired boundar
 Only a material authority, scope, acceptance, decomposition, or validation-allocation
 change resets review to an initial frontier.
 
-A task becomes `Completed` only when implementation criteria, fresh validation, a valid executor-result handoff, and a passing `validate-executor-result` check all exist. `Completed` does not require `verdict: accept` unless review was required. Phase and plan status derive from accepted children plus declared dependency and barrier gates.
+A task becomes `Completed` only when implementation criteria, fresh validation, a valid immutable executor-result handoff, and a passing `validate-executor-result` check all exist. Review-required tasks additionally require exact stored `accept` authority, joined only during accepted-result materialization. Phase and plan status derive from accepted children plus declared dependency and barrier gates.
+
+`write-handoff` resolves the compiled task and runs its pure creation-safe projection before artifact or handoff-index mutation. This admits structurally complete executor facts before independent observation or review while rejecting wrong-owner review, receipt, publication, accepted-result, and audit fields. New handoffs use `lifecycle_authority: location-v1`: status directories own current lifecycle state, status changes move identical bytes, and same-state requests write nothing. Unmarked legacy artifacts retain embedded/location fallback until their first explicit status change creates the bounded digest/type/plan/task/status override; no historical bytes are rewritten.
+
+## Bounded post-execution review and closure
+
+The optional workspace policy in `.work-bundle/project.yaml#orchestration_control` fixes the post-execution review round limit at five and projects stable per-flow state. The append-only controller ledger under `.work-bundle/runtime/orchestration-control/` owns round history. Plan and specification revisions do not consume post-execution review rounds; neither do task reviews, reviewer/provider retries, publication retries, resumes, or branches. Legacy workspaces without this policy keep their existing behavior.
+
+Once all executor attempts are terminal, the controller runs `begin-review-round` before integrated-review evidence preparation or dispatch. An exact request ID and target identity is idempotent; a different target identity reserves a new round. After publication, `complete-review-round` consumes the immutable store-owned product review reference. If no product artifact exists because the controller was blocked, a factual audit-block may complete the attempt as blocked, but it must not impersonate a product verdict. Duplicate exact completion does not increment. `review-round-status` reports the frozen target, reserved/completed counts, and finalization state.
+
+An accepted round continues through the normal final workflow audit, knowledge gate, archive, and index refresh. Findings below the fifth completed round route through admission-controlled scoped repair. The fifth unresolved or blocked completion stops reconciliation and invokes `finalize-with-blockers`: persist finalization-required state, validate the supplied residual specification and clean source baselines, persist an active workspace blocker, finalize the review-owned knowledge disposition, archive the origin specification and plan and update their indexes without collision overwrite, release owned bindings, and persist terminal closure. Incomplete administrative stages remain explicit and retryable, but retry must not reopen product work.
+
+Shared admission uses operation classes instead of caller-selected labels. An exhausted flow refuses reconciliation before its blocker is written. An active workspace blocker refuses ordinary new work and other unexempted reconciliation; read-only diagnosis, round completion, blocker recording, knowledge return, and finalization remain available. Any bounded implementation exemption names the exact flow and blocker and restores its exact backed-up blocker without losing newer unrelated metadata.
+
+The builtin `orch-bounded-closure` rule and its index entry are the deployment target. If an already-installed workspace has a project-scope shim with that same rule ID, retain the project shim until builtin deployment is ready, then remove only that owned shim in the same bounded migration. Never enable both copies or mutate unrelated project rules.
+
+Current metadata migration renames only the legacy policy key to `post_execution_review_round_limit: 5`; it never scans or rewrites historical specifications, plans, handoffs, reviews, or evidence.
 
 ## Failure routing
 
@@ -269,7 +304,9 @@ accepted manifests into a live source inventory.
 
 `orch-review-plan` audits workflow completion, required optional reviews, declared plan-level/integration acceptance, handoff integrity, knowledge disposition, finalization gates, and archive readiness. It checks declared completion evidence against the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints. It does not redo task code review, reread implementation for code quality, or start another implementation-review agent.
 
-Final review aggregates accepted task dispositions from execution and task-review evidence. Any accepted `update`, `supersede`, or `reclassify` promotes durable closure to `required` even when the specification's upstream Knowledge Base Update state was `not-needed`; accepted `none` does not. Rejected task dispositions do not trigger closure. Archive is allowed only after required optional reviews are accepted, declared plan-level/integration acceptance is recorded, validation and handoffs are coherent, barriers converged, the resulting Knowledge Base Update disposition is `completed` or `not-needed`, approved `ks-*` return evidence exists when required, and allowed commit/CodeGraph/metadata/archive/index mechanics complete or are explicitly inapplicable. Missing review verdicts are not a blocker when no task set `acceptance_review.required: true`.
+Final review aggregates accepted task dispositions from execution and task-review evidence. Any accepted `update`, `supersede`, or `reclassify` promotes durable closure to `required` even when the specification's upstream Knowledge Base Update state was `not-needed`; accepted `none` does not. Rejected task dispositions do not trigger closure. Archive is allowed only after required optional reviews are accepted, declared plan-level/integration acceptance is recorded, validation and handoffs are coherent, barriers converged, the resulting Knowledge Base Update disposition is `completed` or `not-needed`, approved `ks-*` return evidence exists when required, and allowed commit/CodeGraph/metadata/archive/index mechanics complete or are explicitly inapplicable. Missing stored review authority is not a blocker when no compiled task set `review_required: true`.
+
+Knowledge closure gates final completion and archive; it never precedes specification, plan, task, or integrated-implementation review.
 
 Only approved keep-summarizing owners write durable knowledge. Final orchestration review owns approved persistence delegation and may invoke that owner, then validate returned paths or an evidence-backed no-write result; executors and orchestration itself must not write knowledge directly.
 

@@ -11,6 +11,8 @@ Did the approved WorkBundle workflow complete correctly, with required optional 
 
 This is a workflow audit and deterministic finalizer. Independent `dev-code-review` owns task-scoped implementation quality when review is explicitly required.
 
+The audit has no mandatory Execution Flow dependency: host-native execution is sufficient and Execution Flow is optional.
+
 ## Audit
 
 Verify:
@@ -19,8 +21,8 @@ Verify:
 - executor-result handoffs by applicability;
 - declared completion evidence corresponds to the compiled Truth Basis, source IDs, expected delta, and remaining AUTH constraints;
 - every mapped invariant has capable, current, correctly bounded harness-observed evidence under its allocated INV/VAL identities; treat incapable green, contradiction, staleness, wrong-boundary, failure, missing, or unexecuted evidence as negative acceptance evidence and route first-owner repair: task repair for failed, stale, or unexecuted implementation evidence; plan repair for missing, wrong-boundary, or incapable allocation; specification repair for contradictory accepted authority;
-- missing `acceptance_review.verdict` blocks only a task that explicitly required independent review; do not require universal task-review evidence;
-- `acceptance_review.verdict: accept` only for those explicitly required reviews;
+- missing stored `accept` review authority blocks only a task whose compiled `review_required` is true; do not require universal task-review evidence or embedded handoff verdicts;
+- exact stored `accept` authority only for those explicitly required reviews, joined during accepted-result materialization;
 - declared plan-level/integration acceptance observed on the final integrated workspace; do not start another implementation-review agent to produce plan-level acceptance;
 - aggregate accepted task dispositions before applying the final knowledge gate: any accepted `update`, `supersede`, or `reclassify` makes durable closure required even when the upstream specification said `not-needed`; accepted `none` and rejected task dispositions do not trigger closure;
 - record validated delegate-return state in the root plan's existing Knowledge Base Update `Closure return` field so the deterministic `archive-plan` helper enforces the same aggregate gate;
@@ -30,7 +32,7 @@ Verify:
 - approved `ks-*` return evidence exists when durable knowledge was required;
 - allowed commit, applicable CodeGraph sync, metadata update, archive, and index refresh completed or are explicitly not applicable.
 - dependency, finalization, resume, and archive decisions consume compact accepted results and current harness observations without replaying transient evidence or historical handoff chains.
-- required task and stage verdicts are admitted from immutable review-store references with native reviewer-run receipts and still-current targets; bare output, unattached receipts, and bare findings are not lifecycle authority.
+- required task and stage verdicts are strongly checked with provider-specific reviewer-run receipts at publication, then later admitted from immutable direct current-authority bindings and still-current targets without receipt or predecessor replay; bare output, unattached receipts, and bare findings are not lifecycle authority.
 - product findings concern accepted product requirements/boundaries, exact product source/diff, normalized harness observations, and unresolved product concerns; handoff, knowledge disposition, reviewer history, and publication/status/archive bookkeeping stay with controller audit.
 
 ## Evidence capability correspondence
@@ -92,9 +94,15 @@ Do not create a repair specification for every failed gate.
 
 When the upstream disposition or aggregate accepted task dispositions make closure `required`, invoke the approved keep-summarizing owner with accepted implementation, validation, handoff, review, and decision evidence. Review owns approved persistence delegation; executor disposition evidence never invokes a `ks-*` skill. Validate structural-value result, written or updated durable paths or evidence-backed no-write rationale, index rebuild status, blockers, and completion state. Resume only from that return evidence. Orchestration does not directly create, edit, promote, delete, or index durable knowledge, and archive remains blocked until the validated return resolves required closure.
 
+Knowledge closure gates final completion and archive; it never precedes specification, plan, task, or integrated-implementation review.
+
 ## Finalization
 
 Keep audit judgment and deterministic finalization together in this skill for now; do not create `orch-finalize-plan`. After every audit gate passes, invoke the smallest existing helper for allowed commit, CodeGraph sync, project metadata update, archive, and index refresh. Clean only a WorkBundle-owned execution workspace when policy and proven Git identity allow it.
+
+For post-execution integrated review, first confirm every executor attempt is terminal, then call `begin-review-round` before evidence preparation or reviewer dispatch. Complete the reserved round with `complete-review-round` using the immutable stored product review reference, or a factual controller audit-block when no product review artifact exists. The audit-block records controller failure only and must not impersonate a product verdict. Use `review-round-status` to report the current frozen target, completed count, finalization requirement, and blocker route.
+
+An accepted post-execution review round follows the normal final audit, knowledge, repository, archive, and index gates above. Findings below the fifth completed round route to scoped repair. The fifth unresolved or blocked round routes to `finalize-with-blockers`: persist finalization-required state, validate the residual specification and clean source baselines, persist the active workspace blocker, validate and record the review-owned knowledge return, archive the origin specification and plan and update their indexes without collision overwrite, release owned bindings, and persist terminal closure. Retry an incomplete administrative stage without reopening product work or rerunning review.
 
 Archive remains blocked while any required knowledge, validation, review, handoff, repository, workspace, or unsettled decision evidence is incomplete or contradictory.
 
@@ -102,9 +110,10 @@ Archive remains blocked while any required knowledge, validation, review, handof
 
 - `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
 - `orch-review-completion`: `rules/orchestration/orch-review-completion.md`
+- `orch-bounded-closure`: `rules/orchestration/orch-bounded-closure.md`
 
 Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules above when their indexed conditions apply.
 
 ## Boundary
 
-Follow `orch-orchestration-boundary` and `orch-review-completion`.
+Follow `orch-orchestration-boundary`, `orch-review-completion`, and `orch-bounded-closure`.

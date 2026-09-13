@@ -37,6 +37,8 @@ Orchestration artifacts are derived working material under `.work-bundle/orchest
 - Reference spec IDs in downstream plans, phases, and tasks instead of duplicating full requirement prose.
 - Carry only task-specific execution detail in task files after citing stable spec IDs.
 - After acceptance, make downstream orchestration consume the compact accepted result and current harness observations; keep transient acceptance evidence and historical handoff chains out of dependency, finalization, resume, and archive context.
+- Route post-execution integrated review and closure through the canonical bounded controller. An exhausted flow refuses reconciliation before its blocker is written; an active workspace blocker refuses ordinary new work and unexempted reconciliation, while diagnosis and closure operations remain available.
+- Keep normal accepted final audit/archive distinct from unresolved fifth-round forced closure. Controller mechanics own counting, admission, durable control state, and administrative retry; agents own product semantics and knowledge curation.
 
 ## Must Not
 
@@ -47,6 +49,7 @@ Orchestration artifacts are derived working material under `.work-bundle/orchest
 - Embed implementation plans inside specifications or make phase or task files read like new specifications.
 - Perform orchestration artifact work from under the knowledge tree.
 - Reconstruct accepted authority by replaying transient acceptance evidence or historical handoff chains after a compact accepted result is available.
+- Bypass bounded admission by renaming an execution or reconciliation action as a read-only or closure operation.
 
 ## Validation
 

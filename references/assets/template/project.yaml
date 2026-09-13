@@ -87,6 +87,16 @@ lifecycle_transaction:
   registry_status: published
   metadata_status: published
 
+# Optional for legacy workspaces. The controller owns round history under
+# .work-bundle/runtime/orchestration-control/ and projects only stable state here.
+orchestration_control:
+  schema_version: 1
+  post_execution_review_round_limit: 5
+  post_execution_review_flows: []
+  blockers: []
+  closed_flows: []
+  implementation_exemptions: []
+
 migration:
   authority_owner: /wb-initialize-project
   compatibility_window: metadata-v2-readable-until-explicit-v3-apply
