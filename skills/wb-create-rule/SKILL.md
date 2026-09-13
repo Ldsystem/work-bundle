@@ -291,7 +291,7 @@ python3 scripts/wb.py validate-rules --scope <toolkit|global|project>
 
 - `wb-create-rule`: `rules/work-bundle/wb-create-rule.md`
 - `wb-project-context-preflight`: `rules/work-bundle/wb-project-context-preflight.md`
-- `wb-script-instruction`: `rules/work-bundle/wb-script-instruction.md` when rule work changes script/lifecycle instructions.
+- Use `wb-create-script` when the requested rule work also requires designing or changing script behavior; ordinary rule editing does not require a script-authoring workflow.
 - `rule-work-bundle-security-exclusion`: `rules/security-exclusion.md` when a rule touches credential-bearing surfaces.
 
 ## On Violation

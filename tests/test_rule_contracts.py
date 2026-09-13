@@ -625,7 +625,7 @@ def test_single_repository_workspace_resource_contracts_converge() -> None:
     metadata_contract = (REPO_ROOT / "references/wb-workspace-metadata-v3-contract.yaml").read_text(encoding="utf-8")
     credential_contract = (REPO_ROOT / "references/wb-credential-use-contract.yaml").read_text(encoding="utf-8")
     security_rule = (REPO_ROOT / "rules/security-exclusion.md").read_text(encoding="utf-8")
-    script_rule = (REPO_ROOT / "rules/work-bundle/wb-script-instruction.md").read_text(encoding="utf-8")
+    script_rule = (REPO_ROOT / "skills/wb-create-script/references/workspace-integration.md").read_text(encoding="utf-8")
 
     assert "workspace_modes: [single-repository, multi-repository]" in credential_contract
     assert "workspace_resources: forbidden" not in metadata_contract

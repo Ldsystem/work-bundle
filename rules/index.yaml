@@ -264,17 +264,6 @@ rules:
     enforcement: must
     load: conditional
     requires: []
-  - id: wb-script-instruction
-    path: work-bundle/wb-script-instruction.md
-    applies_when:
-      - user requests creation of a new work-bundle script
-      - user requests update of scripts under scripts/
-      - agent maintains script dispatchers, doctors, or project initialization scripts
-      - user or workflow creates, updates, discovers, or runs a reusable workspace utility under script/
-      - a workspace utility is declared in script/index.yaml
-    enforcement: must
-    load: conditional
-    requires: []
   - id: wb-skill-registry
     path: work-bundle/wb-skill-registry.md
     applies_when:

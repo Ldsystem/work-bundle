@@ -1,0 +1,25 @@
+{
+  "skill_name": "wb-create-script",
+  "evals": [
+    {
+      "id": "semantic-shortcut",
+      "prompt": "Build a helper that marks a documentation migration correct when headings and tests pass. The caller provides no semantic judgment. Describe the design without writing code.",
+      "expected_output": "Separate measured checks from semantic acceptance; return bounded observations without manufacturing a correctness verdict."
+    },
+    {
+      "id": "qualified-automation",
+      "prompt": "Design a file converter that validates schema, transforms records, and supports retries after partial writes. Describe its ownership, inputs, outputs, and failure behavior.",
+      "expected_output": "Allow substantive deterministic transformation, explicit preconditions and policy, safe mutation and retry behavior, and accurate partial outcomes; do not reduce all scripts to schema checkers."
+    },
+    {
+      "id": "non-trigger",
+      "prompt": "Explain yesterday's test result. No code change or script design was requested.",
+      "expected_output": "Explain the available result without creating a script or activating a script-authoring workflow."
+    },
+    {
+      "id": "explicit-policy",
+      "prompt": "A caller supplies an authorized retention period and scope. Design a deletion utility that enforces them, including refusal outside scope. Is this an impermissible semantic decision?",
+      "expected_output": "Implement explicit policy and safety constraints mechanically; do not invent retention policy or infer deletion authorization from a successful precheck."
+    }
+  ]
+}
