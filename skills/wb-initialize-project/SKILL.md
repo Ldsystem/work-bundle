@@ -187,7 +187,7 @@ Use `migrate-project` only for unambiguous single-repository legacy layout upgra
 
 - `wb-project-context-preflight`: `rules/work-bundle/wb-project-context-preflight.md`
 - `wb-project-registry`: `rules/work-bundle/wb-project-registry.md`
-- `wb-script-instruction`: `rules/work-bundle/wb-script-instruction.md`
+- For workspace utility integration, read `skills/wb-create-script/references/workspace-integration.md` from the toolkit root. Use `wb-create-script` only when authoring or changing script behavior, not for an ordinary initialization command.
 - `rule-work-bundle-security-exclusion`: `rules/security-exclusion.md`
 - `wb-credential-use`: `rules/work-bundle/wb-credential-use.md` only when a task or utility requires a credential.
 - `wb-migrate-to-multi-repository`: `rules/work-bundle/wb-migrate-to-multi-repository.md` only for explicit topology migration.
