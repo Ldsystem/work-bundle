@@ -33,6 +33,7 @@ V2_LIFECYCLE_LOCATIONS = frozenset(
         ("repair_frontier",),
         ("review_reset",),
         ("task_index", "*", "status"),
+        ("phase_index", "*", "status"),
         ("acceptance_review", "verdict"),
         ("acceptance_review", "reviewed_head"),
         ("acceptance_review", "findings"),

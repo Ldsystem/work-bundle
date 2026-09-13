@@ -80,6 +80,22 @@ def test_nested_substantive_and_unknown_fields_affect_v2_identity(
     assert review_runtime.plan_review_identity(tmp_path, plan) != original
 
 
+def test_phase_index_status_is_lifecycle_but_dependencies_are_substantive(tmp_path: Path) -> None:
+    plan, _phase, _task = _plan_graph(tmp_path)
+    _replace(
+        plan,
+        "source_spec:",
+        "phase_index: [{id: phase-001, status: Planned, depends_on: []}]\nsource_spec:",
+    )
+    original = review_runtime.plan_review_identity(tmp_path, plan)
+
+    _replace(plan, "status: Planned, depends_on", "status: Completed, depends_on")
+    assert review_runtime.plan_review_identity(tmp_path, plan) == original
+
+    _replace(plan, "depends_on: []", "depends_on: [phase-000]")
+    assert review_runtime.plan_review_identity(tmp_path, plan) != original
+
+
 def test_requirement_text_cannot_be_hidden_by_heading_format(tmp_path: Path) -> None:
     plan, _phase, _task = _plan_graph(tmp_path)
     plan.write_text(
