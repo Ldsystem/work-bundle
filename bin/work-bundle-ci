@@ -27,13 +27,17 @@ def _relative_test_path(repo_root: Path, path: Path) -> str:
     return candidate.resolve().relative_to(repo_root.resolve()).as_posix()
 
 
+def _emit_progress(message: str) -> None:
+    print(message, flush=True)
+
+
 def run_release_gate(
     repo_root: Path,
     *,
     python_executable: str,
     test_files: Sequence[Path] | None = None,
     run_command: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-    emit: Callable[[str], Any] = print,
+    emit: Callable[[str], Any] = _emit_progress,
 ) -> dict[str, object]:
     repo_root = repo_root.resolve()
     modules = sorted(
@@ -49,6 +53,7 @@ def run_release_gate(
     )
 
     for module in modules:
+        emit(f"WB_CI_MODULE START {module}")
         completed = run_command(
             [python_executable, "-m", "pytest", "-q", module],
             cwd=repo_root,

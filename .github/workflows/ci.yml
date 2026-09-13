@@ -29,7 +29,8 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.13"
-          enable-cache: false
+          enable-cache: true
+          cache-dependency-glob: bin/work-bundle-ci
 
       - name: Run canonical release gate
         run: bin/work-bundle-ci

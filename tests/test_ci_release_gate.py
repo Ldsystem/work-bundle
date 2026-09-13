@@ -16,6 +16,38 @@ def _gate_api():
     return runpy.run_path(str(CI_ENTRY))["run_release_gate"]
 
 
+def test_release_gate_reports_start_before_running_each_module() -> None:
+    events = []
+
+    def run(command, **kwargs):
+        events.append(("run", str(command[-1])))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    _gate_api()(REPO_ROOT, python_executable="/python",
+                test_files=[Path("tests/test_a.py")], run_command=run,
+                emit=lambda line: events.append(("output", line)))
+
+    assert events.index(("output", "WB_CI_MODULE START tests/test_a.py")) < events.index(("run", "tests/test_a.py"))
+
+
+def test_default_ci_output_flushes_immediately(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr("builtins.print", lambda *args, **kwargs: calls.append((args, kwargs)))
+    _gate_api()(REPO_ROOT, python_executable="/python", test_files=[],
+                run_command=lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout="", stderr=""))
+    assert calls
+    assert all(kwargs.get("flush") is True for _args, kwargs in calls)
+
+
+def test_workflow_cache_uses_pinned_dependency_owner_without_reducing_matrix() -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text())
+    job = workflow["jobs"]["deterministic"]
+    assert job["strategy"]["matrix"]["os"] == ["ubuntu-latest", "macos-latest"]
+    setup = next(step for step in job["steps"] if step.get("uses", "").startswith("astral-sh/setup-uv@"))
+    assert setup["with"]["enable-cache"] is True
+    assert setup["with"]["cache-dependency-glob"] == "bin/work-bundle-ci"
+
+
 def test_release_gate_continues_after_early_module_failure() -> None:
     commands: list[list[str]] = []
     output: list[str] = []
