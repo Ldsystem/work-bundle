@@ -299,6 +299,31 @@ def test_live_validation_allows_one_continuity_checked_source_repair(
     assert counter.read_text() == "2"
 
 
+def test_live_validation_authority_repair_gets_distinct_initial_finalization(
+    tmp_path: Path,
+) -> None:
+    root, _, brief, handoff, counter = _counted_validation(
+        tmp_path, reuse_seconds=0
+    )
+    first = _validate_observed(handoff, brief)["observed_validation"][0]
+    store = root / ".work-bundle/runtime/completion-provenance/completion-provenance-v1.json"
+    before = json.loads(store.read_text(encoding="utf-8"))
+    prior_finalization = before["consumptions"][first["observation_id"]]
+
+    repaired_brief = deepcopy(brief)
+    repaired_brief["truth_basis"]["expected_delta"] = [
+        "Reallocated validation authority"
+    ]
+    repaired_brief["validation"][0]["proves"] = "Reallocated validation oracle"
+    second = _validate_observed(handoff, repaired_brief)["observed_validation"][0]
+
+    after = json.loads(store.read_text(encoding="utf-8"))
+    assert second["observation_id"] != first["observation_id"]
+    assert after["consumptions"][second["observation_id"]] != prior_finalization
+    assert after["consumptions"][first["observation_id"]] == prior_finalization
+    assert counter.read_text() == "2"
+
+
 @pytest.mark.parametrize("change", ["source", "oracle", "environment"])
 def test_handoff_validation_invalidates_changed_inputs(tmp_path: Path, monkeypatch, change: str) -> None:
     root, _, brief, handoff, counter = _counted_validation(tmp_path)
@@ -1959,12 +1984,19 @@ def test_build_review_package_includes_tracked_and_untracked_worktree_changes(tm
         args(root, task, handoff=str(handoff), base=base, head="worktree")
     )
     package = target.read_text(encoding="utf-8")
+    preparation = json.loads(target.with_name("review-preparation.json").read_text())
+    manifest = preparation["worktree_manifest"]
 
     assert re.search(r"Head: worktree:[0-9a-f]{64}", package)
     assert f"M\t{WRITE_SCOPE_FILE}" in package
     assert "A\ttests/test_compiler.py" in package
     assert "return 'working'" in package
     assert "def test_compile_task" in package
+    assert set(manifest) == {
+        "schema", "artifact_id", "review_mode", "base", "revision",
+        "changed_files", "write_scope",
+    }
+    assert manifest["revision"] == preparation["target_identity"]["revision"]
 
 
 def test_build_review_package_never_reads_tracked_protected_diff_content(tmp_path: Path) -> None:

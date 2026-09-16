@@ -685,24 +685,84 @@ def _validate_task_context(context: object) -> dict[str, object]:
     return context
 
 
-def _validate_task_source_identity(source_root: Path, context: dict[str, object]) -> None:
+def _task_review_manifest(artifacts: list[dict[str, object]]) -> dict[str, object]:
+    candidates: list[dict[str, object]] = []
+    for raw in artifacts:
+        locator = str(raw.get("locator") or "")
+        if not locator.startswith("control:") or not locator.endswith("review-preparation.json"):
+            continue
+        try:
+            value = json.loads(
+                base64.b64decode(str(raw.get("content_base64") or ""), validate=True).decode("utf-8")
+            )
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            raise ReviewerWorkspaceError("WB_REVIEW_TASK_MANIFEST_INVALID") from None
+        manifest = value.get("worktree_manifest") if isinstance(value, dict) else None
+        if not isinstance(manifest, dict):
+            raise ReviewerWorkspaceError("WB_REVIEW_TASK_MANIFEST_INVALID")
+        candidates.append(manifest)
+    if len(candidates) != 1:
+        raise ReviewerWorkspaceError(
+            "WB_REVIEW_TASK_MANIFEST_MISSING"
+            if not candidates
+            else "WB_REVIEW_TASK_MANIFEST_AMBIGUOUS"
+        )
+    return candidates[0]
+
+
+def _execution_context():
+    orchestration = Path(__file__).resolve().parents[1] / "orchestration"
+    existing = sys.modules.get("execution_context")
+    if existing is not None:
+        if Path(existing.__file__).resolve() != orchestration / "execution_context.py":
+            raise ReviewerWorkspaceError("WB_REVIEW_RUNTIME_MODULE_COLLISION")
+        return existing
+    spec = importlib.util.spec_from_file_location(
+        "execution_context", orchestration / "execution_context.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    original_path = list(sys.path)
+    try:
+        sys.path.insert(0, str(orchestration))
+        sys.modules["execution_context"] = module
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop("execution_context", None)
+        raise
+    finally:
+        sys.path[:] = original_path
+    return module
+
+
+def _validate_task_review(
+    source_root: Path,
+    control_root: Path,
+    protected_roots: list[Path],
+    context: dict[str, object],
+    artifacts: list[dict[str, object]],
+) -> None:
     identity = context["target_identity"]
-    assert isinstance(identity, dict)
-    head = subprocess.run(
-        ["git", "-C", str(source_root), "rev-parse", "HEAD"], capture_output=True, text=True
+    manifest = (
+        _task_review_manifest(artifacts)
+        if isinstance(identity, dict)
+        and str(identity.get("revision") or "").startswith("worktree:")
+        else None
     )
-    tree = subprocess.run(
-        ["git", "-C", str(source_root), "rev-parse", "HEAD^{tree}"], capture_output=True, text=True
-    )
-    status = subprocess.run(
-        ["git", "-C", str(source_root), "status", "--porcelain=v1"], capture_output=True, text=True
-    )
-    if (
-        head.returncode or tree.returncode or status.returncode or status.stdout
-        or head.stdout.strip() != identity.get("revision")
-        or tree.stdout.strip() != identity.get("source_tree")
-    ):
-        raise ReviewerWorkspaceError("WB_REVIEW_TASK_TARGET_MISMATCH")
+    try:
+        _execution_context().validate_task_review_identity(
+            source_root,
+            context,
+            manifest=manifest,
+            protected_roots=protected_roots,
+        )
+    except SystemExit as error:
+        raise ReviewerWorkspaceError(str(error.code)) from None
+    for raw in artifacts:
+        _, _, current = _source_path(
+            source_root, control_root, protected_roots, raw.get("locator")
+        )
+        if _sha256_bytes(current.read_bytes()) != raw.get("sha256"):
+            raise ReviewerWorkspaceError("WB_REVIEW_TASK_PACKET_STALE")
 
 
 class ReviewerWorkspaceError(RuntimeError):
@@ -873,7 +933,7 @@ def build_direct_evidence_packet(
         stage_fields = {"stage_review_context": context, "stage_evidence_manifest": manifest}
     elif task_review_context is not None:
         context = dict(_validate_task_context(task_review_context))
-        _validate_task_source_identity(source_root, context)
+        _validate_task_review(source_root, control_root, protected, context, records)
         stage_fields = {"task_review_context": context}
     return {
         "schema": "review-direct-evidence-packet-v1",
@@ -1081,7 +1141,9 @@ def create_reviewer_workspace(
         _validate_integrated_change_manifest(effective_source, public_packet, control_evidence)
     elif "task_review_context" in packet:
         context = _validate_task_context(packet["task_review_context"])
-        _validate_task_source_identity(effective_source, context)
+        _validate_task_review(
+            effective_source, effective_control, effective_protected, context, artifacts
+        )
     review_round = None
     if (
         "stage_review_context" in packet

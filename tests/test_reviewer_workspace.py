@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import platform
 from pathlib import Path
@@ -31,6 +32,7 @@ ORCHESTRATION_SCRIPTS = REPO_ROOT / "scripts" / "orchestration"
 if str(ORCHESTRATION_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATION_SCRIPTS))
 import bounded_closure  # noqa: E402
+import execution_context  # noqa: E402
 
 
 def native_events(result, *, thread_id="01a0821d-f359-7d60-a9bd-90dd0e006166"):
@@ -179,6 +181,152 @@ def packet(source: Path, control: Path) -> dict[str, object]:
         sentinels=["source:.wor105-review-sentinel", "control:orchestration/docs/wor105/.review-sentinel"],
         network_state="denied",
     )
+
+
+def worktree_task_packet(
+    source: Path,
+    control: Path,
+    *,
+    changed_path: str = "src/target.py",
+    sibling_dirt: bool = False,
+    include_source_artifact: bool = True,
+    protected_roots: list[Path] | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "add", "src/target.py", ".wor105-review-sentinel"],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git", "-C", str(source), "-c", "user.name=Test", "-c",
+            "user.email=test@example.invalid", "commit", "-qm", "fixture",
+        ],
+        check=True,
+    )
+    base = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
+    ).strip()
+    target = source / changed_path
+    if changed_path == "src/target.py":
+        target.write_text("def target():\n    return 2\n", encoding="utf-8")
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("protected drift\n", encoding="utf-8")
+    if sibling_dirt:
+        (source / "src" / "sibling.py").write_text(
+            "unrelated sibling dirt\n", encoding="utf-8"
+        )
+    revision, _, changed, _ = execution_context._review_diff(
+        source, base, "worktree", [changed_path]
+    )
+    manifest = execution_context.task_review_worktree_manifest(
+        {"task_id": "task-worktree"},
+        base=base,
+        revision=revision,
+        review_mode="initial",
+        changed_files=changed,
+        write_scope=[changed_path],
+    )
+    assert manifest is not None
+    preparation = control / "orchestration" / "reviews" / "review-preparation.json"
+    preparation.write_text(
+        json.dumps({"worktree_manifest": manifest}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    context = {
+        "target_identity": {
+            "artifact_id": "task-worktree",
+            "revision": revision,
+            "sha256": "2" * 64,
+            "source_tree": None,
+        },
+        "agent_id": "reviewer-task",
+        "capability": "judgment",
+        "execution_id": "review-execution-worktree",
+        "evidence_mode": "reproducible_snapshot",
+        "review_mode": "initial",
+        "review_target_kind": "task",
+        "repair_frontier": None,
+        "review_reset": None,
+    }
+    artifacts = ["control:orchestration/reviews/review-preparation.json"]
+    if include_source_artifact:
+        artifacts.insert(0, f"source:{changed_path}")
+    direct = build_direct_evidence_packet(
+        source_root=source,
+        control_root=control,
+        protected_roots=protected_roots or [control / "credentials"],
+        artifacts=artifacts,
+        search_roots=[],
+        validators=[],
+        sentinels=[],
+        network_state="denied",
+        task_review_context=context,
+    )
+    return direct, context
+
+
+def test_task_review_worktree_manifest_happy_path(
+    review_roots: tuple[Path, Path, Path],
+) -> None:
+    source, control, runtime = review_roots
+    direct, _ = worktree_task_packet(source, control)
+    created = create_reviewer_workspace(runtime, "review-task-worktree-valid", direct)
+    assert Path(str(created["workspace_path"])).is_dir()
+
+
+def test_task_review_worktree_manifest_rejects_listed_in_scope_drift(
+    review_roots: tuple[Path, Path, Path],
+) -> None:
+    source, control, runtime = review_roots
+    direct, _ = worktree_task_packet(source, control)
+    (source / "src" / "target.py").write_text(
+        "def target():\n    return 3\n", encoding="utf-8"
+    )
+    with pytest.raises(ReviewerWorkspaceError, match="WB_REVIEW_TASK_TARGET_MISMATCH"):
+        create_reviewer_workspace(runtime, "review-task-worktree-drift", direct)
+
+
+def test_task_review_worktree_manifest_excludes_unrelated_sibling_dirt(
+    review_roots: tuple[Path, Path, Path],
+) -> None:
+    source, control, runtime = review_roots
+    direct, _ = worktree_task_packet(source, control, sibling_dirt=True)
+    created = create_reviewer_workspace(runtime, "review-task-worktree-sibling", direct)
+    assert Path(str(created["workspace_path"])).is_dir()
+
+
+def test_task_review_worktree_manifest_rejects_explicit_protected_path(
+    review_roots: tuple[Path, Path, Path],
+) -> None:
+    source, control, _ = review_roots
+    with pytest.raises(ReviewerWorkspaceError, match="WB_REVIEW_PROTECTED_READ_DENIED"):
+        worktree_task_packet(
+            source,
+            control,
+            changed_path="credentials/secret.txt",
+            include_source_artifact=False,
+            protected_roots=[control / "credentials", source / "credentials"],
+        )
+
+
+def test_task_review_worktree_manifest_rejects_review_mode_mismatch(
+    review_roots: tuple[Path, Path, Path],
+) -> None:
+    source, control, runtime = review_roots
+    direct, _ = worktree_task_packet(source, control)
+    preparation = next(
+        item for item in direct["artifacts"]
+        if item["locator"] == "control:orchestration/reviews/review-preparation.json"
+    )
+    value = json.loads(base64.b64decode(preparation["content_base64"]).decode("utf-8"))
+    value["worktree_manifest"]["review_mode"] = "repair"
+    encoded = json.dumps(value, sort_keys=True).encode("utf-8") + b"\n"
+    preparation["content_base64"] = base64.b64encode(encoded).decode("ascii")
+    preparation["sha256"] = hashlib.sha256(encoded).hexdigest()
+    with pytest.raises(ReviewerWorkspaceError, match="WB_REVIEW_TASK_REVIEW_MODE_MISMATCH"):
+        create_reviewer_workspace(runtime, "review-task-worktree-mode", direct)
 
 
 def test_reviewer_dispatch_rechecks_live_round_before_launch(

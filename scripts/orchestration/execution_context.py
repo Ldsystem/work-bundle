@@ -1881,6 +1881,35 @@ def _validation_observation_task(task: Mapping[str, Any]) -> dict[str, Any]:
     return projected
 
 
+def _validation_claim_identity(
+    task: Mapping[str, Any], item: Mapping[str, Any]
+) -> str:
+    """Identify the compiled task authority and oracle consumed by validation."""
+
+    claim_task = _validation_observation_task(task)
+    authority = {
+        key: claim_task.get(key)
+        for key in (
+            "source_ids", "requirements", "constraints", "interfaces",
+            "truth_basis", "files", "evidence_capability",
+        )
+    }
+    definition = {
+        key: item.get(key)
+        for key in (
+            "id", "kind", "command", "mechanism", "expected",
+            "acceptable_results", "invariant_ids", "digest", "proves",
+        )
+    }
+    return semantic_digest(
+        {
+            "authority": authority,
+            "check": definition,
+            "freshness_policy": _completion_provenance_module().validation_reuse_policy(item),
+        }
+    )
+
+
 def _transition_changed_paths(root: Path, previous: str, current: str) -> set[str]:
     """Return both sides of every changed path without rename coalescing."""
 
@@ -3963,6 +3992,7 @@ def _observe_completed_validation(
             finalization_identity = semantic_digest(
                 {
                     "command": str(item.get("command") or "").strip(),
+                    "claim": _validation_claim_identity(task, observed_item),
                     "repair": fit.get("result") == "repaired",
                     "source": pre_batch,
                 }
@@ -5367,6 +5397,109 @@ def _review_diff(
     return f"worktree:{digest}", diff, in_scope, out_scope
 
 
+TASK_REVIEW_WORKTREE_MANIFEST_SCHEMA = "task-review-worktree-manifest-v1"
+
+
+def task_review_worktree_manifest(
+    task: Mapping[str, Any],
+    *,
+    base: str,
+    revision: str,
+    review_mode: str,
+    changed_files: list[str],
+    write_scope: list[str],
+) -> dict[str, Any] | None:
+    """Freeze the canonical worktree projection for task review admission."""
+
+    if not revision.startswith("worktree:"):
+        return None
+    return {
+        "schema": TASK_REVIEW_WORKTREE_MANIFEST_SCHEMA,
+        "artifact_id": str(task.get("task_id") or ""),
+        "review_mode": review_mode,
+        "base": base,
+        "revision": revision,
+        "changed_files": list(changed_files),
+        "write_scope": list(write_scope),
+    }
+
+
+def validate_task_review_identity(
+    root: Path,
+    context: Mapping[str, Any],
+    *,
+    manifest: Mapping[str, Any] | None = None,
+    protected_roots: list[Path] | None = None,
+) -> None:
+    """Validate task review identity at the orchestration owner seam."""
+
+    identity = context.get("target_identity")
+    if not isinstance(identity, Mapping):
+        raise SystemExit("WB_REVIEW_TASK_TARGET_MISMATCH")
+    revision = str(identity.get("revision") or "")
+    if revision.startswith("worktree:"):
+        value = manifest if isinstance(manifest, Mapping) else {}
+        required = {
+            "schema", "artifact_id", "review_mode", "base", "revision",
+            "changed_files", "write_scope",
+        }
+        if value.get("review_mode") not in (None, context.get("review_mode")):
+            raise SystemExit("WB_REVIEW_TASK_REVIEW_MODE_MISMATCH")
+        if (
+            set(value) != required
+            or value.get("schema") != TASK_REVIEW_WORKTREE_MANIFEST_SCHEMA
+            or value.get("artifact_id") != identity.get("artifact_id")
+            or value.get("review_mode") != context.get("review_mode")
+            or value.get("revision") != revision
+            or identity.get("source_tree") is not None
+            or not isinstance(value.get("base"), str)
+            or not re.fullmatch(r"[0-9a-f]{40}", value["base"])
+            or not re.fullmatch(r"worktree:[0-9a-f]{64}", revision)
+            or not isinstance(value.get("changed_files"), list)
+            or any(not isinstance(item, str) or not item for item in value["changed_files"])
+            or not isinstance(value.get("write_scope"), list)
+            or any(not isinstance(item, str) or not item for item in value["write_scope"])
+        ):
+            raise SystemExit("WB_REVIEW_TASK_MANIFEST_INVALID")
+        for line in value["changed_files"]:
+            for path in _paths_from_name_status(line):
+                candidate = root / path
+                if (
+                    Path(path).is_absolute()
+                    or not Path(path).parts
+                    or ".." in Path(path).parts
+                    or not is_relative_to(candidate.resolve(strict=False), root.resolve())
+                ):
+                    raise SystemExit("WB_REVIEW_TASK_TARGET_MISMATCH")
+                if any(
+                    is_relative_to(candidate.resolve(strict=False), protected.resolve())
+                    for protected in protected_roots or []
+                ):
+                    raise SystemExit("WB_REVIEW_PROTECTED_READ_DENIED")
+        current_revision, _, current_files, _ = _review_diff(
+            root, value["base"], "worktree", list(value["write_scope"])
+        )
+        if current_revision != revision or current_files != value["changed_files"]:
+            raise SystemExit("WB_REVIEW_TASK_TARGET_MISMATCH")
+        return
+
+    head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True
+    )
+    tree = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD^{tree}"], capture_output=True, text=True
+    )
+    status = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain=v1"], capture_output=True, text=True
+    )
+    if (
+        head.returncode or tree.returncode or status.returncode or status.stdout
+        or head.stdout.strip() != identity.get("revision")
+        or tree.stdout.strip() != identity.get("source_tree")
+    ):
+        raise SystemExit("WB_REVIEW_TASK_TARGET_MISMATCH")
+
+
 def _redact_diff(text: str) -> str:
     lines: list[str] = []
     for line in text.splitlines():
@@ -5653,6 +5786,15 @@ def build_review_package(args: argparse.Namespace) -> Path:
     else:
         diff = _redact_diff(diff)
 
+    worktree_manifest = task_review_worktree_manifest(
+        task,
+        base=base,
+        revision=head,
+        review_mode=review_mode,
+        changed_files=name_status,
+        write_scope=write_paths,
+    )
+
     changes = handoff.get("changes") if isinstance(handoff.get("changes"), dict) else {}
     handoff_files = [item for item in _as_list(changes.get("files")) if isinstance(item, dict)]
     symbols = sorted(
@@ -5793,6 +5935,7 @@ def build_review_package(args: argparse.Namespace) -> Path:
             "review_reset": None,
             "target_identity": target_identity,
             **({"previous_review": previous_review} if previous_review is not None else {}),
+            **({"worktree_manifest": worktree_manifest} if worktree_manifest is not None else {}),
         }
         review_target.with_name("review-preparation.json").write_text(
             json.dumps(preparation, indent=2, sort_keys=True) + "\n", encoding="utf-8"
