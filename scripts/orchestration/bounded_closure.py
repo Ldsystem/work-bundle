@@ -36,9 +36,6 @@ ADMISSION_OPERATIONS = frozenset({
     "ordinary_new", "reconciliation", "round_completion", "read_only",
     "blocker_recording", "knowledge_return", "finalization",
 })
-ACCEPTED_FINALIZATION_STAGES = (
-    "knowledge", "repository", "codegraph", "workspace", "commit",
-)
 MUTATING_ADMISSION_OPERATIONS = frozenset({"ordinary_new", "reconciliation"})
 
 
@@ -777,22 +774,6 @@ def review_round_status(root: Path, *, flow_id: str) -> dict[str, Any]:
         }
 
 
-def _accepted_finalization_dispositions(value: Mapping[str, Any]) -> dict[str, dict[str, str]]:
-    if not isinstance(value, Mapping) or set(value) != set(ACCEPTED_FINALIZATION_STAGES):
-        raise BoundedClosureError("WB_POST_EXECUTION_INPUT_INVALID", "dispositions")
-    result: dict[str, dict[str, str]] = {}
-    for stage in ACCEPTED_FINALIZATION_STAGES:
-        item = value.get(stage)
-        if not isinstance(item, Mapping) or set(item) != {"status", "evidence_ref"}:
-            raise BoundedClosureError("WB_POST_EXECUTION_INPUT_INVALID", f"dispositions.{stage}")
-        status = item.get("status")
-        evidence_ref = item.get("evidence_ref")
-        if status not in {"completed", "not_applicable", "blocked"} or not isinstance(evidence_ref, str) or not evidence_ref.strip():
-            raise BoundedClosureError("WB_POST_EXECUTION_INPUT_INVALID", f"dispositions.{stage}")
-        result[stage] = {"status": str(status), "evidence_ref": evidence_ref.strip()}
-    return result
-
-
 def require_terminal_finalization(root: Path, flow_id: str) -> dict[str, Any]:
     """Guard only the orchestration-terminal claim; never reinterpret product review."""
     workspace = _workspace_root(root)
@@ -807,13 +788,11 @@ def require_terminal_finalization(root: Path, flow_id: str) -> dict[str, Any]:
 
 def finalize_accepted_plan(
     root: Path, *, flow_id: str, source_baselines: Sequence[Mapping[str, Any]],
-    dispositions: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Perform resumable administration after an already accepted product review."""
     workspace = _workspace_root(root)
     flow_id = _identifier(flow_id, "flow_id")
     portable, local = _portable_source_baselines(source_baselines)
-    supplied = _accepted_finalization_dispositions(dispositions)
     with _locked(workspace):
         metadata = _load_metadata(workspace)
         _policy(metadata, required=True)
@@ -825,10 +804,7 @@ def finalize_accepted_plan(
             raise BoundedClosureError("WB_POST_EXECUTION_ACCEPTED_REVIEW_REQUIRED")
         existing = flow.get("finalization")
         if isinstance(existing, Mapping) and existing.get("state") == "closed":
-            if (
-                existing.get("source_baselines") != portable
-                or existing.get("dispositions") != supplied
-            ):
+            if existing.get("source_baselines") != portable:
                 raise BoundedClosureError("WB_POST_EXECUTION_FINALIZATION_COLLISION")
             return _public_finalization(existing)
         if existing is None:
@@ -839,15 +815,9 @@ def finalize_accepted_plan(
             }
         elif not isinstance(existing, dict) or existing.get("source_baselines") != portable:
             raise BoundedClosureError("WB_POST_EXECUTION_FINALIZATION_COLLISION")
-        flow["finalization"]["dispositions"] = supplied
         _write_ledger(workspace, ledger)
         _write_metadata_projection(workspace, metadata, ledger)
-    blocked = next((stage for stage in ACCEPTED_FINALIZATION_STAGES if supplied[stage]["status"] == "blocked"), None)
-    if blocked:
-        _record_finalization_incomplete(workspace, flow_id, blocked, supplied[blocked]["evidence_ref"])
-        raise BoundedClosureError("WB_POST_EXECUTION_FINALIZATION_INCOMPLETE", blocked)
     _validate_source_baselines(local)
-    _update_finalization(workspace, flow_id, state="validated", incomplete=None)
     import argparse
     from artifact_inputs import _resolve_spec_paths
     from plans import (
@@ -857,7 +827,6 @@ def finalize_accepted_plan(
     )
     from specs import archive_spec_for_forced_finalization
     args = argparse.Namespace(project_root=str(workspace), workspace_root=str(workspace))
-    stage = "resolve_artifacts"
     try:
         rows = index_plans(args)
         root_rows = [row for row in rows if row.get("type") == "plan" and row.get("id") == flow_id]
@@ -869,40 +838,18 @@ def finalize_accepted_plan(
         if len(specs) != 1:
             raise SystemExit("Accepted finalization specification identity missing or ambiguous")
         spec_id = read_structured_artifact(specs[0])["id"]
-        with _locked(workspace):
-            current = _load_ledger(workspace)["flows"][flow_id]["finalization"]
-            administrative = dict(current.get("administrative", {}))
-        if administrative.get("handoffs") != "completed":
-            stage = "handoffs"
-            _archive_related_handoffs(args, flow_id)
-            administrative[stage] = "completed"
-            _update_finalization(workspace, flow_id, administrative=administrative, incomplete=None)
-        if administrative.get("plan") != "completed":
-            stage = "plan"
-            archive_plan_for_forced_finalization(args, flow_id)
-            administrative[stage] = "completed"
-            _update_finalization(workspace, flow_id, administrative=administrative, incomplete=None)
-        if administrative.get("specification") != "completed":
-            stage = "specification"
-            archive_spec_for_forced_finalization(args, str(spec_id))
-            administrative[stage] = "completed"
-            _update_finalization(workspace, flow_id, administrative=administrative, incomplete=None)
-        if administrative.get("ownership_release") != "completed":
-            stage = "ownership_release"
-            binding_result = release_plan_bindings_for_forced_finalization(workspace, flow_id)
-            if binding_result["incomplete"]:
-                raise SystemExit(json.dumps(binding_result["incomplete"], sort_keys=True))
-            administrative[stage] = "completed"
-            _update_finalization(workspace, flow_id, administrative=administrative, incomplete=None)
-        stage = "source_baseline"
-        _validate_source_baselines(local)
+        _archive_related_handoffs(args, flow_id)
+        archive_plan_for_forced_finalization(args, flow_id)
+        archive_spec_for_forced_finalization(args, str(spec_id))
+        binding_result = release_plan_bindings_for_forced_finalization(workspace, flow_id)
+        if binding_result["incomplete"]:
+            raise SystemExit(json.dumps(binding_result["incomplete"], sort_keys=True))
     except (OSError, SystemExit) as error:
-        _record_finalization_incomplete(workspace, flow_id, stage, str(error))
         raise BoundedClosureError("WB_POST_EXECUTION_FINALIZATION_INCOMPLETE", str(error)) from error
-    administrative["indexes"] = "completed"
     return _public_finalization(_update_finalization(
         workspace, flow_id, state="closed", outcome="completed",
-        administrative=administrative, incomplete=None, closed_at=_utc_now(),
+        administrative={"archive": "completed", "ownership_release": "completed"},
+        incomplete=None, closed_at=_utc_now(),
     ))
 
 
@@ -1044,7 +991,7 @@ def _public_finalization(record: Mapping[str, Any]) -> dict[str, Any]:
         for key in (
             "flow_id", "request_id", "state", "outcome", "authority",
             "blocker_id", "residual_spec", "origin_spec_id", "origin_plan_id",
-            "source_baselines", "knowledge_return", "dispositions", "administrative",
+            "source_baselines", "knowledge_return", "administrative",
             "closed_at",
         )
         if key in record
@@ -1379,7 +1326,7 @@ def cmd_finalize_with_blockers(args: Any) -> None:
 def cmd_finalize_accepted_plan(args: Any) -> None:
     print(json.dumps(finalize_accepted_plan(
         _controller_workspace(args), flow_id=args.flow_id,
-        source_baselines=args.source_baselines, dispositions=args.dispositions,
+        source_baselines=args.source_baselines,
     ), sort_keys=True))
 
 
@@ -1430,7 +1377,6 @@ def configure_finalize_with_blockers_parser(parser: Any) -> None:
 def configure_finalize_accepted_plan_parser(parser: Any) -> None:
     parser.add_argument("--flow-id", required=True)
     parser.add_argument("--source-baselines", required=True, type=_json_argument)
-    parser.add_argument("--dispositions", required=True, type=_json_argument)
     parser.set_defaults(func=cmd_finalize_accepted_plan)
 
 
