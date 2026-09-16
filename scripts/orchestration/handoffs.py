@@ -271,7 +271,11 @@ def _resolved_handoff_status(
     return embedded
 
 
-def _collect_handoff_rows(args: argparse.Namespace) -> list[dict[str, object]]:
+def _collect_handoff_rows(
+    args: argparse.Namespace,
+    *,
+    allow_invalid_active_legacy: bool = False,
+) -> list[dict[str, object]]:
     root = orchestration_root(args) / "handoff"
     overrides = _legacy_overrides(root)
     rows: list[dict[str, object]] = []
@@ -310,8 +314,19 @@ def _collect_handoff_rows(args: argparse.Namespace) -> list[dict[str, object]]:
                     f"Duplicate handoff identity across lifecycle locations: {handoff_id}"
                 )
         prior.append((path, metadata, folder, location_status))
-        current_status = _resolved_handoff_status(
-            path, metadata, location_status, overrides.get(handoff_id)
+        override = overrides.get(handoff_id)
+        embedded_status = str(metadata.get("status") or "active")
+        recoverable_invalid_active_legacy = (
+            allow_invalid_active_legacy
+            and metadata.get("lifecycle_authority") in (None, "")
+            and override is None
+            and location_status == "active"
+            and embedded_status not in HANDOFF_STATUSES
+        )
+        current_status = (
+            embedded_status
+            if recoverable_invalid_active_legacy
+            else _resolved_handoff_status(path, metadata, location_status, override)
         )
         rows.append({"id": handoff_id, "type": handoff_type, "status": current_status, "path": rel(path, args), "project": metadata.get("project", ""), "created_at": metadata.get("created_at", ""), "updated_at": metadata.get("updated_at", ""), "related_spec": _related_value(metadata, "related_spec", "spec"), "related_plan": _related_value(metadata, "related_plan", "plan"), "related_phase": _related_value(metadata, "related_phase", "phase"), "related_task": _related_value(metadata, "related_task", "task")})
     orphans = sorted(set(overrides) - set(seen))
@@ -471,13 +486,29 @@ def cmd_set_handoff_status(args: argparse.Namespace) -> None:
         raise SystemExit(f"Invalid handoff status: {args.status}")
     if not HANDOFF_ID_RE.fullmatch(str(args.id)):
         raise SystemExit(f"Invalid handoff identity: {args.id}")
-    rows = _collect_handoff_rows(args)
+    rows = _collect_handoff_rows(
+        args,
+        allow_invalid_active_legacy=args.status == "active",
+    )
     matches = [row for row in rows if row.get("id") == args.id]
-    if not matches:
-        raise SystemExit(f"Handoff not found: {args.id}")
+    invalid_legacy_rows = [
+        row for row in rows if row.get("status") not in HANDOFF_STATUSES
+    ]
     if len(matches) != 1:
+        if not matches and invalid_legacy_rows:
+            raise SystemExit(
+                "Invalid legacy embedded handoff status: "
+                f"{invalid_legacy_rows[0].get('status')}"
+            )
+        if not matches:
+            raise SystemExit(f"Handoff not found: {args.id}")
         raise SystemExit(f"Handoff identity is ambiguous for lifecycle operation: {args.id}")
     match = matches[0]
+    if match.get("status") in HANDOFF_STATUSES and invalid_legacy_rows:
+        raise SystemExit(
+            "Invalid legacy embedded handoff status: "
+            f"{invalid_legacy_rows[0].get('status')}"
+        )
     path = artifact_path_from_row(match, args)
     if match.get("status") == args.status:
         print(args.id)
@@ -507,7 +538,12 @@ def cmd_set_handoff_status(args: argparse.Namespace) -> None:
                 "status": args.status,
             }
             _atomic_text(override_path, json.dumps(record, sort_keys=True))
-        index_handoffs(args)
+        validated_rows = _collect_handoff_rows(
+            args,
+            allow_invalid_active_legacy=args.status == "active",
+        )
+        if all(row.get("status") in HANDOFF_STATUSES for row in validated_rows):
+            index_handoffs(args)
     except BaseException:
         if moved and target.exists():
             path.parent.mkdir(parents=True, exist_ok=True)

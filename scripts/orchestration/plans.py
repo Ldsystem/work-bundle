@@ -1039,6 +1039,9 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
 
 
 def cmd_archive_plan(args: argparse.Namespace) -> None:
+    if getattr(args, "legacy_administrative", False):
+        _archive_legacy_plan(args)
+        return
     rows = index_plans(args)
     root_match = next((row for row in rows if row.get("type") == "plan" and row.get("id") == args.id), None)
     if not root_match:
@@ -1093,6 +1096,44 @@ def cmd_archive_plan(args: argparse.Namespace) -> None:
     index_plans(args)
     for path in moved:
         print(rel(path, args))
+
+
+def _archive_related_handoffs(args: argparse.Namespace, plan_id: str) -> None:
+    from handoffs import index_handoffs, cmd_set_handoff_status
+    for row in index_handoffs(args):
+        if row.get("related_plan") == plan_id and row.get("status") != "archived":
+            cmd_set_handoff_status(argparse.Namespace(**{
+                **vars(args), "id": row["id"], "status": "archived",
+            }))
+    index_handoffs(args)
+
+
+def _archive_legacy_plan(args: argparse.Namespace) -> None:
+    """Explicit administrative disposition, never retrospective product acceptance."""
+    from artifact_inputs import _resolve_spec_paths
+    from specs import archive_spec_for_forced_finalization
+    rows = [row for row in index_plans(args) if row.get("type") == "plan" and row.get("id") == args.id]
+    if len(rows) != 1:
+        raise SystemExit("legacy-archive-blocked: plan identity missing or ambiguous")
+    path = artifact_path_from_row(rows[0], args)
+    data = read_structured_artifact(path)
+    if data.get("spec") and data.get("source_spec") and data["spec"] != data["source_spec"]:
+        raise SystemExit("legacy-archive-blocked: conflicting spec and source_spec")
+    if not data.get("spec") or str(data.get("status", "")).lower() != "completed":
+        raise SystemExit("legacy-archive-blocked: requires completed historical plan with spec alias")
+    if _plan_uses_accepted_result_authority(args, args.id):
+        raise SystemExit("legacy-archive-blocked: current accepted-result flow requires normal finalization")
+    root = project_root(args)
+    specs = _resolve_spec_paths(root, {}, {"source_spec": data["spec"]})
+    if len(specs) != 1:
+        raise SystemExit("legacy-archive-blocked: specification must be unique")
+    spec_data = read_structured_artifact(specs[0])
+    if str(spec_data.get("status", "")).lower() not in {"verified", "archived"}:
+        raise SystemExit("legacy-archive-blocked: specification is not verified")
+    _archive_related_handoffs(args, args.id)
+    archive_plan_for_forced_finalization(args, args.id)
+    archive_spec_for_forced_finalization(args, str(spec_data["id"]))
+    print(json.dumps({"plan_id": args.id, "disposition": "legacy-administrative-archive", "product_acceptance": False}))
 
 
 def archive_plan_for_forced_finalization(args: argparse.Namespace, plan_id: str) -> list[Path]:

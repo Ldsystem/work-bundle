@@ -83,7 +83,7 @@ Task review remains optional and task-scoped; it never consumes the workspace's 
 
 After immutable product review publication, the controller runs `complete-review-round` with its store-owned review reference. When controller preparation or dispatch is factually blocked before a product artifact exists, completion may instead carry an audit-block record; that record must not impersonate a product verdict. Use `review-round-status` to diagnose the count and finalization state.
 
-An accepted round proceeds to the normal final audit. Findings below the fifth completed round return to the existing task owner through admission-controlled reconciliation and claim-relevant repair. The fifth unresolved or factually blocked completion stops repair and requires `finalize-with-blockers`; the executor must not run a sixth round or reopen product work during an administrative retry.
+An accepted round proceeds to the normal final audit and remains `finalization_required`. The controller owns administrative applicability and evidence judgment; after those actions resolve, `finalize-accepted-plan` verifies the clean baseline and performs archive/index/binding release. `require-terminal-finalization` must pass before reporting orchestration completion. Findings below the fifth completed round return to the existing task owner through admission-controlled reconciliation and claim-relevant repair. The fifth unresolved or factually blocked completion stops repair and requires `finalize-with-blockers`; the executor must not run a sixth round or reopen product work during an administrative retry.
 
 ## Runtime Rules
 

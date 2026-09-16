@@ -9,7 +9,9 @@ from bounded_closure import (
     BoundedClosureError,
     configure_begin_review_round_parser,
     configure_complete_review_round_parser,
+    configure_finalize_accepted_plan_parser,
     configure_finalize_with_blockers_parser,
+    configure_require_terminal_finalization_parser,
     configure_review_round_status_parser,
     require_orchestration_admission,
     resolve_working_workspace,
@@ -38,6 +40,7 @@ RECOGNIZED_COMMANDS = frozenset({
     "set-plan-status", "archive-plan", "index-plans", "write-phase", "write-task",
     "write-handoff", "list-handoffs", "set-handoff-status", "index-handoffs",
     "begin-review-round", "complete-review-round", "review-round-status",
+    "finalize-accepted-plan", "require-terminal-finalization",
     "finalize-with-blockers",
 })
 
@@ -151,6 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     set_plan.set_defaults(func=cmd_set_plan_status)
     archive_plan = sub.add_parser("archive-plan", parents=[parent])
     archive_plan.add_argument("--id", required=True)
+    archive_plan.add_argument("--legacy-administrative", action="store_true", help="Explicitly archive a completed historical spec-alias plan without replay or product acceptance")
     _add_acceptance_runtime_inputs(archive_plan)
     archive_plan.set_defaults(func=cmd_archive_plan)
     sub.add_parser("index-plans", parents=[parent]).set_defaults(func=cmd_index_plans)
@@ -196,6 +200,10 @@ def build_parser() -> argparse.ArgumentParser:
     configure_complete_review_round_parser(complete_round)
     round_status = sub.add_parser("review-round-status", parents=[parent])
     configure_review_round_status_parser(round_status)
+    accepted_finalization = sub.add_parser("finalize-accepted-plan", parents=[parent])
+    configure_finalize_accepted_plan_parser(accepted_finalization)
+    terminal_finalization = sub.add_parser("require-terminal-finalization", parents=[parent])
+    configure_require_terminal_finalization_parser(terminal_finalization)
     forced_finalization = sub.add_parser("finalize-with-blockers", parents=[parent])
     configure_finalize_with_blockers_parser(forced_finalization)
     return parser
@@ -210,6 +218,8 @@ def _require_public_admission(args: argparse.Namespace) -> None:
         "begin-review-round": "reconciliation",
         "complete-review-round": "round_completion",
         "review-round-status": "read_only",
+        "finalize-accepted-plan": "finalization",
+        "require-terminal-finalization": "read_only",
         "finalize-with-blockers": "finalization",
         "archive-plan": "finalization", "set-spec-status": "finalization",
         "set-plan-status": "finalization", "set-handoff-status": "finalization",

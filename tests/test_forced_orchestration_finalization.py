@@ -20,6 +20,102 @@ import completion_provenance  # noqa: E402
 import plans  # noqa: E402
 
 
+def test_legacy_administrative_archive_preserves_bytes_and_indexes(tmp_path, monkeypatch):
+    import argparse
+    root, _ = _workspace(tmp_path)
+    path = root / ".work-bundle/orchestration/plan/active/plan-origin.md"
+    path.write_text("---\nid: plan-flow\nstatus: completed\nspec: spec-origin\n---\n# historical plan\n")
+    before = path.read_bytes()
+    spec = root / ".work-bundle/orchestration/spec/active/spec-origin.md"
+    spec_before = spec.read_bytes()
+    monkeypatch.setattr(plans, "require_plan_reviews", lambda *a, **k: pytest.fail("historical review replay"))
+    args = argparse.Namespace(project_root=str(root), id="plan-flow", legacy_administrative=True)
+    plans.cmd_archive_plan(args)
+    plans.cmd_archive_plan(args)
+    assert (root / ".work-bundle/orchestration/plan/archived/plan-origin.md").read_bytes() == before
+    assert (root / ".work-bundle/orchestration/spec/archived/spec-origin.md").read_bytes() == spec_before
+    assert not path.exists() and not spec.exists()
+
+
+def test_legacy_administrative_archive_rejects_conflicting_spec_alias(tmp_path):
+    import argparse
+    root, _ = _workspace(tmp_path)
+    path = root / ".work-bundle/orchestration/plan/active/plan-origin.md"
+    path.write_text("---\nid: plan-flow\nstatus: completed\nspec: spec-origin\nsource_spec: spec-other\n---\n")
+    with pytest.raises(SystemExit, match="conflicting"):
+        plans.cmd_archive_plan(argparse.Namespace(project_root=str(root), id="plan-flow", legacy_administrative=True))
+    assert path.exists()
+
+
+def _accepted_finalization_fixture(tmp_path, monkeypatch):
+    root, baseline = _workspace(tmp_path)
+    path = root / ".work-bundle/orchestration/plan/active/plan-origin.md"
+    path.write_text("---\nid: plan-flow\nstatus: Completed\nsource_spec: spec-origin\n---\n")
+    round_record = bounded_closure.begin_review_round(
+        root, flow_id="plan-flow", request_id="accepted-round", review_id="review-accepted",
+        target_identity={"artifact_id": "plan-flow", "revision": "1", "sha256": "b" * 64, "source_tree": baseline["tree"]},
+        executor_attempts=[{"execution_id": "executor-1", "state": "completed"}], known_missing_evidence=[],
+    )
+    bounded_closure.mark_review_round_prepared(root, flow_id="plan-flow", round_id=round_record["round_id"])
+    review = root / ".work-bundle/orchestration/reviews/review-accepted.json"
+    review.parent.mkdir(parents=True, exist_ok=True)
+    review.write_text("{}\n")
+    review.chmod(0o400)
+    bounded_closure.complete_review_round(
+        root, flow_id="plan-flow", round_id=round_record["round_id"], outcome="accepted",
+        review_reference={"review_id": "review-accepted", "sha256": hashlib.sha256(review.read_bytes()).hexdigest()},
+    )
+    stages = {key: {"status": "completed", "evidence_ref": f"controller:{key}"}
+              for key in ("knowledge", "repository", "codegraph", "workspace", "commit")}
+    return root, baseline, stages
+
+
+@pytest.mark.parametrize("missing", ["knowledge", "repository", "codegraph", "workspace", "commit"])
+def test_accepted_review_is_not_terminal_without_finalization(tmp_path, monkeypatch, missing):
+    root, baseline, stages = _accepted_finalization_fixture(tmp_path, monkeypatch)
+    stages[missing] = {"status": "blocked", "evidence_ref": "controller:authority-unavailable"}
+    with pytest.raises(bounded_closure.BoundedClosureError, match=missing):
+        bounded_closure.finalize_accepted_plan(root, flow_id="plan-flow", source_baselines=[baseline], dispositions=stages)
+    with pytest.raises(bounded_closure.BoundedClosureError, match="FINALIZATION_REQUIRED"):
+        bounded_closure.require_terminal_finalization(root, "plan-flow")
+
+
+def test_accepted_finalization_resumes_without_review_or_validation_replay(tmp_path, monkeypatch):
+    import specs
+    root, baseline, stages = _accepted_finalization_fixture(tmp_path, monkeypatch)
+    archive = specs.archive_spec_for_forced_finalization
+    monkeypatch.setattr(specs, "archive_spec_for_forced_finalization", lambda *a: (_ for _ in ()).throw(OSError("interrupted archive")))
+    with pytest.raises(bounded_closure.BoundedClosureError, match="interrupted archive"):
+        bounded_closure.finalize_accepted_plan(root, flow_id="plan-flow", source_baselines=[baseline], dispositions=stages)
+    monkeypatch.setattr(specs, "archive_spec_for_forced_finalization", archive)
+    monkeypatch.setattr(plans, "require_plan_reviews", lambda *a, **k: pytest.fail("review replay"))
+    monkeypatch.setattr(plans, "_assert_archive_plan_acceptance", lambda *a: pytest.fail("validation replay"))
+    result = bounded_closure.finalize_accepted_plan(root, flow_id="plan-flow", source_baselines=[baseline], dispositions=stages)
+    assert result["state"] == "closed" and result["outcome"] == "completed"
+    assert result["source_baselines"][0]["commit"] == baseline["commit"]
+    assert not list((root / ".work-bundle/orchestration/plan/active").rglob("*.md"))
+    assert not (root / ".work-bundle/orchestration/spec/active/spec-origin.md").exists()
+    bounded_closure.require_terminal_finalization(root, "plan-flow")
+    assert bounded_closure.finalize_accepted_plan(root, flow_id="plan-flow", source_baselines=[baseline], dispositions=stages) == result
+    stages["knowledge"] = {"status": "not_applicable", "evidence_ref": "controller:changed"}
+    with pytest.raises(bounded_closure.BoundedClosureError, match="FINALIZATION_COLLISION"):
+        bounded_closure.finalize_accepted_plan(
+            root, flow_id="plan-flow", source_baselines=[baseline], dispositions=stages
+        )
+
+
+def test_accepted_finalization_rejects_incomplete_controller_dispositions(tmp_path, monkeypatch):
+    root, baseline, stages = _accepted_finalization_fixture(tmp_path, monkeypatch)
+    stages.pop("knowledge")
+    with pytest.raises(bounded_closure.BoundedClosureError, match="dispositions"):
+        bounded_closure.finalize_accepted_plan(
+            root, flow_id="plan-flow", source_baselines=[baseline], dispositions=stages
+        )
+    status = bounded_closure.review_round_status(root, flow_id="plan-flow")
+    assert status["finalization_required"] is True
+    assert status["terminal"] is False
+
+
 def _git(root: Path, *args: str) -> str:
     return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
 

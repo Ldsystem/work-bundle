@@ -225,6 +225,19 @@ def test_live_validation_is_captured_once_by_atomic_initial_acceptance(
     assert counter.read_text() == "1"
 
 
+def test_live_acceptance_changed_authority_does_not_collide_with_prior_claim(tmp_path):
+    root, _, brief, handoff, counter = _counted_validation(tmp_path, reuse_seconds=0)
+    first = _validate_observed(handoff, brief)
+    changed = deepcopy(brief)
+    changed["requirements"] = [*changed.get("requirements", []), "REQ-001: clarified oracle authority"]
+    second = _validate_observed(handoff, changed)
+    assert counter.read_text() == "2"
+    assert first["observed_validation"][0]["observation_id"] != second["observed_validation"][0]["observation_id"]
+    third = _validate_observed(handoff, changed)
+    assert counter.read_text() == "2"
+    assert third["observed_validation"][0]["observation_id"] == second["observed_validation"][0]["observation_id"]
+
+
 def test_live_validation_allows_one_continuity_checked_source_repair(
     tmp_path: Path,
 ) -> None:

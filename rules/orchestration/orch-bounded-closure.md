@@ -24,6 +24,7 @@ Bound post-execution integrated review and repair without counting pre-execution
 - Use `complete-review-round` exactly once with either a store-owned immutable review reference for `accepted|findings` or a factual controller audit-block record for a blocked attempt. A factual controller audit-block must not impersonate a product verdict. Duplicate exact completion is a no-op and conflicting completion fails closed.
 - Use `review-round-status` for current counts, latest frozen target, and finalization diagnostics. Do not reconstruct round state from plan versions, review files, resumes, branches, or handoff history.
 - After an accepted outcome, proceed through the normal final audit, knowledge gate, archive, and index path. When unresolved findings or a blocked attempt complete the fifth completed round, stop reconciliation and use `finalize-with-blockers`.
+- Treat an accepted outcome as `finalization_required`, never terminal. The controller decides which knowledge, repository, CodeGraph, workspace, and commit actions apply, performs or delegates them, and supplies explicit `completed|not_applicable|blocked` dispositions. `finalize-accepted-plan` verifies the clean exact source baselines and performs only archive, index, and binding-release mechanics. `require-terminal-finalization` admits the orchestration-complete claim only after that transaction is closed.
 - Apply forced-finalization order exactly: persist finalization-required state; validate the supplied residual specification and clean portable source baselines; persist an active workspace blocker; finalize the knowledge disposition from validated review-owned return evidence; archive the origin specification and plan and update their indexes without overwriting collisions; release owned bindings; then persist terminal closure.
 - Preserve incomplete administrative stages for retry. A retry may finish knowledge, archive, binding-release, or terminal-record mechanics but must not reopen product work, add a sixth round, rerun accepted evidence, or erase the active blocker.
 - Apply shared admission by operation class. An exhausted flow refuses reconciliation before its blocker is written. An active workspace blocker refuses ordinary new work and other unexempted reconciliation. Read-only diagnosis, round completion, blocker recording, knowledge return, and finalization remain available so the controller can explain and finish closure.
@@ -38,12 +39,13 @@ Bound post-execution integrated review and repair without counting pre-execution
 - Do not call forced blocker closure for an accepted product outcome; accepted work follows normal final audit and archive gates.
 - Do not let audit-block evidence assert semantic correctness, acceptance, findings, or product rejection.
 - Do not overwrite archive collisions, remove unrelated blockers or bindings, mutate historical evidence, or create a parallel recovery subsystem.
+- Do not let a helper infer whether an administrative action applies or whether its evidence is semantically sufficient. A blocked controller disposition records incomplete finalization without changing the accepted product verdict.
 
 ## Validation
 
 - Inspect the controller caller, canonical ledger/state transition definitions, final-audit consumer, and representative accepted, unresolved-fifth-round, pre-blocker refusal, active-workspace-blocker, duplicate-request, different-target, and administrative-retry scenarios.
 - Confirm the rule index mirrors this front matter and the observable triggers are concrete.
-- Confirm current instruction owners use the four controller commands and reserve the limit for post-execution rounds only.
+- Confirm current instruction owners use the bounded controller commands and reserve the limit for post-execution rounds only; accepted review must pass accepted finalization and the terminal guard.
 - Confirm forced closure preserves a residual specification, portable source baselines, active blocker evidence, validated knowledge return, archive collision safety, owned-binding release, and retryable incomplete administrative state.
 
 ## On Violation

@@ -263,6 +263,187 @@ def test_legacy_explicit_return_to_active_uses_digest_bound_override(tmp_path: P
     assert next(item for item in index_handoffs(args) if item["id"] == "legacy-result")["status"] == "active"
 
 
+def test_handoff_index_rejects_invalid_unmarked_legacy_active_status(
+    tmp_path: Path,
+) -> None:
+    path = (
+        tmp_path
+        / ".work-bundle/orchestration/handoff/executor/active/legacy-invalid-status.yaml"
+    )
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "id: legacy-invalid-status\ntype: executor-result\nstatus: completed\n"
+        "related:\n  plan: plan-001\n  task: task-001\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="Invalid legacy embedded handoff status: completed"):
+        index_handoffs(handoff_args(tmp_path, id="legacy-invalid-status"))
+
+
+def test_handoff_status_change_recovers_unique_invalid_unmarked_legacy_active_status(
+    tmp_path: Path,
+) -> None:
+    path = (
+        tmp_path
+        / ".work-bundle/orchestration/handoff/executor/active/legacy-invalid-status.yaml"
+    )
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "id: legacy-invalid-status\ntype: executor-result\nstatus: completed\n"
+        "related:\n  plan: plan-001\n  task: task-001\n",
+        encoding="utf-8",
+    )
+    original = path.read_bytes()
+    args = handoff_args(tmp_path, id="legacy-invalid-status", status="active")
+
+    cmd_set_handoff_status(args)
+
+    override = (
+        tmp_path
+        / ".work-bundle/orchestration/handoff/legacy-status-overrides/legacy-invalid-status.json"
+    )
+    assert json.loads(override.read_text(encoding="utf-8")) == {
+        "handoff_id": "legacy-invalid-status",
+        "related_plan": "plan-001",
+        "related_task": "task-001",
+        "sha256": __import__("hashlib").sha256(original).hexdigest(),
+        "status": "active",
+        "type": "executor-result",
+    }
+    assert path.read_bytes() == original
+    row = next(item for item in index_handoffs(args) if item["id"] == args.id)
+    assert row["status"] == "active"
+
+
+def test_handoff_status_recovery_rejects_ambiguous_invalid_legacy_identity(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".work-bundle/orchestration/handoff/executor/active"
+    root.mkdir(parents=True)
+    paths = [root / "legacy-invalid-first.yaml", root / "legacy-invalid-second.yaml"]
+    for path in paths:
+        path.write_text(
+            "id: legacy-invalid-status\ntype: executor-result\nstatus: completed\n"
+            "related:\n  plan: plan-001\n  task: task-001\n",
+            encoding="utf-8",
+        )
+    originals = {path: path.read_bytes() for path in paths}
+
+    with pytest.raises(SystemExit, match="ambiguous"):
+        cmd_set_handoff_status(
+            handoff_args(tmp_path, id="legacy-invalid-status", status="active")
+        )
+
+    assert {path: path.read_bytes() for path in paths} == originals
+    assert not (
+        tmp_path
+        / ".work-bundle/orchestration/handoff/legacy-status-overrides/legacy-invalid-status.json"
+    ).exists()
+
+
+def test_handoff_status_recovery_handles_distinct_invalid_legacy_records_sequentially(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".work-bundle/orchestration/handoff/executor/active"
+    root.mkdir(parents=True)
+    paths: dict[str, Path] = {}
+    originals: dict[str, bytes] = {}
+    for handoff_id in ("legacy-invalid-first", "legacy-invalid-second"):
+        path = root / f"{handoff_id}.yaml"
+        path.write_text(
+            f"id: {handoff_id}\ntype: executor-result\nstatus: completed\n"
+            f"related:\n  plan: plan-001\n  task: task-{handoff_id.rsplit('-', 1)[-1]}\n",
+            encoding="utf-8",
+        )
+        paths[handoff_id] = path
+        originals[handoff_id] = path.read_bytes()
+
+    first_args = handoff_args(
+        tmp_path, id="legacy-invalid-first", status="active"
+    )
+    cmd_set_handoff_status(first_args)
+
+    override_root = (
+        tmp_path / ".work-bundle/orchestration/handoff/legacy-status-overrides"
+    )
+    assert json.loads(
+        (override_root / "legacy-invalid-first.json").read_text(encoding="utf-8")
+    ) == {
+        "handoff_id": "legacy-invalid-first",
+        "related_plan": "plan-001",
+        "related_task": "task-first",
+        "sha256": __import__("hashlib").sha256(
+            originals["legacy-invalid-first"]
+        ).hexdigest(),
+        "status": "active",
+        "type": "executor-result",
+    }
+    assert not (override_root / "legacy-invalid-second.json").exists()
+    assert {key: path.read_bytes() for key, path in paths.items()} == originals
+    with pytest.raises(
+        SystemExit, match="Invalid legacy embedded handoff status: completed"
+    ):
+        index_handoffs(first_args)
+
+    second_args = handoff_args(
+        tmp_path, id="legacy-invalid-second", status="active"
+    )
+    cmd_set_handoff_status(second_args)
+
+    assert json.loads(
+        (override_root / "legacy-invalid-second.json").read_text(encoding="utf-8")
+    ) == {
+        "handoff_id": "legacy-invalid-second",
+        "related_plan": "plan-001",
+        "related_task": "task-second",
+        "sha256": __import__("hashlib").sha256(
+            originals["legacy-invalid-second"]
+        ).hexdigest(),
+        "status": "active",
+        "type": "executor-result",
+    }
+    assert {key: path.read_bytes() for key, path in paths.items()} == originals
+    assert {
+        row["id"]: row["status"]
+        for row in index_handoffs(second_args)
+        if row["id"] in paths
+    } == {
+        "legacy-invalid-first": "active",
+        "legacy-invalid-second": "active",
+    }
+
+
+def test_handoff_status_recovery_does_not_bypass_invalid_legacy_for_valid_target(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".work-bundle/orchestration/handoff/executor/active"
+    root.mkdir(parents=True)
+    (root / "legacy-invalid.yaml").write_text(
+        "id: legacy-invalid\ntype: executor-result\nstatus: completed\n",
+        encoding="utf-8",
+    )
+    valid = root / "valid-marked.yaml"
+    valid.write_text(
+        "id: valid-marked\ntype: executor-result\nstatus: active\n"
+        "lifecycle_authority: location-v1\n",
+        encoding="utf-8",
+    )
+    original = valid.read_bytes()
+
+    with pytest.raises(
+        SystemExit, match="Invalid legacy embedded handoff status: completed"
+    ):
+        cmd_set_handoff_status(
+            handoff_args(tmp_path, id="valid-marked", status="active")
+        )
+
+    assert valid.read_bytes() == original
+    assert not (
+        tmp_path / ".work-bundle/orchestration/handoff/legacy-status-overrides"
+    ).exists()
+
+
 def test_handoff_index_fails_closed_on_duplicate_identity(tmp_path: Path) -> None:
     active = tmp_path / ".work-bundle/orchestration/handoff/executor/active/result.yaml"
     reviewed = tmp_path / ".work-bundle/orchestration/handoff/executor/reviewed/result.yaml"
