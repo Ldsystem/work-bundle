@@ -7,6 +7,8 @@ applies_when:
   - orchestration workflow resolves project metadata before specification evidence, implementation planning, execution, review, or project scope updates
   - repository preflight evaluates metadata-v4 portable repositories together with device-local bindings
   - agent checks branch baseline, commit baseline, registry locator, or CodeGraph support for a source repository
+  - agent sends instructions to another task or thread that could authorize repository or worktree mutation
+  - agent imports, accepts, or merges source changes produced by another task or thread
 enforcement: must
 load: conditional
 requires: []
@@ -38,6 +40,8 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 - For a managed worktree, verify `project_root` and absolute `git-common-dir` are under `workspace_root`; treat an external origin path as a read-only locator outside bounded provisioning or refresh.
 - Block on branch mismatch, missing required repository metadata, stale commit baseline not explained by accepted executor-result handoffs, inaccessible repositories, unresolved Git status, or unexplained dirty status.
 - Preserve accepted-handoff baseline semantics: only validated executor-result handoffs may explain expected dirty worktree changes during plan execution.
+- Treat source changes produced by another task as an untrusted proposal until the current owning workflow verifies its exact repository, worktree, write scope, diff, and validation evidence.
+- Before asking another task to mutate source, verify that it already owns the exact repository/worktree and write scope through its accepted task binding or an explicit user-authorized ownership handoff. Otherwise keep mutation authority with the current owning workflow; cross-task communication may request status, read-only evidence, or continuation of already-owned work only.
 - For repositories without `.codegraph/`, record `no-index` or `not-indexed` fallback and do not initialize CodeGraph or run `codegraph sync`.
 - For repositories with `.codegraph/`, apply `agent-codegraph-first` when the task requires source-code inspection, dependency tracing, planning, repair, refactor, migration, review, or editing.
 
@@ -54,6 +58,8 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 - Do not run destructive Git operations such as cleanup, reset, stash, or force push to satisfy preflight.
 - Do not initialize CodeGraph for a repository root that lacks `.codegraph/`.
 - Do not infer lifecycle Git stage or commit authority from initialization, doctor, repair, migration, or validation authority.
+- Do not use cross-task or cross-thread messaging to grant new repository/worktree mutation authority, bypass task ownership, or turn an unrelated project controller into a toolkit repair owner.
+- Do not treat another task's completion claim as merge acceptance; audit its exact proposed changes in the repository owner before integration.
 
 ## Validation
 
@@ -64,6 +70,7 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 - Confirm Git-backed repositories recorded expected branch, actual branch, expected commit, actual commit, branch status, commit status, and accepted-baseline status.
 - Confirm CodeGraph evidence records indexed or `no-index` state by repository and never initializes missing indexes.
 - Confirm any bypass or fallback records the concrete reason in the task, phase, review, or executor-result handoff.
+- Confirm every cross-task source contribution had pre-existing bound ownership or remained proposal-only until the repository owner audited and integrated it.
 
 ## On Violation
 
