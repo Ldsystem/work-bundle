@@ -6,6 +6,17 @@ These two boundaries apply to every agent, every task, and every workflow withou
 1. **DO NOT OVERENGINEER.** Implement only the requested behavior in its existing owner with the smallest sufficient change. Do not add speculative abstractions, gates, recovery systems, or repeated work without a concrete requirement.
 2. **MAKE NO MISTAKES.** Verify assumptions against actual authority and source, check the affected behavior before claiming success, and correct discovered errors at their owning layer. Never guess, conceal uncertainty, fabricate evidence, or claim unverified completion. This is a mandatory working discipline, not permission to promise infallibility or add endless verification loops.
 
+## Evidence-first change principle
+
+Before or during evidence exploration, every agent must:
+
+1. Locate the feature in the codebase.
+2. Find its corresponding design purpose and decisions in the knowledge base.
+3. Find its corresponding orchestration evidence—specification, plan, and handoff—and Git history. Use that lineage to understand why each implementation was created, whether it introduced the defect, and whether it is a valid basis for the current user purpose.
+4. If a legacy implementation introduced the defect, prefer reverting or correcting that implementation over adding another patch around it.
+5. If a legacy implementation introduced the intended feature, understand its design and make the fewest updates necessary to satisfy the current request.
+6. In either case, use available source-navigation tools—including CodeGraph when indexed, `rg`, `grep`, and equivalent tools—to find related references and update them consistently.
+
 purpose:
 - Seeing this rule means that you are working with the `work-bundle` toolkit, it provides skills and rules to finish a bunch of works, including:
   - Work bundle skills: `/wb-*`, provide skills to manage a project as a `work-bundle` adapted workspace.
