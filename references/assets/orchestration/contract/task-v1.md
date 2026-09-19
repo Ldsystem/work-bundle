@@ -1,172 +1,58 @@
----
-id: task-001
-plan_id: plan-YYYYMMDD-001
-phase_id: phase-001
-name: [Task Name]
-status: Planned
-order: 1
-task_type: decision|implementation|test|documentation|handoff
-date_created: YYYY-MM-DD
-last_updated: YYYY-MM-DD
-owner: [team/individual/agent]
-depends_on: []
-source_ids: [REQ-001, AC-001]
-truth_basis:
-  purpose: [one bounded intended outcome]
-  as_is_evidence: [[exact source, test, or harness evidence]]
-  decision_authority: [none-relevant | [AUTH-NNN aliases]]
-  expected_delta: [[observable post-change behavior]]
-  conflict_status: clear|escalate
-source_files:
-  - [exact source file path]
-target_files:
-  - [exact target file path]
-target_symbols:
-  - [class/function/module/interface]
-completion_criteria:
-  - [measurable criterion]
-methodology:
-  primary: tdd|systematic-debugging|direct|loop-coding
-  required_skills:
-    - [skill-name]
-executor_profile:
-  capability: mechanical|standard|judgment
-  context_mode: compiled-brief
-  review_capability: standard|judgment
-  escalation:
-    after_failed_repairs: 2
-    next_capability: standard|judgment
-acceptance_review:
-  required: false
-  reviewer_independent: false
-  verdict: pending
-  reviewed_head: ""
-  findings: []
-allocated_rules:
-  - id: [rule-id]
-    source: [authority source]
-    path: [file path when file-backed]
-    applies_when: [observable task condition]
-    load_timing: before_task_work|before_source_inspection|before_script_edit|before_rule_edit|before_validation
-    enforcement: must|should
-allocated_skills:
-  - name: [skill-name]
-    source: [authority source]
-    path: [file path when file-backed]
-    applies_when: [observable task condition]
-    use_timing: before_task_work|task_execution|validation
-    required_for: [why required]
-validation:
-  - kind: process
-    command: exact command
-    proves: [claim]
-    expected: passed
-  - kind: inspection
-    command: inspection identifier
-    mechanism: named-harness-owned-mechanism
-    proves: [claim]
-    expected: passed
-evidence_capability:
-  result: mapped | no_validation_bearing_obligation
-  reason: [non-empty reason]
-  invariants:
-    - {id: INV-001, source_ids: [REQ-001, AC-001], invariant: string, boundary: unit | component | integration | runtime | ui_visual | performance | accessibility | inspection | other, other_mechanism: required-when-other, oracle: VAL-001, capability_reason: string, freshness: current_task_batch, task_id: task-001, evidence_ids: [VAL-001], closure_result: pending}
----
+# Task v1 semantic contract
 
-# TASK-001: [Task Name]
+The current `task` family is schema-owned YAML. Supply semantic YAML to `write-task`; the store injects `artifact_type`, `schema_version`, `id`, `plan_id`, `phase_id`, `name`, `status: planned`, `date_created`, and `last_updated` and writes the canonical `.task.yaml` path.
 
-## Goal
-
-[One bounded outcome.]
-
-## Truth Basis
-
-The front-matter `truth_basis` is mandatory and uses the same five fields as the lightweight path. `decision_authority` is semantically distinct from generic `source_ids`: it is exactly `[none-relevant]` when verified reconciliation found no applicable durable authority, or a non-empty list of `AUTH-NNN` aliases allocated in order from the verified specification's accepted `source_knowledge`. The compiler resolves each allocated alias to `AUTH-NNN: <carried constraint>` from that specification mapping and copies the same resolved values into the disposable task brief and review package. Aliases stay traceable without placing knowledge paths in executor packets. Arbitrary prose, generic requirement IDs, candidate/background/blocked authority, and superseded authority fail closed. The compiler returns the existing `decision-blocked` route when `conflict_status` is `escalate`. Executors do not retrieve durable knowledge to rebuild this authority.
-
-## Source references
-
-List stable source IDs and their task-local effect. Do not duplicate full specification prose. Source IDs are authoritative specification IDs only. Do not cite `EXC-*` excellence proposal IDs; rejected, deferred, and not-material proposals stay out of executor briefs.
-
-| ID | Source path | Task-local effect |
-| --- | --- | --- |
-| REQ-001 | `.work-bundle/orchestration/spec/active/example.md` | [effect] |
-
-## Dependencies and contracts
-
-| Dependency | Required state | Reason |
-| --- | --- | --- |
-| task-000 | Completed | [reason] |
-
-For contract-decoupled work, name the common contract group, accepted prior handoffs, barrier, allowed validation scope, forbidden sibling validation, and convergence owner.
-
-## Files and interfaces
-
-| Path or interface | Read/write | Required usage |
-| --- | --- | --- |
-| `path/to/file` | write | [exact change] |
-
-## Implementation
-
-1. [Concrete file or symbol action.]
-2. [Concrete file or symbol action.]
-
-## Validation
-
-Structured front-matter `validation` is the sole canonical terminal authority for new and updated tasks. Each item must carry explicit `kind: process|inspection`. Missing YAML `kind` fails closed and is not defaulted to `process`. TEST-ID source records are not executable terminal validation. Inspections must name a deterministic harness-owned `mechanism`. `named-harness-file-digest` compares a task-owned 64-character `digest` to the current write-scope file digest and can fail. Preserve `proves`, `expected`, `acceptable_results`, and `expected: skip|skipped` semantics. Executor-authored `kind` cannot choose process versus inspection.
-
-Body `## Validation` is optional non-authoritative presentation and must not grant or block terminal authority. Prefer omitting it on new tasks. Do not add a YAML-versus-body equality gate, renderer, or synchronization machinery.
-
-Validation evidence reuse is owned by the existing WOR-105 source/evaluation and completion-provenance models. Declare deterministic eligibility explicitly:
+Semantic input requires:
 
 ```yaml
-evidence_reuse:
-  mode: deterministic
-  max_age_seconds: 3600
-  environment_inputs: [PYTHONHASHSEED]
-  dependency_files: [runtime.lock]
-  profile: pinned-python-validation
-  output_paths: []
-  include_head: false
+order: 1
+task_type: implementation
+source_ids: [REQ-001A, AC-001]
+truth_basis:
+  purpose: <bounded outcome>
+  as_is_evidence: [<exact current evidence>]
+  decision_authority: [none-relevant]
+  expected_delta: [<observable result>]
+  conflict_status: clear
+depends_on: []
+source_files: [path/to/source.py]
+target_files: [path/to/source.py]
+target_symbols: [module.symbol]
+interfaces: {consumes: [API-001], produces: []}
+steps: [<concrete action>]
+validation:
+  - id: VAL-001
+    kind: process
+    command: pytest -q path/to/test.py
+    proves: [AC-001]
+    expected: passed
+    invariant_ids: [INV-001]
+    capability_reason: <why this oracle is capable>
+evidence_capability:
+  result: mapped
+  reason: <why validation applies>
+  invariants:
+    - id: INV-001
+      source_ids: [AC-001]
+      invariant: <observable claim>
+      boundary: component
+      oracle: VAL-001
+      capability_reason: <why the boundary and oracle are sufficient>
+      freshness: current_task_batch
+      task_id: task-001
+      evidence_ids: [VAL-001]
+      closure_result: pending
+completion_criteria: [<measurable criterion>]
+methodology: {primary: tdd, required_skills: [dev-test-driven-development]}
+executor_profile: {capability: judgment, context_mode: compiled-brief, review_capability: judgment}
+acceptance_review: {required: false, reviewer_independent: false, verdict: pending, reviewed_head: '', findings: []}
+allocated_rules: []
+allocated_skills: []
+handoff_contract: executor-result-v1
 ```
 
-Only `mode` is needed for deterministic checks: its default freshness is 3600 seconds. Without a declaration, or with `mode: live`, freshness defaults to 0 (execute every time). A live check may explicitly declare bounded freshness. `max_age_seconds` is an integer 0–86400. Legacy `reuse_seconds` remains a deterministic opt-in, with HEAD binding retained; conflicting freshness fields fail closed. Skipped and failed observations do not create reusable positive evidence.
+`decision_authority` is semantically distinct from generic `source_ids`. Use `none-relevant` only when the verified specification carries no accepted authority, otherwise use its ordered `AUTH-NNN` aliases; the compiler resolves `AUTH-NNN: <carried constraint>`. A conflict status of `escalate` routes `decision-blocked`. `EXC-*`, rejected, deferred, candidate, background, blocked, or superseded authority never enters executor briefs.
 
-The identity covers conservative material repository content and index state (including dirty/untracked and declared task-created inputs), semantic validation fields, runner/oracle code, declared dependency/profile identity, OS/architecture/runtime, explicitly relevant environment variables, and the execution binding/cwd. Use `include_head: true` for exact-commit claims such as release validation. Restoring the complete deterministic identity A → B → A may reuse its original fresh result; explicit provenance revocation still invalidates it. Local observations never substitute for GitHub platform evidence through an inferred equivalence.
+Use `no_validation_bearing_obligation` only with a non-empty reason and no invariants. Otherwise every validation-bearing obligation has a task-owned invariant, `capability_reason`, `freshness`, and a capable oracle. Exact suffixed IDs such as `REQ-001A` remain intact.
 
-Generated WorkBundle runtime, handoff, review, and log artifacts are packaging, not implicit source inputs. Other observation outputs require exact repository-relative `output_paths`; explicit read/dependency inputs cannot also be output-only. This affects fingerprinting only. Initial result acceptance checks write scope, Git neutrality, handoff/task/plan identity, result shape, knowledge disposition, evidence closure, and authorization once, then persists compact accepted authority. Post-acceptance continuation revalidates compact authority and current claim-relevant observations without replaying the handoff. If an expensive check consumes an otherwise excluded artifact, declare it in `dependency_files`. Unknown external dependencies, unsupported links/submodules, or protected source inputs must not be approximated for reuse. Pin execution profiles and declare all relevant environment/dependency inputs; use fresh execution when coverage is uncertain. No per-feature dependency inference is performed.
-
-A legacy 3-column `Command or inspection | Proves | Expected` row without YAML `kind` is `legacy-untyped`. It fails closed until ordinary artifact repair migrates it to front-matter `kind: process|inspection`. Do not default it to `process`. Never shell-execute ambiguous legacy text.
-
-## Completion
-
-- Implementation criteria are satisfied.
-- Fresh task validation evidence exists.
-- The compiled task brief carries the accepted Truth Basis. When review is required, the review package carries the same values.
-- For initial acceptance, a valid `executor-result-v1` handoff exists. Accepted-task repair, publication retry, finalization, and resume consume compact accepted authority and do not require another handoff.
-- Shared completion validation has passed: task/plan identity, executor-result shape, fresh required validation, `knowledge_disposition`, and unresolved/blocker state.
-- When `acceptance_review.required` is false or omitted, `Completed` does not require an independent reviewer or `accept`.
-- When `acceptance_review.required` is true, `acceptance_review.verdict` is `accept`.
-- A newly authored task acceptance record exposes `review_mode: initial|repair` and `review_target_kind: task`. Legacy records without these fields are tolerated only as initial-review migration input.
-- When `task_fit_check.result` is `repaired`, completion requires `review_mode: repair`, the native review envelope fields, and exactly one `previous_review`. The closed `repair_frontier` binds that predecessor's review ID, blocking finding IDs, previous and repaired target identities, affected boundaries, and frozen evidence identity. Whole review history is not embedded or reacquired.
-- Both the current and previous task-review records retain `required: true`, `reviewer_independent: true`, and `review_target_kind: task`; the adapter does not infer or overwrite those ownership facts. The accepted repaired target names the completed task and its `source_tree` plus `reviewed_head` must equal the helper-observed Git tree and head.
-- Material redesign or changed authority, scope, acceptance, decomposition, or validation allocation requires a fresh `initial` review with `review_reset` bound to the prior review, classified reason, and current target and evidence. The reviewer may reuse the same agent identity when judgment-capable and independent by authorship/repair/decision/deliberation participation and review provenance; identity rotation is not a freshness requirement.
-- Task and stage review results are first-class review-store records. Lifecycle admission takes only `{review_id, sha256}` plus the expected current target; it revalidates the provider-specific reviewer-run receipt before exposing a verdict or selecting a finding. Bare output, receipt, or finding objects are non-authoritative.
-- The task-review product candidate contains accepted product requirements/boundaries, exact product source/diff identity, normalized harness-owned validation observations, and unresolved product concerns. Handoff, knowledge disposition, reviewer history, and publication/status/archive bookkeeping remain controller-owned and are excluded from reviewer judgment. Controller/orchestration code remains product when allocated by the task.
-- A stored post-execution task repair review may recompute the compact accepted result while preserving its executor-result digest, validation evidence identities, owner, baseline, and knowledge disposition. This path performs no executor redispatch, replacement handoff, validation rerun, or review-history embedding.
-
-## Planning verification
-
-Before planning completes, view this task through the plan's semantic-convergence lenses: source-ID coverage, exact file and interface scope, dependencies, validation ownership, allocated rules and methodology, parallel/barrier safety, and compiled executor-context completeness. Repair discovered defects and record compact `semantic_loop` evidence at the owning plan level.
-
-The executor normally consumes the compiled task brief, task-scoped source/tests, and allocated methodology skill. Full specification, root-plan, or phase reading is an escalation path when compiled context is inconsistent or review finds a source-contract defect.
-
-## Methodology and capability allocation
-
-- `mechanical`: one or two files with exact contracts and commands and little judgment.
-- `standard`: multi-file coordination, pattern matching, debugging, or integration.
-- `judgment`: architecture, concurrency, ambiguous tradeoffs, or high-risk review.
-- Semantic artifacts allocate `dev-semantic-convergence`.
-- Unexpected behavior allocates `dev-systematic-debugging`; diagnosed testable repair also allocates TDD.
-- New or changed testable behavior allocates `dev-test-driven-development`.
-- Acceptance review allocates `dev-code-review`.
-- Configuration, generated, or non-testable mechanical work uses `direct` plus exact deterministic verification.
+The compiler validates canonical family, parent bindings, source IDs, dependencies, safe exact scope, structured validation, and authority aliases. It does not decide semantic completeness, appropriate decomposition, evidence sufficiency, or acceptance. Those are direct reviewer judgments against the verified specification and concrete plan tree.

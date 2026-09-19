@@ -9,6 +9,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from infrastructure import (
+    atomic_write_text,
+    load_bootstrap,
+    parse_yaml_mapping,
+    resolve_config_root,
+    resolve_project_registry_path as infrastructure_registry_path,
+)
+
 
 CUSTOMIZED_SKILL_ROOT = Path(__file__).resolve().parents[2] / 'skills'
 GLOBAL_SKILL_REGISTRY = '~/.work-bundle/skills/skill-registry.yaml'
@@ -34,22 +42,17 @@ ROLE_NAMES = ['project-manager', 'solution-architect', 'domain-analyst', 'ui-des
 RULES = ['repository-boundary', 'lifecycle-authority', 'skill-registry', 'domain-profile', 'doctor-readonly', 'runtime-artifact-format', 'security-exclusion']
 
 CLI_HELP_EPILOG = '''Canonical consolidated command surface:
-  init-project <project-root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>]
+  init-workspace <workspace-root> --slug <slug> --repository <id=remote> --mode <single-repository|multi-repository> (--dry-run|--apply)
   show-project [--workspace-root <workspace-root> | --project-root <project-root>]
   validate-project <project-root> --dry-run
   doctor-project <project-root> [--repair] [--force]
-  migrate-project <project-root> --dry-run
   migrate-control-plane <workspace-root> (--dry-run|--apply --accepted-proposal-id <id>)
   migrate-registered-projects (--dry-run|--apply --accepted-plan-id <id>) [--slug <slug>]
-  init-workspace <workspace-root> --slug <slug> --repository <id=remote> (--dry-run|--apply)
   publish-control-plane <workspace-root> --remote <git-remote> (--dry-run|--apply)
   attach-workspace <workspace-root> [--materialize none|missing|all] (--dry-run|--apply)
   doctor-workspace <workspace-root> [--repair]
   add-workspace-member <workspace-root> --repository-id <id> --remote <observed-url> --name <binding-name> --path <relative-path> --default-branch <branch> (--dry-run|--accepted-proposal-id <id> --apply)
   detach-workspace <workspace-root> --apply
-  migrate-to-multi-repository <source-project-root> --target-workspace-root <target> [--origin <git-origin>] ...
-  provision-member --workspace-root <workspace-root> --origin <git-origin> ... (--dry-run|--apply)
-  cleanup-member --workspace-root <workspace-root> --repository-id <id> (--dry-run|--apply)
   execution-workspace-prepare --workspace-root <workspace-root> --source-repository <repo> ...
   execution-workspace-status --runtime-root <runtime-root> --workspace-id <id> ...
   execution-workspace-mark-terminal --runtime-root <runtime-root> --workspace-id <id> --status <integrated|discarded|retired> --evidence <reference>
@@ -67,6 +70,12 @@ Legacy commands are hard-removed and return WB_LEGACY_COMMAND_REMOVED:
   generate-domain-profile             => generate-project-metadata-profile
   merge-domain-profile                => merge-project-metadata-profile
   validate-domain-profile             => validate-project-metadata-profile
+
+Retired metadata commands return typed migration guidance:
+  init-project, initialize-project => init-workspace
+  migrate-project                  => migrate-control-plane or migrate-registered-projects
+  migrate-to-multi-repository      => init-workspace or migrate-control-plane
+  provision-member, cleanup-member => add-workspace-member or doctor-workspace
 '''
 
 
@@ -78,13 +87,22 @@ def read(path: Path) -> str:
     return path.read_text(encoding='utf-8') if path.exists() else ''
 
 
+def compact_yaml_map(text: str) -> dict[str, str]:
+    """Compatibility view over the maintained YAML parser for scalar config fields."""
+    document = parse_yaml_mapping(text, source='configuration')
+    return {
+        str(key): '' if value is None else str(value)
+        for key, value in document.items()
+        if not isinstance(value, (dict, list))
+    }
+
+
 def write(path: Path, data: str, overwrite: bool = True) -> bool:
-    path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and not overwrite:
         return False
     if read(path) == data:
         return False
-    path.write_text(data, encoding='utf-8')
+    atomic_write_text(path, data)
     return True
 
 
@@ -111,30 +129,11 @@ def duty_items(text: str, key: str) -> list[str]:
 
 
 def work_bundle_config_root() -> Path:
-    override = os.environ.get(WORK_BUNDLE_CONFIG_ROOT_ENV, '').strip()
-    if override:
-        return Path(override).expanduser().resolve()
-    return Path.home() / '.work-bundle'
+    return resolve_config_root()
 
 
 def resolve_project_registry_path() -> Path:
-    config_root = work_bundle_config_root()
-    bootstrap_path = config_root / GLOBAL_BOOTSTRAP_FILE_NAME
-    bootstrap = compact_yaml_map(read(bootstrap_path)) if bootstrap_path.is_file() else {}
-    value = bootstrap.get('project_registry', '$work_bundle_config_root/registry/projects.yaml')
-    value = value.replace('$work_bundle_config_root', str(config_root))
-    return Path(value).expanduser().resolve()
-
-
-def compact_yaml_map(text: str) -> dict[str, str]:
-    data: dict[str, str] = {}
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith('#') or ':' not in line:
-            continue
-        key, value = line.split(':', 1)
-        data[key.strip()] = value.strip().strip('"').strip("'")
-    return data
+    return infrastructure_registry_path()
 
 
 def utc_now_rfc3339() -> str:
@@ -150,7 +149,7 @@ def resolve_work_bundle_root() -> Path | None:
 
     config_root = work_bundle_config_root()
     bootstrap_path = config_root / GLOBAL_BOOTSTRAP_FILE_NAME
-    bootstrap = compact_yaml_map(read(bootstrap_path)) if bootstrap_path.is_file() else {}
+    bootstrap = load_bootstrap() if bootstrap_path.is_file() else {}
     bootstrap_root_raw = bootstrap.get('work_bundle_root', '').strip()
     if bootstrap_root_raw:
         candidate = Path(bootstrap_root_raw).expanduser()

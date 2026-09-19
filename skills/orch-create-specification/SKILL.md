@@ -33,6 +33,20 @@ Use `existing` for small/manual work, `preferred` for autonomous multi-task work
 
 Specification repair remains pre-execution authoring: plan and specification revisions do not consume post-execution review rounds. A residual specification created for forced closure preserves unresolved claims and clean source-baseline identities; it does not reopen the exhausted flow or authorize another review round.
 
+11. Materialize the current artifact through `scripts/orch.py write-spec`. Supply semantic front matter and the human-readable body; the specification family schema owns structural fields, canonical `.work-bundle/orchestration/spec/active/<id>.spec.md` location, parsing, atomic writes, and the derived index. Do not select a filename or copy a legacy specification path.
+
+## Independent semantic review
+
+Before marking the specification `verified`, give the exact candidate, original user purpose, accepted authority, and current workspace evidence to a distinct reviewer agent. The reviewer directly decides whether the specification:
+
+- matches the user purpose and accepted authority;
+- covers all requirements, constraints, interfaces, acceptance criteria, validation targets, and open questions;
+- resolves material conflicts without promoting non-authority evidence;
+- uses the current specification family and workspace-root anchor; and
+- stays within scope without absorbing later implementation stages.
+
+Repair concrete findings at their first owning layer, then ask the reviewer to check the repaired candidate. Supporting evidence files do not issue the semantic verdict. Missing ceremony, receipts, indexes, handoffs, or perfect evidence files is not a semantic rejection unless the candidate becomes ambiguous, unsafe, unreadable, or impossible to review.
+
 ## Semantic convergence
 
 Use `dev-semantic-convergence` with these lenses:
@@ -77,3 +91,11 @@ Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules abov
 ## Boundary
 
 Follow `orch-orchestration-boundary`.
+
+## Self-check
+
+- [ ] The specification preserves the user purpose and only accepted authority shapes requirements.
+- [ ] Requirements, constraints, interfaces, acceptance criteria, validation targets, conflicts, scope boundaries, and open questions are complete and mutually consistent.
+- [ ] The artifact uses the canonical `.spec.md` family path and contains no caller-authored structural override or filename.
+- [ ] A distinct reviewer judged the concrete semantics directly; scripts and supporting state supplied structural evidence only.
+- [ ] The quality gate, semantic loop, execution-workspace policy, and Knowledge Base Update disposition agree.

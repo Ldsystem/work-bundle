@@ -351,8 +351,8 @@ def validation_interval_identity(
 # Generated evidence is packaging, not product input. Other output locations
 # must be declared explicitly; never guess from a filename such as "result.json".
 OBSERVATION_ARTIFACT_ROOTS = (
-    ".work-bundle/runtime/", ".work-bundle/orchestration/handoff/",
-    ".work-bundle/orchestration/reviews/", ".work-bundle/logs/",
+    ".work-bundle/runtime/", ".work-bundle/orchestration/result/",
+    ".work-bundle/orchestration/review/", ".work-bundle/logs/",
 )
 
 

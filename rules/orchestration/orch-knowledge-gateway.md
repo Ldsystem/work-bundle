@@ -4,7 +4,7 @@ applies_when:
   - create-specification needs durable project knowledge before drafting
   - create-implementation-plan needs durable project knowledge or spec repair context
   - create-document needs durable project knowledge before drafting
-  - create-handoff needs durable project knowledge for an orchestration handoff outside execution completion
+  - create-handoff needs durable project knowledge for a canonical factual executor result outside execution completion
   - review-plan needs durable project knowledge for validation-backed review
 enforcement: must
 load: conditional
@@ -33,7 +33,7 @@ Route orchestration access to durable project knowledge through the approved `ks
 | `create-specification` | `implementation_spec` |
 | `create-implementation-plan` | `implementation_plan` |
 | `create-document` | `customer_spec` |
-| `create-handoff` (orchestration type) | `implementation_plan` |
+| `create-handoff` (canonical `executor-result-v1`) | `implementation_plan` |
 | `review-plan` | `implementation_plan` |
 
 - Allow `candidate` and `background` context only as rationale, traceability, or promotion input—not as executable requirements.
@@ -52,7 +52,7 @@ Route orchestration access to durable project knowledge through the approved `ks
 - Convert material or non-material non-authority context into requirements, constraints, acceptance criteria, tasks, decisions, or review conclusions without explicit resolution or accepted authority.
 - Block `create-specification` only because non-material unsettled notes exist.
 - retrieve durable knowledge during execute-plan; execution agents must not read `.work-bundle/knowledge/` directly.
-- Apply this gateway rule to `execute-plan`, executor-result handoffs created during execution, or any execution-stage retrieval.
+- Apply this gateway rule to `execute-plan`, executor results created during execution, or any execution-stage retrieval.
 - Defer required execution context to future `.work-bundle/knowledge/` lookup after planning completes.
 - Treat a stale repository commit baseline as proof that durable notes are stale without retrieval classification evidence from note metadata, supersession, current user decisions, or accepted authority.
 - Block bounded gateway retrieval solely because source-repository metadata preflight blocks source inspection, when the gateway and knowledge base are otherwise accessible.
@@ -65,7 +65,7 @@ Route orchestration access to durable project knowledge through the approved `ks
 - Confirm only authority context shaped requirements, tasks, or review conclusions.
 - Confirm no direct `.work-bundle/knowledge/` browsing occurred from the active orchestration directive.
 - Confirm repository metadata blockers stopped only repository-trust-dependent work and did not prevent accessible bounded gateway discovery.
-- Confirm `execute-plan` and execution-completion handoffs did not invoke this gateway.
+- Confirm `execute-plan` and execution-completion executor results did not invoke this gateway.
 
 ## On Violation
 

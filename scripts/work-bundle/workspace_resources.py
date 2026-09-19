@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 import re
 from typing import Any
 
-try:
-    import yaml
-except ImportError:  # The toolkit remains usable in the dependency-free runtime.
-    yaml = None
+import yaml
 
 
 SCRIPT_INDEX_TEMPLATE = '''version: 1
@@ -83,99 +79,7 @@ EXPECTED_ENTRY_CONTRACT = {
 }
 
 
-def _scalar(value: str) -> object:
-    value = value.strip()
-    if value == '[]':
-        return []
-    if value.startswith('[') and value.endswith(']'):
-        body = value[1:-1].strip()
-        if not body:
-            return []
-        return [_scalar(item) for item in body.split(',')]
-    if value in {'true', 'false'}:
-        return value == 'true'
-    if re.fullmatch(r'-?\d+', value):
-        return int(value)
-    if value.startswith(('"', "'")):
-        parsed = ast.literal_eval(value)
-        if not isinstance(parsed, str):
-            raise ValueError('quoted scalar is not a string')
-        return parsed
-    if any(token in value for token in ('{', '}')) or value.startswith(('&', '*', '!')):
-        raise ValueError('unsupported YAML token')
-    return value
-
-
-def _fallback_yaml_load(text: str) -> object:
-    """Parse the closed, indentation-based YAML subset used by this contract."""
-    lines: list[tuple[int, str]] = []
-    for raw in text.splitlines():
-        if '\t' in raw:
-            raise ValueError('tabs are forbidden')
-        stripped = raw.strip()
-        if not stripped or stripped.startswith('#'):
-            continue
-        indent = len(raw) - len(raw.lstrip(' '))
-        if indent % 2:
-            raise ValueError('indentation must use pairs of spaces')
-        lines.append((indent, stripped))
-
-    def parse(index: int, indent: int) -> tuple[object, int]:
-        if index >= len(lines) or lines[index][0] != indent:
-            raise ValueError('invalid indentation')
-        if lines[index][1].startswith('- '):
-            result: list[object] = []
-            while index < len(lines) and lines[index][0] == indent and lines[index][1].startswith('- '):
-                item = lines[index][1][2:].strip()
-                index += 1
-                if ':' in item:
-                    key, raw_value = item.split(':', 1)
-                    mapping: dict[str, object] = {key.strip(): _scalar(raw_value) if raw_value.strip() else None}
-                    if index < len(lines) and lines[index][0] > indent:
-                        nested, index = parse(index, lines[index][0])
-                        if not isinstance(nested, dict) or set(mapping) & set(nested):
-                            raise ValueError('invalid list mapping')
-                        mapping.update(nested)
-                    result.append(mapping)
-                elif item:
-                    result.append(_scalar(item))
-                elif index < len(lines) and lines[index][0] > indent:
-                    nested, index = parse(index, lines[index][0])
-                    result.append(nested)
-                else:
-                    raise ValueError('empty list item')
-            return result, index
-
-        result_map: dict[str, object] = {}
-        while index < len(lines) and lines[index][0] == indent and not lines[index][1].startswith('- '):
-            item = lines[index][1]
-            if ':' not in item:
-                raise ValueError('mapping item lacks colon')
-            key, raw_value = item.split(':', 1)
-            key = key.strip()
-            if not key or key in result_map:
-                raise ValueError('empty or duplicate mapping key')
-            index += 1
-            if raw_value.strip():
-                result_map[key] = _scalar(raw_value)
-            elif index < len(lines) and lines[index][0] > indent:
-                result_map[key], index = parse(index, lines[index][0])
-            else:
-                result_map[key] = None
-        return result_map, index
-
-    if not lines:
-        raise ValueError('empty YAML')
-    parsed, end = parse(0, lines[0][0])
-    if lines[0][0] != 0 or end != len(lines):
-        raise ValueError('trailing or indented root content')
-    return parsed
-
-
 def _load_yaml(text: str) -> object:
-    if yaml is None:
-        return _fallback_yaml_load(text)
-
     class UniqueKeyLoader(yaml.SafeLoader):
         pass
 
@@ -201,7 +105,7 @@ def validate_script_index(workspace_root: Path) -> list[str]:
         return ['WB_SCRIPT_INDEX_MISSING']
     try:
         document = _load_yaml(path.read_text(encoding='utf-8'))
-    except (ValueError, TypeError, SyntaxError, getattr(yaml, 'YAMLError', ValueError) if yaml else ValueError):
+    except (ValueError, TypeError, SyntaxError, yaml.YAMLError):
         return ['WB_SCRIPT_INDEX_YAML_INVALID']
     if not isinstance(document, dict) or set(document) != {'version', 'entry_contract', 'scripts'}:
         return ['WB_SCRIPT_INDEX_INVALID']

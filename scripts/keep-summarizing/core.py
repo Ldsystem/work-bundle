@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -13,6 +14,29 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+
+
+def _infrastructure_module():
+    module_path = Path(__file__).resolve().parents[1] / "work-bundle" / "infrastructure.py"
+    existing = sys.modules.get("work_bundle_infrastructure")
+    if existing is not None:
+        if Path(str(getattr(existing, "__file__", ""))).resolve() != module_path:
+            raise ImportError("work_bundle_infrastructure module collision")
+        return existing
+    spec = importlib.util.spec_from_file_location("work_bundle_infrastructure", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot load work-bundle infrastructure")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["work_bundle_infrastructure"] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop("work_bundle_infrastructure", None)
+        raise
+    return module
+
+
+_infrastructure = _infrastructure_module()
 
 
 LEAF_PERSPECTIVES = {
@@ -165,74 +189,24 @@ def knowledge_root() -> Path:
     return skill_root() / "knowledge"
 
 
-def default_registry_file() -> Path:
-    return Path.home() / ".work-bundle" / "registry" / "projects.yaml"
-
-
 def registry_file(args: argparse.Namespace | None = None) -> Path:
-    if args is not None:
-        explicit = getattr(args, "registry_file", None)
-        if explicit:
-            return Path(explicit).expanduser().resolve()
-    env_path = os.environ.get("KS_PROJECT_REGISTRY")
-    if env_path:
-        return Path(env_path).expanduser().resolve()
-    return default_registry_file()
+    return _infrastructure.resolve_project_registry_path()
 
 
 def work_bundle_knowledge_root(workspace_root: Path) -> Path:
     return workspace_root.resolve() / ".work-bundle" / "knowledge"
 
 
-def find_work_bundle_knowledge(start: Path) -> Path | None:
-    current = start.resolve()
-    for candidate in [current, *current.parents]:
-        root = candidate / ".work-bundle" / "knowledge"
-        if root.exists():
-            return root.resolve()
-    return None
+def _anchor_context(**selectors: object):
+    try:
+        return _infrastructure.resolve_anchor_context(**selectors)
+    except _infrastructure.InfrastructureError as exc:
+        raise SystemExit(exc.code) from exc
 
 
-def resolve_workspace_root(start: Path) -> Path | None:
-    """Find the nearest containing WorkBundle workspace without registry I/O."""
-    current = start.expanduser().resolve()
-    if current.is_file():
-        current = current.parent
-    for candidate in [current, *current.parents]:
-        if (candidate / ".work-bundle" / "project.yaml").is_file():
-            return candidate
-    return None
-
-
-def _workspace_root_from_registry_entry(entry: dict[str, object]) -> Path | None:
-    value = entry.get("workspace_root") or entry.get("work_bundle_root")
-    return Path(str(value)).expanduser().resolve() if value else None
-
-
-def resolve_member_project_root(workspace_root: Path, start: Path) -> Path:
-    """Resolve a cwd/explicit path to its deepest declared source member."""
-    metadata = workspace_root / ".work-bundle" / "project.yaml"
-    candidate = start.expanduser().resolve()
-    members: list[Path] = []
-    in_repositories = False
-    for line in metadata.read_text(encoding="utf-8").splitlines():
-        if line == "source_repositories:":
-            in_repositories = True
-            continue
-        if in_repositories and line and not line.startswith(" "):
-            break
-        if not in_repositories:
-            continue
-        stripped = line.strip()
-        if stripped.startswith("project_root:") or stripped.startswith("path:"):
-            value = stripped.split(":", 1)[1].strip().strip("'\"")
-            if value:
-                member = Path(value).expanduser().resolve()
-                if member == candidate or member in candidate.parents:
-                    members.append(member)
-    if members:
-        return max(members, key=lambda path: len(path.parts))
-    return workspace_root.resolve()
+def resolve_workspace_root(start: Path) -> Path:
+    """Resolve a containing current workspace through schema and binding authority."""
+    return _anchor_context(cwd=start).workspace_root
 
 
 def read_project_slug(root: Path, fallback: str) -> str:
@@ -248,151 +222,10 @@ def read_project_slug(root: Path, fallback: str) -> str:
     return fallback
 
 
-def yaml_quote(value: object) -> str:
-    text = str(value)
-    if not text:
-        return '""'
-    if re.search(r"[:#\n\r\t]|^\s|\s$|^-|^\[", text):
-        return json.dumps(text, ensure_ascii=False)
-    return text
-
-
-def parse_yaml_value(value: str) -> object:
-    value = value.strip()
-    if value == "[]":
-        return []
-    if value in {"true", "false"}:
-        return value == "true"
-    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value[1:-1]
-    return value
-
-
 def registry_projects(path: Path) -> list[dict[str, object]]:
-    if not path.exists():
-        return []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    projects: list[dict[str, object]] = []
-    current: dict[str, object] | None = None
-    current_list: str | None = None
-    current_repo: dict[str, object] | None = None
-    in_projects = False
-    for line in lines:
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if line == "projects:":
-            in_projects = True
-            continue
-        if not in_projects:
-            continue
-        project_start = re.match(r"^\s{2}-\s+slug:\s*(.+)$", line)
-        if project_start:
-            current = {"slug": str(parse_yaml_value(project_start.group(1))), "aliases": [], "source_repositories": []}
-            projects.append(current)
-            current_list = None
-            current_repo = None
-            continue
-        if current is None:
-            continue
-        top_field = re.match(r"^\s{4}([A-Za-z_][\w-]*):\s*(.*)$", line)
-        if top_field:
-            key, raw = top_field.group(1), top_field.group(2)
-            current_repo = None
-            if raw:
-                current[key] = parse_yaml_value(raw)
-                current_list = None
-            else:
-                current.setdefault(key, [])
-                current_list = key
-            continue
-        list_scalar = re.match(r"^\s{6}-\s+(.+)$", line)
-        if list_scalar and current_list == "aliases":
-            aliases = current.setdefault("aliases", [])
-            if isinstance(aliases, list):
-                aliases.append(str(parse_yaml_value(list_scalar.group(1))))
-            continue
-        repo_start = re.match(r"^\s{6}-\s+path:\s*(.+)$", line)
-        if repo_start and current_list == "source_repositories":
-            repos = current.setdefault("source_repositories", [])
-            current_repo = {"path": str(parse_yaml_value(repo_start.group(1)))}
-            if isinstance(repos, list):
-                repos.append(current_repo)
-            continue
-        repo_field = re.match(r"^\s{8}([A-Za-z_][\w-]*):\s*(.*)$", line)
-        if repo_field and current_repo is not None:
-            current_repo[repo_field.group(1)] = parse_yaml_value(repo_field.group(2))
-    return projects
-
-
-def write_registry_projects(path: Path, projects: list[dict[str, object]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["projects:"]
-    for project in sorted(projects, key=lambda item: str(item.get("slug", ""))):
-        lines.append(f"  - slug: {yaml_quote(project.get('slug', ''))}")
-        lines.append(f"    name: {yaml_quote(project.get('name', project.get('slug', '')))}")
-        lines.append(f"    work_bundle_root: {yaml_quote(project.get('work_bundle_root', ''))}")
-        lines.append(f"    knowledge_root: {yaml_quote(project.get('knowledge_root', ''))}")
-        aliases = project.get("aliases", [])
-        if isinstance(aliases, list) and aliases:
-            lines.append("    aliases:")
-            for alias in aliases:
-                lines.append(f"      - {yaml_quote(alias)}")
-        else:
-            lines.append("    aliases: []")
-        repos = project.get("source_repositories", [])
-        lines.append("    source_repositories:")
-        if isinstance(repos, list) and repos:
-            for repo in repos:
-                if not isinstance(repo, dict):
-                    continue
-                lines.append(f"      - path: {yaml_quote(repo.get('path', ''))}")
-                lines.append(f"        work_dir: {'true' if repo.get('work_dir') else 'false'}")
-                lines.append(f"        remote: {yaml_quote(repo.get('remote', ''))}")
-        lines.append(f"    status: {yaml_quote(project.get('status', 'active'))}")
-        lines.append(f"    updated_at: {yaml_quote(project.get('updated_at', now_date()))}")
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    tmp.replace(path)
-
-
-def project_registry_entry(project: str, args: argparse.Namespace | None = None) -> dict[str, object] | None:
-    for entry in registry_projects(registry_file(args)):
-        if entry.get("slug") == project:
-            return entry
-        aliases = entry.get("aliases", [])
-        if isinstance(aliases, list) and project in aliases:
-            return entry
-    return None
-
-
-def registry_entry_for_cwd(cwd: Path, args: argparse.Namespace | None = None) -> dict[str, object] | None:
-    cwd = cwd.resolve()
-    for entry in registry_projects(registry_file(args)):
-        for key in ["workspace_root", "work_bundle_root", "knowledge_root"]:
-            value = entry.get(key)
-            if value:
-                candidate = Path(str(value)).expanduser()
-                if candidate.exists() and is_relative_to(cwd, candidate):
-                    return entry
-        repos = entry.get("source_repositories", [])
-        if isinstance(repos, list):
-            for repo in repos:
-                if isinstance(repo, dict) and repo.get("path"):
-                    candidate = Path(str(repo["path"])).expanduser()
-                    if candidate.exists() and is_relative_to(cwd, candidate):
-                        return entry
-    return None
-
-
-def registry_knowledge_root_for_project(project: str, args: argparse.Namespace | None = None) -> Path | None:
-    entry = project_registry_entry(project, args)
-    if not entry:
-        return None
-    root = entry.get("knowledge_root")
-    return Path(str(root)).expanduser().resolve() if root else None
+    document = _infrastructure.load_project_registry()
+    projects = document.get("projects")
+    return [dict(item) for item in projects if isinstance(item, dict)] if isinstance(projects, list) else []
 
 
 def resolve_knowledge_base(args: argparse.Namespace | None = None) -> tuple[Path, str]:
@@ -402,46 +235,26 @@ def resolve_knowledge_base(args: argparse.Namespace | None = None) -> tuple[Path
             return Path(explicit_root).resolve(), "work-bundle"
         workspace_arg = getattr(args, "workspace_root", None)
         if workspace_arg:
-            workspace = Path(workspace_arg).expanduser().resolve()
-            return work_bundle_knowledge_root(workspace), "work-bundle"
+            context = _anchor_context(workspace_root=workspace_arg)
+            return work_bundle_knowledge_root(context.workspace_root), "work-bundle"
         project_root = getattr(args, "project_root", None)
         if project_root:
             explicit = Path(project_root).expanduser().resolve()
-            workspace = resolve_workspace_root(explicit)
-            if workspace:
-                return work_bundle_knowledge_root(workspace), "work-bundle"
-            entry = registry_entry_for_cwd(explicit, args)
-            if entry:
-                registry_workspace = _workspace_root_from_registry_entry(entry)
-                if registry_workspace:
-                    return work_bundle_knowledge_root(registry_workspace), "registry"
-            return work_bundle_knowledge_root(explicit), "work-bundle"
+            context = _anchor_context(project_root=explicit, cwd=explicit)
+            return work_bundle_knowledge_root(context.workspace_root), "work-bundle"
         cwd_arg = getattr(args, "cwd", None)
         if cwd_arg:
-            found = find_work_bundle_knowledge(Path(cwd_arg))
-            if found:
-                return found, "work-bundle"
-            entry = registry_entry_for_cwd(Path(cwd_arg), args)
-            if entry and entry.get("knowledge_root"):
-                return Path(str(entry["knowledge_root"])).expanduser().resolve(), "registry"
-    found = find_work_bundle_knowledge(Path(os.getcwd()))
-    if found:
-        return found, "work-bundle"
-    entry = registry_entry_for_cwd(Path(os.getcwd()), args)
-    if entry and entry.get("knowledge_root"):
-        return Path(str(entry["knowledge_root"])).expanduser().resolve(), "registry"
-    raise SystemExit("No .work-bundle/knowledge root found. Pass --project-root or --knowledge-root explicitly.")
+            context = _anchor_context(cwd=Path(cwd_arg))
+            return work_bundle_knowledge_root(context.workspace_root), "work-bundle"
+    context = _anchor_context(cwd=Path(os.getcwd()))
+    return work_bundle_knowledge_root(context.workspace_root), "work-bundle"
 
 
 def project_dir(project: str, args: argparse.Namespace | None = None) -> Path:
     if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", project):
         raise SystemExit(f"Invalid project slug: {project}")
-    if args is not None and not getattr(args, "knowledge_root", None) and not getattr(args, "project_root", None):
-        registered = registry_knowledge_root_for_project(project, args)
-        if registered:
-            return registered
     base, mode = resolve_knowledge_base(args)
-    root = base.resolve() if mode in {"work-bundle", "registry"} else (base / project).resolve()
+    root = base.resolve() if mode == "work-bundle" else (base / project).resolve()
     allowed = base.resolve()
     if allowed != root and allowed not in root.parents:
         raise SystemExit("Resolved project path is outside knowledge root.")

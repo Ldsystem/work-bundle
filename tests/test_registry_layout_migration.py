@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests/fixtures/registry-layout"
@@ -27,6 +29,12 @@ from registry_layout import (  # noqa: E402
     migration_path,
     validate_layout_version,
 )
+from infrastructure import InfrastructureError  # noqa: E402
+from project import (  # noqa: E402
+    list_project_registry,
+    project_registry_issues,
+    remove_project_registry,
+)
 
 
 def restore_work_bundle_import_boundary() -> None:
@@ -47,7 +55,7 @@ def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update(
         {
-            "WB_CONFIG_ROOT": str(config_root),
+            "HOME": str(config_root.parent),
             "WB_WORK_BUNDLE_ROOT": str(REPO_ROOT),
             "GIT_AUTHOR_NAME": "Test",
             "GIT_AUTHOR_EMAIL": "test@example.com",
@@ -80,7 +88,7 @@ def render_fixture(path: Path, **replacements: str) -> str:
 
 
 def bootstrap_config(tmp_path: Path) -> Path:
-    config = tmp_path / "config"
+    config = tmp_path / ".work-bundle"
     (config / "registry").mkdir(parents=True)
     (config / "bootstrap.yaml").write_text(
         "\n".join(
@@ -187,14 +195,100 @@ def payload(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
     return json.loads(result.stdout)
 
 
+@pytest.mark.parametrize(
+    "operation",
+    [
+        list_project_registry,
+        project_registry_issues,
+        lambda: remove_project_registry("apparent-project"),
+    ],
+    ids=["list-projects", "registry-doctor", "unregister-project"],
+)
+def test_current_registry_consumers_reject_malformed_yaml_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation
+) -> None:
+    config = bootstrap_config(tmp_path)
+    registry = config / "registry/projects.yaml"
+    registry.write_text(
+        "\n".join(
+            [
+                "registry_schema_version: 1",
+                "projects:",
+                "  - slug: apparent-project",
+                "    aliases: []",
+                "device_bindings: {}",
+                "malformed: [unterminated",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    before = registry.read_bytes()
+    monkeypatch.setenv("HOME", str(config.parent))
+    monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
+
+    with pytest.raises(InfrastructureError) as caught:
+        operation()
+
+    assert caught.value.code == "WB_INFRASTRUCTURE_YAML_INVALID"
+    assert registry.read_bytes() == before
+
+
+def test_registered_project_migration_rejects_malformed_registry_yaml_before_action(
+    tmp_path: Path,
+) -> None:
+    config = bootstrap_config(tmp_path)
+    registry = config / "registry/projects.yaml"
+    registry.write_text(
+        "registry_schema_version: 1\nprojects: [\ndevice_bindings: {}\n",
+        encoding="utf-8",
+    )
+    before = registry.read_bytes()
+
+    result = run_wb(config, "migrate-registered-projects", "--dry-run")
+
+    assert result.returncode == 1
+    assert payload(result)["failure_code"] == "WB_INFRASTRUCTURE_YAML_INVALID"
+    assert registry.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        list_project_registry,
+        project_registry_issues,
+        lambda: remove_project_registry("apparent-project"),
+    ],
+    ids=["list-projects", "registry-doctor", "unregister-project"],
+)
+def test_current_registry_consumers_reject_unsupported_schema_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation
+) -> None:
+    config = bootstrap_config(tmp_path)
+    registry = config / "registry/projects.yaml"
+    registry.write_text(
+        "registry_schema_version: 99\nprojects: []\ndevice_bindings: {}\n",
+        encoding="utf-8",
+    )
+    before = registry.read_bytes()
+    monkeypatch.setenv("HOME", str(config.parent))
+    monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
+
+    with pytest.raises(InfrastructureError) as caught:
+        operation()
+
+    assert caught.value.code == "WB_INFRASTRUCTURE_SCHEMA_INVALID"
+    assert registry.read_bytes() == before
+
+
 def test_catalog_registers_explicit_version_to_version_steps() -> None:
     catalog = load_migration_catalog(REPO_ROOT)
     assert catalog.layout_current == "4"
     assert catalog.registry_schema_current == "1"
-    assert [step.step_id for step in catalog.steps] == ["layout-v2-to-v3", "layout-v3-to-v4"]
+    assert [step.step_id for step in catalog.steps] == ["layout-v2-to-v4", "layout-v3-to-v4"]
     path = migration_path("2", catalog)
     assert path is not None
-    assert [(step.from_version, step.to_version) for step in path] == [("2", "3"), ("3", "4")]
+    assert [(step.from_version, step.to_version) for step in path] == [("2", "4")]
     assert migration_path("4", catalog) == []
     assert migration_path("9", catalog) is None
 
@@ -279,7 +373,6 @@ def test_populated_device_bindings_do_not_reassign_project_roots(tmp_path: Path)
     assert "custom_registry_field: keep-registry" in after
     assert "custom_entry_field: keep-entry-a" in after
     assert "custom_entry_field: keep-entry-b" in after
-    assert after.index("projects:") < after.index("device_bindings:")
     unrelated_start = after.index("wb-unrelated:")
     next_binding = after.find("\n  wb-", unrelated_start + 1)
     unrelated_block = after[unrelated_start: next_binding if next_binding != -1 else None]
@@ -370,8 +463,8 @@ def test_multi_version_sequential_upgrade_v2_to_v4(tmp_path: Path) -> None:
     data = payload(proposed)
     project = data["projects"][0]
     assert project["classification"] == "migratable"
-    assert [step["id"] for step in project["steps"]] == ["layout-v2-to-v3", "layout-v3-to-v4"]
-    assert [step["from_version"] for step in project["steps"]] == ["2", "3"]
+    assert [step["id"] for step in project["steps"]] == ["layout-v2-to-v4"]
+    assert [step["from_version"] for step in project["steps"]] == ["2"]
 
     applied = run_wb(
         config, "migrate-registered-projects", "--apply", "--accepted-plan-id", str(data["plan_id"])
@@ -480,7 +573,7 @@ def test_blocked_multi_repository_v2(tmp_path: Path) -> None:
     assert proposed.returncode == 0, proposed.stdout + proposed.stderr
     project = payload(proposed)["projects"][0]
     assert project["classification"] == "blocked"
-    assert project["failure_code"] == "WB_MIGRATION_MULTI_REPOSITORY_WORKFLOW_REQUIRED"
+    assert project["failure_code"] == "WB_CONTROL_PLANE_SINGLE_REPOSITORY_COUNT_INVALID"
 
 
 def test_validation_failure_after_transformation_restores_state(tmp_path: Path, monkeypatch) -> None:
@@ -490,7 +583,7 @@ def test_validation_failure_after_transformation_restores_state(tmp_path: Path, 
     registry = write_registry(config, [project_block("validate-fail", workspace, repo_id, str(remote))])
     before_registry = registry.read_bytes()
     before_metadata = (workspace / ".work-bundle/project.yaml").read_bytes()
-    monkeypatch.setenv("WB_CONFIG_ROOT", str(config))
+    monkeypatch.setenv("HOME", str(config.parent))
     monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
 
     def failing_validate(root: Path, version: str) -> list[str]:
@@ -523,11 +616,11 @@ def test_intermediate_step_failure_restores_pre_migration_state(tmp_path: Path, 
     registry = write_registry(config, [project_block("mid-fail", workspace, repo_id, str(remote))])
     before_registry = registry.read_bytes()
     before_metadata = (workspace / ".work-bundle/project.yaml").read_bytes()
-    monkeypatch.setenv("WB_CONFIG_ROOT", str(config))
+    monkeypatch.setenv("HOME", str(config.parent))
     monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
 
     def fail_v4(step, root, entry):
-        if step.step_id == "layout-v3-to-v4":
+        if step.step_id == "layout-v2-to-v4":
             return {
                 "status": "failed",
                 "failures": ["WB_REGISTRY_LAYOUT_INJECTED_STEP_FAILURE"],
@@ -544,7 +637,7 @@ def test_intermediate_step_failure_restores_pre_migration_state(tmp_path: Path, 
     )
     assert result["status"] == "issues-found"
     diagnostic = result["diagnostics"][0]
-    assert diagnostic["failed_step"] == "layout-v3-to-v4"
+    assert diagnostic["failed_step"] == "layout-v2-to-v4"
     assert diagnostic["from_version"] == "2"
     assert diagnostic["to_version"] == "4"
     assert diagnostic["failure_code"] == "WB_REGISTRY_LAYOUT_INJECTED_STEP_FAILURE"
@@ -572,7 +665,7 @@ def test_failed_migration_preserves_symlink_and_nested_credentials(
     outside_link.symlink_to(outside)
     before_registry = registry.read_bytes()
     before_metadata = (workspace / ".work-bundle/project.yaml").read_bytes()
-    monkeypatch.setenv("WB_CONFIG_ROOT", str(config))
+    monkeypatch.setenv("HOME", str(config.parent))
     monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
 
     def failing_validate(root: Path, version: str) -> list[str]:
@@ -639,7 +732,7 @@ def test_dry_run_output_and_migration_ordering_are_deterministic(tmp_path: Path)
     assert first["projects"] == second["projects"]
     assert [item["slug"] for item in first["projects"]] == ["alpha", "zebra"]
     assert [step["id"] for step in first["projects"][0]["steps"]] == ["layout-v3-to-v4"]
-    assert [step["id"] for step in first["projects"][1]["steps"]] == ["layout-v2-to-v3", "layout-v3-to-v4"]
+    assert [step["id"] for step in first["projects"][1]["steps"]] == ["layout-v2-to-v4"]
 
 
 def test_stale_plan_id_does_not_mutate(tmp_path: Path) -> None:

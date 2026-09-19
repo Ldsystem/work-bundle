@@ -716,6 +716,10 @@ def observe_validation(
     if source_identity() != source or validation_environment_identity(root, policy) != environment:
         raise SystemExit("validation-blocked: inputs changed while obtaining evidence")
     if finalization_id is not None:
+        # The store-owned observation binds compiled authority, oracle, runner,
+        # environment and source. Reuse keeps its ID; a legitimately fresh
+        # observation must not collide with an older immutable consumer claim.
+        finalization_id = f"{finalization_id}:{record.observation_id}"
         record = _claim_reused_observation(
             store,
             record,

@@ -20,6 +20,16 @@
       "id": "explicit-policy",
       "prompt": "A caller supplies an authorized retention period and scope. Design a deletion utility that enforces them, including refusal outside scope. Is this an impermissible semantic decision?",
       "expected_output": "Implement explicit policy and safety constraints mechanically; do not invent retention policy or infer deletion authorization from a successful precheck."
+    },
+    {
+      "id": "canonical-structural-owner",
+      "prompt": "Design a writer for a persisted orchestration artifact whose ID, schema version, anchor, path, parent binding, lifecycle, and derived index are structural authority. The caller supplies the semantic body and also asks to override the path for convenience.",
+      "expected_output": "Use the maintained versioned schema and artifact-family catalog as the single structural authority; validate bindings before an atomic write, reject caller overrides of canonical fields or paths, and report mechanics without deciding semantic correctness or acceptance."
+    },
+    {
+      "id": "search-is-candidate-evidence",
+      "prompt": "A migration helper finds orchestration files by broad directory search. The first matching filename looks correct. May it use that match as the artifact identity and acceptance authority?",
+      "expected_output": "Use search only for a declared retrieval, index, navigation, or diagnostic job; treat hits as candidates, then canonical-read and schema-validate them. Never infer identity or semantic acceptance from a filename or search hit."
     }
   ]
 }

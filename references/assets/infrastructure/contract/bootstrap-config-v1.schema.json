@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://work-bundle.dev/schemas/infrastructure/bootstrap-config-v1",
+  "title": "WorkBundle bootstrap configuration v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["bootstrap_version", "authority", "work_bundle_root", "project_registry", "skill_registry"],
+  "properties": {
+    "bootstrap_version": {"const": "v1"},
+    "authority": {"const": "canonical"},
+    "work_bundle_root": {"type": "string", "minLength": 1},
+    "project_registry": {"type": "string", "minLength": 1},
+    "skill_registry": {"type": "string", "minLength": 1}
+  }
+}

@@ -45,71 +45,6 @@ def test_malformed_accepted_baseline_is_typed(tmp_path: Path) -> None:
         preflight_module._load_baselines(str(malformed))
 
 
-def write_project_metadata(project: Path, repo: Path, *, branch: str = "main", commit: str | None = None) -> None:
-    head = commit if commit is not None else git(repo, "rev-parse", "HEAD")
-    (project / ".work-bundle").mkdir(parents=True, exist_ok=True)
-    (project / ".work-bundle" / "project.yaml").write_text(
-        "\n".join(
-            [
-                "metadata_version: 2",
-                "source_repositories:",
-                "  - id: repo-main",
-                f"    path: {repo.resolve()}",
-                "    work_dir: true",
-                '    remote: ""',
-                "    git_repository: true",
-                f"    working_branch: {branch}",
-                "    branch_required: true",
-                "    last_commit_id: " + head,
-                "    baseline_status: current",
-                "    codegraph:",
-                "      supported: false",
-                "      index_present: false",
-                f"      root: {repo.resolve()}",
-                "      status: not-indexed",
-                '      synced_commit_id: ""',
-                '      last_synced_at: ""',
-                "      reason: no-index",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
-def write_workspace_metadata_v3(workspace: Path, repo: Path) -> None:
-    head = git(repo, "rev-parse", "HEAD")
-    (workspace / ".work-bundle").mkdir(parents=True, exist_ok=True)
-    (workspace / ".work-bundle" / "project.yaml").write_text(
-        "\n".join(
-            [
-                "metadata_version: 3",
-                f"workspace_root: {workspace.resolve()}",
-                "workspace_mode: multi-repository",
-                "source_repositories:",
-                "  - id: repo-main",
-                f"    project_root: {repo.resolve()}",
-                "    origin_id: origin-main",
-                "    checkout_kind: managed-worktree",
-                "    git_repository: true",
-                "    expected_branch: main",
-                f"    observed_head: {head}",
-                "    baseline_status: current",
-                "    codegraph:",
-                "      supported: false",
-                "      index_present: false",
-                f"      root: {repo.resolve()}",
-                "      status: not-indexed",
-                '      synced_commit_id: ""',
-                '      last_synced_at: ""',
-                "      reason: no-index",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
 def write_workspace_metadata_v4(workspace: Path, workspace_id: str = "wb-test") -> None:
     (workspace / ".work-bundle").mkdir(parents=True, exist_ok=True)
     (workspace / ".work-bundle" / "project.yaml").write_text(
@@ -121,6 +56,12 @@ def write_workspace_metadata_v4(workspace: Path, workspace_id: str = "wb-test") 
                 f"  id: {workspace_id}",
                 "  slug: test",
                 "  mode: multi-repository",
+                "control_plane:",
+                "  schema_version: 1",
+                "  repository:",
+                '    remote: ""',
+                "  sync_policy:",
+                "    mode: manual",
                 "source_repositories:",
                 "  - id: repo-main",
                 "    role: source",
@@ -132,6 +73,7 @@ def write_workspace_metadata_v4(workspace: Path, workspace_id: str = "wb-test") 
                 "      name: repo-main",
                 "    materialization:",
                 "      required: true",
+                "    operation_policy: inherit",
                 "",
             ]
         ),
@@ -141,31 +83,49 @@ def write_workspace_metadata_v4(workspace: Path, workspace_id: str = "wb-test") 
 
 def write_v4_registry(
     path: Path,
+    workspace: Path,
     repo: Path | None,
     *,
     workspace_id: str = "wb-test",
     observed_branch: str = "main",
     observed_head: str = "",
 ) -> None:
-    repository_lines = ["      repo-main:"]
+    repository_lines: list[str] = []
     if repo is not None:
+        repository_lines.append("      repo-main:")
         repository_lines.append(f"        project_root: {repo.resolve()}")
-    if observed_branch:
+        repository_lines.append("        checkout_kind: managed-worktree")
+        repository_lines.append(f"        git_common_dir: {repo.resolve() / '.git'}")
+        repository_lines.append("        observed_at: 2026-09-20T00:00:00Z")
+    if repo is not None and observed_branch:
         repository_lines.append(f"        observed_branch: {observed_branch}")
-    if observed_head:
-        repository_lines.append(f"        observed_head: {observed_head}")
+    if repo is not None and observed_head:
+        repository_lines.append(f"        observed_head: {json.dumps(observed_head)}")
     path.write_text(
         "\n".join(
             [
-                "metadata_version: 4",
+                "registry_schema_version: 1",
+                "projects: []",
                 "device_bindings:",
                 f"  {workspace_id}:",
-                "    repositories:",
+                "    slug: test",
+                f"    workspace_root: {workspace.resolve()}",
+                "    repositories:" if repository_lines else "    repositories: {}",
                 *repository_lines,
                 "",
             ]
         ),
         encoding="utf-8",
+    )
+
+
+def use_registry(monkeypatch: pytest.MonkeyPatch, registry: Path) -> None:
+    monkeypatch.setattr(
+        preflight_module._infrastructure,
+        "load_project_registry",
+        lambda: preflight_module._infrastructure.load_infrastructure_document(
+            registry, family="project-registry", toolkit_root=REPO_ROOT
+        ),
     )
 
 
@@ -177,30 +137,18 @@ def test_v4_repository_entries_accept_yaml_sequence_indentation_and_merge_device
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    repo = repository(tmp_path)
+    repo = repository(workspace, "repo-main")
     registry = tmp_path / "projects.yaml"
-    marker = "- " if indentless else "  - "
-    child = "  " if indentless else "    "
+    write_workspace_metadata_v4(workspace)
     metadata = workspace / ".work-bundle/project.yaml"
-    metadata.parent.mkdir()
-    metadata.write_text(
-        "metadata_version: 4\n"
-        "workspace:\n"
-        "  id: wb-test\n"
-        "  mode: multi-repository\n"
-        "source_repositories:\n"
-        f"{marker}id: repo-main\n"
-        f"{child}role: source\n"
-        f"{child}remote:\n"
-        f"{child}  canonical: https://example.com/repo.git\n"
-        f"{child}default_branch: main\n"
-        f"{child}materialization:\n"
-        f"{child}  required: true\n",
-        encoding="utf-8",
-    )
+    if indentless:
+        text = metadata.read_text(encoding="utf-8")
+        start = text.index("source_repositories:\n") + len("source_repositories:\n")
+        tail = [line[2:] if line.startswith("  ") else line for line in text[start:].splitlines()]
+        metadata.write_text(text[:start] + "\n".join(tail) + "\n", encoding="utf-8")
     head = git(repo, "rev-parse", "HEAD")
-    write_v4_registry(registry, repo, observed_head=head)
-    monkeypatch.setattr(preflight_module, "project_registry_path", lambda: registry)
+    write_v4_registry(registry, workspace, repo, observed_head=head)
+    use_registry(monkeypatch, registry)
 
     entries = preflight_module._metadata_repository_entries(workspace)
 
@@ -219,16 +167,11 @@ def test_v4_preflight_keeps_missing_device_observation_as_typed_failure(
     workspace.mkdir()
     registry = tmp_path / "projects.yaml"
     write_workspace_metadata_v4(workspace)
-    write_v4_registry(registry, None)
-    monkeypatch.setattr(preflight_module, "project_registry_path", lambda: registry)
+    write_v4_registry(registry, workspace, None)
+    use_registry(monkeypatch, registry)
 
-    result = repository_preflight(resolve_target_repositories(workspace))
-
-    assert result["repository_preflight"]["status"] == "blocked"
-    row = result["repository_preflight"]["repositories"][0]
-    assert row["status"] == "missing-observation"
-    assert row["failure_code"] == "WB_REPOSITORY_OBSERVATION_PROJECT_ROOT_MISSING"
-    assert row["metadata"]["repository_id"] == "repo-main"
+    with pytest.raises(SystemExit, match="WB_INFRASTRUCTURE_REPOSITORY_BINDING_MISSING"):
+        resolve_target_repositories(workspace)
 
 
 def test_v4_preflight_detects_stale_device_head_without_refreshing_registry(
@@ -236,12 +179,12 @@ def test_v4_preflight_detects_stale_device_head_without_refreshing_registry(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    repo = repository(tmp_path)
+    repo = repository(workspace, "repo-main")
     registry = tmp_path / "projects.yaml"
     write_workspace_metadata_v4(workspace)
-    write_v4_registry(registry, repo, observed_head="0" * 40)
+    write_v4_registry(registry, workspace, repo, observed_head="0" * 40)
     before = registry.read_text(encoding="utf-8")
-    monkeypatch.setattr(preflight_module, "project_registry_path", lambda: registry)
+    use_registry(monkeypatch, registry)
 
     result = repository_preflight(resolve_target_repositories(workspace))
 
@@ -387,114 +330,6 @@ def test_git_backed_post_sync_style_unexplained_change_blocks(tmp_path: Path) ->
     assert row["unexplained_changes"] == ["?? codegraph-side-effect.txt"]
 
 
-def test_resolution_prefers_task_write_scopes_then_metadata(tmp_path: Path) -> None:
-    project = tmp_path / "project"
-    project.mkdir()
-    target = repository(tmp_path, "target")
-    fallback = repository(tmp_path, "fallback")
-    write_project_metadata(project, fallback)
-    task = project / "task.md"
-    task.write_text(f"---\ntarget_files:\n  - {target / 'new.py'}\nsource_files:\n  - .work-bundle/project.yaml\n---\n", encoding="utf-8")
-
-    assert resolve_target_repositories(project, [task]) == [
-        {"path": str(target.resolve()), "source": "task-write-scope"}
-    ]
-    assert resolve_target_repositories(project) == [
-        {
-            "path": str(fallback.resolve()),
-            "source": "project-metadata",
-            "metadata": {
-                "id": "repo-main",
-                "path": str(fallback.resolve()),
-                "work_dir": True,
-                "remote": "",
-                "git_repository": True,
-                "working_branch": "main",
-                "branch_required": True,
-                "last_commit_id": git(fallback, "rev-parse", "HEAD"),
-                "baseline_status": "current",
-                "codegraph": {
-                    "supported": False,
-                    "index_present": False,
-                    "root": str(fallback.resolve()),
-                    "status": "not-indexed",
-                    "synced_commit_id": "",
-                    "last_synced_at": "",
-                    "reason": "no-index",
-                },
-            },
-        }
-    ]
-
-
-def test_metadata_preflight_reports_branch_commit_and_codegraph_no_index(tmp_path: Path) -> None:
-    project = tmp_path / "project"
-    project.mkdir()
-    repo = repository(tmp_path)
-    write_project_metadata(project, repo)
-
-    result = repository_preflight(resolve_target_repositories(project))
-
-    payload = result["repository_preflight"]
-    assert payload["status"] == "passed"
-    row = payload["repositories"][0]
-    assert row["metadata"]["repository_id"] == "repo-main"
-    assert row["metadata"]["branch_status"] == "matched"
-    assert row["metadata"]["commit_status"] == "matched"
-    assert row["metadata"]["codegraph"]["actual_index_present"] is False
-    assert row["metadata"]["codegraph"]["reason"] == "no-index"
-
-
-def test_v3_workspace_metadata_resolves_and_preflights_member_root(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    member = repository(workspace, "member")
-    write_workspace_metadata_v3(workspace, member)
-
-    targets = resolve_target_repositories(workspace)
-    assert targets[0]["path"] == str(member.resolve())
-    assert targets[0]["source"] == "project-metadata"
-
-    result = repository_preflight(targets)
-    row = result["repository_preflight"]["repositories"][0]
-    assert result["repository_preflight"]["status"] == "passed"
-    assert row["metadata"]["expected_branch"] == "main"
-    assert row["metadata"]["actual_branch"] == "main"
-    assert row["metadata"]["commit_status"] == "matched"
-    assert row["metadata"]["codegraph"]["reason"] == "no-index"
-
-
-def test_metadata_preflight_blocks_branch_mismatch(tmp_path: Path) -> None:
-    project = tmp_path / "project"
-    project.mkdir()
-    repo = repository(tmp_path)
-    write_project_metadata(project, repo, branch="wrong")
-
-    result = repository_preflight(resolve_target_repositories(project))
-    row = result["repository_preflight"]["repositories"][0]
-
-    assert result["repository_preflight"]["status"] == "blocked"
-    assert row["status"] == "branch-mismatch"
-    assert row["metadata"]["branch_status"] == "mismatch"
-
-
-def test_metadata_preflight_blocks_stale_commit(tmp_path: Path) -> None:
-    project = tmp_path / "project"
-    project.mkdir()
-    repo = repository(tmp_path)
-    old_head = git(repo, "rev-parse", "HEAD")
-    (repo / "tracked.txt").write_text("later\n", encoding="utf-8")
-    git(repo, "commit", "-am", "later")
-    write_project_metadata(project, repo, commit=old_head)
-
-    result = repository_preflight(resolve_target_repositories(project))
-    row = result["repository_preflight"]["repositories"][0]
-
-    assert result["repository_preflight"]["status"] == "blocked"
-    assert row["status"] == "stale-baseline"
-    assert row["metadata"]["commit_status"] == "stale"
-
-
 def test_resolution_excludes_orchestration_artifacts_and_falls_through_to_source(
     tmp_path: Path,
 ) -> None:
@@ -538,23 +373,6 @@ def test_resolution_keeps_explicit_source_target_inside_nested_repository(tmp_pa
     assert resolve_target_repositories(project, [task]) == [
         {"path": str(nested.resolve()), "source": "task-write-scope"}
     ]
-
-
-def test_cli_outputs_machine_usable_json(tmp_path: Path) -> None:
-    repo = repository(tmp_path)
-    command = [
-        sys.executable,
-        str(REPO_ROOT / "scripts" / "orch.py"),
-        "repository-preflight",
-        "--project-root",
-        str(tmp_path),
-        "--repository",
-        str(repo),
-    ]
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
-    payload = json.loads(result.stdout)
-    assert payload["repository_preflight"]["status"] == "passed"
-    assert payload["repository_preflight"]["repositories"][0]["status"] == "clean"
 
 
 def test_repository_preflight_help_describes_accepted_baseline_contract() -> None:

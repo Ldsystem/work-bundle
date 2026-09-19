@@ -18,6 +18,12 @@ from core import (
     write,
 )
 from workspace_resources import _load_yaml
+from infrastructure import (
+    InfrastructureError,
+    dump_canonical_yaml,
+    parse_yaml_mapping,
+    validate_infrastructure_document,
+)
 
 
 CATALOG_REFERENCE = Path('references/wb-registry-layout-migration.yaml')
@@ -112,16 +118,33 @@ def _normalize_version(value: object) -> str:
     return text
 
 
-def detect_registry_schema_version(text: str, catalog: MigrationCatalog) -> str:
-    for line in text.splitlines():
-        if line.startswith('registry_schema_version:'):
-            return str(line.split(':', 1)[1].strip().strip('"').strip("'"))
-    return catalog.registry_schema_implicit
+def _parse_registry_document(text: str) -> dict[str, object]:
+    try:
+        return parse_yaml_mapping(text, source='project registry')
+    except InfrastructureError as exc:
+        raise RegistryLayoutError(exc.code, details=exc.details) from exc
+
+
+def _validate_registry_document(document: dict[str, object]) -> dict[str, object]:
+    try:
+        return validate_infrastructure_document(document, family='project-registry')
+    except InfrastructureError as exc:
+        raise RegistryLayoutError(exc.code, details=exc.details) from exc
+
+
+def detect_registry_schema_version(
+    document: dict[str, object], catalog: MigrationCatalog
+) -> str:
+    declared = document.get('registry_schema_version')
+    return str(declared) if declared is not None else catalog.registry_schema_implicit
 
 
 def detect_layout_version(metadata_text: str) -> str:
-    from project import _yaml_scalar
-    return _normalize_version(_yaml_scalar(metadata_text, 'metadata_version'))
+    try:
+        document = parse_yaml_mapping(metadata_text, source='workspace project metadata')
+    except InfrastructureError as exc:
+        raise RegistryLayoutError(exc.code, details=exc.details) from exc
+    return _normalize_version(document.get('metadata_version'))
 
 
 def migration_path(
@@ -252,59 +275,33 @@ def restore_workspace(snapshot: dict[str, object]) -> None:
             _remove_created_credential_store(workspace_root)
 
 
-def _project_block_bounds(lines: list[str], slug: str) -> tuple[int, int] | None:
-    start: int | None = None
-    for index, line in enumerate(lines):
-        if not line.startswith('  - slug:'):
-            continue
-        value = line.split(':', 1)[1].strip().strip('"').strip("'")
-        if value == slug:
-            start = index
-            break
-    if start is None:
-        return None
-    end = start + 1
-    while end < len(lines):
-        line = lines[end]
-        if line.startswith('  - '):
-            break
-        if line and not line.startswith((' ', '#')):
-            break
-        end += 1
-    return start, end
-
-
 def set_entry_layout_version(text: str, slug: str, version: str) -> str:
-    lines = text.splitlines()
-    bounds = _project_block_bounds(lines, slug)
-    if bounds is None:
+    document = _validate_registry_document(_parse_registry_document(text))
+    projects = document.get('projects')
+    if not isinstance(projects, list):
         raise RegistryLayoutError(
             'WB_REGISTRY_LAYOUT_ENTRY_MISSING',
             slug=slug,
             to_version=version,
             failed_step='registry-publication',
         )
-    start, end = bounds
-    field = f'    layout_version: {version}'
-    replaced = False
-    for index in range(start, end):
-        if lines[index].startswith('    layout_version:'):
-            lines[index] = field
-            replaced = True
-            break
-    if not replaced:
-        insert_at = start + 1
-        for index in range(start, end):
-            if lines[index].startswith('    status:'):
-                insert_at = index
-                break
-        lines.insert(insert_at, field)
-    return '\n'.join(lines).rstrip() + '\n'
+    match = next(
+        (item for item in projects if isinstance(item, dict) and str(item.get('slug') or '') == slug),
+        None,
+    )
+    if match is None:
+        raise RegistryLayoutError(
+            'WB_REGISTRY_LAYOUT_ENTRY_MISSING', slug=slug, to_version=version,
+            failed_step='registry-publication',
+        )
+    match['layout_version'] = int(version) if version.isdigit() else version
+    return dump_canonical_yaml(_validate_registry_document(document))
 
 
 def ensure_registry_schema_version(text: str, version: str) -> str:
-    from project import _ensure_registry_schema_version
-    return _ensure_registry_schema_version(text, version)
+    document = _validate_registry_document(_parse_registry_document(text))
+    document['registry_schema_version'] = int(version) if version.isdigit() else version
+    return dump_canonical_yaml(_validate_registry_document(document))
 
 
 def classify_registered_project(
@@ -344,6 +341,14 @@ def classify_registered_project(
         return result
     metadata_text = read(metadata_path)
     layout_version = detect_layout_version(metadata_text)
+    if layout_version == catalog.layout_current:
+        try:
+            validate_infrastructure_document(
+                parse_yaml_mapping(metadata_text, source=str(metadata_path)),
+                family='workspace-project-metadata',
+            )
+        except InfrastructureError as exc:
+            raise RegistryLayoutError(exc.code, slug=slug, details=exc.details) from exc
     result['layout_version'] = layout_version
     result['workspace_root'] = str(workspace_root.resolve()) if workspace_root.exists() else str(workspace_root)
     result['metadata_digest'] = _metadata_digest(metadata_text)
@@ -391,7 +396,6 @@ def _classify_blockers(
     path: list[LayoutMigrationStep],
 ) -> list[dict[str, str]]:
     blockers: list[dict[str, str]] = []
-    from project import assess_legacy_topology
     from control_plane import (
         ControlPlaneError,
         _proposal,
@@ -399,16 +403,7 @@ def _classify_blockers(
         _source_tracks_control_plane,
     )
     for step in path:
-        if step.step_id == 'layout-v2-to-v3':
-            topology = assess_legacy_topology(workspace_root, metadata_text, entry)
-            failure = str(topology.get('failure_code') or '')
-            if failure:
-                blockers.append({
-                    'code': failure,
-                    'step': step.step_id,
-                    'required_command': str(topology.get('required_command') or ''),
-                })
-        elif step.step_id == 'layout-v3-to-v4':
+        if step.step_id in {'layout-v2-to-v4', 'layout-v3-to-v4'}:
             protected = _protected_tracked_paths(workspace_root)
             if protected:
                 blockers.append({
@@ -443,14 +438,16 @@ def inspect_registered_projects(
     if not registry_path.is_file():
         raise RegistryLayoutError('WB_REGISTRY_LAYOUT_REGISTRY_MISSING', details={'path': str(registry_path)})
     registry_text = read(registry_path)
-    registry_schema_version = detect_registry_schema_version(registry_text, catalog)
+    registry_document = _parse_registry_document(registry_text)
+    registry_schema_version = detect_registry_schema_version(registry_document, catalog)
     if registry_schema_version not in catalog.registry_schema_supported:
         raise RegistryLayoutError(
             'WB_REGISTRY_SCHEMA_UNSUPPORTED',
             details={'registry_schema_version': registry_schema_version},
         )
-    from project import _project_blocks
-    entries = _project_blocks(registry_path)
+    registry_document = _validate_registry_document(registry_document)
+    from project import _project_blocks_from_document
+    entries = _project_blocks_from_document(registry_document) or []
     projects = [
         classify_registered_project(entry, catalog, registry_schema_version=registry_schema_version)
         for entry in sorted(entries, key=lambda item: str(item.get('slug') or ''))
@@ -496,16 +493,9 @@ def apply_layout_step(
     workspace_root: Path,
     entry: dict[str, object],
 ) -> dict[str, object]:
-    if step.step_id == 'layout-v2-to-v3':
-        from project import apply_layout_v2_to_v3
-        return apply_layout_v2_to_v3(
-            workspace_root,
-            name=str(entry.get('name') or entry.get('slug') or ''),
-            registry_entry_data=entry,
-        )
-    if step.step_id == 'layout-v3-to-v4':
-        from control_plane import apply_layout_v3_to_v4
-        return apply_layout_v3_to_v4(workspace_root)
+    if step.step_id in {'layout-v2-to-v4', 'layout-v3-to-v4'}:
+        from control_plane import apply_historical_layout_to_v4
+        return apply_historical_layout_to_v4(workspace_root)
     raise RegistryLayoutError(
         'WB_REGISTRY_LAYOUT_STEP_UNKNOWN',
         slug=str(entry.get('slug') or ''),
@@ -781,7 +771,6 @@ def migrate_registered_projects(
     validate: Callable[[Path, str], list[str]] = validate_layout_version,
 ) -> dict[str, object]:
     catalog = load_migration_catalog()
-    from project import _project_blocks
     plan = inspect_registered_projects(slug=slug, catalog=catalog)
     payload: dict[str, object] = {
         'command': 'migrate-registered-projects',
@@ -805,9 +794,13 @@ def migrate_registered_projects(
         payload['failure_code'] = 'WB_REGISTRY_LAYOUT_PLAN_STALE'
         return payload
     registry_path = resolve_project_registry_path()
+    registry_document = _validate_registry_document(
+        _parse_registry_document(read(registry_path))
+    )
+    from project import _project_blocks_from_document
     entries = {
         str(entry.get('slug') or ''): entry
-        for entry in _project_blocks(registry_path)
+        for entry in (_project_blocks_from_document(registry_document) or [])
     }
     results: list[dict[str, object]] = []
     changed: list[str] = []

@@ -30,7 +30,6 @@ from completion_provenance import (  # noqa: E402
     validate_resume_owner,
 )
 import execution_context  # noqa: E402
-import plans  # noqa: E402
 import completion_provenance  # noqa: E402
 
 
@@ -207,7 +206,7 @@ def test_kernel_ids_are_globally_unique_across_managed_store(tmp_path):
 def test_kernel_execution_context_creates_typed_binding_ownership(tmp_path, monkeypatch):
     # Unit-test ownership after the independently tested stage-gate boundary.
     monkeypatch.setattr(execution_context, "_find_plan", lambda *_: (tmp_path / "plan.md", {}))
-    monkeypatch.setattr("review_runtime.require_plan_reviews", lambda *_: None)
+    (tmp_path / "plan.md").write_text("status: verified\n", encoding="utf-8")
     execution_root = tmp_path / "execution"
     execution_root.mkdir()
     runtime_root = tmp_path / "runtime"
@@ -246,7 +245,7 @@ def test_kernel_execution_context_creates_typed_binding_ownership(tmp_path, monk
 
 def test_kernel_execution_context_rejects_missing_malformed_or_store_mismatched_ownership(tmp_path, monkeypatch):
     monkeypatch.setattr(execution_context, "_find_plan", lambda *_: (tmp_path / "plan.md", {}))
-    monkeypatch.setattr("review_runtime.require_plan_reviews", lambda *_: None)
+    (tmp_path / "plan.md").write_text("status: verified\n", encoding="utf-8")
     execution_root = tmp_path / "execution"
     execution_root.mkdir()
     runtime_root = tmp_path / "runtime"
@@ -543,39 +542,3 @@ def test_execution_workspace_cleanup_rejects_retained_binding():
         module.assert_binding_released_for_cleanup(retained)
     released = {**retained, "state": "released", "current_owner": "task-c01", "repair_owner": None, "releasable": True}
     assert module.assert_binding_released_for_cleanup(released)["original_owner"] == "task-c01"
-
-
-def test_completed_task_transition_releases_active_binding_and_persists_workspace_owner(tmp_path, monkeypatch):
-    control_root = tmp_path / "workspace"
-    (control_root / ".work-bundle").mkdir(parents=True)
-    store = ManagedProvenanceStore(control_root / ".work-bundle/runtime/completion-provenance")
-    created = FailureOwnershipV1.create(store, "binding:plan-001:task-c01", "isolated_worktree", "task-c01")
-    binding = {
-        "plan_id": "plan-001",
-        "task_id": "task-c01",
-        "workspace_id": "workspace-001",
-        "execution_id": "execution-c01",
-        "repository_id": "repo-main",
-        "runtime_root": str(tmp_path / "runtime"),
-        "ownership": created.to_dict(),
-    }
-    persisted = []
-    retained = []
-
-    monkeypatch.setattr(plans, "resolve_workspace_root", lambda _args: control_root)
-    monkeypatch.setattr(plans, "load_task_execution_binding", lambda *_args: binding)
-    monkeypatch.setattr(plans, "_persist_binding", lambda value, _root: persisted.append(value))
-    monkeypatch.setattr(
-        plans,
-        "_execution_workspace_module",
-        lambda: type("Workspace", (), {"retain_binding_owner": staticmethod(lambda *args, **kwargs: retained.append((args, kwargs)))})(),
-    )
-
-    released = plans._release_completed_task_binding(
-        type("Args", (), {"workspace_root": str(control_root)})(),
-        {"id": "task-c01", "plan_id": "plan-001", "phase_id": "phase-c"},
-    )
-
-    assert released["state"] == "released"
-    assert persisted[0]["ownership"] == released
-    assert retained[0][1]["ownership"] == released

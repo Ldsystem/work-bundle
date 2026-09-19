@@ -1,0 +1,32 @@
+catalog_id: artifact-family-catalog-v2
+schema_version: 1
+families:
+  - name: artifact-family-catalog
+    schema: {id: artifact-family-catalog-v1, path: artifact-family-catalog-v1.schema.json}
+    representation: yaml
+    anchor: toolkit_root
+    locator: {template: references/assets/orchestration/contract/artifact-family-catalog-v2.yaml, variables: []}
+    identity: {field: catalog_id, pattern: '^artifact-family-catalog-v[0-9]+$'}
+    relationships: {bindings: []}
+    lifecycle: {authority: immutable-release, states: [released], transitions: {}}
+    index: {policy: none}
+  - name: specification
+    schema: {id: specification-v1, path: specification-v1.schema.json}
+    representation: markdown-front-matter
+    anchor: workspace_root
+    locator:
+      template: .work-bundle/orchestration/spec/{state}/{id}.spec.md
+      variables: [state, id]
+    identity:
+      field: id
+      pattern: '^spec-[a-z0-9][a-z0-9-]*$'
+    relationships: {bindings: []}
+    lifecycle:
+      authority: location
+      states: [active, archived]
+      transitions: {active: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/spec/index.jsonl
+      source_states: [active, archived]
+      projection: [id, title, status, purpose, component, date_created, last_updated]
+      format: jsonl

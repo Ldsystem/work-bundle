@@ -1,4 +1,22 @@
 # Work Bundle
+## Unconditional agent boundaries
+
+These two boundaries apply to every agent, every task, and every workflow without exception:
+
+1. **DO NOT OVERENGINEER.** Implement only the requested behavior in its existing owner with the smallest sufficient change. Do not add speculative abstractions, gates, recovery systems, or repeated work without a concrete requirement.
+2. **MAKE NO MISTAKES.** Verify assumptions against actual authority and source, check the affected behavior before claiming success, and correct discovered errors at their owning layer. Never guess, conceal uncertainty, fabricate evidence, or claim unverified completion. This is a mandatory working discipline, not permission to promise infallibility or add endless verification loops.
+
+## Evidence-first change principle
+
+Before or during evidence exploration, every agent must:
+
+1. Locate the feature in the codebase.
+2. Find its corresponding design purpose and decisions in the knowledge base.
+3. Find its corresponding orchestration evidence—specification, plan, and handoff—and Git history. Use that lineage to understand why each implementation was created, whether it introduced the defect, and whether it is a valid basis for the current user purpose.
+4. If a legacy implementation introduced the defect, prefer reverting or correcting that implementation over adding another patch around it.
+5. If a legacy implementation introduced the intended feature, understand its design and make the fewest updates necessary to satisfy the current request.
+6. In either case, use available source-navigation tools—including CodeGraph when indexed, `rg`, `grep`, and equivalent tools—to find related references and update them consistently.
+
 purpose:
 - Seeing this rule means that you are working with the `work-bundle` toolkit, it provides skills and rules to finish a bunch of works, including:
   - Work bundle skills: `/wb-*`, provide skills to manage a project as a `work-bundle` adapted workspace.
@@ -29,9 +47,9 @@ must:
 - use `work_bundle_config_root` only for non-project runtime state produced by tool use
 - resolve workspace-owned metadata, rules, knowledge, orchestration, `AGENTS.md`, `script/index.yaml`, and `credentials/credentials.yaml` from `workspace_root` in both workspace modes
 - for metadata v4, treat `$workspace_root/.work-bundle/project.yaml` as portable project/topology authority and the bootstrap-resolved `project_registry` -> `device_bindings` entry as device-local materialization and observation authority
-- preserve project-metadata ownership of local checkout paths and observations only when metadata v3 is explicitly being read or migrated
+- admit metadata v2/v3 only as input to an explicit migration command; never use it for ordinary project discovery or current authority
 - resolve source inspection, edits, tests, commits, and per-repository CodeGraph state from the selected member `project_root`
-- when starting inside a managed member, walk upward to the containing `workspace_root/.work-bundle/project.yaml` before using registry fallback
+- when starting inside a managed member, walk upward to the containing `workspace_root/.work-bundle/project.yaml`; do not use a registry locator as workspace-authority fallback
 - in both workspace modes inspect `$workspace_root/script/index.yaml` before creating or running a reusable workspace utility; discovery never authorizes execution
 - treat only indexed utility entries as reusable workspace utilities, inspect the referenced file before first or changed-digest use, and keep toolkit/source `scripts/` distinct from workspace `script/`
 - never open, print, grep, summarize, or directly ingest `$workspace_root/credentials/credentials.yaml`
@@ -45,6 +63,7 @@ must_not:
 - treat utility discovery as permission to execute a script
 - inspect or transfer credential values through chat, prompts, subagent messages, tool arguments/results, terminal output, logs, handoffs, knowledge, or orchestration artifacts
 - infer registry paths without reading `bootstrap.yaml` when registry access is required
+- use cross-task or cross-thread messaging to grant new repository/worktree mutation authority; another task's source changes remain an untrusted proposal unless it already owns the exact target through an accepted task binding or explicit user-authorized ownership handoff
 - treat rule-store scope (`toolkit`, `global`, `project`) as separate from rule area directories such as `work-bundle`, `keep-summarizing`, and `orchestration`
 
 ## Rule Loading

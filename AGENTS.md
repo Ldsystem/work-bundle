@@ -2,6 +2,24 @@
 # Work Bundle RULE START
 # ========================
 # Work Bundle
+## Unconditional agent boundaries
+
+These two boundaries apply to every agent, every task, and every workflow without exception:
+
+1. **DO NOT OVERENGINEER.** Implement only the requested behavior in its existing owner with the smallest sufficient change. Do not add speculative abstractions, gates, recovery systems, or repeated work without a concrete requirement.
+2. **MAKE NO MISTAKES.** Verify assumptions against actual authority and source, check the affected behavior before claiming success, and correct discovered errors at their owning layer. Never guess, conceal uncertainty, fabricate evidence, or claim unverified completion. This is a mandatory working discipline, not permission to promise infallibility or add endless verification loops.
+
+## Evidence-first change principle
+
+Before or during evidence exploration, every agent must:
+
+1. Locate the feature in the codebase.
+2. Find its corresponding design purpose and decisions in the knowledge base.
+3. Find its corresponding orchestration evidence—specification, plan, and handoff—and Git history. Use that lineage to understand why each implementation was created, whether it introduced the defect, and whether it is a valid basis for the current user purpose.
+4. If a legacy implementation introduced the defect, prefer reverting or correcting that implementation over adding another patch around it.
+5. If a legacy implementation introduced the intended feature, understand its design and make the fewest updates necessary to satisfy the current request.
+6. In either case, use available source-navigation tools—including CodeGraph when indexed, `rg`, `grep`, and equivalent tools—to find related references and update them consistently.
+
 purpose:
 - Seeing this rule means that you are working with the `work-bundle` toolkit, it provides skills and rules to finish a bunch of works, including:
   - Work bundle skills: `/wb-*`, provide skills to manage a project as a `work-bundle` adapted workspace.
@@ -26,10 +44,8 @@ must:
 - resolve `work_bundle_root` from `$work_bundle_config_root/bootstrap.yaml` -> `work_bundle_root`
 - resolve project registry from `$work_bundle_config_root/bootstrap.yaml` -> `project_registry`
 - resolve skill registry from `$work_bundle_config_root/bootstrap.yaml` -> `skill_registry`
-- resolve effective `prefer_subagent` as `.work-bundle/project.yaml` -> `prefer_subagent`, then `$work_bundle_config_root/bootstrap.yaml` -> `prefer_subagent`, then `false`
 - before material implementation, establish or consume one Truth Basis containing purpose, as-is evidence, accepted decision authority, expected delta, and conflict status; after preflight and source grounding, lightweight planning runs one bounded `ks-what-is-helpful` gateway and records accepted authority or evidence-backed `none relevant`, while heavy execution compiles carried authority without executor retrieval
 - after each meaningful validated move, record a knowledge disposition of `none`, `update`, `supersede`, or `reclassify`; the lightweight completion owner resolves its approved `ks-*` follow-up, while heavy executors return task-local evidence only and final orchestration review owns heavy-path persistence follow-up
-- treat `prefer_subagent` as permission to prefer sub-agent scheduling only when normal execution safety, write-scope, dependency, and fallback checks pass
 - use `work_bundle_root` only for toolkit assets, builtin skills, builtin rules, and references
 - use `work_bundle_config_root` only for non-project runtime state produced by tool use
 - resolve workspace-owned metadata, rules, knowledge, orchestration, `AGENTS.md`, `script/index.yaml`, and `credentials/credentials.yaml` from `workspace_root` in both workspace modes
@@ -50,7 +66,6 @@ must_not:
 - treat utility discovery as permission to execute a script
 - inspect or transfer credential values through chat, prompts, subagent messages, tool arguments/results, terminal output, logs, handoffs, knowledge, or orchestration artifacts
 - infer registry paths without reading `bootstrap.yaml` when registry access is required
-- let `prefer_subagent` bypass repository preflight, sub-agent capability checks, disjoint write-scope checks, dependency checks, or single-agent fallback
 - treat rule-store scope (`toolkit`, `global`, `project`) as separate from rule area directories such as `work-bundle`, `keep-summarizing`, and `orchestration`
 
 ## Rule Loading

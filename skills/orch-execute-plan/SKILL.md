@@ -1,98 +1,28 @@
 ---
 name: orch-execute-plan
-description: 'Execute a WorkBundle task, phase, or plan through mandatory subagent task ownership, compiled task briefs, task-local methodology, optional independent acceptance review, and dependency-aware scheduling.'
+description: Execute verified WorkBundle tasks and produce factual canonical executor results for direct independent product review.
 ---
 
-# orch-execute-plan
+# Execute a WorkBundle Plan
 
-## Execution Constraints (skill-owned)
+Execute only the task authority supplied by the controller. Use its verified specification, canonical plan/task, compiled Truth Basis, accepted dependency results, allocated rules, and task-local methodology. Do not retrieve durable knowledge during execution or broaden repository/write scope.
 
-Execution is a no-retrieval stage. Use the selected task, its compiled Truth Basis and cited specification values, declared prior handoffs, task-scoped source/tests, and allocated methodology. Do not query or read `.work-bundle/knowledge/`.
+## Execution
 
-## Scheduler-Owned Constraints
+1. Verify the exact task, bindings, source baseline, write scope, dependencies, and validation obligations before mutation.
+2. Follow the task methodology. For behavior changes, use GROUND → RED → GREEN → REFACTOR and retain focused observations that can disprove the claim.
+3. Keep each worker inside its existing task ownership. A worker reports source changes and factual observations; it does not accept the product.
+4. Freeze the resulting commit or worktree candidate with a path-sorted changed-path manifest.
+5. Write one canonical `executor-result-v1` with implemented scope, changed paths, focused observations, unresolved product blockers, task fit, repository/CodeGraph facts, delegation provenance, and knowledge disposition.
+6. When review is required, send the exact candidate, verified specification and plan, every obligation, and focused observations to a distinct reviewer. Supporting-state defects are routed separately unless the product itself is ambiguous, unsafe, inaccessible, or impossible to review.
+7. On `repair`, resume the owning task and review the new exact candidate. On `blocked`, report the product blocker. On `accept`, let the controller create the compact accepted task result.
 
-1. Resolve target task, phase, or plan and its executable dependency queue.
-2. Before compilation, capability selection, delegation, or edits, resolve the workspace and every target repository from `.work-bundle/project.yaml`. Git-backed targets must match branch and accepted metadata baseline and be clean unless validated handoffs explain exact changes. Never mutate user work to pass preflight.
-3. Record CodeGraph applicability per target. When `.codegraph/` exists for indexed source work, sync after preflight and query it before broad inspection; recheck cleanliness and sync after changes. Otherwise record `no-index` and use bounded direct inspection. Do not initialize CodeGraph.
-4. Select or prepare the declared execution workspace and hydration profile. Record provenance. Cleanup may remove only a clean WorkBundle-owned workspace whose expected Git identity still matches, whose policy allows cleanup, and whose durable lifecycle state confirms integration or an explicit discarded/retired decision. Age alone is report-only; never delete user or harness workspaces.
-5. After scheduler workspace selection or preparation and before material edits, create or load one harness-owned task execution binding that carries plan/task identity, `workspace_id`/`execution_id`/`repository_id`, and exact path/Git provenance. Keep it in runtime/execution-workspace state outside the mutation envelope. Compile and read task/spec artifacts from the control WorkBundle root. Execute process and Git evidence against the bound execution repository. Do not point orchestration `--project-root` at an isolated worktree to load gitignored `.work-bundle/orchestration/**`. Capture the pre-task baseline once from that bound repository via the helper; later brief rebuild or repair must not recapture or replace it. Executor handoff and other supported executor-facing interfaces cannot supply or replace that baseline. Same-user filesystem rewrite of helper runtime files is out of scope. Mutating siblings on the same execution path isolate via prepare_worktree or serialize even when write scopes are disjoint; a shared worktree must not host them. Do not add a path-ownership ledger.
-6. Compile the bounded task brief:
+Executor results must not contain product verdicts, recommended repair strategy, final-audit conclusions, or knowledge-write authorization. Missing historical records, indexes, or handoffs do not become product findings.
 
-```bash
-python3 scripts/orch.py build-task-brief --task <task-path>
-```
+## Self-check
 
-Missing source IDs; decision authority other than `none-relevant` or an `AUTH-NNN` alias whose carried constraint was reconciled in the verified specification; `conflict_status: escalate`; inconsistent scope; or unsafe workspace state fails closed with the existing typed blocker. Truth Basis conflict uses `decision-blocked`. The compiled brief includes `AUTH-NNN: <carried constraint>`, not the alias alone.
-7. Choose the provider-neutral capability from the task profile. Consume planner-proven dependencies, write scopes, common-contract groups, barriers, convergence ownership, and isolation requirements. Dispatch every ready independent task with disjoint write scope to a separate execution workspace before awaiting any result. Serialize dependent, overlapping, or same-workspace mutation. Contract-decoupled participants validate against the common contract, accepted prior handoffs, and task-local files; they reach the named barrier before convergence work.
-8. Selecting `orch-execute-plan` makes every implementation and repair task subagent-owned. Use the production `TaskOwnershipScheduler` entry in `scripts/orchestration/task_ownership.py` with a host-native adapter or an optional Execution-Flow adapter; host-native execution is sufficient and Execution Flow is optional. Do not reproduce its admission logic in prompts or detached helpers. Before any task mutation, it confirms adapter availability and binds each dispatched task to validated neutral agent/run provenance. If no subagent is available, it fails closed with `workspace-blocked`; there is no controller or single-agent fallback. Do not substitute `reviewer_independent: false` for a missing task owner. The orchestration thread may schedule, compile briefs, coordinate barriers, validate results, route reviews, and manage lifecycle, but it must not implement or repair task write scope.
-9. Use `TaskOwnershipScheduler.validate_acceptance` to validate neutral `delegation_evidence` and reject acceptance when mutation provenance shows the controller changed task-owned write scope, even if validation is green. Run the pure creation-safe projection before the helper atomically writes/indexes the immutable executor result; it rejects malformed executor facts and wrong-owner review/control fields without observing, reviewing, or accepting. For a mapped capability task, report each validation under its compiled evidence ID and invariant IDs, and add `evidence_closure` using the allocated boundary, freshness, and evidence IDs. The later terminal helper observes required process/inspection items in the bound worktree as one Git-state-neutral batch, reuses the compiled identities, and rejects missing, incapable, contradictory, stale, wrong-boundary, failed, or unexecuted evidence before authorizing from post-execution task-caused delta. Executor closure claims are corroboration, not harness proof. Compile `build-review-package` and assign `dev-code-review` only when compiled `review_required: true`. The scheduler does not perform code-quality review.
-
-```bash
-python3 scripts/orch.py validate-executor-result --task <task-path> --handoff <handoff-path>
-```
-
-## Executor-Owned Constraints
-
-- Follow the compiled brief and its exact read/write/forbidden scope.
-- Own implementation and repair task mutation as the bound subagent; return neutral `agent_id`, `run_id`, and `mechanism` provenance without UI or visibility fields.
-- Load or acknowledge allocated rules and methodology before the operation they govern.
-- Create or load the harness-owned task execution binding before material edits; capture the pre-task baseline once; run process commands and named inspections only in the bound execution repository.
-- Apply `systematic-debugging` before proposing a root-cause fix for unexpected behavior.
-- Apply TDD to testable new/changed behavior and diagnosed fixes; use direct deterministic verification for non-testable mechanical artifacts.
-- Run fresh claim-relevant validation after the final edit.
-- Write a sparse `executor-result-v1` handoff containing only executor-owned task identity, changed paths, validation, repository/CodeGraph fallback, allocated obligations, unresolved blockers, local task-fit evidence, and a knowledge disposition of `none`, `update`, `supersede`, or `reclassify`. Omit review, receipt, publication, accepted-result, and later audit facts.
-- Knowledge disposition contains task-local evidence only. It must not name knowledge paths, invoke any `ks-*` skill, or authorize persistence; final orchestration review owns approved follow-up.
-- Do not perform acceptance judgment or mark a review-required task complete.
-- Trigger `wb-defect-evaluation` only for a new unintended WorkBundle-related conflict, error, failed validation, or contradictory workflow behavior. Stop once visible relatedness is established; no chain-of-thought or exhaustive tracing is required.
-
-## Independent task review
-
-When compiled `review_required: true`, validate initial executor facts without demanding or embedding the future review verdict, then build the product candidate only from accepted product requirements/boundaries, exact base/current product source and diff identity, harness-owned normalized validation observations, and unresolved product concerns. Handoff, knowledge, reviewer-history, receipt/publication, status, and archive bookkeeping are not product-review inputs or findings. Controller/orchestration code is still product when the task allocates it. Skip this hop when review is not required.
-
-```bash
-python3 scripts/orch.py build-review-package \
-  --task <task-path> --handoff <handoff-path> --base <git-ref> --head <git-ref>
-```
-
-Use `--head worktree` for pre-commit review; the compiler includes tracked, staged, unstaged, and untracked changes, assigns a stable worktree identity, and withholds protected-path content.
-
-The reviewer uses only that bounded product candidate and `dev-code-review`, returning compact `accept|repair` product judgment. Invalid or incomplete input is a controller input/runner failure outside the product verdict. The controller composes the native envelope, verifies independent provenance, and publishes it. A task or stage verdict becomes lifecycle authority only after the exact result and its provider-specific reviewer-run receipt are stored and validated against controller-authorized target identity.
-
-If reviewer infrastructure or provider failure prevents a verdict, preserve the immutable package and repair the first broken runner/provider owner. A capable independent reviewer may be reused. Do not change source, rerun validation, reslice, or require identity rotation for provider availability. Publication retry after a completed judgment reuses the exact result and receipt.
-
-On `repair`, preserve reviewer observations verbatim while the controller supplies the classification, first broken owner or artifact, and selected action through the v2 agent-owned decision contract. Return blocking findings to the existing task owner only when that is the controller-selected route; there is no fixed class-to-remedy table or confirming review. Repair from the exact previously reviewed source, rerun only claim-relevant validation invalidated by the repair, and perform one scoped rereview of the affected frontier. Reuse unaffected executor and validation authority. Only a material authority, scope, acceptance, decomposition, or validation-allocation change resets to an initial frontier. Publication-only/control resume never redispatches the executor or reruns validation/review.
-
-## Completion semantics
-
-A task becomes `Completed` only when implementation criteria, fresh validation, neutral subagent ownership provenance, no controller mutation of task write scope, a valid immutable executor-result handoff, and a passing `validate-executor-result` check all exist. A review-required task additionally needs exact stored `accept` authority; accepted-result materialization alone joins it with executor facts and current observations. Phase and plan completion derive from accepted children and declared dependency, barrier, and convergence gates.
-
-Enforce acceptance once: after the helper verifies binding, source/scope, subagent ownership, validation, and stored required-review authority, persist one compact accepted result. A later stored task repair review recomposes that result through the existing materializer, preserving executor and validation authority without redispatch, handoff rewrite, validation rerun, or embedded review history. Dependency release and later lifecycle steps consume the compact result plus current harness observations; they do not replay transient acceptance evidence or historical handoff chains.
-
-Use typed blockers:
-
-```text
-context-blocked | repository-blocked | decision-blocked | validation-blocked
-review-blocked | knowledge-blocked | workspace-blocked
-```
-
-Resume the owning step. Do not restart the lifecycle or create a repair specification for an ordinary task rejection.
-
-## Post-execution bounded review
-
-Task review remains optional and task-scoped; it never consumes the workspace's post-execution review round budget. After every executor attempt for the flow is terminal and the integrated candidate is ready, the controller runs `begin-review-round` before preparing evidence or dispatching integrated review. The exact request ID plus frozen target identity is idempotent; a different target identity reserves a new round.
-
-After immutable product review publication, the controller runs `complete-review-round` with its store-owned review reference. When controller preparation or dispatch is factually blocked before a product artifact exists, completion may instead carry an audit-block record; that record must not impersonate a product verdict. Use `review-round-status` to diagnose the count and finalization state.
-
-An accepted round proceeds to the normal final audit. Findings below the fifth completed round return to the existing task owner through admission-controlled reconciliation and claim-relevant repair. The fifth unresolved or factually blocked completion stops repair and requires `finalize-with-blockers`; the executor must not run a sixth round or reopen product work during an administrative retry.
-
-## Runtime Rules
-
-- `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
-- `orch-handoff-required`: `rules/orchestration/orch-handoff-required.md`
-- `orch-bounded-closure`: `rules/orchestration/orch-bounded-closure.md`
-
-Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules above when their indexed conditions apply.
-
-## Boundary
-
-Follow `orch-orchestration-boundary`, `orch-handoff-required`, and `orch-bounded-closure`.
+- [ ] The executed task and repository/write scope match accepted authority.
+- [ ] The executor result is canonical, factual, schema-valid, and bound to the exact plan/task.
+- [ ] Focused observations are current and claim-relevant; green tests do not substitute for checking every obligation.
+- [ ] A distinct reviewer, not the executor or controller, authored any product verdict.
+- [ ] No receipt, history replay, or supporting-state defect issued or changed a semantic verdict.

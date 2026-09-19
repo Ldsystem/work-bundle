@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "implementation-review-v2",
+  "type": "object",
+  "required": ["artifact_type", "schema_version", "id", "plan_id", "task_id", "scope", "specification_id", "plan_identity", "target", "target_sha256", "implementor_agent_id", "reviewer", "reviewed_obligations", "focused_observations", "verdict", "findings", "date_created", "last_updated"],
+  "properties": {
+    "artifact_type": {"const": "implementation-review"}, "schema_version": {"const": 2},
+    "id": {"type": "string", "pattern": "^review-[a-z0-9][a-z0-9-]*$"},
+    "plan_id": {"type": "string", "pattern": "^plan-[a-z0-9][a-z0-9-]*$"}, "task_id": {"type": ["string", "null"]},
+    "scope": {"enum": ["task", "integrated"]}, "specification_id": {"type": "string", "minLength": 1},
+    "plan_identity": {"$ref": "#/$defs/idref"},
+    "target": {"type": "object", "required": ["kind", "sha256", "base_commit", "manifest"], "properties": {"kind": {"enum": ["commit", "worktree"]}, "sha256": {"$ref": "#/$defs/sha"}, "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "manifest": {"type": "array", "items": {"oneOf": [{"type": "object", "required": ["path", "state", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "state": {"const": "present"}, "sha256": {"$ref": "#/$defs/sha"}}, "additionalProperties": false}, {"type": "object", "required": ["path", "state"], "properties": {"path": {"type": "string", "minLength": 1}, "state": {"const": "deleted"}}, "additionalProperties": false}]}}}, "additionalProperties": false},
+    "target_sha256": {"$ref": "#/$defs/sha"},
+    "implementor_agent_id": {"type": "string", "minLength": 1},
+    "reviewer": {"type": "object", "required": ["agent_id"], "properties": {"agent_id": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+    "reviewed_obligations": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["source_id", "status", "summary"], "properties": {"source_id": {"type": "string", "minLength": 1}, "status": {"enum": ["satisfied", "missing", "blocked"]}, "summary": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
+    "focused_observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+    "verdict": {"enum": ["accept", "repair", "blocked"]},
+    "findings": {"type": "array", "items": {"type": "object", "required": ["source_id", "boundary", "summary"], "properties": {"source_id": {"type": "string", "minLength": 1}, "boundary": {"type": "string", "minLength": 1}, "summary": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
+    "date_created": {"type": "string", "format": "date"}, "last_updated": {"type": "string", "format": "date"}
+  },
+  "$defs": {"sha": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "idref": {"type": "object", "required": ["id", "sha256"], "properties": {"id": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha"}}, "additionalProperties": false}, "observation": {"type": "object", "required": ["id", "result", "summary"], "properties": {"id": {"type": "string", "minLength": 1}, "result": {"enum": ["passed", "failed", "blocked", "not-run"]}, "summary": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
+  "additionalProperties": false
+}

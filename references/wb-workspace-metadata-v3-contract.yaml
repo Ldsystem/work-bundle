@@ -1,6 +1,6 @@
 id: workspace-metadata-v3-contract
-status: current
 metadata_version: 3
+status: historical-migration-input
 authority: workspace-working-state
 compatibility:
   readable_versions: [2, 3]

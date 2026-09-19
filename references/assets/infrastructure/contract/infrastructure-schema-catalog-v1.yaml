@@ -1,0 +1,14 @@
+schema_version: 1
+families:
+  bootstrap-config:
+    version: 1
+    representation: yaml
+    schema: bootstrap-config-v1.schema.json
+  project-registry:
+    version: 1
+    representation: yaml
+    schema: project-registry-v1.schema.json
+  workspace-project-metadata:
+    version: 1
+    representation: yaml
+    schema: workspace-project-metadata-v4.schema.json

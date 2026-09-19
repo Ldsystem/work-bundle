@@ -11,6 +11,9 @@ import sys
 import tempfile
 import unittest
 
+import pytest
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORK_BUNDLE_SCRIPTS = REPO_ROOT / "scripts/work-bundle"
@@ -19,17 +22,13 @@ loaded_core_path = Path(getattr(loaded_core, "__file__", "")) if loaded_core is 
 if loaded_core_path is not None and WORK_BUNDLE_SCRIPTS not in loaded_core_path.parents:
     sys.modules.pop("core", None)
 sys.path.insert(0, str(WORK_BUNDLE_SCRIPTS))
-from workspace_resources import CREDENTIAL_TEMPLATE, SCRIPT_INDEX_TEMPLATE
-from control_plane import (
-    ControlPlaneError,
-    deferred_remote_task_identity,
-    validate_deferred_remote_independent_review_identity,
-)
+from workspace_resources import CREDENTIAL_TEMPLATE, SCRIPT_INDEX_TEMPLATE, _load_yaml
+from control_plane import ControlPlaneError
 
 
 def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env["WB_CONFIG_ROOT"] = str(config_root)
+    env["HOME"] = str(config_root.parent)
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/wb.py"), *args],
         cwd=REPO_ROOT,
@@ -42,7 +41,7 @@ def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 def run_orch(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env["WB_CONFIG_ROOT"] = str(config_root)
+    env["HOME"] = str(config_root.parent)
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/orch.py"), *args],
         cwd=REPO_ROOT,
@@ -61,7 +60,7 @@ def git(path: Path, *args: str) -> str:
 
 
 def config_root(tmp_path: Path) -> Path:
-    root = tmp_path / "config"
+    root = tmp_path / ".work-bundle"
     (root / "registry").mkdir(parents=True)
     (root / "bootstrap.yaml").write_text(
         "\n".join(
@@ -142,6 +141,26 @@ def make_v3_workspace(tmp_path: Path) -> tuple[Path, Path, str]:
     return workspace, remote, head
 
 
+def contain_v3_checkout(workspace: Path) -> Path:
+    metadata = workspace / ".work-bundle/project.yaml"
+    original = metadata.read_text(encoding="utf-8")
+    document = yaml.safe_load(original)
+    old_checkout = Path(str(document["project_root"]))
+    checkout = workspace / "source-main"
+    old_checkout.rename(checkout)
+    replacements = {
+        f"project_root: {old_checkout}": f"project_root: {checkout}",
+        f"git_control_root: {old_checkout / '.git'}": f"git_control_root: {checkout / '.git'}",
+    }
+    lines = []
+    for line in original.splitlines():
+        stripped = line.strip()
+        replacement = replacements.get(stripped)
+        lines.append(f"{line[: len(line) - len(line.lstrip())]}{replacement}" if replacement else line)
+    metadata.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return checkout
+
+
 def make_v3_single_workspace(tmp_path: Path, *, tracked_agents: bool = False) -> tuple[Path, Path, str]:
     remote = tmp_path / "single-source.git"
     workspace = tmp_path / "single-workspace"
@@ -219,6 +238,40 @@ def migrate(config: Path, workspace: Path) -> dict[str, object]:
     return json.loads(applied.stdout)
 
 
+def test_migrate_control_plane_routes_current_and_unsupported_before_legacy_proposal(tmp_path: Path) -> None:
+    config = config_root(tmp_path)
+    workspace = tmp_path / "current-workspace"
+    initialized = run_wb(
+        config,
+        "init-workspace",
+        str(workspace),
+        "--mode",
+        "multi-repository",
+        "--slug",
+        "current",
+        "--optional-repository",
+        "source=ssh://git@example.test/source.git",
+        "--apply",
+    )
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+
+    for action in ("--dry-run", "--apply"):
+        current = run_wb(config, "migrate-control-plane", str(workspace), action)
+        assert current.returncode == 0, current.stdout + current.stderr
+        payload = json.loads(current.stdout)
+        assert payload["migration"] == {"from_version": 4, "to_version": 4, "disposition": "current"}
+        assert payload["changed_files"] == []
+
+    unsupported = tmp_path / "unsupported"
+    unsupported.joinpath(".work-bundle").mkdir(parents=True)
+    unsupported.joinpath(".work-bundle/project.yaml").write_text(
+        "metadata_version: 99\nlegacy_shape: deliberately-incomplete\n", encoding="utf-8"
+    )
+    rejected = run_wb(config, "migrate-control-plane", str(unsupported), "--dry-run")
+    assert rejected.returncode == 1
+    assert json.loads(rejected.stdout)["failure_code"] == "WB_CONTROL_PLANE_MIGRATION_SOURCE_UNSUPPORTED"
+
+
 def portable_multi_workspace(
     tmp_path: Path, repositories: list[tuple[str, Path]]
 ) -> tuple[Path, bytes]:
@@ -258,6 +311,15 @@ def test_v3_to_v4_migration_is_deterministic_and_splits_local_state(tmp_path: Pa
     assert "workspace_root" in first_data["proposal"]["local_fields_to_move"]
     assert first_data["proposal"]["repositories"][0]["id"] == "source-main"
     assert "runtime/" in first_data["proposal"]["local_only_paths"]
+    portable_paths = first_data["proposal"]["portable_paths"]
+    assert "orchestration/handoff/" not in portable_paths
+    for current in (
+        "orchestration/result/executor/",
+        "orchestration/result/accepted/",
+        "orchestration/review/implementation/",
+        "orchestration/review/final/",
+    ):
+        assert current in portable_paths
 
     applied = run_wb(
         config,
@@ -368,43 +430,11 @@ def test_migration_uses_registry_remote_when_live_origin_chain_ends_locally(tmp_
     assert json.loads(proposed.stdout)["proposal"]["repositories"][0]["canonical_remote"] == "ssh://git@example.test/team/source"
 
 
-def test_fallback_yaml_scalar_rejects_yaml_indicators_but_allows_mid_scalar_ampersand() -> None:
-    script = """
-import json
-import workspace_resources
-
-workspace_resources.yaml = None
-values = {}
-for label, scalar in {
-    "anchor": "&anchor value",
-    "alias": "*alias",
-    "core_tag": "!!str value",
-    "custom_tag": "!custom value",
-    "verbatim_tag": "!<tag:example.com,2026:x> value",
-}.items():
-    try:
-        workspace_resources._load_yaml(f"value: {scalar}\\n")
-    except ValueError as exc:
-        values[label] = str(exc)
-values["path"] = workspace_resources._load_yaml("value: /Volumes/ext/DTM&RPG\\n")["value"]
-print(json.dumps(values, sort_keys=True))
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=REPO_ROOT / "scripts/work-bundle",
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout) == {
-        "alias": "unsupported YAML token",
-        "anchor": "unsupported YAML token",
-        "core_tag": "unsupported YAML token",
-        "custom_tag": "unsupported YAML token",
-        "path": "/Volumes/ext/DTM&RPG",
-        "verbatim_tag": "unsupported YAML token",
-    }
+def test_maintained_yaml_parser_is_safe_and_accepts_normal_scalars() -> None:
+    assert _load_yaml("value: /Volumes/ext/DTM&RPG\n") == {"value": "/Volumes/ext/DTM&RPG"}
+    assert _load_yaml("value: {nested: true}\n") == {"value": {"nested": True}}
+    with pytest.raises(yaml.YAMLError):
+        _load_yaml("value: !custom unsafe\n")
 
 
 def test_migration_preserves_existing_control_plane_gitignore_content(tmp_path: Path) -> None:
@@ -506,7 +536,7 @@ def test_migration_blocks_registry_and_live_network_remote_conflict_without_over
 def test_attach_and_doctor_resolve_local_source_origin_chain(tmp_path: Path) -> None:
     config_a = config_root(tmp_path / "device-a")
     workspace, network_remote, _ = make_v3_workspace(tmp_path / "fixture")
-    checkout = tmp_path / "fixture/source"
+    checkout = contain_v3_checkout(workspace)
     local_origin = tmp_path / "local-origin"
     subprocess.run(["git", "clone", "-q", "--", str(network_remote), str(local_origin)], check=True)
     git(local_origin, "remote", "set-url", "origin", "ssh://git@example.test/team/source.git")
@@ -543,6 +573,9 @@ def test_legacy_project_commands_accept_v4_and_doctor_repair_preserves_portable_
     workspace, _, _ = make_v3_workspace(tmp_path)
     migrate(config, workspace)
     checkout = tmp_path / "source"
+    contained_checkout = workspace / "source-main"
+    checkout.rename(contained_checkout)
+    checkout = contained_checkout
     attached = run_wb(
         config,
         "attach-workspace",
@@ -641,6 +674,28 @@ def test_single_repository_init_creates_workspace_resources(tmp_path: Path) -> N
     assert credential_file.read_text(encoding="utf-8") == CREDENTIAL_TEMPLATE
     assert credential_file.parent.stat().st_mode & 0o777 == 0o700
     assert credential_file.stat().st_mode & 0o777 == 0o600
+    orchestration = workspace / ".work-bundle/orchestration"
+    for retired in ("handoff", "plan/index.jsonl", "handoff/index.jsonl"):
+        assert not (orchestration / retired).exists()
+    for current in (
+        "spec/active",
+        "spec/archived",
+        "plan/active",
+        "plan/archived",
+        "result/executor/active",
+        "result/executor/reviewed",
+        "result/executor/superseded",
+        "result/executor/archived",
+        "result/accepted/active",
+        "result/accepted/superseded",
+        "result/accepted/archived",
+        "review/implementation/active",
+        "review/implementation/superseded",
+        "review/implementation/archived",
+        "review/final/active",
+        "review/final/archived",
+    ):
+        assert (orchestration / current).is_dir()
 
 
 def test_single_repository_init_preserves_workspace_resources(tmp_path: Path) -> None:
@@ -894,12 +949,12 @@ def test_attach_reconstructs_distinct_device_binding_without_portable_diff(tmp_p
     (control_b / "project.yaml").write_bytes(portable)
     (control_b / "knowledge").mkdir()
     config_b = config_root(tmp_path / "device-b-config")
-    attached = run_wb(config_b, "attach-workspace", str(workspace_b), "--materialize", "none", "--apply")
+    attached = run_wb(config_b, "attach-workspace", str(workspace_b), "--materialize", "missing", "--apply")
     assert attached.returncode == 0, attached.stdout + attached.stderr
     data = json.loads(attached.stdout)
     assert data["portable_status"] == "passed"
-    assert data["execution_ready"] is False
-    assert data["repositories"][0]["state"] == "absent"
+    assert data["execution_ready"] is True
+    assert data["repositories"][0]["state"] == "materialized-managed"
     assert (control_b / "project.yaml").read_bytes() == portable
     assert str(workspace_b) in (config_b / "registry/projects.yaml").read_text(encoding="utf-8")
     assert (workspace_b / "script/index.yaml").is_file()
@@ -919,6 +974,9 @@ def test_attach_adopts_only_matching_remote_and_detach_is_local_only(tmp_path: P
 
     _, compatible, _ = make_remote(tmp_path / "matching", "compatible")
     git(compatible, "remote", "set-url", "origin", str(remote))
+    contained_compatible = workspace / "source-main"
+    compatible.rename(contained_compatible)
+    compatible = contained_compatible
     attached = run_wb(
         config_b,
         "attach-workspace",
@@ -933,6 +991,7 @@ def test_attach_adopts_only_matching_remote_and_detach_is_local_only(tmp_path: P
     assert json.loads(attached.stdout)["repositories"][0]["state"] == "compatible-existing"
 
     _, conflict, _ = make_remote(tmp_path / "conflict", "wrong")
+    git(compatible, "remote", "set-url", "origin", str(conflict.parent / "wrong.git"))
     rejected = run_wb(
         config_b,
         "attach-workspace",
@@ -940,7 +999,7 @@ def test_attach_adopts_only_matching_remote_and_detach_is_local_only(tmp_path: P
         "--materialize",
         "none",
         "--repository-path",
-        f"source-main={conflict}",
+        f"source-main={compatible}",
         "--apply",
     )
     assert rejected.returncode == 1
@@ -970,6 +1029,9 @@ def test_orchestration_preflight_resolves_v4_local_binding(tmp_path: Path) -> No
     migrate(config, workspace)
     _, checkout, _ = make_remote(tmp_path / "attached", "checkout")
     git(checkout, "remote", "set-url", "origin", str(remote))
+    contained_checkout = workspace / "source-main"
+    checkout.rename(contained_checkout)
+    checkout = contained_checkout
     attached = run_wb(
         config,
         "attach-workspace",
@@ -982,7 +1044,7 @@ def test_orchestration_preflight_resolves_v4_local_binding(tmp_path: Path) -> No
     )
     assert attached.returncode == 0, attached.stdout + attached.stderr
 
-    preflight = run_orch(config, "repository-preflight", "--project-root", str(workspace))
+    preflight = run_orch(config, "repository-preflight", "--workspace-root", str(workspace))
     assert preflight.returncode == 0, preflight.stdout + preflight.stderr
     repositories = json.loads(preflight.stdout)["repository_preflight"]["repositories"]
     assert [row["path"] for row in repositories] == [str(checkout.resolve())]
@@ -1024,7 +1086,7 @@ def test_v4_attach_doctor_and_preflight_share_bootstrap_resolved_registry(tmp_pa
     assert attached.returncode == 0, attached.stdout + attached.stderr
     doctor = run_wb(config, "doctor-workspace", str(workspace))
     assert doctor.returncode == 0, doctor.stdout + doctor.stderr
-    preflight = run_orch(config, "repository-preflight", "--project-root", str(workspace))
+    preflight = run_orch(config, "repository-preflight", "--workspace-root", str(workspace))
     assert preflight.returncode == 0, preflight.stdout + preflight.stderr
 
     registry_text = custom_registry.read_text(encoding="utf-8")
@@ -1140,6 +1202,9 @@ def test_doctor_repair_preserves_existing_and_unknown_local_binding_fields(tmp_p
     migrate(config, workspace)
     _, checkout, _ = make_remote(tmp_path / "attached", "checkout")
     git(checkout, "remote", "set-url", "origin", str(remote))
+    contained_checkout = workspace / "source-main"
+    checkout.rename(contained_checkout)
+    checkout = contained_checkout
     attached = run_wb(
         config,
         "attach-workspace",
@@ -1173,6 +1238,7 @@ def test_doctor_repair_preserves_existing_and_unknown_local_binding_fields(tmp_p
 def test_doctor_workspace_repair_does_not_create_script_index(tmp_path: Path) -> None:
     config = config_root(tmp_path / "config-root")
     workspace, _, _ = make_v3_workspace(tmp_path / "fixture")
+    contain_v3_checkout(workspace)
     migrate(config, workspace)
     script_index = workspace / "script/index.yaml"
     script_index.unlink(missing_ok=True)
@@ -1257,6 +1323,9 @@ def test_orchestration_blocks_when_current_local_head_outgrows_device_observatio
     migrate(config, workspace)
     _, checkout, _ = make_remote(tmp_path / "attached", "checkout")
     git(checkout, "remote", "set-url", "origin", str(remote))
+    contained_checkout = workspace / "source-main"
+    checkout.rename(contained_checkout)
+    checkout = contained_checkout
     attached = run_wb(
         config,
         "attach-workspace",
@@ -1273,7 +1342,7 @@ def test_orchestration_blocks_when_current_local_head_outgrows_device_observatio
     (checkout / "later.txt").write_text("later\n", encoding="utf-8")
     git(checkout, "add", "later.txt")
     git(checkout, "commit", "-q", "-m", "later local commit")
-    preflight = run_orch(config, "repository-preflight", "--project-root", str(workspace))
+    preflight = run_orch(config, "repository-preflight", "--workspace-root", str(workspace))
     payload = json.loads(preflight.stdout)["repository_preflight"]
     row = payload["repositories"][0]
     assert payload["status"] == "blocked"
@@ -1347,6 +1416,9 @@ def test_doctor_reports_deleted_bound_checkout_not_ready(tmp_path: Path) -> None
     migrate(config, workspace)
     _, checkout, _ = make_remote(tmp_path / "attached", "checkout")
     git(checkout, "remote", "set-url", "origin", str(remote))
+    contained_checkout = workspace / "source-main"
+    checkout.rename(contained_checkout)
+    checkout = contained_checkout
     assert run_wb(config, "attach-workspace", str(workspace), "--repository-path", f"source-main={checkout}", "--materialize", "none", "--apply").returncode == 0
     checkout.rename(checkout.with_name("checkout-moved"))
     doctor = run_wb(config, "doctor-workspace", str(workspace))
@@ -1391,8 +1463,7 @@ def test_v4_schema_rejects_duplicate_repository_ids_and_invalid_mode(tmp_path: P
     metadata.write_text(text.replace("  mode: multi-repository", "  mode: invalid").replace("agents_sync:", duplicate + "agents_sync:", 1), encoding="utf-8")
     doctor = run_wb(config, "doctor-workspace", str(workspace))
     failures = json.loads(doctor.stdout)["portable"]["failures"]
-    assert "WB_CONTROL_PLANE_WORKSPACE_MODE_INVALID" in failures
-    assert "WB_CONTROL_PLANE_REPOSITORY_ID_DUPLICATE:source-main" in failures
+    assert failures == ["WB_INFRASTRUCTURE_SCHEMA_INVALID"]
 
 
 def test_non_git_v3_member_migrates_with_manual_locator(tmp_path: Path) -> None:
@@ -1657,6 +1728,9 @@ def test_attach_and_doctor_report_wrong_branch_and_dirty_checkout_not_ready(tmp_
     migrate(config, workspace)
     _, checkout, _ = make_remote(tmp_path / "attached", "checkout")
     git(checkout, "remote", "set-url", "origin", str(remote))
+    contained_checkout = workspace / "source-main"
+    checkout.rename(contained_checkout)
+    checkout = contained_checkout
     git(checkout, "checkout", "-q", "-b", "wrong")
     (checkout / "dirty.txt").write_text("dirty\n", encoding="utf-8")
     attached = run_wb(config, "attach-workspace", str(workspace), "--repository-path", f"source-main={checkout}", "--materialize", "none", "--apply")
@@ -1681,7 +1755,7 @@ def test_attach_converges_duplicate_agents_sections(tmp_path: Path) -> None:
     block = f"# ========================\n# Work Bundle RULE START\n# ========================\n{template}# ========================\n# Work Bundle RULE END\n# ========================\n"
     (workspace_b / "AGENTS.md").write_text("user-before\n" + block + "user-middle\n" + block + "user-after\n", encoding="utf-8")
     config_b = config_root(tmp_path / "config-b")
-    attached = run_wb(config_b, "attach-workspace", str(workspace_b), "--materialize", "none", "--apply")
+    attached = run_wb(config_b, "attach-workspace", str(workspace_b), "--materialize", "missing", "--apply")
     assert attached.returncode == 0, attached.stdout + attached.stderr
     agents = (workspace_b / "AGENTS.md").read_text(encoding="utf-8")
     assert agents.count("# Work Bundle RULE START") == 1
@@ -1718,6 +1792,38 @@ def init_single_v4(
         )
         assert attached.returncode == 0, attached.stdout + attached.stderr
     return config, workspace, remote, workspace_id
+
+
+def test_register_project_uses_structured_v4_registry_without_binding_loss(tmp_path: Path) -> None:
+    config, workspace, _, workspace_id = init_single_v4(tmp_path, attach=False)
+    registry = config / "registry/projects.yaml"
+    before = yaml.safe_load(registry.read_text(encoding="utf-8"))
+
+    registered = run_wb(config, "register-project", str(workspace), "--name", "renamed-demo")
+
+    assert registered.returncode == 0, registered.stdout + registered.stderr
+    after = yaml.safe_load(registry.read_text(encoding="utf-8"))
+    assert after["device_bindings"][workspace_id] == before["device_bindings"][workspace_id]
+    matching = [entry for entry in after["projects"] if entry["slug"] == "renamed-demo"]
+    assert len(matching) == 1
+    assert matching[0]["name"] == "renamed-demo"
+
+
+def test_register_project_rejects_malformed_v4_before_registry_mutation(tmp_path: Path) -> None:
+    config, workspace, _, _ = init_single_v4(tmp_path, attach=False)
+    registry = config / "registry/projects.yaml"
+    registry_before = registry.read_bytes()
+    metadata = workspace / ".work-bundle/project.yaml"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8").replace("authority: canonical\n", ""),
+        encoding="utf-8",
+    )
+
+    registered = run_wb(config, "register-project", str(workspace), "--name", "must-not-write")
+
+    assert registered.returncode == 1, registered.stdout + registered.stderr
+    assert json.loads(registered.stdout)["failure_code"] == "WB_INFRASTRUCTURE_SCHEMA_INVALID"
+    assert registry.read_bytes() == registry_before
 
 
 def add_workspace_member_args(
@@ -1773,108 +1879,6 @@ def write_composite_metadata(workspace: Path, *, include_root: bool = True, memb
     metadata.write_text(text, encoding="utf-8")
 
 
-def test_deferred_remote_independent_review_identity() -> None:
-    if not os.environ.get("WOR105_C02_REVIEW"):
-        raise unittest.SkipTest("WOR105_C02_REVIEW selects the real independent review artifact")
-    validated = validate_deferred_remote_independent_review_identity(REPO_ROOT, task_id="task-c02")
-    assert validated["reviewed_tree"] == git(REPO_ROOT, "rev-parse", "HEAD^{tree}")
-
-
-def canonical_repository_identity(repository: Path) -> dict[str, str]:
-    orchestration = REPO_ROOT / "scripts/orchestration"
-    command = "\n".join(
-        [
-            "import hashlib, json, sys",
-            "from pathlib import Path",
-            f"sys.path.insert(0, {str(orchestration)!r})",
-            "from repository_preflight import capture_repository_evidence",
-            "evidence = capture_repository_evidence(Path(sys.argv[1]))",
-            "digest = hashlib.sha256(json.dumps(evidence, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()",
-            "print(json.dumps({'head': evidence['head'], 'tree': evidence['tree'], 'digest': digest}))",
-        ]
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", command, str(repository)],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return json.loads(result.stdout)
-
-
-def test_deferred_remote_task_identity_equals_canonical_repository_evidence(tmp_path) -> None:
-    _, repository, _ = make_remote(tmp_path, "canonical-identity-source")
-    canonical = canonical_repository_identity(repository)
-    identity = deferred_remote_task_identity(repository)
-    bespoke_evidence = {
-        "repository": repository.resolve().name,
-        "branch": git(repository, "branch", "--show-current"),
-        "head": canonical["head"],
-        "tree": canonical["tree"],
-        "status": "clean",
-    }
-    bespoke_digest = hashlib.sha256(
-        json.dumps(bespoke_evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-
-    assert identity["repository_evidence_sha256"] == canonical["digest"]
-    assert identity["repository_evidence_sha256"] != bespoke_digest
-
-
-def test_deferred_remote_review_identity_contract_rejects_mismatch(tmp_path, monkeypatch) -> None:
-    _, repository, _ = make_remote(tmp_path, "identity-source")
-    canonical = canonical_repository_identity(repository)
-    identity = deferred_remote_task_identity(repository)
-    assert identity["repository_evidence_sha256"] == canonical["digest"]
-    review_path = tmp_path / "review.yaml"
-    accepted = {
-        "task_id": "task-c02",
-        "reviewer_independent": True,
-        "verdict": "accept",
-        "reviewed_head": identity["reviewed_head"],
-        "reviewed_tree": identity["reviewed_tree"],
-    }
-    review_path.write_text(json.dumps(accepted), encoding="utf-8")
-    monkeypatch.setenv("WOR105_C02_REVIEW", str(review_path))
-    assert validate_deferred_remote_independent_review_identity(
-        repository, task_id="task-c02"
-    )["reviewed_head"] == identity["reviewed_head"]
-
-    for key, value in (
-        ("task_id", "task-c01"),
-        ("reviewer_independent", False),
-        ("verdict", "repair"),
-        ("reviewed_head", "0" * 40 + "+repository-evidence-sha256:" + "0" * 64),
-        ("reviewed_tree", "0" * 40),
-    ):
-        review_path.write_text(json.dumps({**accepted, key: value}), encoding="utf-8")
-        with unittest.TestCase().assertRaisesRegex(ControlPlaneError, "REVIEW_IDENTITY_MISMATCH"):
-            validate_deferred_remote_independent_review_identity(repository, task_id="task-c02")
-
-    bespoke_evidence = {
-        "repository": repository.resolve().name,
-        "branch": git(repository, "branch", "--show-current"),
-        "head": canonical["head"],
-        "tree": canonical["tree"],
-        "status": "clean",
-    }
-    bespoke_digest = hashlib.sha256(
-        json.dumps(bespoke_evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    review_path.write_text(
-        json.dumps(
-            {
-                **accepted,
-                "reviewed_head": f"{canonical['head']}+repository-evidence-sha256:{bespoke_digest}",
-            }
-        ),
-        encoding="utf-8",
-    )
-    with unittest.TestCase().assertRaisesRegex(ControlPlaneError, "REVIEW_IDENTITY_MISMATCH"):
-        validate_deferred_remote_independent_review_identity(repository, task_id="task-c02")
-
-
 class CompositeMemberLifecycleTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -1897,7 +1901,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         write_composite_metadata(workspace, include_root=False)
         doctor = run_wb(config, "doctor-workspace", str(workspace))
         failures = json.loads(doctor.stdout)["portable"]["failures"]
-        self.assertIn("WB_CONTROL_PLANE_COMPOSITE_ROOT_BINDING_INVALID", failures)
+        self.assertEqual(failures, ["WB_INFRASTRUCTURE_SCHEMA_INVALID"])
 
     def test_v4_composite_schema_requires_at_least_one_named_member(self) -> None:
         config, workspace, _, _ = init_single_v4(self.tmp_path)
@@ -1968,8 +1972,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         )
         doctor = run_wb(config, "doctor-workspace", str(workspace))
         failures = json.loads(doctor.stdout)["portable"]["failures"]
-        self.assertIn("WB_CONTROL_PLANE_MEMBER_BINDING_INVALID:extra-member", failures)
-        self.assertIn("WB_CONTROL_PLANE_SINGLE_REPOSITORY_BINDING_INVALID", failures)
+        self.assertEqual(failures, ["WB_INFRASTRUCTURE_SCHEMA_INVALID"])
 
     def test_add_workspace_member_dry_run_emits_digest_bound_proposal_without_writes(self) -> None:
         config, workspace, _, workspace_id = init_single_v4(self.tmp_path)
@@ -2054,12 +2057,13 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         metadata = (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
         self.assertIn("  mode: composite", metadata)
         self.assertIn(workspace_id, metadata)
-        self.assertIn("  - id: source-main", metadata)
-        self.assertIn("      type: root", metadata)
-        self.assertIn("  - id: execution-flow", metadata)
-        self.assertIn("      type: member", metadata)
-        self.assertIn("      name: execution-flow", metadata)
-        self.assertIn("      path: execution-flow", metadata)
+        repositories = yaml.safe_load(metadata)["source_repositories"]
+        self.assertEqual([item["id"] for item in repositories], ["source-main", "execution-flow"])
+        self.assertEqual(repositories[0]["workspace_binding"], {"type": "root"})
+        self.assertEqual(
+            repositories[1]["workspace_binding"],
+            {"type": "member", "name": "execution-flow", "path": "execution-flow"},
+        )
         self.assertNotIn("workspace_root:", metadata)
         self.assertNotIn("project_root:", metadata)
         self.assertTrue((workspace / "execution-flow/README.md").is_file())
@@ -2122,9 +2126,10 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
         metadata = (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
-        self.assertEqual(metadata.count("  - id: source-main"), 1)
-        self.assertEqual(metadata.count("  - id: execution-flow"), 1)
-        self.assertEqual(metadata.count("  - id: second-flow"), 1)
+        repository_ids = [item["id"] for item in yaml.safe_load(metadata)["source_repositories"]]
+        self.assertEqual(repository_ids.count("source-main"), 1)
+        self.assertEqual(repository_ids.count("execution-flow"), 1)
+        self.assertEqual(repository_ids.count("second-flow"), 1)
         self.assertIn("  mode: composite", metadata)
         self.assertTrue((workspace / "execution-flow/README.md").is_file())
         self.assertTrue((workspace / "second-flow/README.md").is_file())
@@ -2358,7 +2363,13 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         self.assertEqual(json.loads(mismatched.stdout)["failure_code"], "WB_CONTROL_PLANE_BINDING_ROOT_MISMATCH")
 
         incomplete = init_single_v4(self.tmp_path / "incomplete", slug="incomplete-demo", attach=False)
-        incomplete_config, incomplete_workspace, _, _ = incomplete
+        incomplete_config, incomplete_workspace, _, incomplete_workspace_id = incomplete
+        incomplete_registry = incomplete_config / "registry/projects.yaml"
+        incomplete_document = yaml.safe_load(incomplete_registry.read_text(encoding="utf-8"))
+        incomplete_document["device_bindings"][incomplete_workspace_id]["repositories"].pop("source-main")
+        incomplete_registry.write_text(
+            yaml.safe_dump(incomplete_document, sort_keys=False), encoding="utf-8"
+        )
         missing_root = run_wb(
             incomplete_config,
             *add_workspace_member_args(incomplete_workspace, member_remote),

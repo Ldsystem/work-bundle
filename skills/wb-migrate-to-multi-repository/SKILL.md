@@ -1,22 +1,30 @@
 ---
 name: wb-migrate-to-multi-repository
-description: Inspect, dry-run, apply, verify, retry, or roll back a source-preserving migration from a single-repository WorkBundle project to a multi-repository workspace. Use when the user explicitly requests this topology migration.
+description: Route a requested legacy topology migration to the current metadata-v4 workspace creation or explicit historical metadata migration path. The former v3-producing public command is retired.
 ---
 
-# Migrate To Multi-Repository Workspace
+# Route Multi-Repository Migration
 
-Load `rules/work-bundle/wb-migrate-to-multi-repository.md`, project preflight/registry rules, and security exclusion. Resolve explicit source authority `project_root`, target `workspace_root`, workspace slug, repository ID/name, working branch, base ref, optional primary Git `origin`, and any additional origin locators. When the authority root is not Git-backed, `--origin` is required and must select one of its declared reusable Git source repositories.
+Do not run the former `migrate-to-multi-repository` implementation. The public command returns `WB_TOPOLOGY_MIGRATION_COMMAND_RETIRED` because it produced metadata v3, which is no longer a current format.
 
-Always run inspect and dry-run before requesting explicit apply authority. Report the source repository and nested `.work-bundle` Git states separately. When either is dirty, pass the exact accepted-baseline ID returned by the proposal; never synthesize or bypass it. Never clean, stash, reset, commit, delete, relocate, or deregister source state.
+Choose the current v4 owner from the user's purpose:
 
-Treat multiple legacy repository locators as a routing signal, not proof that a valid multi-repository workspace already exists. The in-place `migrate-project` command must stop and route such evidence here; only this workflow may create workspace-local control stores and managed worktrees.
+- For a new multi-repository workspace, use `init-workspace <workspace-root> --mode multi-repository --slug <slug> --repository <id=remote> ...` with dry-run before apply.
+- For an existing workspace whose `.work-bundle/project.yaml` is metadata v2 or v3, use `migrate-control-plane <workspace-root> --dry-run`, then apply only the exact accepted proposal ID.
+- For registry-wide historical migration, use `migrate-registered-projects` with its exact accepted plan ID.
+- For adding a repository to an existing current workspace, use the v4 `add-workspace-member` proposal/apply transaction.
 
-On apply, copy and verify `.work-bundle`, preserve nested Git history and unknown files, copy indexed `script/`, merge managed AGENTS content, exclude credential content, create an empty protected credential store, and provision a workspace-local control store plus named worktree. Publish registry authority only after all target verification passes.
+Preserve source repositories and unrelated workspace files. Never use the historical Python migration module as a public producer, never publish an intermediate metadata v3 document, and never treat a repository locator as a device binding.
 
-Verify SessionStart discovery, member preflight, workspace-local Git control, staged metadata/registry identities, resources, and source preservation before publication. Publish metadata v3 and the bootstrap-resolved locator registry through one atomic-or-recoverable transaction only after every check passes. Keep built-in skills outside the external skill registry.
+## Self-check
 
-On failure, retain a redacted transaction record outside disposable owned paths. Permit only idempotent retry with the same accepted baseline or rollback of transaction-owned target paths; restore partial publication without leaving a false active member. For an already published transaction, replay the persisted complete result and stable transaction evidence without writing or republishing. Never expose credential contents or sensitive paths.
+- Did the selected command emit or preserve schema-valid metadata v4 only?
+- If the input was v2/v3, was it admitted solely through an explicit historical migration command?
+- Are portable topology and device-local paths still separated and joined by stable IDs?
+- Did I avoid staging, committing, deleting, or mutating source state outside the chosen v4 transaction?
 
-For later `provision-member` operations, checkout verification is internal. Public success requires the new member in workspace metadata and its origin in the bootstrap-resolved registry through the same recoverable publication boundary. A matching verified-but-unpublished transaction resumes; it is not an unrelated target collision.
+## Runtime rules
 
-An older verified checkout may predate recovery records. Resume it only after exact workspace-local control, origin, repository ID, branch, and base-HEAD verification. Do not delete it through cleanup unless a recovery record proves it is unpublished and transaction-owned.
+- `wb-project-context-preflight`
+- `wb-project-registry`
+- `rule-work-bundle-security-exclusion`

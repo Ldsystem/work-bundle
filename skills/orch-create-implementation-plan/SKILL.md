@@ -7,7 +7,15 @@ description: 'Create executable WorkBundle plans, phases, and tasks from a verif
 
 ## Entry gate
 
-Plan only from a verified active specification with converged semantics, resolved blockers, stable source IDs, explicit knowledge disposition, and coherent repository evidence. Repair missing authority. Compile only verified authoritative scope. Do not allocate `EXC-*` proposal IDs or rejected, deferred, or not-material excellence proposals as `source_ids`, task scope, or executor briefs. Accepted excellence work enters planning only through the stable requirement, constraint, interface, acceptance-criterion, or validation-target IDs it projected to.
+Use this skill when a verified specification needs an executable WorkBundle plan tree. Plan only from one canonical active `verified` specification with converged semantics, stable source IDs, resolved material conflicts, explicit knowledge disposition, and coherent current repository evidence. Repair missing specification authority before planning. Do not use this skill for lightweight coding plans or post-execution review/finalization.
+
+Compile only verified authoritative scope. Do not allocate `EXC-*` proposal IDs or rejected, deferred, or not-material excellence proposals as `source_ids`, task scope, or executor briefs. Accepted excellence work enters planning only through the stable requirement, constraint, interface, acceptance-criterion, or validation-target IDs it projected to.
+
+## Canonical output
+
+Author semantic YAML for the `root-plan`, `phase`, and `task` families. Invoke `write-plan`, `write-phase`, and `write-task`; the shared store injects family/schema identity, IDs, qualification/status, dates, and parent bindings and selects `.plan.yaml`, `.phase.yaml`, and `.task.yaml` canonical locations. Do not choose filenames, embed structural overrides, infer parents from directories, or create Markdown compatibility copies.
+
+The root plan binds `source_spec_id`. Every phase binds `plan_id`. Every task binds both `plan_id` and `phase_id`. Use one explicit default phase when no actual barrier or convergence split is needed.
 
 ## Planning workflow
 
@@ -20,8 +28,11 @@ Plan only from a verified active specification with converged semantics, resolve
 7. When a consequential simplification or compatibility assumption exists, make the earliest ordinary task cheaply falsify it before broad edits. Do not add a risk score, checkpoint phase, or parallel lifecycle.
 8. When execution proves a task materially under-decomposed, return to the plan and reslice only the affected region around the newly evidenced seam. Preserve the original binding, baseline, and accepted unaffected regions; do not repeatedly enlarge the task.
 9. Use the canonical semantic plan projection for review identity and freshness; status-only or append-only evidence changes do not require plan review or reslicing, while authority, scope, dependency, acceptance, decomposition, or validation-allocation changes do.
-10. Before plan acceptance, invoke canonical static task admission for every task through the task compiler. Do not duplicate its admission predicates in the planner.
-11. Keep planning revision policy separate from post-execution control: plan and specification revisions do not consume post-execution review rounds. Do not allocate a plan-version counter, reviewer retry, task review, or publication retry against the workspace round limit. When planning remediation for an existing flow, preserve its stable flow identity and let shared admission refuse exhausted or workspace-blocked reconciliation.
+10. Before semantic review, invoke canonical static task admission for every task through the task compiler. Treat schema, family, canonical placement, parent binding, dependency, scope, authority-alias, and validation-shape results as structural facts only. Do not duplicate its predicates in the planner or let it decide semantic completeness.
+11. Give a distinct reviewer the verified specification, the concrete canonical plan tree, and bounded current source evidence. The reviewer maps every accepted requirement, constraint, interface, acceptance criterion, validation target, accepted `DEC-*`, and resolved stable open-question outcome to production ownership and capable validation, then issues `accept`, `repair`, or `blocked` directly. Tests, doctors, indexes, receipts, handoffs, and evidence volume do not issue this semantic verdict. Repair findings at the first owning plan/phase/task layer and re-review the exact repaired tree once.
+12. Keep planning qualification (`draft`, `verified`, `superseded`) separate from execution state and finalization. Phase/task execution states, handoff/review receipt gates, plan completion, and archive/finalization belong to the downstream execution/review stage.
+
+Current plan and specification revisions do not consume post-execution review rounds.
 
 ## Methodology allocation
 
@@ -102,3 +113,15 @@ Central `AGENTS.md` owns rule discovery and loading. Load the runtime rules abov
 ## Boundary
 
 Follow `orch-orchestration-boundary`. Do not read durable knowledge directly during downstream execution.
+
+## Self-check
+
+Before returning a plan candidate, confirm from the stored YAML and compiler output that:
+
+- the root plan binds exactly one canonical active verified specification and every phase/task has exact canonical parent bindings;
+- every accepted specification obligation has explicit phase/task ownership and validation IDs where validation-bearing;
+- every authoritative production path has one production owner, exact files/symbols, dependencies, steps, methodology, rules/skills, capable oracle, and measurable completion criteria;
+- every phase is justified by an actual barrier or convergence boundary, or the tree uses one explicit default phase;
+- static admission passes without legacy Markdown, fallback filenames, broad scans, or a second persisted combined index;
+- a distinct reviewer directly judged coverage, decomposition, ownership, dependencies, validation, authority, scope, and executability and the stored qualification does not exceed that verdict;
+- no task/phase completion, handoff review, receipt, finalization, or archive semantics were added during planning.

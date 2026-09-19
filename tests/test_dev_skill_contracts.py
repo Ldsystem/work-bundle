@@ -15,13 +15,10 @@ def test_wb_initialize_skill_matches_live_cli() -> None:
     text = skill_text("wb-initialize-project")
     epilog = (REPO_ROOT / "scripts" / "work-bundle" / "core.py").read_text(encoding="utf-8")
 
-    assert "`init-project <root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>]" in text
-    assert "init-project <project-root> --mode <single-repository|multi-repository> [--workspace-root <workspace-root>]" in epilog
-    assert "`doctor-project <root> [--workspace-root" not in text
-    assert "`validate-project <root> [--workspace-root" not in text
-    assert "`doctor-project <root> [--repair] [--force]`" in text
-    assert "`validate-project <root> [--dry-run]`" in text
-    assert "Existing command names and `--project-root` remain supported for single-repository projects." not in text
+    assert "init-workspace <workspace-root>" in text
+    assert "init-workspace <workspace-root>" in epilog
+    assert "WB_CURRENT_INIT_COMMAND_RETIRED" in text
+    assert "v2/v3 is migration input only" in text
 
 
 def test_semantic_convergence_contract_is_bounded_and_reports_compact_result() -> None:

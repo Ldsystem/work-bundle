@@ -1,4 +1,8 @@
-"""Append-only, privacy-safe stage telemetry for WorkBundle orchestration."""
+"""Append-only, privacy-safe diagnostic telemetry.
+
+Stage events report operational facts only. They never issue or reinterpret a
+product-review verdict, artifact qualification, or lifecycle decision.
+"""
 
 from __future__ import annotations
 
@@ -56,7 +60,6 @@ COMPILED_CONTEXT_METRIC_FIELDS = frozenset(
         "allocated_skill_bytes",
         "capability_projection_bytes",
         "evidence_projection_bytes",
-        "review_package_bytes",
         "omitted_by_reference_bytes",
         "expansion_reason",
     }

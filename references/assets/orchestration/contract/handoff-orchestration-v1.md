@@ -1,24 +1,21 @@
 ---
 id: handoff-orchestration-v1
-type: contract
-status: legacy
-artifact_type: orchestration-handoff
+type: historical-exclusion
+status: retired
+artifact_type: retired-orchestration-handoff
 active_creation: false
 ---
 
-# Orchestration Handoff Contract
+# Historical Exclusion: Orchestration Handoffs
 
-This contract is legacy-only. It remains as compatibility documentation for existing archived or historical `handoff-orch-*` artifacts, but the active workflow must not create new orchestration handoffs.
+This file records a retired artifact name only. It is not a current contract and grants no compatibility authority.
 
-Continuation state now comes from active specifications, plans, phases, tasks, indexes, and compact `executor-result` handoffs.
+Current tools must not inspect, index, migrate, replay, preserve, or create `handoff-orch-*` artifacts. Historical instances may be discarded when no separately verified current semantic authority would be lost.
 
-## Active Workflow Rule
+Continuation state comes from canonical specifications, plan trees, executor results, implementation reviews, accepted task results, and final workflow reviews.
 
-- Do not create new active `handoff-orch-*` artifacts.
-- Do not advertise orchestration handoffs as an active continuation feature.
-- Do not require orchestration handoffs for execution, review, or archive readiness.
-- Keep existing archived or historical orchestration handoffs readable and indexable during migration.
+## Exclusion Rule
 
-## Legacy Shape
-
-Historical orchestration handoffs may contain narrative sections such as current objective, decisions made, implementation scope, risks, open questions, recommended next action, and related working artifacts. These sections are not an active creation template.
+- Do not load this file as artifact-authoring authority.
+- Do not add a reader, indexer, migration route, alias, sidecar, or fallback for retired orchestration handoffs.
+- Do not require retired handoffs for execution, review, continuation, or archive readiness.

@@ -7,6 +7,8 @@ applies_when:
   - orchestration workflow resolves project metadata before specification evidence, implementation planning, execution, review, or project scope updates
   - repository preflight evaluates metadata-v4 portable repositories together with device-local bindings
   - agent checks branch baseline, commit baseline, registry locator, or CodeGraph support for a source repository
+  - agent sends instructions to another task or thread that could authorize repository or worktree mutation
+  - agent imports, accepts, or merges source changes produced by another task or thread
 enforcement: must
 load: conditional
 requires: []
@@ -23,21 +25,23 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 - Resolve `work_bundle_config_root` as `~/.work-bundle/`.
 - Read `$work_bundle_config_root/bootstrap.yaml` before resolving registry paths.
 - Resolve the project registry path from `$work_bundle_config_root/bootstrap.yaml` field `project_registry` when registry access is required.
-- Resolve an explicit `--workspace-root` first, or an explicit `--project-root` to its containing workspace; otherwise walk upward from cwd for `.work-bundle/project.yaml` before using bounded registry fallback.
+- Resolve an explicit `--workspace-root` first, or an explicit `--project-root` to its containing workspace; otherwise walk upward from cwd for `.work-bundle/project.yaml`. Do not use a registry locator as a workspace-authority fallback.
 - In single-repository compatibility mode, `$project_root/.work-bundle/project.yaml` is the same file because `project_root == workspace_root`; never apply that alias to a member root in multi-repository mode.
 - For metadata v4, treat `$workspace_root/.work-bundle/project.yaml` as portable project/topology authority for stable workspace identity, mode, source-repository identity, canonical remotes, root/member topology, materialization requirements, and portable operation policy.
 - For metadata v4, resolve device-local workspace root, control-plane checkout observations, member `project_root` paths, checkout kinds, observed branch/HEAD/time, and Git common directories only from `device_bindings` in the bootstrap-resolved `project_registry`.
-- For metadata v3, preserve `$workspace_root/.work-bundle/project.yaml` as local working-state authority only during explicit v3 reads and migrations.
-- Establish a compact workspace/member map from v4 portable metadata plus its matching device binding, or from explicit v3 metadata during compatibility work, before source inspection, planning, or edits.
-- Treat metadata v2 as readable compatibility input. Do not silently relocate it, infer multi-repository topology, or create/move worktrees without explicit migration apply authority.
+- Admit metadata v2/v3 only as explicit migration input; ordinary inspection, planning, execution, and review require metadata v4.
+- Establish a compact workspace/member map from v4 portable metadata plus its matching device binding before source inspection, planning, or edits.
+- Treat metadata v2/v3 as migration input only. Legacy `working_branch`, `last_commit_id`, and other local checkout fields are migration evidence, not current authority. Do not silently relocate legacy metadata, infer topology, or create/move worktrees without explicit migration apply authority.
 - Require explicit `single-repository` or `multi-repository` mode for new creation. Existing v3 metadata may supply its declared mode; v2 inspection never silently supplies a topology conversion decision.
 - Inspect every applicable `source_repositories[]` entry before specification evidence collection, implementation planning, execution, review, and project-scope metadata updates.
-- Treat each v4 portable repository joined to its device binding, each v3 `source_repositories[]` member binding, or each v2 compatibility entry as a separate `project_root` source boundary for preflight, CodeGraph checks, edits, validation, and delegation.
-- For Git-backed repositories, compare live Git evidence with portable v4 branch policy and device-local observations, v3 `expected_branch` and accepted `observed_head`, or v2 `working_branch` and `last_commit_id`, according to the metadata version being read.
+- Treat each v4 portable repository joined to its device binding as a separate `project_root` source boundary for preflight, CodeGraph checks, edits, validation, and delegation.
+- For Git-backed repositories, compare live Git evidence with portable v4 branch policy and device-local observations.
 - Carry verified repository structure, branch/HEAD, baseline, and CodeGraph evidence into the as-is evidence of the current Truth Basis. If portable topology, device-local observations, live Git, or expected delta conflict materially, stop through the existing repository- or decision-blocked route before source edits.
 - For a managed worktree, verify `project_root` and absolute `git-common-dir` are under `workspace_root`; treat an external origin path as a read-only locator outside bounded provisioning or refresh.
 - Block on branch mismatch, missing required repository metadata, stale commit baseline not explained by accepted executor-result handoffs, inaccessible repositories, unresolved Git status, or unexplained dirty status.
 - Preserve accepted-handoff baseline semantics: only validated executor-result handoffs may explain expected dirty worktree changes during plan execution.
+- Treat source changes produced by another task as an untrusted proposal until the current owning workflow verifies its exact repository, worktree, write scope, diff, and validation evidence.
+- Before asking another task to mutate source, verify that it already owns the exact repository/worktree and write scope through its accepted task binding or an explicit user-authorized ownership handoff. Otherwise keep mutation authority with the current owning workflow; cross-task communication may request status, read-only evidence, or continuation of already-owned work only.
 - For repositories without `.codegraph/`, record `no-index` or `not-indexed` fallback and do not initialize CodeGraph or run `codegraph sync`.
 - For repositories with `.codegraph/`, apply `agent-codegraph-first` when the task requires source-code inspection, dependency tracing, planning, repair, refactor, migration, review, or editing.
 
@@ -54,6 +58,8 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 - Do not run destructive Git operations such as cleanup, reset, stash, or force push to satisfy preflight.
 - Do not initialize CodeGraph for a repository root that lacks `.codegraph/`.
 - Do not infer lifecycle Git stage or commit authority from initialization, doctor, repair, migration, or validation authority.
+- Do not use cross-task or cross-thread messaging to grant new repository/worktree mutation authority, bypass task ownership, or turn an unrelated project controller into a toolkit repair owner.
+- Do not treat another task's completion claim as merge acceptance; audit its exact proposed changes in the repository owner before integration.
 
 ## Validation
 
@@ -64,6 +70,7 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 - Confirm Git-backed repositories recorded expected branch, actual branch, expected commit, actual commit, branch status, commit status, and accepted-baseline status.
 - Confirm CodeGraph evidence records indexed or `no-index` state by repository and never initializes missing indexes.
 - Confirm any bypass or fallback records the concrete reason in the task, phase, review, or executor-result handoff.
+- Confirm every cross-task source contribution had pre-existing bound ownership or remained proposal-only until the repository owner audited and integrated it.
 
 ## On Violation
 

@@ -66,3 +66,40 @@ def test_pd_pressure_rows_cover_review_stable_decomposition() -> None:
     assert "return to the plan" in combined["PD-07"]
     assert "speculative" in combined["PD-09"]
     assert "independently owned entry points" in combined["PD-10"]
+
+
+def test_stage4_contracts_use_schema_owned_yaml_and_direct_semantic_review() -> None:
+    planner = read("skills/orch-create-implementation-plan/SKILL.md")
+    rule = read("rules/orchestration/orch-artifact-authoring.md")
+    workflow = read("references/assets/orchestration/workflow.md")
+    contracts = "\n".join(
+        read(path)
+        for path in [
+            "references/assets/orchestration/contract/plan-v1.md",
+            "references/assets/orchestration/contract/phase-v1.md",
+            "references/assets/orchestration/contract/task-v1.md",
+        ]
+    )
+    for token in ["schema-owned YAML", "root-plan", "phase", "task"]:
+        assert token in planner + workflow + contracts
+    for token in [
+        "distinct reviewer", "verified specification", "ownership", "dependencies",
+        "validation", "authority", "scope", "executability",
+    ]:
+        assert token in planner
+    assert "## Self-check" in planner
+    assert "Do not create Markdown plan/phase/task compatibility copies" in rule
+    assert "tests, doctors, indexes, receipts, handoffs" in planner.lower()
+    assert "stage5-required" not in planner
+
+
+def test_stage4_evals_cover_cutover_semantic_review_and_exact_source_ids() -> None:
+    payload = json.loads(read("references/evals/orchestration/evals.json"))
+    cases = {str(case["id"]): case for case in payload["evals"]}
+    assert {"STG4-01", "STG4-02", "STG4-03", "STG4-04"} <= cases.keys()
+    combined = " ".join(
+        f"{cases[key]['prompt']} {cases[key]['expected_output']}"
+        for key in ("STG4-01", "STG4-02", "STG4-03", "STG4-04")
+    )
+    for token in ["schema-owned", "distinct semantic reviewer", "REQ-001A", "Stage 5"]:
+        assert token in combined

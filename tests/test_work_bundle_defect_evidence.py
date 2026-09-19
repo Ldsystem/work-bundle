@@ -22,7 +22,7 @@ def prepare_cwd(tmp_path: Path, catalog: str = CATALOG) -> Path:
 
 def run_wb(tmp_path: Path, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env["WB_CONFIG_ROOT"] = str(tmp_path / "config")
+    env["HOME"] = str(tmp_path)
     return subprocess.run(
         [sys.executable, str(WB), *args],
         cwd=cwd or prepare_cwd(tmp_path),
@@ -65,7 +65,7 @@ def test_defect_ensure_store_creates_directories(tmp_path: Path) -> None:
     assert payload["status"] == "ok"
     assert Path(payload["active"]).is_dir()
     assert Path(payload["archived"]).is_dir()
-    assert Path(payload["root"]) == tmp_path / "config" / "defect"
+    assert Path(payload["root"]) == tmp_path / ".work-bundle" / "defect"
     assert not (Path.home() / ".work-bundle" / "defect" / "active" / "__pytest_marker__").exists()
 
 
@@ -163,7 +163,7 @@ def test_defect_create_evidence_rejects_archived_without_action(tmp_path: Path) 
 
 def test_defect_create_evidence_rejects_status_directory_mismatch(tmp_path: Path) -> None:
     create_active(tmp_path, "status-mismatch")
-    path = tmp_path / "config" / "defect" / "active" / f"{evidence_id('status-mismatch')}.yaml"
+    path = tmp_path / ".work-bundle" / "defect" / "active" / f"{evidence_id('status-mismatch')}.yaml"
     path.write_text(path.read_text(encoding="utf-8").replace("status: active", "status: archived"), encoding="utf-8")
 
     result = run_wb(tmp_path, "defect-build-index")

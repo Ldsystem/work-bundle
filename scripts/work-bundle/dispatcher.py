@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import subprocess
 import sys
 from pathlib import Path
 
@@ -40,37 +39,6 @@ from control_plane import (
 from registry_layout import cmd_migrate_registered_projects
 
 
-def _load_review_runtime():
-    return _load_reviewer_workspace()._review_runtime()
-
-
-def _load_legacy_wor107_migration():
-    module_path = (
-        Path(__file__).resolve().parents[1]
-        / 'orchestration'
-        / 'legacy_wor107_migration.py'
-    )
-    spec = importlib.util.spec_from_file_location(
-        '_wb_legacy_wor107_migration', module_path
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f'Unable to load legacy migration utility: {module_path}')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _load_reviewer_workspace():
-    module_path = Path(__file__).with_name('reviewer_workspace.py')
-    spec = importlib.util.spec_from_file_location('_wb_reviewer_workspace', module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f'Unable to load reviewer workspace runtime: {module_path}')
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def _load_evaluation_identity():
     module_path = Path(__file__).resolve().parents[1] / 'orchestration' / 'evaluation_identity.py'
     spec = importlib.util.spec_from_file_location('_wb_evaluation_identity', module_path)
@@ -96,7 +64,6 @@ COMMAND_ALIASES = {
     'validate-project-initialization': 'validate-project',
     'validate-runtime-artifacts': 'doctor',
     'validate-repository-health': 'repository-health',
-    'validate-workflow-branches': 'workflow-branches',
 }
 EXECUTION_WORKSPACE_COMMANDS = frozenset({
     'execution-workspace-prepare',
@@ -117,15 +84,12 @@ LIVE_COMMANDS = frozenset({
     'validate-project', 'create-rules', 'validate-rules',
     'defect-ensure-store', 'defect-create-evidence', 'defect-build-index',
     'defect-write-index', 'defect-archive-evidence', 'defect-migrate-store',
-    'validate-contract', 'assert-migration-stop',
-    'reviewer-workspace-create', 'reviewer-workspace-operation',
-    'reviewer-workspace-cleanup', 'reviewer-process-run',
     'evaluation-identity-freeze', 'evaluation-identity-complete',
     'evaluation-identity-transition',
     'stage-event-append', 'stage-event-query', 'stage-event-export',
     'doctor', 'repository-health', 'validate-directive-wiring',
     'validate-skill-registry', 'validate-work-bundle-rules',
-    'render-doctor-report', 'workflow-branches',
+    'render-doctor-report',
     'generate-project-metadata-profile', 'merge-project-metadata-profile',
     'validate-project-metadata-profile', 'inspect-skill',
     'validate-registry-entry', 'register-skill', 'merge-skill-hints',
@@ -135,27 +99,7 @@ RECOGNIZED_COMMANDS = frozenset(
     | COMMAND_ALIASES.keys()
     | LEGACY_DEFECT_COMMANDS.keys()
     | LEGACY_COMMAND_MIGRATIONS.keys()
-) | frozenset({
-    'begin-review-round', 'complete-review-round', 'review-round-status',
-    'finalize-with-blockers',
-})
-
-
-def _run_orchestration_controller(command: str, arguments: list[str]) -> int:
-    """Route the second public CLI family to the canonical controller owner."""
-
-    dispatcher = Path(__file__).resolve().parents[1] / 'orchestration' / 'dispatcher.py'
-    completed = subprocess.run(
-        [sys.executable, str(dispatcher), command, *arguments],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.stdout:
-        sys.stdout.write(completed.stdout)
-    if completed.stderr:
-        sys.stderr.write(completed.stderr)
-    return completed.returncode
+)
 
 
 def main() -> int:
@@ -174,11 +118,6 @@ def main() -> int:
     if command in LEGACY_COMMAND_MIGRATIONS:
         return cmd_legacy_command_removed(command, LEGACY_COMMAND_MIGRATIONS[command])
     command = COMMAND_ALIASES.get(command, command)
-    if command in {
-        'begin-review-round', 'complete-review-round', 'review-round-status',
-        'finalize-with-blockers',
-    }:
-        return _run_orchestration_controller(command, parsed.args)
     if command == 'migrate-work-bundle-config':
         return cmd_migrate_work_bundle_config(parsed.args)
     if command in {'init-project', 'initialize-project'}:
@@ -217,14 +156,6 @@ def main() -> int:
         return cmd_provision_member(parsed.args)
     if command == 'cleanup-member':
         return cmd_cleanup_member(parsed.args)
-    if command == 'validate-contract':
-        return _load_review_runtime().cmd_validate_contract(parsed.args)
-    if command == 'assert-migration-stop':
-        legacy = _load_legacy_wor107_migration()
-        print(legacy.DEPRECATION_DIAGNOSTIC, file=sys.stderr)
-        return legacy.cmd_assert_migration_stop(parsed.args)
-    if command in {'reviewer-workspace-create', 'reviewer-workspace-operation', 'reviewer-workspace-cleanup', 'reviewer-process-run'}:
-        return _load_reviewer_workspace().cmd_reviewer_workspace(command, parsed.args)
     if command in {'evaluation-identity-freeze', 'evaluation-identity-complete', 'evaluation-identity-transition'}:
         return _load_evaluation_identity().cmd_evaluation_identity(command, parsed.args)
     if command in {'stage-event-append', 'stage-event-query', 'stage-event-export'}:
@@ -270,8 +201,6 @@ def main() -> int:
         return cmd_doctor(parsed.args)
     if command == 'render-doctor-report':
         return cmd_doctor(parsed.args, report=True)
-    if command == 'workflow-branches':
-        return cmd_doctor(parsed.args, workflow=True)
     if command == 'generate-project-metadata-profile':
         return cmd_domain_profile(parsed.args)
     if command == 'merge-project-metadata-profile':

@@ -22,11 +22,11 @@ Ensure project registration and lookup preserve the versioned authority split be
 - Treat registry project entries as locator authority for workspace slug/root, knowledge root, aliases, and stable repository origin `id`, `origin_path`, `remote`, and Git capability.
 - Treat metadata-v4 `device_bindings` in that same registry as device-local authority for materialized workspace/control-plane paths, member `project_root` paths, checkout kinds, and checkout/control-plane observations.
 - Treat metadata-v4 `$workspace_root/.work-bundle/project.yaml` as portable project/topology authority and forbid device-local paths or observations there.
-- Preserve metadata-v3 `$workspace_root/.work-bundle/project.yaml` working-state authority only for explicit v3 reads and migrations.
+- Admit metadata v2/v3 only through explicit migration commands; ordinary registry consumers require metadata v4.
 - Register every initialized single- or multi-repository workspace to `projects.yaml` under an explicit new or existing workspace slug, and create or update the corresponding workspace metadata.
 - When changing portable topology, update its durable authorities through an atomic or recoverable workflow; when attaching metadata v4, publish only the device-local binding after all materializations validate.
-- Describe registry, device-binding, metadata-v4 portable, and metadata-v3 compatibility roles without collapsing them into one working-state model.
-- Preserve metadata v2 locator entries as compatibility input during explicit migration, preserve unknown fields, and publish v3 origin/member separation only after target verification.
+- Describe registry, device-binding, portable metadata-v4, and historical migration-input roles without collapsing them into one working-state model.
+- Preserve metadata v2/v3 locator entries as explicit migration input, preserve unknown portable fields, and publish validated v4 directly after target verification.
 - Enumerate registered workspaces from the bootstrap-resolved project registry for layout upgrades; classify each entry as current, migratable, unsupported, missing, or blocked; apply registered version-to-version layout steps in deterministic order; and publish registry `layout_version` only after the target layout validates.
 
 ## Must Not
@@ -45,7 +45,7 @@ Ensure project registration and lookup preserve the versioned authority split be
 - Verify all locator and device-binding IO uses only the bootstrap-resolved `project_registry`.
 - Verify initialized projects have both a registry entry and a matching `$project_root/.work-bundle/project.yaml`.
 - Verify metadata-v4 portable repositories remain path-free while matching device bindings contain local materialization and observation fields.
-- Verify metadata-v3 local fields remain accepted only in explicit v3 compatibility reads and migrations.
+- Verify metadata-v2/v3 local fields are admitted only by explicit migration commands and are never ordinary current reads.
 
 ## On Violation
 

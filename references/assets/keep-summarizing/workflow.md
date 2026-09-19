@@ -20,11 +20,12 @@
     docs/
     spec/
     plan/
-    handoff/
+    result/
+    review/
 ```
 
 `<workspace-root>/.work-bundle/knowledge/` is the default durable source of truth for one managed workspace. A nested member cwd resolves upward to the containing workspace; source inspection remains scoped to that member `project_root`. Single-repository mode remains current with `workspace_root == project_root`. Legacy knowledge roots are readable only when explicitly selected for migration or read-only intake.
-Handoff artifacts live under `.work-bundle/orchestration/handoff/` and are not durable knowledge.
+Executor results and review artifacts live under `.work-bundle/orchestration/result/` and `.work-bundle/orchestration/review/`; they are not durable knowledge.
 
 ## V3 Lifecycle Authority Model
 

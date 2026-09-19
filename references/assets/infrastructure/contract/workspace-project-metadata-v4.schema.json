@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://work-bundle.dev/schemas/infrastructure/workspace-project-metadata-v4",
+  "title": "Portable WorkBundle workspace project metadata v4",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["metadata_version", "authority", "workspace", "control_plane", "source_repositories"],
+  "properties": {
+    "metadata_version": {"const": 4},
+    "authority": {"const": "canonical"},
+    "workspace": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "slug", "mode"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^wb-[A-Za-z0-9][A-Za-z0-9._-]*$"},
+        "slug": {"type": "string", "minLength": 1},
+        "mode": {"enum": ["single-repository", "multi-repository", "composite"]}
+      }
+    },
+    "control_plane": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["schema_version", "repository", "sync_policy"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "repository": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["remote"],
+          "properties": {"remote": {"type": "string"}}
+        },
+        "sync_policy": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["mode"],
+          "properties": {"mode": {"const": "manual"}}
+        }
+      }
+    },
+    "source_repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/repository"}
+    }
+  },
+  "allOf": [
+    {"not": {"anyOf": [
+      {"required": ["workspace_root"]},
+      {"required": ["project_root"]},
+      {"required": ["observed_head"]},
+      {"required": ["observed_at"]},
+      {"required": ["observation_time"]},
+      {"required": ["git_common_dir"]}
+    ]}}
+  ],
+  "$defs": {
+    "repository": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "role", "default_branch", "workspace_binding", "materialization", "operation_policy"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "minLength": 1},
+        "remote": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["canonical"],
+          "properties": {
+            "canonical": {"type": ["string", "null"]},
+            "aliases": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "locator": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {"type": "string", "minLength": 1},
+            "value": {"type": "string", "minLength": 1}
+          }
+        },
+        "default_branch": {"type": "string", "minLength": 1},
+        "workspace_binding": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type"],
+              "properties": {"type": {"const": "root"}}
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "name"],
+              "properties": {
+                "type": {"const": "member"},
+                "name": {"type": "string", "pattern": "^(?!\\.{1,2}$)[^/\\\\]+$"},
+                "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"}
+              }
+            }
+          ]
+        },
+        "materialization": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["required"],
+          "properties": {"required": {"type": "boolean"}}
+        },
+        "operation_policy": {"type": "string", "minLength": 1}
+      },
+      "anyOf": [{"required": ["remote"]}, {"required": ["locator"]}],
+      "allOf": [
+        {"not": {"anyOf": [
+          {"required": ["workspace_root"]},
+          {"required": ["project_root"]},
+          {"required": ["observed_head"]},
+          {"required": ["observed_at"]},
+          {"required": ["observation_time"]},
+          {"required": ["git_common_dir"]}
+        ]}}
+      ]
+    }
+  }
+}

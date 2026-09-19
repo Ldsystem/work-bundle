@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://work-bundle.dev/schemas/infrastructure/project-registry-v1",
+  "title": "WorkBundle project registry v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["projects", "device_bindings"],
+  "properties": {
+    "registry_schema_version": {"const": 1},
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["slug"],
+        "properties": {
+          "slug": {"type": "string", "minLength": 1},
+          "aliases": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "device_bindings": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/workspaceBinding"}
+    }
+  },
+  "$defs": {
+    "workspaceBinding": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["slug", "workspace_root", "repositories"],
+      "properties": {
+        "slug": {"type": "string", "minLength": 1},
+        "workspace_root": {"type": "string", "minLength": 1},
+        "repositories": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/repositoryBinding"}
+        }
+      }
+    },
+    "repositoryBinding": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "project_root",
+        "checkout_kind",
+        "observed_branch",
+        "observed_head",
+        "observed_at",
+        "git_common_dir"
+      ],
+      "properties": {
+        "project_root": {"type": "string", "minLength": 1},
+        "checkout_kind": {"type": "string", "minLength": 1},
+        "observed_branch": {"type": "string"},
+        "observed_head": {"type": "string"},
+        "observed_at": {"type": "string", "minLength": 1},
+        "git_common_dir": {"type": "string"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"checkout_kind": {"enum": ["manual", "unmaterialized-member"]}},
+            "required": ["checkout_kind"]
+          },
+          "then": {},
+          "else": {
+            "properties": {
+              "observed_branch": {"minLength": 1},
+              "observed_head": {"minLength": 1},
+              "git_common_dir": {"minLength": 1}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {"checkout_kind": {"const": "unmaterialized-member"}},
+            "required": ["checkout_kind"]
+          },
+          "then": {
+            "properties": {
+              "observed_branch": {"const": ""},
+              "observed_head": {"const": ""},
+              "git_common_dir": {"const": ""}
+            }
+          }
+        }
+      ]
+    }
+  }
+}
