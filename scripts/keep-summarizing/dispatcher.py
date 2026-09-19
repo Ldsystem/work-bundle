@@ -7,7 +7,7 @@ from core import RETRIEVAL_POLICY_HINTS
 from doctor import cmd_doctor
 from git_ops import cmd_git
 from indexes import cmd_index, cmd_index_open_questions
-from migration import cmd_migrate_legacy, cmd_migrate_v3
+from migration import cmd_migrate_v3
 from notes import cmd_breakdown_design, cmd_output, cmd_write_note
 from project import cmd_init, cmd_resolve
 from query import cmd_query
@@ -17,8 +17,8 @@ from registry import cmd_list_projects, cmd_register_project, cmd_registry_docto
 RECOGNIZED_COMMANDS = frozenset({
     "init", "resolve", "write-note", "index", "query", "index-open-questions",
     "git", "doctor", "output", "breakdown-design", "add-question",
-    "list-questions", "match-questions", "resolve-question", "migrate-legacy",
-    "migrate-v3", "register-project", "unregister-project", "list-projects",
+    "list-questions", "match-questions", "resolve-question", "migrate-v3",
+    "register-project", "unregister-project", "list-projects",
     "registry-doctor",
 })
 
@@ -119,11 +119,6 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_question.add_argument("--resolved-by-note")
     add_resolution_args(resolve_question)
     resolve_question.set_defaults(func=cmd_resolve_question)
-    migrate = sub.add_parser("migrate-legacy")
-    migrate.add_argument("--project", required=True)
-    migrate.add_argument("--legacy-root")
-    add_resolution_args(migrate)
-    migrate.set_defaults(func=cmd_migrate_legacy)
     migrate_v3 = sub.add_parser("migrate-v3")
     migrate_v3.add_argument("--project", required=True)
     migrate_v3.add_argument("--dry-run", action="store_true")

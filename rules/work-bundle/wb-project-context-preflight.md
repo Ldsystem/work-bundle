@@ -25,17 +25,17 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 - Resolve `work_bundle_config_root` as `~/.work-bundle/`.
 - Read `$work_bundle_config_root/bootstrap.yaml` before resolving registry paths.
 - Resolve the project registry path from `$work_bundle_config_root/bootstrap.yaml` field `project_registry` when registry access is required.
-- Resolve an explicit `--workspace-root` first, or an explicit `--project-root` to its containing workspace; otherwise walk upward from cwd for `.work-bundle/project.yaml` before using bounded registry fallback.
+- Resolve an explicit `--workspace-root` first, or an explicit `--project-root` to its containing workspace; otherwise walk upward from cwd for `.work-bundle/project.yaml`. Do not use a registry locator as a workspace-authority fallback.
 - In single-repository compatibility mode, `$project_root/.work-bundle/project.yaml` is the same file because `project_root == workspace_root`; never apply that alias to a member root in multi-repository mode.
 - For metadata v4, treat `$workspace_root/.work-bundle/project.yaml` as portable project/topology authority for stable workspace identity, mode, source-repository identity, canonical remotes, root/member topology, materialization requirements, and portable operation policy.
 - For metadata v4, resolve device-local workspace root, control-plane checkout observations, member `project_root` paths, checkout kinds, observed branch/HEAD/time, and Git common directories only from `device_bindings` in the bootstrap-resolved `project_registry`.
-- For metadata v3, preserve `$workspace_root/.work-bundle/project.yaml` as local working-state authority only during explicit v3 reads and migrations.
-- Establish a compact workspace/member map from v4 portable metadata plus its matching device binding, or from explicit v3 metadata during compatibility work, before source inspection, planning, or edits.
-- Treat metadata v2 as readable compatibility input. Do not silently relocate it, infer multi-repository topology, or create/move worktrees without explicit migration apply authority.
+- Admit metadata v2/v3 only as explicit migration input; ordinary inspection, planning, execution, and review require metadata v4.
+- Establish a compact workspace/member map from v4 portable metadata plus its matching device binding before source inspection, planning, or edits.
+- Treat metadata v2/v3 as migration input only. Legacy `working_branch`, `last_commit_id`, and other local checkout fields are migration evidence, not current authority. Do not silently relocate legacy metadata, infer topology, or create/move worktrees without explicit migration apply authority.
 - Require explicit `single-repository` or `multi-repository` mode for new creation. Existing v3 metadata may supply its declared mode; v2 inspection never silently supplies a topology conversion decision.
 - Inspect every applicable `source_repositories[]` entry before specification evidence collection, implementation planning, execution, review, and project-scope metadata updates.
-- Treat each v4 portable repository joined to its device binding, each v3 `source_repositories[]` member binding, or each v2 compatibility entry as a separate `project_root` source boundary for preflight, CodeGraph checks, edits, validation, and delegation.
-- For Git-backed repositories, compare live Git evidence with portable v4 branch policy and device-local observations, v3 `expected_branch` and accepted `observed_head`, or v2 `working_branch` and `last_commit_id`, according to the metadata version being read.
+- Treat each v4 portable repository joined to its device binding as a separate `project_root` source boundary for preflight, CodeGraph checks, edits, validation, and delegation.
+- For Git-backed repositories, compare live Git evidence with portable v4 branch policy and device-local observations.
 - Carry verified repository structure, branch/HEAD, baseline, and CodeGraph evidence into the as-is evidence of the current Truth Basis. If portable topology, device-local observations, live Git, or expected delta conflict materially, stop through the existing repository- or decision-blocked route before source edits.
 - For a managed worktree, verify `project_root` and absolute `git-common-dir` are under `workspace_root`; treat an external origin path as a read-only locator outside bounded provisioning or refresh.
 - Block on branch mismatch, missing required repository metadata, stale commit baseline not explained by accepted executor-result handoffs, inaccessible repositories, unresolved Git status, or unexplained dirty status.

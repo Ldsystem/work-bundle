@@ -1,0 +1,23 @@
+catalog_id: artifact-family-catalog-v1
+schema_version: 1
+families:
+  - name: artifact-family-catalog
+    schema:
+      id: artifact-family-catalog-v1
+      path: artifact-family-catalog-v1.schema.json
+    representation: yaml
+    anchor: toolkit_root
+    locator:
+      template: references/assets/orchestration/contract/artifact-family-catalog-v1.yaml
+      variables: []
+    identity:
+      field: catalog_id
+      pattern: ^artifact-family-catalog-v[0-9]+$
+    relationships:
+      bindings: []
+    lifecycle:
+      authority: immutable-release
+      states: [released]
+      transitions: {}
+    index:
+      policy: none

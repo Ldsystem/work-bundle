@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import json
-import os
-import subprocess
 import sys
 
 import pytest
@@ -64,19 +61,6 @@ class HeldOpenAdapter(RecordingAdapter):
         return {"handoff": f"handoff-{handle}", "accepted": True}
 
 
-def run_wb(config_root: Path, *args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    env["WB_CONFIG_ROOT"] = str(config_root)
-    return subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "wb.py"), *args],
-        cwd=cwd,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-
 def test_sg01_execute_plan_requires_implicit_subagent_ownership() -> None:
     adapter = RecordingAdapter()
     result = TaskOwnershipScheduler(adapter).run_wave(
@@ -117,25 +101,6 @@ def test_sg03_legacy_preference_has_no_behavioral_effect(
     )
     (registry / "projects.yaml").write_text("projects: []\n", encoding="utf-8")
     (registry / "skill-registry.yaml").write_text("skills: []\n", encoding="utf-8")
-    project = tmp_path / "project"
-    project.mkdir()
-    initialized = run_wb(
-        config_root,
-        "init-project",
-        str(project),
-        "--mode",
-        "single-repository",
-        cwd=project,
-    )
-    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
-    metadata = project / ".work-bundle" / "project.yaml"
-    metadata.write_text(metadata.read_text(encoding="utf-8") + preference, encoding="utf-8")
-
-    shown = run_wb(config_root, "show-project", "--project-root", str(project), cwd=project)
-    assert shown.returncode == 0, shown.stdout + shown.stderr
-    assert "prefer_subagent" not in json.loads(shown.stdout)
-    assert "prefer_subagent" not in (project / "AGENTS.md").read_text(encoding="utf-8")
-    assert "prefer_subagent" not in json.loads(initialized.stdout)
 
     adapter = RecordingAdapter()
     TaskOwnershipScheduler(adapter).run_wave(

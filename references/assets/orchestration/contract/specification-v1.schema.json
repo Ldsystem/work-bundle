@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "specification-v1",
+  "type": "object",
+  "required": ["artifact_type", "schema_version", "id", "title", "project", "status", "date_created", "last_updated", "purpose", "component", "version", "source_knowledge", "related_handoffs", "tags", "execution_workspace"],
+  "properties": {
+    "artifact_type": {"const": "specification"},
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^spec-[a-z0-9][a-z0-9-]*$"},
+    "title": {"type": "string", "minLength": 1},
+    "project": {"type": "string", "minLength": 1},
+    "status": {"enum": ["draft", "verified", "superseded"]},
+    "date_created": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+    "last_updated": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+    "purpose": {"type": "string", "minLength": 1},
+    "component": {"type": "string", "minLength": 1},
+    "version": {"type": ["string", "number"]},
+    "source_knowledge": {"type": "array", "items": {"type": "object", "required": ["path", "constraint"], "properties": {"path": {"type": "string", "minLength": 1}, "constraint": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
+    "related_handoffs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "tags": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "execution_workspace": {"type": "object", "required": ["isolation", "profile", "cleanup"], "properties": {"isolation": {"enum": ["required", "preferred", "existing"]}, "profile": {"type": "string", "minLength": 1}, "cleanup": {"enum": ["after_integration", "manual"]}}, "additionalProperties": false}
+  },
+  "additionalProperties": false
+}

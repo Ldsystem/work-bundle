@@ -2,71 +2,79 @@
 from __future__ import annotations
 
 import argparse
-import json
-
-from core import HANDOFF_TYPES, resolve_workspace_root
-from bounded_closure import (
-    BoundedClosureError,
-    configure_begin_review_round_parser,
-    configure_complete_review_round_parser,
-    configure_finalize_accepted_plan_parser,
-    configure_finalize_with_blockers_parser,
-    configure_require_terminal_finalization_parser,
-    configure_review_round_status_parser,
-    require_orchestration_admission,
-    resolve_working_workspace,
-)
+import importlib
 from doctor import cmd_doctor
-from documents import cmd_git_status, cmd_next_action_candidates, cmd_related, cmd_state, cmd_write_doc
 from execution_context import (
-    cmd_build_review_package,
+    cmd_build_implementation_review_candidate,
     cmd_build_task_brief,
-    cmd_observe_task_validation,
-    task_flow_id,
-    cmd_validate_executor_result,
 )
-from handoffs import cmd_index_handoffs, cmd_list_handoffs, cmd_set_handoff_status, cmd_write_handoff
+from handoffs import (
+    cmd_index_executor_results,
+    cmd_list_executor_results,
+    cmd_transition_executor_result,
+    cmd_write_executor_result,
+)
 from init import cmd_init
-from plans import cmd_archive_plan, cmd_index_plans, cmd_list_plans, cmd_set_plan_status, cmd_write_phase, cmd_write_plan, cmd_write_task
+from review_runtime import (
+    cmd_list_accepted_task_results,
+    cmd_list_final_workflow_reviews,
+    cmd_list_implementation_reviews,
+    cmd_write_accepted_task_result,
+    cmd_write_final_workflow_review,
+    cmd_write_implementation_review,
+)
 from repository_preflight import cmd_repository_preflight
-from specs import cmd_index_specs, cmd_list_specs, cmd_set_spec_status, cmd_write_spec
+
+
+def _lazy_command(module_name: str, function_name: str):
+    """Keep unrelated lifecycle modules outside the selected command graph."""
+
+    def invoke(args: argparse.Namespace) -> None:
+        function = getattr(importlib.import_module(module_name), function_name)
+        function(args)
+
+    return invoke
+
+
+cmd_write_spec = _lazy_command("specs", "cmd_write_spec")
+cmd_list_specs = _lazy_command("specs", "cmd_list_specs")
+cmd_set_spec_status = _lazy_command("specs", "cmd_set_spec_status")
+cmd_index_specs = _lazy_command("specs", "cmd_index_specs")
+cmd_write_plan = _lazy_command("plans", "cmd_write_plan")
+cmd_list_plans = _lazy_command("plans", "cmd_list_plans")
+cmd_set_plan_status = _lazy_command("plans", "cmd_set_plan_status")
+cmd_index_plans = _lazy_command("plans", "cmd_index_plans")
+cmd_write_phase = _lazy_command("plans", "cmd_write_phase")
+cmd_write_task = _lazy_command("plans", "cmd_write_task")
+cmd_finalize_reviewed_plan = _lazy_command("plans", "cmd_finalize_reviewed_plan")
+cmd_git_status = _lazy_command("documents", "cmd_git_status")
+cmd_next_action_candidates = _lazy_command("documents", "cmd_next_action_candidates")
+cmd_related = _lazy_command("documents", "cmd_related")
+cmd_state = _lazy_command("documents", "cmd_state")
+cmd_write_doc = _lazy_command("documents", "cmd_write_doc")
 
 RECOGNIZED_COMMANDS = frozenset({
     "init", "doctor", "state", "next-action-candidates", "git-status",
-    "repository-preflight", "build-task-brief", "build-review-package",
-    "validate-executor-result", "observe-task-validation",
+    "repository-preflight", "build-task-brief",
     "related", "write-doc", "write-spec",
     "list-specs", "set-spec-status", "index-specs", "write-plan", "list-plans",
-    "set-plan-status", "archive-plan", "index-plans", "write-phase", "write-task",
-    "write-handoff", "list-handoffs", "set-handoff-status", "index-handoffs",
-    "begin-review-round", "complete-review-round", "review-round-status",
-    "finalize-accepted-plan", "require-terminal-finalization",
-    "finalize-with-blockers",
+    "set-plan-status", "index-plans", "write-phase", "write-task",
+    "write-executor-result", "list-executor-results",
+    "transition-executor-result", "index-executor-results",
+    "build-implementation-review-candidate", "write-implementation-review",
+    "list-implementation-reviews", "write-accepted-task-result",
+    "list-accepted-task-results", "write-final-workflow-review",
+    "list-final-workflow-reviews", "finalize-reviewed-plan",
 })
-
-
-def _runtime_json(value: str) -> object:
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError as error:
-        raise argparse.ArgumentTypeError(f"invalid controller runtime JSON: {error.msg}") from error
-
-
-def _add_acceptance_runtime_inputs(parser: argparse.ArgumentParser) -> None:
-    """Expose harness observations without adding them to durable executor results."""
-
-    parser.add_argument("--mutation-events", type=_runtime_json)
-    parser.add_argument("--accepted-dependency-deltas", type=_runtime_json)
-    parser.add_argument("--prior-ownership", type=_runtime_json)
-    parser.add_argument("--repair-continuity", type=_runtime_json)
-    parser.add_argument("--authorized-replacements", type=_runtime_json)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-root")
+    parser.add_argument("--workspace-root")
     parent = argparse.ArgumentParser(add_help=False)
-    parent.add_argument("--project-root")
+    parent.add_argument("--project-root", default=argparse.SUPPRESS)
+    parent.add_argument("--workspace-root", default=argparse.SUPPRESS)
     parent.add_argument("--workspace-id")
     parent.add_argument("--execution-id")
     parent.add_argument("--repository-id")
@@ -89,22 +97,6 @@ def build_parser() -> argparse.ArgumentParser:
     task_brief = sub.add_parser("build-task-brief", parents=[parent])
     task_brief.add_argument("--task", required=True)
     task_brief.set_defaults(func=cmd_build_task_brief)
-    review_package = sub.add_parser("build-review-package", parents=[parent])
-    review_package.add_argument("--task", required=True)
-    review_package.add_argument("--handoff")
-    review_package.add_argument("--base", required=True)
-    review_package.add_argument("--head", required=True)
-    review_package.add_argument("--validation-observation-id", action="append", default=[])
-    _add_acceptance_runtime_inputs(review_package)
-    review_package.set_defaults(func=cmd_build_review_package)
-    validate_result = sub.add_parser("validate-executor-result", parents=[parent])
-    validate_result.add_argument("--task", required=True)
-    validate_result.add_argument("--handoff", required=True)
-    _add_acceptance_runtime_inputs(validate_result)
-    validate_result.set_defaults(func=cmd_validate_executor_result)
-    observe_validation = sub.add_parser("observe-task-validation", parents=[parent])
-    observe_validation.add_argument("--task", required=True)
-    observe_validation.set_defaults(func=cmd_observe_task_validation)
     related = sub.add_parser("related", parents=[parent])
     related.add_argument("--id", required=True)
     related.set_defaults(func=cmd_related)
@@ -120,7 +112,6 @@ def build_parser() -> argparse.ArgumentParser:
     write_spec.add_argument("--content-file", required=True)
     write_spec.add_argument("--status", default="draft")
     write_spec.add_argument("--id")
-    write_spec.add_argument("--filename")
     write_spec.set_defaults(func=cmd_write_spec)
     list_specs = sub.add_parser("list-specs", parents=[parent])
     list_specs.add_argument("--status")
@@ -136,8 +127,9 @@ def build_parser() -> argparse.ArgumentParser:
     write_plan.add_argument("--component", required=True)
     write_plan.add_argument("--version", default="1")
     write_plan.add_argument("--content-file", required=True)
-    write_plan.add_argument("--status", default="Planned")
+    write_plan.add_argument("--status", default="draft")
     write_plan.add_argument("--id")
+    write_plan.add_argument("--source-spec-id", required=True)
     write_plan.add_argument("--filename")
     write_plan.set_defaults(func=cmd_write_plan)
     list_plans = sub.add_parser("list-plans", parents=[parent])
@@ -149,21 +141,14 @@ def build_parser() -> argparse.ArgumentParser:
     set_plan.add_argument("--status", required=True)
     set_plan.add_argument("--kind", choices=["plan", "phase", "task"])
     set_plan.add_argument("--plan-id")
-    set_plan.add_argument("--handoff")
-    _add_acceptance_runtime_inputs(set_plan)
     set_plan.set_defaults(func=cmd_set_plan_status)
-    archive_plan = sub.add_parser("archive-plan", parents=[parent])
-    archive_plan.add_argument("--id", required=True)
-    archive_plan.add_argument("--legacy-administrative", action="store_true", help="Explicitly archive a completed historical spec-alias plan without replay or product acceptance")
-    _add_acceptance_runtime_inputs(archive_plan)
-    archive_plan.set_defaults(func=cmd_archive_plan)
     sub.add_parser("index-plans", parents=[parent]).set_defaults(func=cmd_index_plans)
     write_phase = sub.add_parser("write-phase", parents=[parent])
     write_phase.add_argument("--plan-id", required=True)
     write_phase.add_argument("--phase-id", required=True)
     write_phase.add_argument("--title", required=True)
     write_phase.add_argument("--content-file", required=True)
-    write_phase.add_argument("--status", default="Planned")
+    write_phase.add_argument("--status", default="planned")
     write_phase.set_defaults(func=cmd_write_phase)
     write_task = sub.add_parser("write-task", parents=[parent])
     write_task.add_argument("--plan-id", required=True)
@@ -171,82 +156,62 @@ def build_parser() -> argparse.ArgumentParser:
     write_task.add_argument("--task-id", required=True)
     write_task.add_argument("--title", required=True)
     write_task.add_argument("--content-file", required=True)
-    write_task.add_argument("--status", default="Planned")
+    write_task.add_argument("--status", default="planned")
     write_task.set_defaults(func=cmd_write_task)
-    write_handoff = sub.add_parser("write-handoff", parents=[parent])
-    write_handoff.add_argument("--type", required=True)
-    write_handoff.add_argument("--title", required=True)
-    write_handoff.add_argument("--content-file", required=True)
-    write_handoff.add_argument("--related-spec")
-    write_handoff.add_argument("--related-plan")
-    write_handoff.add_argument("--related-phase")
-    write_handoff.add_argument("--related-task")
-    write_handoff.add_argument("--status", default="active")
-    write_handoff.add_argument("--id")
-    write_handoff.add_argument("--format", choices=["yaml", "markdown"])
-    write_handoff.set_defaults(func=cmd_write_handoff)
-    list_handoffs = sub.add_parser("list-handoffs", parents=[parent])
-    list_handoffs.add_argument("--type", choices=sorted(HANDOFF_TYPES))
-    list_handoffs.add_argument("--status")
-    list_handoffs.set_defaults(func=cmd_list_handoffs)
-    set_handoff = sub.add_parser("set-handoff-status", parents=[parent])
-    set_handoff.add_argument("--id", required=True)
-    set_handoff.add_argument("--status", required=True)
-    set_handoff.set_defaults(func=cmd_set_handoff_status)
-    sub.add_parser("index-handoffs", parents=[parent]).set_defaults(func=cmd_index_handoffs)
-    begin_round = sub.add_parser("begin-review-round", parents=[parent])
-    configure_begin_review_round_parser(begin_round)
-    complete_round = sub.add_parser("complete-review-round", parents=[parent])
-    configure_complete_review_round_parser(complete_round)
-    round_status = sub.add_parser("review-round-status", parents=[parent])
-    configure_review_round_status_parser(round_status)
-    accepted_finalization = sub.add_parser("finalize-accepted-plan", parents=[parent])
-    configure_finalize_accepted_plan_parser(accepted_finalization)
-    terminal_finalization = sub.add_parser("require-terminal-finalization", parents=[parent])
-    configure_require_terminal_finalization_parser(terminal_finalization)
-    forced_finalization = sub.add_parser("finalize-with-blockers", parents=[parent])
-    configure_finalize_with_blockers_parser(forced_finalization)
+    write_result = sub.add_parser("write-executor-result", parents=[parent])
+    for flag in ("id", "plan-id", "task-id", "content-file"):
+        write_result.add_argument(f"--{flag}", required=True)
+    write_result.add_argument("--phase-id")
+    write_result.set_defaults(func=cmd_write_executor_result)
+    list_results = sub.add_parser("list-executor-results", parents=[parent])
+    list_results.add_argument("--plan-id")
+    list_results.add_argument("--task-id")
+    list_results.set_defaults(func=cmd_list_executor_results)
+    transition_result = sub.add_parser("transition-executor-result", parents=[parent])
+    for flag in ("id", "plan-id", "task-id", "current-state", "target-state"):
+        transition_result.add_argument(f"--{flag}", required=True)
+    transition_result.set_defaults(func=cmd_transition_executor_result)
+    sub.add_parser("index-executor-results", parents=[parent]).set_defaults(func=cmd_index_executor_results)
+    candidate = sub.add_parser("build-implementation-review-candidate", parents=[parent])
+    candidate.add_argument("--source-root", required=True)
+    candidate.add_argument("--kind", choices=["commit", "worktree"], required=True)
+    candidate.add_argument("--base-commit", required=True)
+    candidate.add_argument("--changed-path", action="append", default=[])
+    candidate.set_defaults(func=cmd_build_implementation_review_candidate)
+    for command, function, task_optional in (
+        ("write-implementation-review", cmd_write_implementation_review, True),
+        ("write-accepted-task-result", cmd_write_accepted_task_result, False),
+        ("write-final-workflow-review", cmd_write_final_workflow_review, None),
+    ):
+        current = sub.add_parser(command, parents=[parent])
+        current.add_argument("--id", required=True)
+        current.add_argument("--plan-id", required=True)
+        if task_optional is not None:
+            current.add_argument("--task-id", required=not task_optional)
+        if command == "write-implementation-review":
+            current.add_argument("--source-root", required=True)
+        current.add_argument("--content-file", required=True)
+        current.set_defaults(func=function)
+    for command, function, has_task in (
+        ("list-implementation-reviews", cmd_list_implementation_reviews, True),
+        ("list-accepted-task-results", cmd_list_accepted_task_results, True),
+        ("list-final-workflow-reviews", cmd_list_final_workflow_reviews, False),
+    ):
+        current = sub.add_parser(command, parents=[parent])
+        current.add_argument("--plan-id")
+        if has_task:
+            current.add_argument("--task-id")
+        current.set_defaults(func=function)
+    finalize = sub.add_parser("finalize-reviewed-plan", parents=[parent])
+    finalize.add_argument("--plan-id", required=True)
+    finalize.add_argument("--final-review-id", required=True)
+    finalize.set_defaults(func=cmd_finalize_reviewed_plan)
     return parser
-
-
-def _require_public_admission(args: argparse.Namespace) -> None:
-    operation = {
-        "write-spec": "ordinary_new", "write-plan": "ordinary_new",
-        "write-phase": "reconciliation", "write-task": "reconciliation",
-        "build-task-brief": "reconciliation", "build-review-package": "reconciliation",
-        "observe-task-validation": "reconciliation",
-        "begin-review-round": "reconciliation",
-        "complete-review-round": "round_completion",
-        "review-round-status": "read_only",
-        "finalize-accepted-plan": "finalization",
-        "require-terminal-finalization": "read_only",
-        "finalize-with-blockers": "finalization",
-        "archive-plan": "finalization", "set-spec-status": "finalization",
-        "set-plan-status": "finalization", "set-handoff-status": "finalization",
-    }.get(args.command)
-    if operation is not None:
-        root = resolve_working_workspace(resolve_workspace_root(args))
-        flow_id = (
-            getattr(args, "flow_id", None)
-            or getattr(args, "plan_id", None)
-            or getattr(args, "id", None)
-        )
-        if flow_id is None and getattr(args, "task", None):
-            flow_id = task_flow_id(args)
-        try:
-            if root is not None:
-                require_orchestration_admission(root, operation=operation, flow_id=flow_id)
-        except BoundedClosureError as error:
-            raise SystemExit(str(error)) from error
 
 
 def main() -> int:
     args = build_parser().parse_args()
-    _require_public_admission(args)
-    try:
-        args.func(args)
-    except BoundedClosureError as error:
-        raise SystemExit(str(error)) from error
+    args.func(args)
     return 0
 
 

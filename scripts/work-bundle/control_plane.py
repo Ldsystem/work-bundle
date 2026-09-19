@@ -3,13 +3,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
-import sys
-import tempfile
 from typing import Iterable
 from urllib.parse import parse_qsl, urlsplit
 
@@ -20,7 +17,20 @@ from core import (
     resolve_work_bundle_root,
     utc_now_rfc3339,
 )
-from workspace_resources import _load_yaml, ensure_workspace_resources
+from workspace_resources import (
+    CREDENTIAL_TEMPLATE,
+    SCRIPT_INDEX_TEMPLATE,
+    _load_yaml,
+    ensure_workspace_resources,
+)
+from infrastructure import (
+    InfrastructureError,
+    atomic_write_text,
+    dump_canonical_yaml,
+    join_workspace_binding,
+    parse_yaml_mapping,
+    validate_infrastructure_document,
+)
 
 
 VERSION = "4"
@@ -40,6 +50,32 @@ LOCAL_V3_KEYS = {
     "metadata_compatibility",
 }
 RESERVED_V4_KEYS = {"metadata_version", "authority", "workspace", "control_plane", "source_repositories"}
+CURRENT_ORCHESTRATION_STORE_ROOTS = (
+    "orchestration/spec/active",
+    "orchestration/spec/archived",
+    "orchestration/plan/active",
+    "orchestration/plan/archived",
+    "orchestration/result/executor/active",
+    "orchestration/result/executor/reviewed",
+    "orchestration/result/executor/superseded",
+    "orchestration/result/executor/archived",
+    "orchestration/result/accepted/active",
+    "orchestration/result/accepted/superseded",
+    "orchestration/result/accepted/archived",
+    "orchestration/review/implementation/active",
+    "orchestration/review/implementation/superseded",
+    "orchestration/review/implementation/archived",
+    "orchestration/review/final/active",
+    "orchestration/review/final/archived",
+)
+CURRENT_ORCHESTRATION_PORTABLE_PATHS = (
+    "orchestration/spec/",
+    "orchestration/plan/",
+    "orchestration/result/executor/",
+    "orchestration/result/accepted/",
+    "orchestration/review/implementation/",
+    "orchestration/review/final/",
+)
 
 
 class ControlPlaneError(RuntimeError):
@@ -47,74 +83,6 @@ class ControlPlaneError(RuntimeError):
         super().__init__(code)
         self.code = code
         self.details = details or {}
-
-
-def deferred_remote_task_identity(repository_root: Path) -> dict[str, str]:
-    """Compute identity from the canonical orchestration repository evidence."""
-
-    root = repository_root.expanduser().resolve()
-    orchestration_root = Path(__file__).resolve().parents[1] / "orchestration"
-    command = "\n".join(
-        [
-            "import json, sys",
-            "from pathlib import Path",
-            "sys.path.insert(0, sys.argv[1])",
-            "from repository_preflight import capture_repository_evidence",
-            "print(json.dumps(capture_repository_evidence(Path(sys.argv[2])), sort_keys=True))",
-        ]
-    )
-    captured = subprocess.run(
-        [sys.executable, "-c", command, str(orchestration_root), str(root)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    try:
-        evidence = json.loads(captured.stdout) if captured.returncode == 0 else None
-    except json.JSONDecodeError:
-        evidence = None
-    if not isinstance(evidence, dict):
-        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_REPOSITORY_INVALID")
-    head = str(evidence.get("head") or "")
-    tree = str(evidence.get("tree") or "")
-    if not re.fullmatch(r"[0-9a-f]{40}", head) or not re.fullmatch(r"[0-9a-f]{40}", tree):
-        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_REPOSITORY_INVALID")
-    if evidence.get("status") != "clean" or evidence.get("entries"):
-        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_TASK_TREE_DIRTY")
-    digest = hashlib.sha256(
-        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    return {
-        "reviewed_head": f"{head}+repository-evidence-sha256:{digest}",
-        "reviewed_tree": tree,
-        "repository_evidence_sha256": digest,
-    }
-
-
-def validate_deferred_remote_independent_review_identity(
-    repository_root: Path, *, task_id: str
-) -> dict[str, object]:
-    """Load the selected real review and bind its acceptance to the current Git tree."""
-
-    raw_path = os.environ.get("WOR105_C02_REVIEW", "").strip()
-    if not raw_path:
-        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_ARTIFACT_REQUIRED")
-    review_path = Path(raw_path).expanduser().resolve()
-    if not review_path.is_file():
-        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_ARTIFACT_MISSING")
-    review = _load_yaml(read(review_path))
-    if not isinstance(review, dict):
-        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_IDENTITY_MISMATCH")
-    identity = deferred_remote_task_identity(repository_root)
-    if (
-        review.get("task_id") != task_id
-        or review.get("reviewer_independent") is not True
-        or review.get("verdict") != "accept"
-        or review.get("reviewed_head") != identity["reviewed_head"]
-        or review.get("reviewed_tree") != identity["reviewed_tree"]
-    ):
-        raise ControlPlaneError("WB_CONTROL_PLANE_REVIEW_IDENTITY_MISMATCH")
-    return dict(review)
 
 
 def _yaml_scalar(text: str, key: str) -> str:
@@ -166,7 +134,7 @@ def _agents_contract_block() -> str:
     ])
 
 
-def _sync_agents(workspace_root: Path) -> list[str]:
+def _render_synced_agents(workspace_root: Path) -> str:
     template = _agents_template()
     managed = f"{AGENTS_START}\n{template}{AGENTS_END}\n"
     path = workspace_root / "AGENTS.md"
@@ -199,7 +167,12 @@ def _sync_agents(workspace_root: Path) -> list[str]:
         rendered = current.rstrip("\n") + "\n\n" + managed
     else:
         rendered = managed
-    return [str(path)] if _atomic_write(path, rendered) else []
+    return rendered
+
+
+def _sync_agents(workspace_root: Path) -> list[str]:
+    path = workspace_root / "AGENTS.md"
+    return [str(path)] if _atomic_write(path, _render_synced_agents(workspace_root)) else []
 
 
 def _repository_execution_issues(path: Path, expected_branch: str, repository_id: str) -> list[str]:
@@ -372,12 +345,12 @@ def _resolved_declared_remote(value: object, repository_path: Path) -> str:
     return _resolved_git_remote(local)
 
 
-def _registry_repository_remotes(workspace_root: Path) -> dict[str, str]:
+def _registry_repository_entries(workspace_root: Path) -> list[dict[str, object]]:
     registry = resolve_project_registry_path()
     document = _load_yaml(read(registry)) if registry.is_file() else {}
     projects = document.get("projects") if isinstance(document, dict) else None
     if not isinstance(projects, list):
-        return {}
+        return []
     control = (workspace_root / ".work-bundle").resolve()
     matches: list[dict[str, object]] = []
     for project in projects:
@@ -389,21 +362,28 @@ def _registry_repository_remotes(workspace_root: Path) -> dict[str, str]:
     if len(matches) > 1:
         raise ControlPlaneError("WB_CONTROL_PLANE_REGISTRY_WORKSPACE_AMBIGUOUS")
     if not matches:
-        return {}
+        return []
     repositories = matches[0].get("repository_origins")
     if not isinstance(repositories, list):
         repositories = matches[0].get("source_repositories")
     if not isinstance(repositories, list):
-        return {}
-    result: dict[str, str] = {}
+        return []
+    result: list[dict[str, object]] = []
     for repository in repositories:
         if not isinstance(repository, dict):
             continue
         repository_id = str(repository.get("id") or "")
-        remote = str(repository.get("remote") or "")
-        if repository_id and remote:
-            result[repository_id] = remote
+        if repository_id:
+            result.append(dict(repository))
     return result
+
+
+def _registry_repository_remotes(workspace_root: Path) -> dict[str, str]:
+    return {
+        str(item.get("id")): str(item.get("remote"))
+        for item in _registry_repository_entries(workspace_root)
+        if item.get("id") and item.get("remote")
+    }
 
 
 def _is_local_remote(remote: str, repository_path: Path) -> bool:
@@ -440,34 +420,24 @@ def _canonical_migration_remote(
 
 
 def _workspace_slug(workspace_root: Path, text: str) -> str:
-    workspace_block = _block(text, "workspace")
-    nested_slug = re.search(r"^\s{2}slug:\s*(.*?)\s*$", workspace_block, re.MULTILINE)
-    return (nested_slug.group(1).strip().strip('"').strip("'") if nested_slug else workspace_root.name) or "workspace"
+    workspace = parse_yaml_mapping(text, source="project metadata").get("workspace")
+    return (str(workspace.get("slug") or "") if isinstance(workspace, dict) else workspace_root.name) or "workspace"
 
 
 def _workspace_id(text: str) -> str:
-    workspace_block = _block(text, "workspace")
-    match = re.search(r"^\s{2}id:\s*(.*?)\s*$", workspace_block, re.MULTILINE)
-    return match.group(1).strip().strip('"').strip("'") if match else ""
+    workspace = parse_yaml_mapping(text, source="project metadata").get("workspace")
+    return str(workspace.get("id") or "") if isinstance(workspace, dict) else ""
 
 
 def _workspace_value(text: str, key: str) -> str:
-    match = re.search(rf"^\s{{2}}{re.escape(key)}:\s*(.*?)\s*$", _block(text, "workspace"), re.MULTILINE)
-    return match.group(1).strip().strip('"').strip("'") if match else ""
+    workspace = parse_yaml_mapping(text, source="project metadata").get("workspace")
+    return str(workspace.get(key) or "") if isinstance(workspace, dict) else ""
 
 
 def _control_plane_remote(text: str) -> str:
-    block = _block(text, "control_plane")
-    in_repository = False
-    for line in block.splitlines():
-        if line == "  repository:":
-            in_repository = True
-            continue
-        if in_repository and line.startswith("    remote:"):
-            return line.split(":", 1)[1].strip().strip('"').strip("'")
-        if in_repository and line.startswith("  ") and not line.startswith("    "):
-            break
-    return ""
+    control = parse_yaml_mapping(text, source="project metadata").get("control_plane")
+    repository = control.get("repository") if isinstance(control, dict) else None
+    return str(repository.get("remote") or "") if isinstance(repository, dict) else ""
 
 
 def _v3_repositories(text: str) -> list[dict[str, object]]:
@@ -478,22 +448,10 @@ def _v3_repositories(text: str) -> list[dict[str, object]]:
     return repositories
 
 
-def _source_repository_bounds(lines: list[str]) -> tuple[int, int] | None:
-    start = next((i for i, line in enumerate(lines)
-                  if re.match(r"^source_repositories:(?:\s|$)", line)), None)
-    if start is None:
-        return None
-    # Any non-comment root content ends the list, including quoted keys and
-    # document markers. Readers and writers must agree on this boundary.
-    end = next((i for i in range(start + 1, len(lines))
-                if re.match(r"^[^\s#]", lines[i])), len(lines))
-    return start, end
-
-
 def _v4_repositories(text: str) -> list[dict[str, object]]:
-    lines = text.splitlines(keepends=True)
-    bounds = _source_repository_bounds(lines)
-    repositories = _parse_list_items("".join(lines[bounds[0]:bounds[1]])) if bounds else []
+    document = parse_yaml_mapping(text, source="project metadata")
+    raw_repositories = document.get("source_repositories")
+    repositories = [dict(item) for item in raw_repositories if isinstance(item, dict)] if isinstance(raw_repositories, list) else []
     # The generic parser retains remote as a mapping. Normalize its canonical field.
     for repository in repositories:
         remote = repository.get("remote")
@@ -508,7 +466,7 @@ def _v4_repositories(text: str) -> list[dict[str, object]]:
         locator = repository.get("locator")
         repository["locator_type"] = str(locator.get("type", "")) if isinstance(locator, dict) else ""
         repository["materialization_raw"] = (
-            str(materialization.get("required", "")) if isinstance(materialization, dict) else ""
+            materialization.get("required", "") if isinstance(materialization, dict) else ""
         )
         repository["materialization_state"] = (
             str(materialization.get("state", "")) if isinstance(materialization, dict) else ""
@@ -575,6 +533,27 @@ def _render_v4(
     if mode not in {"single-repository", "multi-repository"}:
         raise ControlPlaneError("WB_CONTROL_PLANE_WORKSPACE_MODE_INVALID")
     repositories = _v3_repositories(v3_text)
+    if not repositories and _yaml_scalar(v3_text, "metadata_version") == "2":
+        registered = _registry_repository_entries(workspace_root)
+        if not registered:
+            registered = [{
+                "id": workspace_root.name,
+                "path": str(workspace_root),
+                "remote": _git_remote(workspace_root),
+                "git_repository": bool(_git(workspace_root, "rev-parse", "--git-dir")),
+            }]
+        repositories = [
+            {
+                "id": str(item.get("id") or workspace_root.name),
+                "project_root": str(item.get("path") or workspace_root),
+                "origin_id": str(item.get("id") or workspace_root.name),
+                "git_repository": bool(item.get("git_repository", True)),
+                "expected_branch": str(item.get("expected_branch") or "main"),
+                "remote": str(item.get("remote") or ""),
+                "operation_policy": "inherit",
+            }
+            for item in registered
+        ]
     if not repositories:
         raise ControlPlaneError("WB_CONTROL_PLANE_REPOSITORIES_MISSING")
     if mode == "single-repository" and len(repositories) != 1:
@@ -681,19 +660,9 @@ def _proposal(
 
 
 def _atomic_write(path: Path, text: str) -> bool:
-    path.parent.mkdir(parents=True, exist_ok=True)
     if read(path) == text:
         return False
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(text)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    atomic_write_text(path, text)
     return True
 
 
@@ -704,13 +673,25 @@ def _atomic_publish(payloads: dict[Path, str]) -> list[str]:
         for path, text in payloads.items():
             if _atomic_write(path, text):
                 changed.append(str(path))
-    except (OSError, ControlPlaneError):
+    except (OSError, ControlPlaneError, InfrastructureError):
+        rollback_failures: list[str] = []
         for path, value in before.items():
-            if value is None:
-                path.unlink(missing_ok=True)
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(value)
+            try:
+                if value is None:
+                    if path.exists():
+                        path.unlink(missing_ok=True)
+                else:
+                    if path.is_file() and path.read_bytes() == value:
+                        continue
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    atomic_write_text(path, value.decode("utf-8"))
+            except (OSError, InfrastructureError):
+                rollback_failures.append(str(path))
+        if rollback_failures:
+            raise ControlPlaneError(
+                "WB_CONTROL_PLANE_TRANSACTION_RECOVERY_REQUIRED",
+                {"rollback_failures": rollback_failures},
+            )
         raise ControlPlaneError("WB_CONTROL_PLANE_TRANSACTION_FAILED")
     return changed
 
@@ -751,123 +732,12 @@ def _source_tracks_control_plane(workspace_root: Path) -> bool:
 def _source_exclude_payload(workspace_root: Path) -> tuple[Path, str] | None:
     if not (workspace_root / ".git").exists():
         return None
-    ignored = subprocess.run(
-        ["git", "-C", str(workspace_root), "check-ignore", "-q", "--no-index", ".work-bundle/project.yaml"],
-        check=False,
-        capture_output=True,
-        text=True,
-    ).returncode == 0
-    if ignored:
-        return None
     path = workspace_root / ".git/info/exclude"
     current = read(path)
-    rendered = current
-    if rendered and not rendered.endswith("\n"):
-        rendered += "\n"
-    rendered += ".work-bundle/\n"
-    return path, rendered
-
-
-def _binding_block_bounds(lines: list[str]) -> tuple[int, int] | None:
-    try:
-        start = next(i for i, line in enumerate(lines) if line == "device_bindings:")
-    except StopIteration:
+    rendered = _exclude_text_with_source_and_members(current, ())
+    if rendered == current:
         return None
-    end = start + 1
-    while end < len(lines) and (not lines[end] or lines[end].startswith(" ")):
-        end += 1
-    return start, end
-
-
-def _parse_bindings(text: str) -> dict[str, dict[str, object]]:
-    lines = text.splitlines()
-    bounds = _binding_block_bounds(lines)
-    if not bounds:
-        return {}
-    start, end = bounds
-    document = _load_yaml("\n".join(lines[start:end]) + "\n")
-    if not isinstance(document, dict) or not isinstance(document.get("device_bindings"), dict):
-        return {}
-    result: dict[str, dict[str, object]] = {}
-    for key, value in document["device_bindings"].items():
-        if isinstance(value, dict):
-            result[str(key)] = value
-    return result
-
-
-def _render_nested(lines: list[str], indent: int, key: str, value: object) -> None:
-    prefix = " " * indent
-    if isinstance(value, dict):
-        lines.append(f"{prefix}{key}:")
-        for nested_key, nested_value in value.items():
-            _render_nested(lines, indent + 2, str(nested_key), nested_value)
-    elif isinstance(value, list):
-        if not value:
-            lines.append(f"{prefix}{key}: []")
-        elif all(not isinstance(item, (dict, list)) for item in value):
-            lines.append(f"{prefix}{key}: [{', '.join(_quote(item) for item in value)}]")
-        else:
-            lines.append(f"{prefix}{key}:")
-            for item in value:
-                if isinstance(item, dict):
-                    lines.append(f"{prefix}  -")
-                    for nested_key, nested_value in item.items():
-                        _render_nested(lines, indent + 4, str(nested_key), nested_value)
-    elif isinstance(value, bool):
-        lines.append(f"{prefix}{key}: {str(value).lower()}")
-    elif value is None:
-        lines.append(f"{prefix}{key}: null")
-    else:
-        lines.append(f"{prefix}{key}: {_quote(value)}")
-
-
-def _render_bindings(bindings: dict[str, dict[str, object]]) -> str:
-    lines = ["device_bindings:"]
-    for workspace_id in sorted(bindings):
-        binding = bindings[workspace_id]
-        lines.extend(
-            [
-                f"  {_quote(workspace_id)}:",
-                f"    slug: {_quote(binding.get('slug'))}",
-                f"    workspace_root: {_quote(binding.get('workspace_root'))}",
-                f"    control_plane_path: {_quote(binding.get('control_plane_path'))}",
-                f"    control_plane_remote: {_quote(binding.get('control_plane_remote'))}",
-                f"    observed_control_plane_head: {_quote(binding.get('observed_control_plane_head'))}",
-            ]
-        )
-        known_binding_fields = {
-            "slug", "workspace_root", "control_plane_path", "control_plane_remote",
-            "observed_control_plane_head", "repositories",
-        }
-        for key in sorted(set(binding) - known_binding_fields):
-            value = binding.get(key)
-            _render_nested(lines, 4, key, value)
-        lines.append("    repositories:")
-        repositories = binding.get("repositories")
-        if isinstance(repositories, dict):
-            for repository_id in sorted(repositories):
-                repository = repositories[repository_id]
-                if not isinstance(repository, dict):
-                    continue
-                lines.extend(
-                    [
-                        f"      {_quote(repository_id)}:",
-                        f"        project_root: {_quote(repository.get('project_root'))}",
-                        f"        checkout_kind: {_quote(repository.get('checkout_kind'))}",
-                        f"        observed_branch: {_quote(repository.get('observed_branch'))}",
-                        f"        observed_head: {_quote(repository.get('observed_head'))}",
-                        f"        observed_at: {_quote(repository.get('observed_at'))}",
-                    ]
-                )
-                known_repository_fields = {
-                    "project_root", "checkout_kind", "observed_branch", "observed_head",
-                    "observed_at", "git_common_dir",
-                }
-                for key in sorted(set(repository) - known_repository_fields):
-                    value = repository.get(key)
-                    _render_nested(lines, 8, key, value)
-                lines.append(f"        git_common_dir: {_quote(repository.get('git_common_dir'))}")
-    return "\n".join(lines) + "\n"
+    return path, rendered
 
 
 def _write_bindings(bindings: dict[str, dict[str, object]]) -> Path:
@@ -877,21 +747,22 @@ def _write_bindings(bindings: dict[str, dict[str, object]]) -> Path:
 
 
 def _bindings_document(bindings: dict[str, dict[str, object]], original: str) -> str:
-    lines = original.splitlines()
-    bounds = _binding_block_bounds(lines)
-    replacement = _render_bindings(bindings).splitlines()
-    if bounds:
-        start, end = bounds
-        lines = lines[:start] + replacement + lines[end:]
-    else:
-        if lines and lines[-1]:
-            lines.append("")
-        lines.extend(replacement)
-    return "\n".join(lines).rstrip() + "\n"
+    document = parse_yaml_mapping(original, source="project registry")
+    document.setdefault("projects", [])
+    document["device_bindings"] = bindings
+    validate_infrastructure_document(document, family="project-registry")
+    return dump_canonical_yaml(document)
 
 
 def _registry_bindings() -> dict[str, dict[str, object]]:
-    return _parse_bindings(read(resolve_project_registry_path()))
+    registry = resolve_project_registry_path()
+    document = parse_yaml_mapping(read(registry) or "projects: []\ndevice_bindings: {}\n", source="project registry")
+    bindings = document.get("device_bindings")
+    return {
+        str(key): dict(value)
+        for key, value in bindings.items()
+        if isinstance(value, dict)
+    } if isinstance(bindings, dict) else {}
 
 
 def _binding_from_v3(
@@ -900,13 +771,19 @@ def _binding_from_v3(
     local: dict[str, dict[str, object]] = {}
     for repository in repositories:
         path = Path(str(repository.get("project_root") or "")).expanduser().resolve()
+        observed_branch = _git(path, "branch", "--show-current")
+        observed_head = _git(path, "rev-parse", "HEAD")
+        git_common_dir = _git(path, "rev-parse", "--git-common-dir")
+        checkout_kind = str(repository.get("checkout_kind") or "external")
+        if not observed_branch and not observed_head and not git_common_dir:
+            checkout_kind = "manual"
         local[str(repository.get("id") or "")] = {
             "project_root": str(path),
-            "checkout_kind": str(repository.get("checkout_kind") or "external"),
-            "observed_branch": _git(path, "branch", "--show-current"),
-            "observed_head": _git(path, "rev-parse", "HEAD"),
+            "checkout_kind": checkout_kind,
+            "observed_branch": observed_branch,
+            "observed_head": observed_head,
             "observed_at": utc_now_rfc3339(),
-            "git_common_dir": _git(path, "rev-parse", "--git-common-dir"),
+            "git_common_dir": git_common_dir,
         }
     control = workspace_root / ".work-bundle"
     return {
@@ -921,25 +798,15 @@ def _binding_from_v3(
 
 def _portable_failures(text: str) -> list[str]:
     failures: list[str] = []
-    if _yaml_scalar(text, "metadata_version") != VERSION:
-        failures.append("WB_CONTROL_PLANE_METADATA_VERSION_INVALID")
-    workspace_id = _workspace_id(text)
-    if not workspace_id.startswith("wb-"):
-        failures.append("WB_CONTROL_PLANE_WORKSPACE_ID_INVALID")
-    if not _workspace_value(text, "slug"):
-        failures.append("WB_CONTROL_PLANE_WORKSPACE_SLUG_MISSING")
-    mode = _workspace_value(text, "mode")
-    if mode not in {"single-repository", "multi-repository", "composite"}:
-        failures.append("WB_CONTROL_PLANE_WORKSPACE_MODE_INVALID")
-    control = _block(text, "control_plane")
-    if not re.search(r"^\s{2}schema_version:\s*1\s*$", control, re.MULTILINE):
-        failures.append("WB_CONTROL_PLANE_SCHEMA_VERSION_INVALID")
-    if not re.search(r"^\s{4}mode:\s*manual\s*$", control, re.MULTILINE):
-        failures.append("WB_CONTROL_PLANE_SYNC_POLICY_INVALID")
-    forbidden = ("workspace_root", "project_root", "observed_head", "observation_time", "git_control_root")
-    for key in forbidden:
-        if re.search(rf"^\s*{key}:\s*", text, re.MULTILINE):
-            failures.append(f"WB_CONTROL_PLANE_PORTABLE_FIELD_FORBIDDEN:{key}")
+    try:
+        document = validate_infrastructure_document(
+            parse_yaml_mapping(text, source="project metadata"),
+            family="workspace-project-metadata",
+        )
+    except InfrastructureError as exc:
+        return [exc.code]
+    workspace = document["workspace"]
+    mode = str(workspace["mode"])
     try:
         repositories = _v4_repositories(text)
         configured_control_remote = _control_plane_remote(text)
@@ -1134,30 +1001,85 @@ def cmd_init_workspace(args: list[str]) -> int:
         return 0
     bindings = _registry_bindings()
     control = workspace_root / ".work-bundle"
+    local_repositories: dict[str, dict[str, object]] = {}
+    for repository in repositories:
+        repository_id = str(repository["id"])
+        project_root = workspace_root if parsed.mode == "single-repository" else workspace_root / repository_id
+        local_repositories[repository_id] = {
+            "project_root": str(project_root),
+            "checkout_kind": "workspace-root" if parsed.mode == "single-repository" else "unmaterialized-member",
+            "observed_branch": _git(project_root, "branch", "--show-current") if project_root.exists() else "",
+            "observed_head": _git(project_root, "rev-parse", "HEAD") if project_root.exists() else "",
+            "observed_at": utc_now_rfc3339(),
+            "git_common_dir": _git(project_root, "rev-parse", "--git-common-dir") if project_root.exists() else "",
+        }
     bindings[workspace_id] = {
         "slug": parsed.slug,
         "workspace_root": str(workspace_root),
         "control_plane_path": str(control),
         "control_plane_remote": "",
         "observed_control_plane_head": "",
-        "repositories": {},
+        "repositories": local_repositories,
     }
     registry = resolve_project_registry_path()
-    changed = _atomic_publish({
+    registry_text = _bindings_document(bindings, read(registry) or "projects: []\n")
+    try:
+        portable = validate_infrastructure_document(
+            parse_yaml_mapping(rendered, source=str(metadata)), family="workspace-project-metadata"
+        )
+        registry_document = validate_infrastructure_document(
+            parse_yaml_mapping(registry_text, source=str(registry)), family="project-registry"
+        )
+        from infrastructure import join_workspace_binding
+        join_workspace_binding(portable, registry_document, expected_workspace_root=workspace_root)
+    except InfrastructureError as exc:
+        out({"command": "init-workspace", "status": "issues-found", "failure_code": exc.code, "changed_files": []})
+        return 1
+    payloads = {
         metadata: rendered,
         control / ".gitignore": gitignore_text,
-        registry: _bindings_document(bindings, read(registry) or "projects: []\n"),
-    })
-    for relative in ("knowledge/notes", "knowledge/open-questions", "knowledge/context-packs", "knowledge/indexes", "orchestration/spec/active", "orchestration/plan/active", "orchestration/handoff", "orchestration/docs", "orchestration/principles", "rules", "git", "runtime", "orchestration/execution-state"):
-        path = control / relative
-        if not path.exists():
-            path.mkdir(parents=True)
-            changed.append(str(path))
-    changed.extend(ensure_workspace_resources(workspace_root))
-    changed.extend(_sync_agents(workspace_root))
-    if parsed.mode == "single-repository" and (workspace_root / ".git").exists():
-        if _ensure_source_local_excludes(workspace_root):
-            changed.append(str(workspace_root / ".git/info/exclude"))
+        registry: registry_text,
+        workspace_root / "AGENTS.md": _render_synced_agents(workspace_root),
+    }
+    script_index = workspace_root / "script/index.yaml"
+    credential_file = workspace_root / "credentials/credentials.yaml"
+    if not script_index.exists():
+        payloads[script_index] = SCRIPT_INDEX_TEMPLATE
+    if not credential_file.exists():
+        payloads[credential_file] = CREDENTIAL_TEMPLATE
+    source_exclusion = _source_exclude_payload(workspace_root) if parsed.mode == "single-repository" else None
+    if source_exclusion is not None:
+        payloads[source_exclusion[0]] = source_exclusion[1]
+    created_directories: list[Path] = []
+    try:
+        for relative in (
+            "knowledge/notes",
+            "knowledge/open-questions",
+            "knowledge/context-packs",
+            "knowledge/indexes",
+            *CURRENT_ORCHESTRATION_STORE_ROOTS,
+            "orchestration/docs",
+            "orchestration/principles",
+            "rules",
+            "git",
+            "runtime",
+            "orchestration/execution-state",
+        ):
+            path = control / relative
+            if not path.exists():
+                path.mkdir(parents=True)
+                created_directories.append(path)
+        changed = _atomic_publish(payloads)
+    except (OSError, ControlPlaneError):
+        for path in reversed(created_directories):
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+        raise
+    changed.extend(str(path) for path in created_directories)
+    credential_file.parent.chmod(0o700)
+    credential_file.chmod(0o600)
     out({"command": "init-workspace", "status": "passed", "dry_run": False, "workspace_id": workspace_id, "changed_files": sorted(set(changed))})
     return 0
 
@@ -1395,11 +1317,11 @@ def cmd_publish_control_plane(args: list[str]) -> int:
     return 0
 
 
-def apply_layout_v3_to_v4(
+def apply_historical_layout_to_v4(
     workspace_root: Path,
     remote_overrides: dict[str, str] | None = None,
 ) -> dict[str, object]:
-    """Upgrade metadata v3 to portable v4, publishing device bindings atomically with metadata."""
+    """Upgrade historical metadata v2 or v3 directly to portable v4."""
     workspace_root = workspace_root.expanduser().resolve()
     metadata_path = workspace_root / ".work-bundle/project.yaml"
     before = read(metadata_path)
@@ -1410,7 +1332,10 @@ def apply_layout_v3_to_v4(
         raise ControlPlaneError("WB_CONTROL_PLANE_SOURCE_TRACKS_CONTROL_PLANE")
     proposal = _proposal(workspace_root, before, remote_overrides)
     gitignore_text = _merged_local_only_gitignore(read(workspace_root / ".work-bundle/.gitignore"))
-    backup = workspace_root / ".work-bundle/runtime/migrations" / str(proposal["proposal_id"]) / "project-v3.yaml"
+    source_version = _yaml_scalar(before, "metadata_version")
+    if source_version not in {"2", "3"}:
+        raise ControlPlaneError("WB_CONTROL_PLANE_MIGRATION_SOURCE_UNSUPPORTED")
+    backup = workspace_root / ".work-bundle/runtime/migrations" / str(proposal["proposal_id"]) / f"project-v{source_version}.yaml"
     gitignore = workspace_root / ".work-bundle/.gitignore"
     bindings = _registry_bindings()
     workspace_id = str(proposal["workspace_id"])
@@ -1454,6 +1379,36 @@ def cmd_migrate_control_plane(args: list[str]) -> int:
     workspace_root = Path(parsed.workspace_root).expanduser().resolve()
     metadata_path = workspace_root / ".work-bundle/project.yaml"
     before = read(metadata_path)
+    try:
+        source_document = parse_yaml_mapping(before, source=str(metadata_path))
+    except InfrastructureError as exc:
+        out({
+            "command": "migrate-control-plane",
+            "status": "issues-found",
+            "failure_code": exc.code,
+            "changed_files": [],
+        })
+        return 1
+    source_version = source_document.get("metadata_version")
+    if source_version == 4:
+        out({
+            "command": "migrate-control-plane",
+            "status": "passed",
+            "dry_run": bool(parsed.dry_run),
+            "workspace_root": str(workspace_root),
+            "migration": {"from_version": 4, "to_version": 4, "disposition": "current"},
+            "changed_files": [],
+        })
+        return 0
+    if source_version not in {2, 3, "2", "3"}:
+        out({
+            "command": "migrate-control-plane",
+            "status": "issues-found",
+            "failure_code": "WB_CONTROL_PLANE_MIGRATION_SOURCE_UNSUPPORTED",
+            "metadata_version": source_version,
+            "changed_files": [],
+        })
+        return 1
     try:
         remote_overrides = {
             str(item["id"]): str(item["remote"])
@@ -1499,7 +1454,13 @@ def cmd_migrate_control_plane(args: list[str]) -> int:
                 {"id": item.get("id"), "canonical_remote": canonical_remote(item.get("remote"))}
                 for item in proposal["repositories"] if isinstance(item, dict)
             ],
-            "portable_paths": ["project.yaml", "knowledge/", "orchestration/spec/", "orchestration/plan/", "orchestration/handoff/", "orchestration/docs/", "rules/"],
+            "portable_paths": [
+                "project.yaml",
+                "knowledge/",
+                *CURRENT_ORCHESTRATION_PORTABLE_PATHS,
+                "orchestration/docs/",
+                "rules/",
+            ],
             "local_only_paths": ["git/", "runtime/", "orchestration/execution-state/"],
             "control_plane_git": {
                 "currently_initialized": (
@@ -1519,7 +1480,7 @@ def cmd_migrate_control_plane(args: list[str]) -> int:
         out({**base, "status": "issues-found", "failure_code": "WB_CONTROL_PLANE_PROPOSAL_STALE", "changed_files": []})
         return 1
     try:
-        applied = apply_layout_v3_to_v4(workspace_root, remote_overrides)
+        applied = apply_historical_layout_to_v4(workspace_root, remote_overrides)
     except ControlPlaneError as exc:
         out({**base, "status": "issues-found", "failure_code": exc.code, "changed_files": [], **exc.details})
         return 1
@@ -1685,66 +1646,59 @@ def _classify_workspace_member(
     return "absent"
 
 
-def _render_member_metadata_block(member: dict[str, str], *, multi: bool = False) -> str:
+def _member_metadata_record(member: dict[str, str], *, multi: bool = False) -> dict[str, object]:
     state = member.get("materialization", "")
-    remote_line = f"      canonical: {_quote(member['remote'])}" if member["remote"] else "      canonical: null"
-    lines = [
-            f"  - id: {_quote(member['repository_id'])}",
-            "    role: source",
-            "    remote:",
-            remote_line,
-            "      aliases: []",
-            f"    default_branch: {_quote(member['default_branch'])}",
-            "    workspace_binding:",
-            "      type: member",
-            f"      name: {_quote(member['name'])}",
-            *([] if multi else [f"      path: {_quote(member['path'])}"]),
-            "    materialization:",
-            "      required: true",
-            *([f"      state: {state}"] if state else []),
-    ]
+    binding: dict[str, object] = {"type": "member", "name": member["name"]}
+    if not multi:
+        binding["path"] = member["path"]
+    record: dict[str, object] = {
+        "id": member["repository_id"],
+        "role": "source",
+        "remote": {"canonical": member["remote"] or None, "aliases": []},
+        "default_branch": member["default_branch"],
+        "workspace_binding": binding,
+        "materialization": {"required": True},
+        "operation_policy": "inherit",
+    }
     if state:
-        lines.extend(
-            [
-                "    deferred_remote:",
-                f"      proposal_id: {_quote(member['proposal_id'])}",
-                f"      transaction_id: {_quote(member['transaction_id'])}",
-                f"      replay_key: {_quote(member['replay_key'])}",
-            ]
-        )
-    lines.append("    operation_policy: inherit")
-    return "\n".join(lines) + "\n"
+        record["materialization"]["state"] = state
+        record["deferred_remote"] = {
+            "proposal_id": member["proposal_id"],
+            "transaction_id": member["transaction_id"],
+            "replay_key": member["replay_key"],
+        }
+    return record
 
 
 def _append_member_metadata(text: str, member: dict[str, str]) -> str:
-    if _workspace_value(text, "mode") == "single-repository":
-        text = re.sub(r"^(\s{2}mode: )single-repository\s*$", r"\1composite", text, count=1, flags=re.MULTILINE)
-    block = _render_member_metadata_block(member, multi=_workspace_value(text, "mode") == "multi-repository")
-    lines = text.splitlines(keepends=True)
-    bounds = _source_repository_bounds(lines)
-    if bounds is None:
+    document = parse_yaml_mapping(text, source="project metadata")
+    workspace = document.get("workspace")
+    repositories = document.get("source_repositories")
+    if not isinstance(workspace, dict) or not isinstance(repositories, list):
         raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
-    _, end = bounds
-    prefix = "".join(lines[:end])
-    return prefix + ("" if prefix.endswith("\n") else "\n") + block + "".join(lines[end:])
+    if workspace.get("mode") == "single-repository":
+        workspace["mode"] = "composite"
+    repositories.append(
+        _member_metadata_record(member, multi=workspace.get("mode") == "multi-repository")
+    )
+    validate_infrastructure_document(document, family="workspace-project-metadata")
+    return dump_canonical_yaml(document)
 
 
 def _replace_member_metadata(text: str, repository_id: str, member: dict[str, str]) -> str:
-    lines = text.splitlines(keepends=True)
-    bounds = _source_repository_bounds(lines)
-    if bounds is None:
+    document = parse_yaml_mapping(text, source="project metadata")
+    workspace = document.get("workspace")
+    repositories = document.get("source_repositories")
+    if not isinstance(workspace, dict) or not isinstance(repositories, list):
         raise ControlPlaneError("WB_CONTROL_PLANE_METADATA_INVALID")
-    start, end = bounds
-    starts = [index for index in range(start + 1, end) if re.match(r"^  - id:\s*", lines[index])]
-    for position, item_start in enumerate(starts):
-        raw_id = lines[item_start].split(":", 1)[1].strip().strip('"').strip("'")
-        if raw_id != repository_id:
+    for index, repository in enumerate(repositories):
+        if not isinstance(repository, dict) or str(repository.get("id") or "") != repository_id:
             continue
-        item_end = starts[position + 1] if position + 1 < len(starts) else end
-        rendered = _render_member_metadata_block(
-            member, multi=_workspace_value(text, "mode") == "multi-repository"
+        repositories[index] = _member_metadata_record(
+            member, multi=workspace.get("mode") == "multi-repository"
         )
-        return "".join(lines[:item_start]) + rendered + "".join(lines[item_end:])
+        validate_infrastructure_document(document, family="workspace-project-metadata")
+        return dump_canonical_yaml(document)
     raise ControlPlaneError("WB_CONTROL_PLANE_DEFERRED_REMOTE_MISSING")
 
 
@@ -2303,6 +2257,16 @@ def _attach(
                 "observed_control_plane_head": _git(control, "rev-parse", "HEAD"),
                 "repositories": local_repositories,
             }
+            registry_preview = parse_yaml_mapping(
+                _bindings_document(bindings, read(resolve_project_registry_path()) or "projects: []\n"),
+                source="project registry",
+            )
+            portable_preview = parse_yaml_mapping(read(metadata_path), source=str(metadata_path))
+            join_workspace_binding(
+                portable_preview,
+                registry_preview,
+                expected_workspace_root=workspace_root,
+            )
             readiness_failures = []
             repositories_by_id = {str(item.get("id") or ""): item for item in repositories}
             for repository_id, local in local_repositories.items():
@@ -2315,6 +2279,9 @@ def _attach(
                         project_root, str(portable.get("default_branch") or ""), repository_id
                     )
                 )
+        except InfrastructureError as exc:
+            rollback_attach()
+            raise ControlPlaneError(exc.code, exc.details) from exc
         except ControlPlaneError:
             rollback_attach()
             raise

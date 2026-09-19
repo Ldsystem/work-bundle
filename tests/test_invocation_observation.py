@@ -222,6 +222,32 @@ def test_subparser_vocabulary_matches_exported_recognized_set(path: Path) -> Non
         and isinstance(call.args[0], ast.Constant)
         and isinstance(call.args[0].value, str)
     }
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.For) or not isinstance(node.target, ast.Tuple):
+            continue
+        command_target = node.target.elts[0]
+        if not isinstance(command_target, ast.Name) or not isinstance(node.iter, (ast.Tuple, ast.List)):
+            continue
+        dynamically_routed = any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "add_parser"
+            and call.args
+            and isinstance(call.args[0], ast.Name)
+            and call.args[0].id == command_target.id
+            for statement in node.body
+            for call in ast.walk(statement)
+        )
+        if not dynamically_routed:
+            continue
+        routed.update(
+            item.elts[0].value
+            for item in node.iter.elts
+            if isinstance(item, ast.Tuple)
+            and item.elts
+            and isinstance(item.elts[0], ast.Constant)
+            and isinstance(item.elts[0].value, str)
+        )
     exported: set[str] | None = None
     for node in tree.body:
         if not isinstance(node, ast.Assign):

@@ -47,9 +47,9 @@ must:
 - use `work_bundle_config_root` only for non-project runtime state produced by tool use
 - resolve workspace-owned metadata, rules, knowledge, orchestration, `AGENTS.md`, `script/index.yaml`, and `credentials/credentials.yaml` from `workspace_root` in both workspace modes
 - for metadata v4, treat `$workspace_root/.work-bundle/project.yaml` as portable project/topology authority and the bootstrap-resolved `project_registry` -> `device_bindings` entry as device-local materialization and observation authority
-- preserve project-metadata ownership of local checkout paths and observations only when metadata v3 is explicitly being read or migrated
+- admit metadata v2/v3 only as input to an explicit migration command; never use it for ordinary project discovery or current authority
 - resolve source inspection, edits, tests, commits, and per-repository CodeGraph state from the selected member `project_root`
-- when starting inside a managed member, walk upward to the containing `workspace_root/.work-bundle/project.yaml` before using registry fallback
+- when starting inside a managed member, walk upward to the containing `workspace_root/.work-bundle/project.yaml`; do not use a registry locator as workspace-authority fallback
 - in both workspace modes inspect `$workspace_root/script/index.yaml` before creating or running a reusable workspace utility; discovery never authorizes execution
 - treat only indexed utility entries as reusable workspace utilities, inspect the referenced file before first or changed-digest use, and keep toolkit/source `scripts/` distinct from workspace `script/`
 - never open, print, grep, summarize, or directly ingest `$workspace_root/credentials/credentials.yaml`

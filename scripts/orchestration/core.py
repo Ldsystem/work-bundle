@@ -5,17 +5,67 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
+
+
+def _artifact_store_module():
+    """Load the orchestration sibling even when this file is loaded directly."""
+    module_path = Path(__file__).with_name("artifact_store.py").resolve()
+    existing = sys.modules.get("artifact_store")
+    if existing is not None:
+        if Path(str(getattr(existing, "__file__", ""))).resolve() != module_path:
+            raise ImportError("artifact_store module collision")
+        return existing
+    spec = importlib.util.spec_from_file_location("artifact_store", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot load orchestration artifact_store")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["artifact_store"] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop("artifact_store", None)
+        raise
+    return module
+
+
+_artifact_store = _artifact_store_module()
+atomic_write_bytes = _artifact_store.atomic_write_bytes
+parse_markdown_artifact = _artifact_store.parse_markdown_artifact
+
+
+def _infrastructure_module():
+    """Load the shared infrastructure owner without making the hyphenated path a package."""
+    module_path = Path(__file__).resolve().parents[1] / "work-bundle" / "infrastructure.py"
+    existing = sys.modules.get("work_bundle_infrastructure")
+    if existing is not None:
+        if Path(str(getattr(existing, "__file__", ""))).resolve() != module_path:
+            raise ImportError("work_bundle_infrastructure module collision")
+        return existing
+    spec = importlib.util.spec_from_file_location("work_bundle_infrastructure", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot load work-bundle infrastructure")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["work_bundle_infrastructure"] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop("work_bundle_infrastructure", None)
+        raise
+    return module
+
+
+_infrastructure = _infrastructure_module()
 
 
 SPEC_STATUSES = {"draft", "active", "verified", "implemented", "reviewed", "superseded", "archived"}
 PLAN_STATUSES = {"Planned", "In progress", "Completed", "Deprecated", "On Hold"}
-HANDOFF_STATUSES = {"active", "reviewed", "archived", "superseded"}
-HANDOFF_TYPES = {"orchestration", "executor-result"}
 RETRIEVAL_ROLES = {"authority", "candidate", "background", "blocked"}
 # Directive policies describe classification/output intent only. Knowledge
 # discovery remains neutral and cross-stage before agent authority classification.
@@ -47,169 +97,59 @@ def is_relative_to(path: Path, parent: Path) -> bool:
     return path == parent or parent in path.parents
 
 
-def _walk_workspace_root(start: Path) -> Path | None:
-    current = start.expanduser().resolve()
-    if current.is_file():
-        current = current.parent
-    for candidate in [current, *current.parents]:
-        if (candidate / ".work-bundle" / "project.yaml").is_file():
-            return candidate
-    return None
-
-
 def project_registry_path() -> Path:
-    config_root = Path(os.environ.get("WB_CONFIG_ROOT", Path.home() / ".work-bundle")).expanduser()
-    bootstrap = config_root / "bootstrap.yaml"
-    registry_value = "$work_bundle_config_root/registry/projects.yaml"
-    if bootstrap.is_file():
-        for line in bootstrap.read_text(encoding="utf-8").splitlines():
-            if line.strip().startswith("project_registry:"):
-                registry_value = line.split(":", 1)[1].strip().strip("'\"")
-                break
-    registry_value = registry_value.replace("$work_bundle_config_root", str(config_root))
-    return Path(registry_value).expanduser().resolve()
-
-
-def _registry_workspace_candidates(start: Path) -> list[Path]:
-    config_root = Path(os.environ.get("WB_CONFIG_ROOT", Path.home() / ".work-bundle")).expanduser()
-    if not (config_root / "bootstrap.yaml").is_file():
-        return []
-    registry = project_registry_path()
-    if not registry.is_file():
-        return []
-    projects: list[dict[str, object]] = []
-    current: dict[str, object] | None = None
-    for line in registry.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if line.startswith("  - slug:"):
-            current = {"locators": []}
-            projects.append(current)
-            continue
-        if current is None:
-            continue
-        if stripped.startswith("workspace_root:"):
-            value = stripped.split(":", 1)[1].strip().strip("'\"")
-            if value:
-                current["root"] = Path(value).expanduser().resolve()
-        elif stripped.startswith("origin_path:") or stripped.startswith("path:"):
-            value = stripped.split(":", 1)[1].strip().strip("'\"")
-            if value:
-                locators = current["locators"]
-                assert isinstance(locators, list)
-                locators.append(Path(value).expanduser().resolve())
-
-    current_path = start.resolve()
-    matches: list[Path] = []
-    for project in projects:
-        root = project.get("root")
-        if not isinstance(root, Path):
-            continue
-        locators = [root, *[path for path in project["locators"] if isinstance(path, Path)]]
-        if any(locator == current_path or locator in current_path.parents for locator in locators):
-            matches.append(root)
-    return matches
+    try:
+        return _infrastructure.resolve_project_registry_path()
+    except _infrastructure.InfrastructureError as exc:
+        raise SystemExit(exc.code) from exc
 
 
 def resolve_workspace_root(args: argparse.Namespace) -> Path:
     explicit_workspace = getattr(args, "workspace_root", None)
-    if explicit_workspace:
-        root = Path(explicit_workspace).expanduser().resolve()
-        if not (root / ".work-bundle" / "project.yaml").is_file():
-            raise SystemExit(f"No workspace metadata found at: {root}")
-        return root
-
     explicit_project = getattr(args, "project_root", None)
-    start = Path(explicit_project).expanduser() if explicit_project else Path.cwd()
-    found = _walk_workspace_root(start)
-    if found:
-        return found
-    if explicit_project:
-        return start.resolve()
-
-    current = start.resolve()
-    matching = _registry_workspace_candidates(current)
-    if matching:
-        return max(matching, key=lambda path: len(path.parts))
-    raise SystemExit("No workspace root found. Pass --workspace-root/--project-root or run inside a work bundle.")
+    try:
+        context = _infrastructure.resolve_anchor_context(
+            workspace_root=Path(explicit_workspace) if explicit_workspace else None,
+            project_root=Path(explicit_project) if explicit_project else None,
+            cwd=Path.cwd(),
+        )
+    except _infrastructure.InfrastructureError as exc:
+        raise SystemExit(exc.code) from exc
+    return context.workspace_root
 
 
 def _member_roots(root: Path) -> list[Path]:
-    metadata = root / ".work-bundle" / "project.yaml"
-    text = metadata.read_text(encoding="utf-8")
-    if re.search(r"^metadata_version:\s*4\s*$", text, re.MULTILINE):
-        workspace_id = ""
-        in_workspace = False
-        for line in text.splitlines():
-            if line == "workspace:":
-                in_workspace = True
-                continue
-            if in_workspace and line and not line.startswith(" "):
-                break
-            if in_workspace and line.strip().startswith("id:"):
-                workspace_id = line.split(":", 1)[1].strip().strip("'\"")
-                break
-        registry = project_registry_path()
-        if not registry.is_file() or not workspace_id:
-            return []
-        roots: list[Path] = []
-        in_bindings = False
-        in_target = False
-        in_repositories = False
-        for line in registry.read_text(encoding="utf-8").splitlines():
-            if line == "device_bindings:":
-                in_bindings = True
-                continue
-            if in_bindings and line and not line.startswith(" "):
-                break
-            if not in_bindings:
-                continue
-            if re.match(r"^  [^\s].*:$", line):
-                in_target = line.strip()[:-1].strip("'\"") == workspace_id
-                in_repositories = False
-                continue
-            if in_target and line == "    repositories:":
-                in_repositories = True
-                continue
-            if in_target and in_repositories and line.startswith("        project_root:"):
-                value = line.split(":", 1)[1].strip().strip("'\"")
-                if value:
-                    roots.append(Path(value).expanduser().resolve())
-        return roots
-    roots: list[Path] = []
-    in_repositories = False
-    for line in text.splitlines():
-        if line == "source_repositories:":
-            in_repositories = True
-            continue
-        if in_repositories and line and not line.startswith(" "):
-            break
-        if not in_repositories:
-            continue
-        stripped = line.strip()
-        if stripped.startswith("project_root:") or stripped.startswith("path:"):
-            value = stripped.split(":", 1)[1].strip().strip("'\"")
-            if value:
-                roots.append(Path(value).expanduser().resolve())
-    return roots
+    try:
+        metadata = _infrastructure.load_workspace_metadata(root)
+        registry = _infrastructure.load_project_registry()
+        binding = _infrastructure.join_workspace_binding(metadata, registry, expected_workspace_root=root)
+    except _infrastructure.InfrastructureError:
+        return []
+    repositories = binding.get("repositories")
+    if not isinstance(repositories, dict):
+        return []
+    return [
+        Path(str(item["project_root"])).expanduser().resolve()
+        for item in repositories.values()
+        if isinstance(item, dict) and item.get("project_root")
+    ]
 
 
 def resolve_member_project_root(args: argparse.Namespace, workspace: Path | None = None) -> Path:
-    root = workspace or resolve_workspace_root(args)
+    explicit_workspace = workspace or getattr(args, "workspace_root", None)
     explicit_project = getattr(args, "project_root", None)
-    candidate = Path(explicit_project).expanduser().resolve() if explicit_project else Path.cwd().resolve()
-    members = [member for member in _member_roots(root) if member == candidate or member in candidate.parents]
-    if members:
-        return max(members, key=lambda path: len(path.parts))
-    if candidate == root or root in candidate.parents:
-        return root
-    if not explicit_project and getattr(args, "workspace_root", None):
-        return root
-    raise SystemExit(f"Project root is not a managed member of workspace: {candidate}")
-
-
-def project_root(args: argparse.Namespace) -> Path:
-    """Compatibility alias for the workspace authority root."""
-    return resolve_workspace_root(args)
+    try:
+        context = _infrastructure.resolve_anchor_context(
+            workspace_root=Path(explicit_workspace) if explicit_workspace else None,
+            project_root=Path(explicit_project) if explicit_project else None,
+            cwd=Path.cwd(),
+            member_required=True,
+        )
+    except _infrastructure.InfrastructureError as exc:
+        raise SystemExit(exc.code) from exc
+    if context.project_root is None:
+        raise SystemExit("WB_PROJECT_ROOT_AMBIGUOUS")
+    return context.project_root
 
 
 def work_bundle(args: argparse.Namespace) -> Path:
@@ -266,23 +206,13 @@ def read_front_matter(path: Path) -> tuple[dict[str, object], str]:
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---\n"):
         return {}, text
-    end = text.find("\n---\n", 4)
-    if end == -1:
-        return {}, text
-    raw = text[4:end]
-    body = text[end + 5 :]
-    data: dict[str, object] = {}
-    for line in raw.splitlines():
-        if ":" in line and not line.startswith(" "):
-            key, value = line.split(":", 1)
-            data[key.strip()] = value.strip()
+    data, body = parse_markdown_artifact(text, source=str(path))
     return data, body
 
 
 def write_text_safely(path: Path, content: str, args: argparse.Namespace) -> None:
     target = ensure_under_orchestration(path, args)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content.rstrip() + "\n", encoding="utf-8")
+    atomic_write_bytes(target, (content.rstrip() + "\n").encode("utf-8"))
 
 
 def sequence_id(root: Path, prefix: str) -> str:
@@ -313,17 +243,21 @@ def init_dirs(args: argparse.Namespace) -> None:
         "spec/archived",
         "plan/active",
         "plan/archived",
-        "handoff/orchestration/active",
-        "handoff/orchestration/archived",
-        "handoff/executor/active",
-        "handoff/executor/archived",
+        "result/executor/active",
+        "result/executor/reviewed",
+        "result/executor/superseded",
+        "result/executor/archived",
+        "result/accepted/active",
+        "result/accepted/superseded",
+        "result/accepted/archived",
+        "review/implementation/active",
+        "review/implementation/superseded",
+        "review/implementation/archived",
+        "review/final/active",
+        "review/final/archived",
         "docs",
     ]:
         (root / directory).mkdir(parents=True, exist_ok=True)
-    for index in ["spec/index.jsonl", "plan/index.jsonl", "handoff/index.jsonl"]:
-        path = root / index
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch(exist_ok=True)
 
 
 def rel(path: Path, args: argparse.Namespace) -> str:
@@ -345,10 +279,12 @@ def move_to_archive(path: Path, active_root: Path, archived_root: Path) -> Path:
     return target
 
 
-def count_by_status(rows: list[dict[str, object]]) -> dict[str, int]:
+def count_by_status(
+    rows: list[dict[str, object]], *, status_key: str = "status"
+) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in rows:
-        status = str(row.get("status", "unknown"))
+        status = str(row.get(status_key, "unknown"))
         counts[status] = counts.get(status, 0) + 1
     return counts
 

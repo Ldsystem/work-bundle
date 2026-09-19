@@ -19,8 +19,8 @@ requires: []
 - Treat `.work-bundle/knowledge/` as the default durable source of truth for one managed project.
 - Read a legacy knowledge root only when the user or task explicitly selects it for migration or read-only intake.
 - Keep durable note writes under `.work-bundle/knowledge/notes/`, `.work-bundle/knowledge/open-questions/`, or `.work-bundle/knowledge/context-packs/` only when the active directive allows persistence.
-- Route specification, plan, task, handoff, and reader-facing artifact work to the matching `orch-*` rule or skill instead of treating that work as durable knowledge authoring.
-- Treat `.work-bundle/orchestration/handoff/` as orchestration output, not durable knowledge.
+- Route specification, plan, task, executor-result, review, and reader-facing artifact work to the matching `orch-*` rule or skill instead of treating that work as durable knowledge authoring.
+- Treat `.work-bundle/orchestration/result/` and `.work-bundle/orchestration/review/` as orchestration output, not durable knowledge.
 
 ## Must Not
 

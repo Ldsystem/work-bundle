@@ -78,16 +78,27 @@ def test_release_gate_continues_after_early_module_failure() -> None:
 
 
 def test_release_gate_inputs_are_tracked_and_execution_independent() -> None:
-    tracked = subprocess.run(
-        ["git", "ls-files", "tests/test_*.py"],
+    eligible = subprocess.run(
+        [
+            "git", "ls-files", "--cached", "--others", "--exclude-standard",
+            "tests/test_*.py",
+        ],
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
         text=True,
     ).stdout.splitlines()
-    discovered = sorted(path.relative_to(REPO_ROOT).as_posix() for path in (REPO_ROOT / "tests").glob("test_*.py"))
+    discovered = sorted(path for path in eligible if (REPO_ROOT / path).is_file())
 
-    assert tracked == discovered
+    observed = _gate_api()(
+        REPO_ROOT,
+        python_executable="/python",
+        run_command=lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, stdout="", stderr=""
+        ),
+        emit=lambda _line: None,
+    )
+    assert observed["modules"] == discovered
     for path in [CI_ENTRY, REPO_ROOT / "bin" / "work-bundle-skill", REPO_ROOT / ".github" / "workflows" / "ci.yml"]:
         subprocess.run(
             ["git", "ls-files", "--error-unmatch", path.relative_to(REPO_ROOT).as_posix()],

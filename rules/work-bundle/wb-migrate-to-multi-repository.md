@@ -15,43 +15,31 @@ requires:
 
 ## Purpose
 
-Require dry-run-first, source-preserving, recoverable migration from a supported single-repository workspace to a supported multi-repository workspace.
+Route single-to-multi requests through current metadata-v4 transactions without reviving the retired metadata-v3 topology producer.
 
 ## Must
 
-- Invoke `wb-migrate-to-multi-repository` with explicit source `project_root`, target `workspace_root`, workspace slug, repository identity/name, working branch, and base ref.
-- Keep the authority-copy source distinct from the primary Git origin. When the authority root is not Git-backed, require an explicit origin selected from its declared reusable source repositories and preserve both states independently.
-- Classify legacy topology from both workspace metadata and the bootstrap-resolved registry. Permit in-place metadata migration only when the evidence is unambiguously single-repository; route multiple repositories here and block identity disagreement or proposal drift.
-- Run inspect and dry-run proposal before explicit apply and report source repository and nested `.work-bundle` Git state separately. Require the exact proposal-derived accepted-baseline ID before applying either dirty state.
-- Preserve source repository, branch, worktree, `.work-bundle`, registry entry, script utilities, and credential store unchanged until target verification passes.
-- Copy and verify WorkBundle state and indexed workspace utilities without following unsafe symlinks or treating transient caches as authority.
-- Create an empty protected target credential store; require separate secure local transfer or recreation and never copy credential content automatically.
-- Provision a workspace-local Git control store and named member worktree, then publish registry and metadata only after target verification.
-- Verify SessionStart discovery, member preflight, workspace-local Git control, staged metadata/registry identities, resources, and source preservation before publishing any active state.
-- Publish metadata v3 and the bootstrap-resolved locator registry atomically or recoverably after final verification, with before/after identity and digest evidence.
-- Treat a provisioned checkout in `verified` state as internal and incomplete. A public `provision-member` success requires metadata and registry publication; matching verified retries resume publication and published retries replay without writes.
-- Treat an exact verified checkout without a recovery record as an older incomplete WorkBundle checkout only when workspace-local control, origin, repository ID, branch, and base HEAD all match. Resume publication without claiming the adopted paths as rollback-owned; keep all non-matching paths as collisions.
-- Permit `cleanup-member` to remove only recorded, unpublished, transaction-owned checkout/control paths. Never use cleanup to deregister published members or delete unrecorded paths.
-- Record partial failure outside disposable owned paths as a redacted recoverable transaction supporting idempotent retry or rollback of migration-owned target paths only.
-- Return an already published retry from the persisted complete result with the same transaction identity/context and no metadata, registry, target, or recovery-record write.
+- Treat `migrate-to-multi-repository` as a retired typed refusal and follow its v4 guidance.
+- For a new multi-repository workspace, use `init-workspace --mode multi-repository`; validate its portable metadata and matching device bindings before publication.
+- For metadata v2/v3 input, use `migrate-control-plane` or `migrate-registered-projects` and require the exact accepted proposal or plan identity before apply.
+- For an existing metadata-v4 workspace, use the proposal-bound `add-workspace-member` transaction.
+- Preserve source repositories and unrelated workspace files, and keep portable topology separate from device-local paths and observations.
+- Publish metadata v4 directly and validate the portable/device-binding join by stable workspace and repository IDs.
 
 ## Must Not
 
-- Do not commit, clean, stash, reset, delete, deregister, relocate, or silently change the source workspace or repository.
-- Do not create a direct linked worktree whose Git common directory remains outside `workspace_root`.
-- Do not publish a false active target registry entry or reuse conflicting paths or branches.
-- Do not let `migrate-project --force` override topology classification or report public provisioning success while metadata or registry publication is pending.
-- Do not delete the recovery record when rolling back transaction-owned target paths.
+- Do not invoke the historical topology migration module or publish metadata v3 as a current state.
+- Do not use `provision-member` or `cleanup-member`; both are retired v3-mutating routes.
+- Do not infer a device binding from a repository locator or permit a member path or Git common directory to escape `workspace_root`.
+- Do not commit, clean, stash, reset, delete, deregister, relocate, or silently change a source repository.
 - Do not copy, print, index, delegate, or archive credential material.
 
 ## Validation
 
-- Verify source preservation, copy inventory/digests, script-index consistency, credential exclusion, AGENTS merge, and target resource protection.
-- Verify member path and absolute Git common directory are within `workspace_root`, branch/base/HEAD evidence matches, and metadata/registry converge.
-- Verify SessionStart discovery and per-member preflight from nested target paths.
-- Verify multi-source legacy input routes to this workflow and public member results never combine `status: passed` with pending publication.
-- Verify failure recovery touches only transaction-owned target paths and leaves source authority active.
+- Verify the selected v4 command, its dry-run/apply identity when applicable, schema-valid metadata v4, matching device bindings, and source preservation.
+- Verify legacy v2/v3 input is admitted only by an explicit migration command and no intermediate metadata v3 state is published.
+- Verify member and Git common-directory paths remain inside `workspace_root` and observations match live Git state before use.
 
 ## On Violation
 
-Stop migration publication, preserve the source unchanged, record a redacted recoverable failure, and permit only idempotent retry or explicit rollback of validated migration-owned target paths.
+Stop publication, preserve the source unchanged, and route to the matching v4 initialization, migration, member-add, attach, or doctor command.

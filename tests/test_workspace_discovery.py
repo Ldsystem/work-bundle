@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -31,38 +36,80 @@ session_hook = load_module(
 )
 
 
-def write_workspace_metadata(workspace: Path, member: Path) -> None:
+def write_workspace_metadata(workspace: Path, member: Path, *, mode: str = "multi-repository") -> None:
     metadata = workspace / ".work-bundle" / "project.yaml"
     metadata.parent.mkdir(parents=True)
-    metadata.write_text(
-        "\n".join(
-            [
-                "metadata_version: 3",
-                f"workspace_root: {workspace.resolve()}",
-                "workspace_mode: multi-repository",
-                "source_repositories:",
-                "  - id: member-main",
-                f"    project_root: {member.resolve()}",
-                "    origin_id: origin-main",
-                "    checkout_kind: managed-worktree",
-                "    expected_branch: feature/workspace",
-                "    observed_head: abc123",
-                "    baseline_status: current",
-                "",
-            ]
-        ),
+    binding = {"type": "root"} if mode == "single-repository" else {"type": "member", "name": member.name}
+    document = {
+        "metadata_version": 4,
+        "authority": "canonical",
+        "workspace": {"id": "wb-discovery", "slug": "demo", "mode": mode},
+        "control_plane": {"schema_version": 1, "repository": {"remote": ""}, "sync_policy": {"mode": "manual"}},
+        "source_repositories": [{
+            "id": "member-main",
+            "role": "source",
+            "locator": {"type": "manual", "value": "fixture"},
+            "default_branch": "feature/workspace",
+            "workspace_binding": binding,
+            "materialization": {"required": True},
+            "operation_policy": "inherit",
+        }],
+    }
+    metadata.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    config = Path.home() / ".work-bundle"
+    registry = config / "registry/projects.yaml"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text(yaml.safe_dump({
+        "registry_schema_version": 1,
+        "projects": [{"slug": "demo", "aliases": []}],
+        "device_bindings": {"wb-discovery": {
+            "slug": "demo",
+            "workspace_root": str(workspace.resolve()),
+            "control_plane_path": str(metadata.parent.resolve()),
+            "control_plane_remote": "",
+            "observed_control_plane_head": "",
+            "repositories": {"member-main": {
+                "project_root": str(member.resolve()),
+                "checkout_kind": "manual",
+                "observed_branch": "",
+                "observed_head": "",
+                "observed_at": "2026-09-19T00:00:00Z",
+                "git_common_dir": "",
+            }},
+        }},
+    }, sort_keys=False), encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    config = home / ".work-bundle"
+    config.mkdir(parents=True)
+    (config / "bootstrap.yaml").write_text(
+        "\n".join([
+            "bootstrap_version: v1",
+            "authority: canonical",
+            f"work_bundle_root: {REPO_ROOT}",
+            'project_registry: "$work_bundle_config_root/registry/projects.yaml"',
+            'skill_registry: "$work_bundle_config_root/registry/skill-registry.yaml"',
+            "",
+        ]),
         encoding="utf-8",
     )
+    monkeypatch.setenv("HOME", str(home))
 
 
-def test_nested_member_resolves_workspace_and_member_independently(tmp_path: Path) -> None:
+def test_nested_member_resolves_workspace_and_member_independently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     workspace = tmp_path / "workspace"
     member = workspace / "service-api"
     deep = member / "src" / "feature"
     deep.mkdir(parents=True)
     write_workspace_metadata(workspace, member)
 
-    args = argparse.Namespace(workspace_root=None, project_root=str(deep))
+    monkeypatch.chdir(deep)
+    args = argparse.Namespace(workspace_root=None, project_root=None)
 
     assert orchestration_core.resolve_workspace_root(args) == workspace.resolve()
     assert orchestration_core.resolve_member_project_root(args) == member.resolve()
@@ -96,44 +143,93 @@ def test_keep_summarizing_uses_workspace_knowledge_from_member_path(tmp_path: Pa
     args = argparse.Namespace(
         knowledge_root=None,
         workspace_root=None,
-        project_root=str(deep),
-        cwd=None,
+        project_root=None,
+        cwd=str(deep),
         registry_file=None,
     )
 
     assert keep_core.resolve_workspace_root(deep) == workspace.resolve()
-    assert keep_core.resolve_member_project_root(workspace, deep) == member.resolve()
     assert keep_core.resolve_knowledge_base(args) == (
         workspace.resolve() / ".work-bundle" / "knowledge",
         "work-bundle",
     )
 
 
-def test_single_repository_compatibility_resolves_same_root(tmp_path: Path) -> None:
+def test_keep_summarizing_cwd_requires_matching_device_binding(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    member = workspace / "member"
+    deep = member / "nested"
+    deep.mkdir(parents=True)
+    write_workspace_metadata(workspace, member)
+    registry = Path.home() / ".work-bundle/registry/projects.yaml"
+    document = yaml.safe_load(registry.read_text(encoding="utf-8"))
+    document["device_bindings"] = {}
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    args = argparse.Namespace(
+        knowledge_root=None,
+        workspace_root=None,
+        project_root=None,
+        cwd=str(deep),
+        registry_file=None,
+    )
+
+    with pytest.raises(SystemExit, match="WB_INFRASTRUCTURE_WORKSPACE_BINDING_MISSING"):
+        keep_core.resolve_knowledge_base(args)
+
+
+def test_keep_summarizing_resolve_and_doctor_use_v4_anchor_join(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    member = workspace / "member"
+    deep = member / "nested"
+    deep.mkdir(parents=True)
+    write_workspace_metadata(workspace, member)
+    knowledge = workspace / ".work-bundle/knowledge"
+    knowledge.mkdir()
+    knowledge.joinpath("project.yaml").write_text("slug: demo\n", encoding="utf-8")
+    dispatcher = REPO_ROOT / "scripts/keep-summarizing/dispatcher.py"
+    env = os.environ.copy()
+
+    resolved = subprocess.run(
+        [sys.executable, str(dispatcher), "resolve", "--cwd", str(deep)],
+        env=env, check=False, capture_output=True, text=True,
+    )
+    assert resolved.returncode == 0, resolved.stdout + resolved.stderr
+    assert resolved.stdout.strip() == "demo"
+
+    healthy = subprocess.run(
+        [sys.executable, str(dispatcher), "doctor", "--project", "demo", "--cwd", str(deep)],
+        env=env, check=False, capture_output=True, text=True,
+    )
+    assert healthy.returncode == 0, healthy.stdout + healthy.stderr
+    assert healthy.stdout.strip() == "ok"
+
+    registry = Path.home() / ".work-bundle/registry/projects.yaml"
+    document = yaml.safe_load(registry.read_text(encoding="utf-8"))
+    document["device_bindings"] = {}
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    missing = subprocess.run(
+        [sys.executable, str(dispatcher), "resolve", "--cwd", str(deep)],
+        env=env, check=False, capture_output=True, text=True,
+    )
+    assert missing.returncode != 0
+    assert "WB_INFRASTRUCTURE_WORKSPACE_BINDING_MISSING" in missing.stderr
+
+
+def test_single_repository_compatibility_resolves_same_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project = tmp_path / "single"
     deep = project / "src" / "nested"
     deep.mkdir(parents=True)
-    metadata = project / ".work-bundle" / "project.yaml"
-    metadata.parent.mkdir(parents=True)
-    metadata.write_text(
-        "\n".join(
-            [
-                "metadata_version: 2",
-                "source_repositories:",
-                "  - id: single-main",
-                f"    path: {project.resolve()}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    write_workspace_metadata(project, project, mode="single-repository")
 
-    args = argparse.Namespace(workspace_root=None, project_root=str(deep))
+    monkeypatch.chdir(deep)
+    args = argparse.Namespace(workspace_root=None, project_root=None)
     assert orchestration_core.resolve_workspace_root(args) == project.resolve()
     assert orchestration_core.resolve_member_project_root(args) == project.resolve()
 
 
-def test_orchestration_registry_fallback_maps_origin_to_workspace(
+def test_orchestration_does_not_use_registry_origin_as_workspace_fallback(
     tmp_path: Path, monkeypatch
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -142,29 +238,8 @@ def test_orchestration_registry_fallback_maps_origin_to_workspace(
     member.mkdir(parents=True)
     origin.mkdir(parents=True)
     write_workspace_metadata(workspace, member)
-    config = tmp_path / "config"
-    registry = config / "registry" / "projects.yaml"
-    registry.parent.mkdir(parents=True)
-    registry.write_text(
-        "\n".join(
-            [
-                "projects:",
-                "  - slug: demo",
-                f"    workspace_root: {workspace.resolve()}",
-                "    repository_origins:",
-                "      - id: origin-main",
-                f"        origin_path: {(tmp_path / 'origin').resolve()}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (config / "bootstrap.yaml").write_text(
-        f"project_registry: {registry.resolve()}\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("WB_CONFIG_ROOT", str(config))
     monkeypatch.chdir(origin)
 
     args = argparse.Namespace(workspace_root=None, project_root=None)
-    assert orchestration_core.resolve_workspace_root(args) == workspace.resolve()
+    with pytest.raises(SystemExit, match="WB_INFRASTRUCTURE_WORKSPACE_NOT_FOUND"):
+        orchestration_core.resolve_workspace_root(args)

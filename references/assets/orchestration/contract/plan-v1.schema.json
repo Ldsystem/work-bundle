@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "plan-v1",
+  "type": "object",
+  "required": ["artifact_type", "schema_version", "id", "goal", "purpose", "component", "version", "source_spec_id", "status", "date_created", "last_updated", "source_coverage", "authority", "strategy", "phase_index", "dependency_graph", "risks", "validation_strategy", "completion_criteria", "knowledge_base_update", "semantic_loop", "execution_workspace"],
+  "properties": {
+    "artifact_type": {"const": "root-plan"},
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^plan-[a-z0-9][a-z0-9-]*$"},
+    "goal": {"type": "string", "minLength": 1},
+    "purpose": {"type": "string", "minLength": 1},
+    "component": {"type": "string", "minLength": 1},
+    "version": {"type": "string", "minLength": 1},
+    "source_spec_id": {"type": "string", "pattern": "^spec-[a-z0-9][a-z0-9-]*$"},
+    "status": {"enum": ["draft", "verified", "superseded"]},
+    "date_created": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+    "last_updated": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+    "source_coverage": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/coverage"}},
+    "authority": {"type": "object", "minProperties": 1},
+    "strategy": {"type": "object", "minProperties": 1},
+    "phase_index": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["id", "order"], "properties": {"id": {"type": "string", "pattern": "^phase-[a-z0-9][a-z0-9-]*$"}, "order": {"type": "integer", "minimum": 1}}, "additionalProperties": true}},
+    "dependency_graph": {"type": "object"},
+    "risks": {"type": "array"},
+    "validation_strategy": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["id", "kind"], "properties": {"id": {"type": "string", "minLength": 1}, "kind": {"type": "string", "minLength": 1}}, "additionalProperties": true}},
+    "completion_criteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "knowledge_base_update": {"type": "object", "minProperties": 1},
+    "semantic_loop": {"type": "object", "minProperties": 1},
+    "execution_workspace": {
+      "type": "object",
+      "required": ["isolation", "profile", "cleanup"],
+      "properties": {
+        "isolation": {"enum": ["required", "preferred", "existing"]},
+        "profile": {"type": "string", "minLength": 1},
+        "cleanup": {"enum": ["after_integration", "manual"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "coverage": {
+      "type": "object",
+      "required": ["source_id", "obligation_kind"],
+      "properties": {
+        "source_id": {"type": "string", "pattern": "^[A-Z][A-Z0-9_-]*-[0-9]+[A-Z]?$"},
+        "obligation_kind": {"type": "string", "minLength": 1},
+        "phase_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^phase-[a-z0-9][a-z0-9-]*$"}, "uniqueItems": true},
+        "task_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^task-[a-z0-9][a-z0-9-]*$"}, "uniqueItems": true},
+        "validation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      },
+      "anyOf": [{"required": ["phase_ids"]}, {"required": ["task_ids"]}],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "executor-result-v1",
+  "type": "object",
+  "required": ["artifact_type", "schema_version", "id", "plan_id", "phase_id", "task_id", "result_state", "summary", "changes", "validation_observations", "unresolved_product_blockers", "task_fit", "repository_observations", "codegraph_observations", "delegation", "knowledge_disposition", "date_created", "last_updated"],
+  "properties": {
+    "artifact_type": {"const": "executor-result"},
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^result-[a-z0-9][a-z0-9-]*$"},
+    "plan_id": {"type": "string", "pattern": "^plan-[a-z0-9][a-z0-9-]*$"},
+    "phase_id": {"type": ["string", "null"]},
+    "task_id": {"type": "string", "pattern": "^task-[a-z0-9][a-z0-9-]*$"},
+    "result_state": {"enum": ["implemented", "partial", "blocked"]},
+    "summary": {"type": "string", "minLength": 1},
+    "changes": {"type": "array", "items": {"$ref": "#/$defs/change"}},
+    "validation_observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+    "unresolved_product_blockers": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "task_fit": {"type": "object", "required": ["status", "summary"], "properties": {"status": {"enum": ["complete", "partial", "blocked"]}, "summary": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+    "repository_observations": {"type": "object"},
+    "codegraph_observations": {"type": "object"},
+    "delegation": {"type": "object"},
+    "knowledge_disposition": {"$ref": "#/$defs/knowledge"},
+    "date_created": {"type": "string", "format": "date"},
+    "last_updated": {"type": "string", "format": "date"}
+  },
+  "$defs": {
+    "change": {"type": "object", "required": ["path", "summary"], "properties": {"path": {"type": "string", "minLength": 1}, "summary": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+    "observation": {"type": "object", "required": ["id", "result", "summary"], "properties": {"id": {"type": "string", "minLength": 1}, "command": {"type": "string"}, "result": {"enum": ["passed", "failed", "blocked", "not-run"]}, "summary": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+    "knowledge": {"type": "object", "required": ["action", "reason"], "properties": {"action": {"enum": ["none", "update", "supersede", "reclassify"]}, "reason": {"type": "string", "minLength": 1}}, "additionalProperties": false}
+  },
+  "additionalProperties": false
+}

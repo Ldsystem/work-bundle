@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "artifact-family-catalog-v1",
+  "type": "object",
+  "required": ["catalog_id", "schema_version", "families"],
+  "properties": {
+    "catalog_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*-v[0-9]+$"},
+    "schema_version": {"const": 1},
+    "families": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/family"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "family": {
+      "type": "object",
+      "required": ["name", "schema", "representation", "anchor", "locator", "identity", "relationships", "lifecycle", "index"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "schema": {
+          "type": "object",
+          "required": ["id", "path"],
+          "properties": {
+            "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*-v[0-9]+$"},
+            "path": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "representation": {"enum": ["yaml", "markdown-front-matter"]},
+        "anchor": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "locator": {
+          "type": "object",
+          "required": ["template", "variables"],
+          "properties": {
+            "template": {"type": "string", "minLength": 1},
+            "variables": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "identity": {
+          "type": "object",
+          "required": ["field", "pattern"],
+          "properties": {
+            "field": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+            "pattern": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "relationships": {
+          "type": "object",
+          "required": ["bindings"],
+          "properties": {
+            "bindings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "field", "required"],
+                "properties": {
+                  "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+                  "field": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+                  "required": {"type": "boolean"}
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "lifecycle": {
+          "type": "object",
+          "required": ["authority", "states", "transitions"],
+          "properties": {
+            "authority": {"enum": ["location", "immutable-release"]},
+            "states": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+            "transitions": {
+              "type": "object",
+              "additionalProperties": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+            }
+          },
+          "additionalProperties": false
+        },
+        "index": {
+          "oneOf": [
+            {"type": "object", "required": ["policy"], "properties": {"policy": {"const": "none"}}, "additionalProperties": false},
+            {
+              "type": "object",
+              "required": ["path", "source_states", "projection", "format"],
+              "properties": {
+                "path": {"type": "string", "minLength": 1},
+                "source_states": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+                "projection": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+                "format": {"const": "jsonl"}
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

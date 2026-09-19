@@ -3,6 +3,7 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #   "pyyaml==6.0.3",
+#   "jsonschema==4.25.1",
 #   "sqlite-vec==0.1.9",
 #   "fastembed==0.8.0",
 # ]
@@ -26,6 +27,7 @@ from invocation_observation import invoke_observed
 
 RUNTIME_DEPENDENCIES = (
     ("yaml", "pyyaml"),
+    ("jsonschema", "jsonschema"),
     ("sqlite_vec", "sqlite-vec"),
     ("fastembed", "fastembed"),
 )

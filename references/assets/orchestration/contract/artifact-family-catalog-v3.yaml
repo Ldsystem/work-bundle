@@ -1,0 +1,91 @@
+catalog_id: artifact-family-catalog-v3
+schema_version: 1
+families:
+  - name: artifact-family-catalog
+    schema: {id: artifact-family-catalog-v1, path: artifact-family-catalog-v1.schema.json}
+    representation: yaml
+    anchor: toolkit_root
+    locator: {template: references/assets/orchestration/contract/artifact-family-catalog-v3.yaml, variables: []}
+    identity: {field: catalog_id, pattern: '^artifact-family-catalog-v[0-9]+$'}
+    relationships: {bindings: []}
+    lifecycle: {authority: immutable-release, states: [released], transitions: {}}
+    index: {policy: none}
+  - name: specification
+    schema: {id: specification-v1, path: specification-v1.schema.json}
+    representation: markdown-front-matter
+    anchor: workspace_root
+    locator:
+      template: .work-bundle/orchestration/spec/{state}/{id}.spec.md
+      variables: [state, id]
+    identity: {field: id, pattern: '^spec-[a-z0-9][a-z0-9-]*$'}
+    relationships: {bindings: []}
+    lifecycle:
+      authority: location
+      states: [active, archived]
+      transitions: {active: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/spec/index.jsonl
+      source_states: [active, archived]
+      projection: [id, title, status, purpose, component, date_created, last_updated]
+      format: jsonl
+  - name: root-plan
+    schema: {id: plan-v1, path: plan-v1.schema.json}
+    representation: yaml
+    anchor: workspace_root
+    locator:
+      template: .work-bundle/orchestration/plan/{state}/{id}.plan.yaml
+      variables: [state, id]
+    identity: {field: id, pattern: '^plan-[a-z0-9][a-z0-9-]*$'}
+    relationships:
+      bindings:
+        - {name: source_spec, field: source_spec_id, required: true}
+    lifecycle:
+      authority: location
+      states: [active, archived]
+      transitions: {active: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/plan/root-plan-index.jsonl
+      source_states: [active, archived]
+      projection: [artifact_type, id, source_spec_id, goal, status, date_created, last_updated]
+      format: jsonl
+  - name: phase
+    schema: {id: phase-v1, path: phase-v1.schema.json}
+    representation: yaml
+    anchor: workspace_root
+    locator:
+      template: .work-bundle/orchestration/plan/{state}/{plan}/{id}.phase.yaml
+      variables: [state, plan, id]
+    identity: {field: id, pattern: '^phase-[a-z0-9][a-z0-9-]*$'}
+    relationships:
+      bindings:
+        - {name: plan, field: plan_id, required: true}
+    lifecycle:
+      authority: location
+      states: [active, archived]
+      transitions: {active: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/plan/phase-index.jsonl
+      source_states: [active, archived]
+      projection: [artifact_type, id, plan_id, name, status, order, date_created, last_updated]
+      format: jsonl
+  - name: task
+    schema: {id: task-v1, path: task-v1.schema.json}
+    representation: yaml
+    anchor: workspace_root
+    locator:
+      template: .work-bundle/orchestration/plan/{state}/{plan}/{phase}/{id}.task.yaml
+      variables: [state, plan, phase, id]
+    identity: {field: id, pattern: '^task-[a-z0-9][a-z0-9-]*$'}
+    relationships:
+      bindings:
+        - {name: plan, field: plan_id, required: true}
+        - {name: phase, field: phase_id, required: true}
+    lifecycle:
+      authority: location
+      states: [active, archived]
+      transitions: {active: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/plan/task-index.jsonl
+      source_states: [active, archived]
+      projection: [artifact_type, id, plan_id, phase_id, name, status, order, task_type, date_created, last_updated]
+      format: jsonl

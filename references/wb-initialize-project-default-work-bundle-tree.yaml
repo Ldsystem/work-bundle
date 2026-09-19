@@ -12,14 +12,21 @@ roots:
   - .work-bundle/orchestration/spec/archived
   - .work-bundle/orchestration/plan/active
   - .work-bundle/orchestration/plan/archived
-  - .work-bundle/orchestration/handoff/orchestration/active
-  - .work-bundle/orchestration/handoff/orchestration/archived
-  - .work-bundle/orchestration/handoff/executor/active
-  - .work-bundle/orchestration/handoff/executor/archived
+  - .work-bundle/orchestration/result/executor/active
+  - .work-bundle/orchestration/result/executor/reviewed
+  - .work-bundle/orchestration/result/executor/superseded
+  - .work-bundle/orchestration/result/executor/archived
+  - .work-bundle/orchestration/result/accepted/active
+  - .work-bundle/orchestration/result/accepted/superseded
+  - .work-bundle/orchestration/result/accepted/archived
+  - .work-bundle/orchestration/review/implementation/active
+  - .work-bundle/orchestration/review/implementation/superseded
+  - .work-bundle/orchestration/review/implementation/archived
+  - .work-bundle/orchestration/review/final/active
+  - .work-bundle/orchestration/review/final/archived
   - .work-bundle/orchestration/docs
   - .work-bundle/orchestration/principles
   - .work-bundle/orchestration/templates
-  - .work-bundle/orchestration/reviews
   - .work-bundle/orchestration/execution-state
 multi_repository_workspace_resources:
   - path: script/index.yaml

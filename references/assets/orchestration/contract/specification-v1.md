@@ -1,10 +1,14 @@
 ---
+artifact_type: specification
+schema_version: 1
 id: spec-YYYYMMDD-001
 title: [Concise Title Describing the Specification's Focus]
 project: <project-slug>
 status: draft
 date_created: [YYYY-MM-DD]
 last_updated: [Optional: YYYY-MM-DD]
+purpose: [Concise implementation purpose]
+component: [Owning component or bounded surface]
 source_knowledge:
   - path: .work-bundle/knowledge/notes/...
     constraint: [task-relevant accepted decision or constraint]
@@ -16,6 +20,8 @@ execution_workspace:
   profile: default
   cleanup: after_integration|manual
 ---
+
+The immutable `specification-v1` schema owns this structural front matter. The agent supplies the human-readable semantic body and semantic metadata, while `scripts/orch.py write-spec` owns family, schema version, identity, qualification, timestamps, canonical `.work-bundle/orchestration/spec/{state}/{id}.spec.md` location, atomic write, lifecycle movement, and index projection. Caller-authored structural overrides and filenames are invalid.
 
 The front-matter `source_knowledge` contains accepted authority only, as established by bounded retrieval and Source Context reconciliation. Each accepted entry carries a provenance `path` and the already-reconciled task-relevant `constraint`. Candidate, background, blocked, and superseded knowledge remains classified in Source Context or Open Questions and must not appear in this carried-authority list. Downstream planning allocates deterministic `AUTH-NNN` aliases by list order so executor packets remain traceable without exposing knowledge paths. The compiler resolves each allocated alias to `AUTH-NNN: <carried constraint>` in the task brief and review package.
 
@@ -47,7 +53,7 @@ After the initial shell exists and before broad repository evidence gathering, r
 Required evidence:
 
 - `.work-bundle/project.yaml` availability and `metadata_version`.
-- Source repository `id`, path, Git capability, expected `working_branch`, actual branch, expected `last_commit_id`, actual HEAD commit, branch status, and commit/baseline status when Git-backed.
+- Source repository `id`, device-bound project root, Git capability, portable default branch, device-observed branch/HEAD, live branch/HEAD, and accepted-baseline status when Git-backed.
 - Registry locator consistency when the bootstrap-resolved project registry is used.
 - CodeGraph support, `.codegraph/` marker presence, index status, synced commit when available, and `no-index` or `not-indexed` fallback when absent.
 
@@ -263,7 +269,9 @@ Do not instruct specification authors or executors to write durable knowledge di
 - The specification remains self-contained and does not require broad repository exploration before the shell exists.
 - The source context records neutral cross-stage retrieval anchors or a retrieval gap, and any named retrieval policy is used only for classification/output grouping.
 - The specification carries accepted authority context forward so downstream planning and execution do not need to read `.work-bundle/knowledge/`.
-- The specification records project metadata preflight evidence including `working_branch`, `last_commit_id`, branch status, baseline status, and CodeGraph no-index fallback when applicable.
+- The specification records metadata-v4 portable topology, device-local branch/HEAD observations, live branch/HEAD, accepted-baseline status, and CodeGraph no-index fallback when applicable.
+- A distinct reviewer directly compares the concrete specification with the user purpose, accepted authority, workspace evidence, requirements, constraints, interfaces, acceptance criteria, validation targets, material conflicts, open questions, and scope.
+- Supporting evidence, tests, doctors, indexes, handoffs, receipts, and knowledge state provide evidence but do not issue the semantic verdict.
 - The specification does not encode artifact-version counting as post-execution review policy; any residual forced-closure specification preserves unresolved claims without reopening product work.
 - WorkBundle project specifications record related active defects and expected review closure when applicable.
 - Material non-authority or opposing evidence is visible without shaping requirements unless resolved by user decision or accepted authority.

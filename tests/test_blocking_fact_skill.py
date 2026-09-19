@@ -58,15 +58,13 @@ def test_existing_admission_consumes_targeted_resolution_and_exemptions(tmp_path
     metadata.parent.mkdir()
     for name in ("b1.md", "b2.md"):
         (tmp_path / name).write_text("# Selected product requirements\n")
-    old_closure = {"origin_plan": "old-flow", "closure_outcome": "closed_with_blockers"}
     control = {
         "schema_version": 1,
-        "post_execution_review_round_limit": 5,
         "blockers": [
-            {"id": "B1", "status": "active", "specification": "b1.md", "reason": "missing receipt"},
+            {"id": "B1", "status": "active", "specification": "b1.md", "reason": "unresolved requirement"},
             {"id": "B2", "status": "active", "specification": "b2.md", "reason": "unrelated"},
         ],
-        "closed_flows": [old_closure.copy()],
+        "operator_notes": {"preserve": True},
         "implementation_exemptions": [],
     }
     data = {"metadata_version": 4, "orchestration_control": control, "custom": {"keep": True}}
@@ -83,7 +81,7 @@ def test_existing_admission_consumes_targeted_resolution_and_exemptions(tmp_path
     save()
     with pytest.raises(bounded_closure.BoundedClosureError, match="blocker=B2"):
         admit()
-    # Supply a later agent decision only for B1, without a receipt or review file.
+    # Supply a later agent decision only for B1, without auxiliary state.
     control["implementation_exemptions"] = []
     control["blockers"][0].update(status="resolved", resolution={"judgment": "semantic pass"})
     save()
@@ -91,7 +89,7 @@ def test_existing_admission_consumes_targeted_resolution_and_exemptions(tmp_path
         admit()
     reread = yaml.safe_load(metadata.read_text())
     assert reread["custom"] == {"keep": True}
-    assert reread["orchestration_control"]["closed_flows"] == [old_closure]
+    assert reread["orchestration_control"]["operator_notes"] == {"preserve": True}
     # An independent explicit exemption for B2 demonstrates B1 no longer gates admission.
     control["implementation_exemptions"] = [{"blocker_id": "B2", "flow_id": "repair-B1", "status": "active"}]
     save()

@@ -1,0 +1,162 @@
+catalog_id: artifact-family-catalog-v4
+schema_version: 1
+families:
+  - name: artifact-family-catalog
+    schema: {id: artifact-family-catalog-v1, path: artifact-family-catalog-v1.schema.json}
+    representation: yaml
+    anchor: toolkit_root
+    locator: {template: references/assets/orchestration/contract/artifact-family-catalog-v4.yaml, variables: []}
+    identity: {field: catalog_id, pattern: '^artifact-family-catalog-v[0-9]+$'}
+    relationships: {bindings: []}
+    lifecycle: {authority: immutable-release, states: [released], transitions: {}}
+    index: {policy: none}
+  - name: specification
+    schema: {id: specification-v1, path: specification-v1.schema.json}
+    representation: markdown-front-matter
+    anchor: workspace_root
+    locator: {template: '.work-bundle/orchestration/spec/{state}/{id}.spec.md', variables: [state, id]}
+    identity: {field: id, pattern: '^spec-[a-z0-9][a-z0-9-]*$'}
+    relationships: {bindings: []}
+    lifecycle:
+      authority: location
+      states: [active, archived]
+      transitions: {active: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/spec/index.jsonl
+      source_states: [active, archived]
+      projection: [id, title, status, purpose, component, date_created, last_updated]
+      format: jsonl
+  - name: root-plan
+    schema: {id: plan-v1, path: plan-v1.schema.json}
+    representation: yaml
+    anchor: workspace_root
+    locator: {template: '.work-bundle/orchestration/plan/{state}/{id}.plan.yaml', variables: [state, id]}
+    identity: {field: id, pattern: '^plan-[a-z0-9][a-z0-9-]*$'}
+    relationships:
+      bindings:
+        - {name: source_spec, field: source_spec_id, required: true}
+    lifecycle:
+      authority: location
+      states: [active, archived]
+      transitions: {active: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/plan/root-plan-index.jsonl
+      source_states: [active, archived]
+      projection: [artifact_type, id, source_spec_id, goal, status, date_created, last_updated]
+      format: jsonl
+  - name: phase
+    schema: {id: phase-v1, path: phase-v1.schema.json}
+    representation: yaml
+    anchor: workspace_root
+    locator: {template: '.work-bundle/orchestration/plan/{state}/{plan}/{id}.phase.yaml', variables: [state, plan, id]}
+    identity: {field: id, pattern: '^phase-[a-z0-9][a-z0-9-]*$'}
+    relationships:
+      bindings:
+        - {name: plan, field: plan_id, required: true}
+    lifecycle:
+      authority: location
+      states: [active, archived]
+      transitions: {active: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/plan/phase-index.jsonl
+      source_states: [active, archived]
+      projection: [artifact_type, id, plan_id, name, status, order, date_created, last_updated]
+      format: jsonl
+  - name: task
+    schema: {id: task-v1, path: task-v1.schema.json}
+    representation: yaml
+    anchor: workspace_root
+    locator: {template: '.work-bundle/orchestration/plan/{state}/{plan}/{phase}/{id}.task.yaml', variables: [state, plan, phase, id]}
+    identity: {field: id, pattern: '^task-[a-z0-9][a-z0-9-]*$'}
+    relationships:
+      bindings:
+        - {name: plan, field: plan_id, required: true}
+        - {name: phase, field: phase_id, required: true}
+    lifecycle:
+      authority: location
+      states: [active, archived]
+      transitions: {active: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/plan/task-index.jsonl
+      source_states: [active, archived]
+      projection: [artifact_type, id, plan_id, phase_id, name, status, order, task_type, date_created, last_updated]
+      format: jsonl
+  - name: executor-result
+    schema: {id: executor-result-v1, path: executor-result-v1.schema.json}
+    representation: yaml
+    anchor: workspace_root
+    locator: {template: '.work-bundle/orchestration/result/executor/{state}/{plan}/{task}/{id}.executor-result.yaml', variables: [state, plan, task, id]}
+    identity: {field: id, pattern: '^result-[a-z0-9][a-z0-9-]*$'}
+    relationships:
+      bindings:
+        - {name: plan, field: plan_id, required: true}
+        - {name: task, field: task_id, required: true}
+    lifecycle:
+      authority: location
+      states: [active, reviewed, superseded, archived]
+      transitions:
+        active: [reviewed, superseded, archived]
+        reviewed: [superseded, archived]
+        superseded: [archived]
+        archived: []
+    index:
+      path: .work-bundle/orchestration/result/executor/executor-result-index.jsonl
+      source_states: [active, reviewed, superseded, archived]
+      projection: [artifact_type, id, plan_id, phase_id, task_id, result_state, date_created, last_updated]
+      format: jsonl
+  - name: implementation-review
+    schema: {id: implementation-review-v1, path: implementation-review-v1.schema.json}
+    representation: yaml
+    anchor: workspace_root
+    locator: {template: '.work-bundle/orchestration/review/implementation/{state}/{plan}/{id}.implementation-review.yaml', variables: [state, plan, id]}
+    identity: {field: id, pattern: '^review-[a-z0-9][a-z0-9-]*$'}
+    relationships:
+      bindings:
+        - {name: plan, field: plan_id, required: true}
+        - {name: task, field: task_id, required: false}
+    lifecycle:
+      authority: location
+      states: [active, superseded, archived]
+      transitions: {active: [superseded, archived], superseded: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/review/implementation/implementation-review-index.jsonl
+      source_states: [active, superseded, archived]
+      projection: [artifact_type, id, plan_id, task_id, scope, verdict, target_sha256, date_created, last_updated]
+      format: jsonl
+  - name: accepted-task-result
+    schema: {id: accepted-task-result-v1, path: accepted-task-result-v1.schema.json}
+    representation: yaml
+    anchor: workspace_root
+    locator: {template: '.work-bundle/orchestration/result/accepted/{state}/{plan}/{task}/{id}.accepted-task-result.yaml', variables: [state, plan, task, id]}
+    identity: {field: id, pattern: '^accepted-[a-z0-9][a-z0-9-]*$'}
+    relationships:
+      bindings:
+        - {name: plan, field: plan_id, required: true}
+        - {name: task, field: task_id, required: true}
+    lifecycle:
+      authority: location
+      states: [active, superseded, archived]
+      transitions: {active: [superseded, archived], superseded: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/result/accepted/accepted-task-result-index.jsonl
+      source_states: [active, superseded, archived]
+      projection: [artifact_type, id, plan_id, task_id, product_sha256, knowledge_action, date_created, last_updated]
+      format: jsonl
+  - name: final-workflow-review
+    schema: {id: final-workflow-review-v1, path: final-workflow-review-v1.schema.json}
+    representation: yaml
+    anchor: workspace_root
+    locator: {template: '.work-bundle/orchestration/review/final/{state}/{plan}/{id}.final-workflow-review.yaml', variables: [state, plan, id]}
+    identity: {field: id, pattern: '^final-[a-z0-9][a-z0-9-]*$'}
+    relationships:
+      bindings:
+        - {name: plan, field: plan_id, required: true}
+    lifecycle:
+      authority: location
+      states: [active, archived]
+      transitions: {active: [archived], archived: []}
+    index:
+      path: .work-bundle/orchestration/review/final/final-workflow-review-index.jsonl
+      source_states: [active, archived]
+      projection: [artifact_type, id, plan_id, verdict, archive_ready, target_sha256, date_created, last_updated]
+      format: jsonl

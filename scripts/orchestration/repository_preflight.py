@@ -6,14 +6,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 import subprocess
 from pathlib import Path
 from typing import Iterable, Mapping
 
-import yaml
-
-from core import project_registry_path, resolve_workspace_root
+from core import _infrastructure, resolve_workspace_root
 
 
 STATUS_COMMAND = ["git", "status", "--porcelain=v1", "--untracked-files=all"]
@@ -67,68 +64,18 @@ def _front_matter_lists(path: Path) -> dict[str, list[str]]:
     return result
 
 
-def _parse_value(value: str) -> object:
-    value = value.strip().strip("'\"")
-    if value == "true":
-        return True
-    if value == "false":
-        return False
-    return value
-
-
-def _metadata_scalar(text: str, key: str) -> str:
-    match = re.search(rf"^{re.escape(key)}:\s*(.*?)\s*$", text, re.MULTILINE)
-    return match.group(1).strip().strip("'\"") if match else ""
-
-
-def _device_binding_repositories(workspace_id: str) -> dict[str, dict[str, object]]:
-    registry = project_registry_path()
-    if not registry.is_file() or not workspace_id:
-        return {}
-    in_bindings = False
-    in_workspace = False
-    in_repositories = False
-    current_repository = ""
-    repositories: dict[str, dict[str, object]] = {}
-    for line in registry.read_text(encoding="utf-8").splitlines():
-        if line == "device_bindings:":
-            in_bindings = True
-            continue
-        if in_bindings and line and not line.startswith(" "):
-            break
-        if not in_bindings:
-            continue
-        if re.match(r"^  [^\s].*:$", line):
-            current_id = line.strip()[:-1].strip("'\"")
-            in_workspace = current_id == workspace_id
-            in_repositories = False
-            current_repository = ""
-            continue
-        if not in_workspace:
-            continue
-        if line == "    repositories:":
-            in_repositories = True
-            continue
-        if in_repositories and re.match(r"^      [^\s].*:$", line):
-            current_repository = line.strip()[:-1].strip("'\"")
-            repositories[current_repository] = {"id": current_repository}
-            continue
-        if in_repositories and current_repository and line.startswith("        ") and ":" in line:
-            key, value = line.strip().split(":", 1)
-            repositories[current_repository][key] = _parse_value(value)
-    return repositories
-
-
 def _v4_metadata_repository_entries(root: Path, text: str) -> list[dict[str, object]]:
     try:
-        document = yaml.safe_load(text)
-    except yaml.YAMLError:
-        return []
-    if not isinstance(document, Mapping):
-        return []
-    workspace = document.get("workspace")
-    workspace_id = str(workspace.get("id") or "") if isinstance(workspace, Mapping) else ""
-    local = _device_binding_repositories(workspace_id)
+        document = _infrastructure.load_workspace_metadata(root)
+        registry = _infrastructure.load_project_registry()
+        binding = _infrastructure.join_workspace_binding(
+            document, registry, expected_workspace_root=root
+        )
+    except _infrastructure.InfrastructureError as exc:
+        raise SystemExit(exc.code) from exc
+    local = binding.get("repositories")
+    if not isinstance(local, Mapping):
+        raise SystemExit("WB_DEVICE_BINDING_REPOSITORIES_MISSING")
     repositories = document.get("source_repositories")
     if not isinstance(repositories, list):
         return []
@@ -179,56 +126,7 @@ def _metadata_repository_entries(root: Path) -> list[dict[str, object]]:
     metadata = root / ".work-bundle" / "project.yaml"
     if not metadata.exists():
         return []
-    text = metadata.read_text(encoding="utf-8")
-    if _metadata_scalar(text, "metadata_version") == "4":
-        return _v4_metadata_repository_entries(root, text)
-    repositories: list[dict[str, object]] = []
-    in_source_repositories = False
-    current: dict[str, object] | None = None
-    current_nested: dict[str, object] | None = None
-    nested_key: str | None = None
-    for line in text.splitlines():
-        if line == "source_repositories:":
-            in_source_repositories = True
-            continue
-        if in_source_repositories and line and not line.startswith(" "):
-            break
-        stripped = line.strip()
-        if not in_source_repositories or not stripped:
-            continue
-        if line.startswith("  - "):
-            if current is not None:
-                repositories.append(current)
-            current = {}
-            current_nested = None
-            nested_key = None
-            item = stripped[2:]
-            if ":" in item:
-                key, value = item.split(":", 1)
-                current[key.strip()] = _parse_value(value)
-            continue
-        if current is None:
-            continue
-        if line.startswith("    ") and not line.startswith("      ") and ":" in stripped:
-            key, value = stripped.split(":", 1)
-            key = key.strip()
-            value = value.strip()
-            current_nested = None
-            nested_key = None
-            if value == "" and key in {"branch_check", "codegraph"}:
-                current[key] = {}
-                current_nested = current[key]  # type: ignore[assignment]
-                nested_key = key
-            else:
-                current[key] = _parse_value(value)
-            continue
-        if line.startswith("      ") and current_nested is not None and ":" in stripped:
-            key, value = stripped.split(":", 1)
-            current_nested[key.strip()] = _parse_value(value)
-            continue
-    if current is not None:
-        repositories.append(current)
-    return repositories
+    return _v4_metadata_repository_entries(root, metadata.read_text(encoding="utf-8"))
 
 
 def _metadata_repositories(root: Path) -> list[Path]:
@@ -328,10 +226,15 @@ def resolve_target_repositories(
     if resolved:
         return _enrich_with_metadata(root, resolved)
     metadata_path = root / ".work-bundle" / "project.yaml"
-    if metadata_path.is_file() and _metadata_scalar(
-        metadata_path.read_text(encoding="utf-8"), "metadata_version"
-    ) == "4":
-        return _v4_metadata_targets(root)
+    if metadata_path.is_file():
+        try:
+            document = _infrastructure.parse_yaml_mapping(
+                metadata_path.read_text(encoding="utf-8"), source=str(metadata_path)
+            )
+        except _infrastructure.InfrastructureError as exc:
+            raise SystemExit(exc.code) from exc
+        if document.get("metadata_version") == 4:
+            return _v4_metadata_targets(root)
     return _enrich_with_metadata(
         root,
         _resolve_candidates(root, ((path, "project-metadata") for path in _metadata_repositories(root))),

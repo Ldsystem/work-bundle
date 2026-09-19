@@ -1,4 +1,5 @@
 from core import *
+from core import _anchor_context
 from indexes import markdown_files, open_question_files, v3_note_issues
 
 def cmd_doctor(args: argparse.Namespace) -> None:
@@ -97,6 +98,13 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         for issue in issues:
             print(issue)
         raise SystemExit(1)
-    if not project_registry_entry(args.project, args):
-        print(f"warning: project is not registered: {args.project}")
+    selectors: dict[str, object] = {}
+    if getattr(args, "workspace_root", None):
+        selectors["workspace_root"] = args.workspace_root
+    elif getattr(args, "project_root", None):
+        selectors["project_root"] = args.project_root
+        selectors["cwd"] = args.project_root
+    else:
+        selectors["cwd"] = getattr(args, "cwd", None) or os.getcwd()
+    _anchor_context(**selectors)
     print("ok")

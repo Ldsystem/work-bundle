@@ -174,16 +174,16 @@ def test_scoped_validate_rules_resolves_toolkit_root(tmp_path: Path) -> None:
 
 
 def test_scoped_validate_rules_resolves_global_and_project_roots(tmp_path: Path) -> None:
-    config = tmp_path / "config"
+    config = tmp_path / ".work-bundle"
     global_root = config / "rules"
     project = tmp_path / "project"
     project_root = project / ".work-bundle" / "rules"
     for root, rule_id in [(global_root, "global-cross-cutting"), (project_root, "project-cross-cutting")]:
         root.mkdir(parents=True)
         (root / f"{rule_id}.md").write_text(valid_rule_md(rule_id), encoding="utf-8")
-        assert run_wb("create-rules", str(root), env={"WB_CONFIG_ROOT": str(config)}).returncode == 0
+        assert run_wb("create-rules", str(root), env={"HOME": str(tmp_path)}).returncode == 0
 
-    global_result = run_wb("validate-rules", "--scope", "global", env={"WB_CONFIG_ROOT": str(config)})
+    global_result = run_wb("validate-rules", "--scope", "global", env={"HOME": str(tmp_path)})
     global_payload = json.loads(global_result.stdout)
     assert global_result.returncode == 0, global_result.stdout + global_result.stderr
     assert global_payload["scope"] == "global"
@@ -195,7 +195,7 @@ def test_scoped_validate_rules_resolves_global_and_project_roots(tmp_path: Path)
         "project",
         "--project-root",
         str(project),
-        env={"WB_CONFIG_ROOT": str(config)},
+        env={"HOME": str(tmp_path)},
     )
     project_payload = json.loads(project_result.stdout)
     assert project_result.returncode == 0, project_result.stdout + project_result.stderr
@@ -226,10 +226,10 @@ def test_toolkit_create_rules_blocks_when_project_root_differs_from_work_bundle_
 def test_effective_rule_registry_reports_optional_missing_and_duplicate_ids(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT / "scripts" / "work-bundle"))
     old_root = os.environ.get("WB_WORK_BUNDLE_ROOT")
-    old_config = os.environ.get("WB_CONFIG_ROOT")
+    old_home = os.environ.get("HOME")
     try:
         os.environ["WB_WORK_BUNDLE_ROOT"] = str(tmp_path / "toolkit")
-        os.environ["WB_CONFIG_ROOT"] = str(tmp_path / "config")
+        os.environ["HOME"] = str(tmp_path / "home")
         sys.modules.pop("rules", None)
         import rules as rules_module
 
@@ -250,10 +250,10 @@ def test_effective_rule_registry_reports_optional_missing_and_duplicate_ids(tmp_
             os.environ.pop("WB_WORK_BUNDLE_ROOT", None)
         else:
             os.environ["WB_WORK_BUNDLE_ROOT"] = old_root
-        if old_config is None:
-            os.environ.pop("WB_CONFIG_ROOT", None)
+        if old_home is None:
+            os.environ.pop("HOME", None)
         else:
-            os.environ["WB_CONFIG_ROOT"] = old_config
+            os.environ["HOME"] = old_home
         if sys.path and sys.path[0] == str(REPO_ROOT / "scripts" / "work-bundle"):
             sys.path.pop(0)
 
@@ -529,58 +529,69 @@ def test_defect_rules_support_same_scope_specification_owned_handling() -> None:
     assert "evidence persistence is not required" in evidence
 
 
-def test_orchestration_rules_require_contract_barrier_and_review_settlement_evidence() -> None:
+def test_orchestration_rules_define_closed_executor_result_and_direct_review_boundary() -> None:
     handoff = (REPO_ROOT / "rules/orchestration/orch-handoff-required.md").read_text(encoding="utf-8")
     review = (REPO_ROOT / "rules/orchestration/orch-review-completion.md").read_text(encoding="utf-8")
 
-    assert "contract_decoupling" in handoff
-    assert "common contracts checked" in handoff
-    assert "`peer_implementation_validation_used: false`" in handoff
-    assert "barrier id, participant role, readiness `reached|blocked`" in handoff
-    assert "every participant completed or blocked with executor-result handoffs before joint validation began" in handoff
+    for current in (
+        "canonical `executor-result-v1`",
+        "factual scope, changed paths, focused observations",
+        "separate from independent product judgment",
+        "Permit direct product review",
+        "Do not put verdicts, acceptance, repair advice",
+    ):
+        assert current in handoff
+    for retired in (
+        "contract_decoupling",
+        "peer_implementation_validation_used",
+        "build-review-package",
+        "publication receipt",
+    ):
+        assert retired not in handoff
 
-    assert "fails closed before `Completed`" in handoff
-    assert "not only before `build-review-package`" in handoff
-
-    assert "compiled Truth Basis" in review
-    assert "AUTH constraints" in review
-    assert "universal task-review evidence" in review
-    assert "implementation-review agent" in review
-    assert "explicitly required" in review
-    assert "Route missing evidence to its first owner" in review
-    assert "publication-only/control resume uses the compact accepted result" in review
-    assert "Route incomplete durable knowledge work to `knowledge-blocked`" in review
-    assert "Create or require plan repair only for a decomposition defect" in review
-    assert "specification repair only for a requirement, design, or authority defect" in review
-    assert "Do not create a repair specification for every failed review gate" in review
-    assert "evidence_capability" in review
-    assert "INV/VAL" in review
-    assert "incapable green" in review
-    assert "pre-closure oracle-capability check" in review
-    assert "no_validation_bearing_obligation" in review
-    assert "WOR-59 G9 remains the unchanged post-execution classifier" in review
+    for current in (
+        "distinct implementation reviewer",
+        "exact frozen candidate",
+        "canonical `accepted-task-result-v1`",
+        "one compact final workflow review",
+        "Keep finalization mechanical",
+    ):
+        assert current in review
+    for retired in ("review round", "review-of-review", "publication-only/control resume"):
+        assert retired not in review
 
 
-def test_execution_and_review_skills_carry_task003_flow_requirements() -> None:
+def test_execution_and_review_skills_define_current_optional_direct_review_flow() -> None:
     execute = (REPO_ROOT / "skills/orch-execute-plan/SKILL.md").read_text(encoding="utf-8")
     review = (REPO_ROOT / "skills/orch-review-plan/SKILL.md").read_text(encoding="utf-8")
 
-    assert "Contract-decoupled participants validate against the common contract" in execute
-    assert "accepted prior handoffs" in execute
-    assert "reach the named barrier before convergence work" in execute
-    assert "The scheduler does not perform code-quality review" in execute
-    assert "validate-executor-result" in execute
-    assert "validate initial executor facts without demanding or embedding the future review verdict" in execute
-    assert "stored required-review authority" in execute
+    for current in (
+        "path-sorted changed-path manifest",
+        "canonical `executor-result-v1`",
+        "When review is required",
+        "distinct reviewer",
+        "does not accept the product",
+    ):
+        assert current in execute
+    for retired in (
+        "accepted prior handoffs",
+        "named barrier",
+        "validate-executor-result",
+        "embedded legacy status",
+    ):
+        assert retired not in execute
 
-    assert "Independent `dev-code-review` owns task-scoped implementation quality" in review
-    assert "compiled Truth Basis" in review
-    assert "implementation-review agent" in review
-    assert "do not require universal task-review evidence or embedded handoff verdicts" in review
-    assert "Do not broadly inspect source" in review
-    assert "knowledge-blocked" in review
-    assert "repair plan only" in review
-    assert "repair specification" in review
+    for current in (
+        "exact frozen commit or worktree candidate",
+        "implementation-review-v1",
+            "accepted implementation review when required",
+            "one compact final workflow review",
+            "they do not reconstruct review history",
+            "Do not reread source for code quality or repeat implementation review",
+        ):
+            assert current in review
+    for retired in ("review round", "publication receipt"):
+        assert retired not in review
 
 
 def test_initialize_project_guidance_matches_create_rule_project_scope() -> None:
@@ -608,7 +619,7 @@ def test_initialize_project_v4_migration_guardrails_and_pressure_scenarios() -> 
 
     assert "migrate-control-plane" in initialize
     assert "migrate-registered-projects" in initialize
-    assert "--repository-remote" in initialize
+    assert "--repository <id=remote>" in initialize
     assert "load every applicable rule body in full" in initialize
     assert "do not edit the project registry directly" in initialize
     assert "do not change an external repository's Git config" in initialize
@@ -658,7 +669,7 @@ def test_v4_portable_and_device_local_authority_contracts_converge() -> None:
     assert 'registry/projects.yaml' not in control_plane
     assert 'registry/projects.yaml' not in repository_preflight
     assert "resolve_project_registry_path" in control_plane
-    assert "project_registry_path" in repository_preflight
+    assert "_infrastructure.join_workspace_binding" in repository_preflight
 
 
 def test_initialize_project_pressure_scenario_covers_v4_authority_and_member_rollback() -> None:

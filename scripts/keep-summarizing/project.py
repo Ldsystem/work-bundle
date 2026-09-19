@@ -1,4 +1,5 @@
 from core import *
+from core import _anchor_context
 from indexes import cmd_index
 from registry import upsert_registry_project
 
@@ -30,26 +31,11 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 def cmd_resolve(args: argparse.Namespace) -> None:
     cwd = Path(args.cwd or os.getcwd()).resolve()
-    workspace = resolve_workspace_root(cwd)
-    if workspace:
-        root = work_bundle_knowledge_root(workspace)
-        print(read_project_slug(root, workspace.name))
-        return
-    registry_entry = registry_entry_for_cwd(cwd, args)
-    if registry_entry:
-        print(registry_entry.get("slug"))
-        return
-    base, mode = resolve_knowledge_base(args)
-    if mode in {"work-bundle", "registry"}:
-        print(read_project_slug(base, base.parent.parent.name))
-        return
-    for project_yaml in knowledge_root().glob("*/project.yaml"):
-        root = project_yaml.parent.resolve()
-        if cwd == root or root in cwd.parents:
-            print(project_yaml.parent.name)
-            return
-        text = project_yaml.read_text(encoding="utf-8")
-        if str(cwd) in text:
-            print(project_yaml.parent.name)
-            return
-    raise SystemExit("No matching project knowledge repo found.")
+    if getattr(args, "workspace_root", None):
+        context = _anchor_context(workspace_root=args.workspace_root)
+    elif getattr(args, "project_root", None):
+        context = _anchor_context(project_root=args.project_root, cwd=args.project_root)
+    else:
+        context = _anchor_context(cwd=cwd)
+    root = work_bundle_knowledge_root(context.workspace_root)
+    print(read_project_slug(root, context.workspace_root.name))

@@ -18,7 +18,7 @@ def run_wb(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     cwd = tmp_path / "cwd"
     cwd.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    env["WB_CONFIG_ROOT"] = str(tmp_path / "config")
+    env["HOME"] = str(tmp_path)
     return subprocess.run(
         [sys.executable, str(WB), *args],
         cwd=cwd,
@@ -34,7 +34,7 @@ def evidence_id(slug: str) -> str:
 
 
 def write_legacy_record(tmp_path: Path, *, status: str = "active", slug: str = "migration-record") -> tuple[Path, bytes]:
-    root = tmp_path / "config" / "violation"
+    root = tmp_path / ".work-bundle" / "violation"
     (root / "active").mkdir(parents=True, exist_ok=True)
     (root / "archived").mkdir(parents=True, exist_ok=True)
     action = "null" if status == "active" else "completed"
@@ -67,7 +67,7 @@ def record_fingerprint(root: Path) -> str:
 def publish_incomplete_destination(tmp_path: Path, *, mismatch: bool = False) -> tuple[Path, Path]:
     legacy_path, _ = write_legacy_record(tmp_path)
     legacy = legacy_path.parents[1]
-    destination = tmp_path / "config" / "defect"
+    destination = tmp_path / ".work-bundle" / "defect"
     shutil.copytree(legacy, destination)
     fingerprint = record_fingerprint(destination)
     marker = {
@@ -89,8 +89,8 @@ def test_defect_migrate_store_preserves_record_bytes_and_rebuilds_index(tmp_path
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert payload["migration_status"] == "migrated"
-    defect = tmp_path / "config" / "defect"
-    assert not (tmp_path / "config" / "violation").exists()
+    defect = tmp_path / ".work-bundle" / "defect"
+    assert not (tmp_path / ".work-bundle" / "violation").exists()
     assert (defect / "active" / legacy_path.name).read_bytes() == original
     assert legacy_path.stem in (defect / "index.yaml").read_text(encoding="utf-8")
     assert not (defect / ".migration-marker.json").exists()
@@ -111,12 +111,12 @@ def test_defect_non_migration_command_blocks_before_destination_creation(tmp_pat
         result = run_wb(case, command, *arguments)
         assert result.returncode == 1, command
         assert "defect-migrate-store" in result.stdout
-        assert not (case / "config" / "defect").exists()
+        assert not (case / ".work-bundle" / "defect").exists()
 
 
 def test_defect_non_migration_commands_block_on_staging_or_marker(tmp_path: Path) -> None:
     staging_case = tmp_path / "staging"
-    staging = staging_case / "config" / ".defect-migration-staging"
+    staging = staging_case / ".work-bundle" / ".defect-migration-staging"
     staging.mkdir(parents=True)
     staging_result = run_wb(staging_case, "defect-ensure-store")
     assert staging_result.returncode == 1
@@ -125,7 +125,7 @@ def test_defect_non_migration_commands_block_on_staging_or_marker(tmp_path: Path
     marker_case = tmp_path / "marker"
     ensured = run_wb(marker_case, "defect-ensure-store")
     assert ensured.returncode == 0
-    marker = marker_case / "config" / "defect" / ".migration-marker.json"
+    marker = marker_case / ".work-bundle" / "defect" / ".migration-marker.json"
     marker.write_text("{}", encoding="utf-8")
     marker_result = run_wb(marker_case, "defect-build-index")
     assert marker_result.returncode == 1
@@ -134,10 +134,10 @@ def test_defect_non_migration_commands_block_on_staging_or_marker(tmp_path: Path
 
 def test_defect_migrate_store_fails_closed_when_both_roots_are_unmarked(tmp_path: Path) -> None:
     write_legacy_record(tmp_path)
-    defect = tmp_path / "config" / "defect"
+    defect = tmp_path / ".work-bundle" / "defect"
     (defect / "active").mkdir(parents=True)
     (defect / "archived").mkdir()
-    config = tmp_path / "config"
+    config = tmp_path / ".work-bundle"
     before = sorted(path.relative_to(config).as_posix() for path in config.rglob("*"))
 
     result = run_wb(tmp_path, "defect-migrate-store")
@@ -152,7 +152,7 @@ def test_defect_migrate_store_is_noop_when_neither_store_exists(tmp_path: Path) 
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)["migration_status"] == "no-store"
-    assert not (tmp_path / "config" / "defect").exists()
+    assert not (tmp_path / ".work-bundle" / "defect").exists()
 
 
 def test_defect_migrate_store_rejects_invalid_legacy_without_destination(tmp_path: Path) -> None:
@@ -163,7 +163,7 @@ def test_defect_migrate_store_rejects_invalid_legacy_without_destination(tmp_pat
 
     assert result.returncode == 1
     assert path.read_text(encoding="utf-8") == "invalid\n"
-    assert not (tmp_path / "config" / "defect").exists()
+    assert not (tmp_path / ".work-bundle" / "defect").exists()
     assert original != path.read_bytes()
 
 
@@ -199,18 +199,18 @@ def test_defect_migrate_store_finalizes_destination_only_marker(tmp_path: Path) 
 
 def test_defect_migrate_store_replaces_owned_staging_beside_legacy(tmp_path: Path) -> None:
     write_legacy_record(tmp_path)
-    staging = tmp_path / "config" / ".defect-migration-staging"
+    staging = tmp_path / ".work-bundle" / ".defect-migration-staging"
     staging.mkdir()
     (staging / ".staging-owner").write_text("work-bundle:defect-migrate-store:v1\n", encoding="utf-8")
     (staging / "partial").write_text("partial", encoding="utf-8")
     result = run_wb(tmp_path, "defect-migrate-store")
     assert result.returncode == 0, result.stdout + result.stderr
     assert not staging.exists()
-    assert (tmp_path / "config" / "defect").exists()
+    assert (tmp_path / ".work-bundle" / "defect").exists()
 
 
 def test_defect_migrate_store_rejects_unowned_staging(tmp_path: Path) -> None:
-    staging = tmp_path / "config" / ".defect-migration-staging"
+    staging = tmp_path / ".work-bundle" / ".defect-migration-staging"
     staging.mkdir(parents=True)
     (staging / "user-file").write_text("preserve", encoding="utf-8")
     result = run_wb(tmp_path, "defect-migrate-store")
@@ -221,7 +221,7 @@ def test_defect_migrate_store_rejects_unowned_staging(tmp_path: Path) -> None:
 def test_defect_migrate_store_is_idempotent_after_success(tmp_path: Path) -> None:
     write_legacy_record(tmp_path)
     first = run_wb(tmp_path, "defect-migrate-store")
-    destination = tmp_path / "config" / "defect"
+    destination = tmp_path / ".work-bundle" / "defect"
     before = {path.relative_to(destination).as_posix(): path.read_bytes() for path in destination.rglob("*") if path.is_file()}
     second = run_wb(tmp_path, "defect-migrate-store")
     assert first.returncode == 0
@@ -231,7 +231,7 @@ def test_defect_migrate_store_is_idempotent_after_success(tmp_path: Path) -> Non
 
 
 def test_defect_migrate_store_rejects_invalid_destination_only(tmp_path: Path) -> None:
-    destination = tmp_path / "config" / "defect"
+    destination = tmp_path / ".work-bundle" / "defect"
     destination.mkdir(parents=True)
     sentinel = destination / "preserve"
     sentinel.write_text("user-state", encoding="utf-8")
@@ -258,4 +258,4 @@ def test_legacy_command_fails_with_guidance_without_store_effects(tmp_path: Path
         assert payload["diagnostic"] == "WB_LEGACY_COMMAND_REMOVED"
         assert payload["replacement_command"] == replacement
         assert legacy_path.read_bytes() == original
-        assert not (case / "config" / "defect").exists()
+        assert not (case / ".work-bundle" / "defect").exists()

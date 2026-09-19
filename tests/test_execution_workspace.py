@@ -56,14 +56,13 @@ def prepare_fixture(tmp_path: Path, *, execution_id: str = "exec-1") -> tuple[Pa
     return source, runtime, result
 
 
-def test_project_template_declares_hydration_profiles_and_runtime_ignore() -> None:
+def test_project_template_declares_portable_v4_metadata_and_runtime_ignore() -> None:
     project_template = (REPO_ROOT / "references/assets/template/project.yaml").read_text(encoding="utf-8")
     ignore_template = (REPO_ROOT / "references/assets/template/.gitignore.template").read_text(encoding="utf-8")
-    assert "execution_workspace_profiles:" in project_template
-    assert "strategy: regenerate" in project_template
-    assert "strategy: credential-inject" in project_template
-    assert "strategy: copy" in project_template
-    assert "sensitivity: non-secret" in project_template
+    assert "metadata_version: 4" in project_template
+    assert "control_plane:" in project_template
+    assert "workspace_binding:" in project_template
+    assert "execution_workspace_profiles:" not in project_template
     assert ".work-bundle/" in ignore_template
 
 
