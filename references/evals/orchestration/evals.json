@@ -52,13 +52,13 @@
     {
       "id": 9,
       "prompt": "Review an implemented plan where the project files do not satisfy the source specification.",
-      "expected_output": "Selects review-plan, directly compares the exact implementation candidate with every verified specification and plan obligation, issues repair from missing product behavior even when tests pass, and routes specification repair only when the defect belongs to requirement or authority.",
+      "expected_output": "Selects review-plan, directly compares the exact implementation candidate with every verified specification and plan obligation, advises repair for missing product behavior even when tests pass, and lets the controller/orchestrator assess the finding and route repair to implementation or specification authority.",
       "files": []
     },
     {
       "id": 10,
       "prompt": "Review an implemented plan where all specification, plan, handoff, and project file checks pass.",
-      "expected_output": "Selects review-plan, consumes accepted implementation verdicts and current test outcomes, checks plan coverage, material defects, knowledge return, repository facts, and archive readiness once, then lets deterministic finalization perform only lifecycle, index, baseline, destination, and binding mechanics.",
+      "expected_output": "Selects review-plan, consumes controller-accepted task decisions, exact review advice, and current test outcomes; checks plan coverage, material defects, knowledge return, repository facts, and archive readiness once; then lets the controller/orchestrator own closure and deterministic finalization perform only lifecycle, index, baseline, destination, and binding mechanics.",
       "files": []
     },
     {
@@ -273,20 +273,20 @@
     },
     {
       "id": 46,
-      "prompt": "Run final review after every task already has an accepted independent task review.",
-      "expected_output": "orch-review-plan audits workflow, handoff, knowledge, and finalization evidence and does not inspect source code quality again.",
+      "prompt": "Run final review after every task already has a controller-accepted result and independent review advice.",
+      "expected_output": "orch-review-plan provides a compact audit of workflow, result, knowledge, and finalization facts without inspecting source code quality again; the controller/orchestrator assesses the advice and owns closure.",
       "files": []
     },
     {
       "id": 47,
-      "prompt": "Final review finds one completed task has no task-review verdict.",
-      "expected_output": "Returns review-blocked and resumes the owning execution review step; it does not create a repair specification.",
+      "prompt": "Final audit finds one completed task that required independent review has no review advice.",
+      "expected_output": "Advises that closure is blocked by missing required review input; the controller/orchestrator assesses that advice and routes the owning execution-review step without creating a repair specification.",
       "files": []
     },
     {
       "id": 48,
       "prompt": "Final review proves the specification contains the wrong API requirement.",
-      "expected_output": "Routes to specification repair because the defect is requirement authority, while keeping implementation artifacts unarchived.",
+      "expected_output": "The final auditor advises specification repair because the defect belongs to requirement authority; the controller/orchestrator assesses the finding, routes the accepted repair, and keeps implementation artifacts unarchived.",
       "files": []
     },
     {
@@ -340,7 +340,7 @@
     {
       "id": 57,
       "prompt": "An independent task reviewer finds a blocking correctness defect.",
-      "expected_output": "Returns repair with compact evidence, routes to the same task implementer, reruns fresh validation, regenerates the package from the original base, and re-reviews.",
+      "expected_output": "Returns advisory repair findings with compact evidence; the controller/orchestrator assesses them and, when accurate, routes the same task implementer, reruns fresh validation, regenerates the package from the original base, and requests rereview.",
       "files": []
     },
     {
@@ -412,7 +412,7 @@
     {
       "id": 69,
       "prompt": "Review a heavy task whose implementation and tests do not match the compiled Truth Basis.",
-      "expected_output": "Returns repair after comparing accepted purpose, source evidence, decision authority, expected delta, test oracle, and disposition.",
+      "expected_output": "Returns advisory repair findings after comparing accepted purpose, source evidence, decision authority, expected delta, test oracle, and disposition; the controller/orchestrator assesses them before routing repair.",
       "files": []
     },
     {
@@ -580,7 +580,7 @@
     {
       "id": "STG3-01",
       "prompt": "Create and verify a specification after structural tests pass, but the draft omits one user requirement and an interface constraint.",
-      "expected_output": "Uses the specification-v1 canonical .spec.md family for structure, but the distinct agent reviewer rejects the semantics for concrete missing coverage; tests and index state do not issue verification.",
+      "expected_output": "Uses the specification-v1 canonical .spec.md family for structure; the distinct agent reviewer advises repair for concrete missing coverage, and the controller/orchestrator assesses the accurate finding and withholds verification. Tests and index state do not issue verification.",
       "files": []
     },
     {
@@ -598,7 +598,7 @@
     {
       "id": "STG3-04",
       "prompt": "A caller asks the specification writer to preserve its custom filename, embedded id, verified status, and timestamp because a receipt already exists.",
-      "expected_output": "Rejects caller structural overrides and filename selection before mutation; the receipt does not decide semantic qualification, which remains a distinct reviewer-agent judgment.",
+      "expected_output": "Rejects caller structural overrides and filename selection before mutation; the receipt does not decide semantic qualification, and reviewer advice remains an input to the controller/orchestrator's qualification decision.",
       "files": []
     },
     {
@@ -610,7 +610,7 @@
     {
       "id": "STG4-02",
       "prompt": "All plan schemas and static admission checks pass, but one accepted interface and its validation obligation have no task owner.",
-      "expected_output": "The distinct semantic reviewer issues repair for missing ownership and capable validation; tests, doctors, indexes, receipts, and evidence volume cannot qualify the incomplete plan.",
+      "expected_output": "The distinct semantic reviewer advises repair for missing ownership and capable validation; the controller/orchestrator assesses that advice and withholds qualification because the defect is accurate. Tests, doctors, indexes, receipts, and evidence volume cannot qualify the incomplete plan.",
       "files": []
     },
     {
@@ -634,29 +634,35 @@
     {
       "id": "STG5-02",
       "prompt": "A frozen worktree candidate passes its focused tests but omits one accepted behavior from the verified specification.",
-      "expected_output": "The distinct reviewer directly compares the exact manifest with every specification and plan obligation and records repair in implementation-review-v1; green tests do not hide missing behavior.",
+      "expected_output": "The distinct reviewer directly compares the exact manifest with every specification and plan obligation and records repair advice in implementation-review-v2; the controller/orchestrator assesses the finding and routes the accurate product defect. Green tests do not hide missing behavior.",
       "files": []
     },
     {
       "id": "STG5-03",
       "prompt": "A correct reviewable candidate has a stale index and no historical reviewer receipt.",
-      "expected_output": "The product reviewer may accept the exact candidate; the supporting-state defect is routed separately and cannot manufacture or veto the semantic verdict.",
+      "expected_output": "The product reviewer may advise acceptance of the exact candidate; the controller/orchestrator assesses that advice and owns the product decision. The supporting-state defect is routed separately and cannot manufacture or veto acceptance.",
       "files": []
     },
     {
       "id": "STG5-04",
       "prompt": "A dependency needs the already accepted task outcome.",
-      "expected_output": "Consumes one canonical accepted-task-result-v1 referencing the executor result, exact accepted implementation review, current validation outcomes, product identity, defects, and knowledge disposition without receipt or history replay.",
+      "expected_output": "Consumes one canonical accepted-task-result-v1 containing the controller/orchestrator acceptance decision and referencing the executor result, exact implementation review advice, current validation outcomes, product identity, defects, and knowledge disposition without receipt or history replay.",
       "files": []
     },
     {
       "id": "STG5-05",
       "prompt": "Run final workflow closure after every planned task has a compact accepted result.",
-      "expected_output": "A distinct final auditor writes one final-workflow-review-v1 covering plan/task coverage, accepted verdicts, current tests, material defects, knowledge return, repository facts, and archive readiness without repeating code review or reconstructing history.",
+      "expected_output": "A distinct final auditor advises on plan/task coverage, controller-accepted decisions, current tests, material defects, knowledge return, repository facts, and archive readiness without repeating code review or reconstructing history. The controller/orchestrator assesses that advice and writes one final-workflow-review-v1 closure decision.",
       "files": []
     }
   ],
   "v4_evals": [
+    {
+      "id": "v4-in-place-plan-repair-full-review",
+      "prompt": "Repair a verified implementation plan after review finds an omitted production owner, then review the repaired plan.",
+      "expected_output": "Returns the existing root plan to draft, updates the existing plan, phase, and task identities in place without retaining intermediate revision copies, and gives a distinct reviewer the complete current tree. The reviewer checks every accepted specification obligation and current source boundary rather than limiting review to the repair delta; the controller/orchestrator assesses the advice and owns qualification.",
+      "files": []
+    },
     {
       "id": "v4-obsolete-role-context-retirement",
       "description": "Given a request to preserve deprecated role-context aliases for compatibility, require repository-wide consumer characterization and then remove the skill, rule, CLI, implementation, reference, and positive runtime guidance when no supported external consumer exists; retain only a negative non-reintroduction guard."

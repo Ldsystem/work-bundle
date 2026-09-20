@@ -13,6 +13,11 @@ from artifact_store import (
 CATALOG_PATH = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v3.yaml"
 FAMILY = "specification"
 QUALIFICATION_STATUSES = {"draft", "verified", "superseded"}
+QUALIFICATION_TRANSITIONS = {
+    "draft": {"verified", "superseded"},
+    "verified": {"draft", "superseded"},
+    "superseded": set(),
+}
 STRUCTURAL_INPUT_FIELDS = {
     "artifact_type", "schema_version", "id", "title", "status", "date_created",
     "last_updated", "purpose", "component", "version",
@@ -88,13 +93,25 @@ def cmd_write_spec(args: argparse.Namespace) -> None:
     if args.status not in QUALIFICATION_STATUSES:
         raise SystemExit(f"Invalid spec qualification status: {args.status}")
     identity = args.id or _next_identity(args)
-    if _path(args, identity, "active").exists() or _path(args, identity, "archived").exists():
-        raise SystemExit(f"Specification canonical identity collision: {identity}")
     semantic, body = _semantic_input(Path(args.content_file))
+    active_path = _path(args, identity, "active")
+    archived_path = _path(args, identity, "archived")
+    if archived_path.exists():
+        raise SystemExit(f"Specification canonical identity collision: {identity}")
+    existing = (
+        read_artifact(CATALOG_PATH, FAMILY, _anchors(args), identity=identity, state="active")
+        if active_path.exists()
+        else None
+    )
+    if existing is not None and args.status != "draft":
+        raise SystemExit("Specification content updates must return the specification to draft")
+    if existing is not None and existing["data"].get("status") == "superseded":
+        raise SystemExit("Superseded specification content cannot be changed")
     today = now_date()
     data = {
         **semantic, "artifact_type": FAMILY, "schema_version": 1, "id": identity,
-        "title": args.title, "status": args.status, "date_created": today,
+        "title": args.title, "status": args.status,
+        "date_created": str(existing["data"]["date_created"]) if existing else today,
         "last_updated": today, "purpose": args.purpose, "component": args.component,
         "version": args.version,
     }
@@ -150,6 +167,10 @@ def cmd_set_spec_status(args: argparse.Namespace) -> None:
     if data["status"] == args.status:
         print(args.id)
         return
+    if args.status not in QUALIFICATION_TRANSITIONS.get(str(data["status"]), set()):
+        raise SystemExit(
+            f"Invalid specification qualification transition: {data['status']} -> {args.status}"
+        )
     data["status"] = args.status
     data["last_updated"] = now_date()
     write_artifact(CATALOG_PATH, FAMILY, _anchors(args), data, state="active", body=str(current["body"]))

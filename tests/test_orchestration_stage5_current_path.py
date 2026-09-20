@@ -246,7 +246,7 @@ def test_executor_result_round_trip_inline_block_index_and_transition(
     assert stored["data"]["result_state"] == "implemented"
 
 
-def test_executor_result_rejects_overrides_duplicates_and_review_verdict_before_mutation(
+def test_executor_result_rejects_overrides_and_updates_active_identity_in_place(
     workspace: Path, tmp_path: Path,
 ) -> None:
     bad = _executor_semantics()
@@ -273,10 +273,24 @@ def test_executor_result_rejects_overrides_duplicates_and_review_verdict_before_
         content_file=str(content),
     )
     handoffs.cmd_write_executor_result(args)
-    before = next(workspace.rglob("*.executor-result.yaml")).read_bytes()
-    with pytest.raises(SystemExit, match="collision"):
-        handoffs.cmd_write_executor_result(args)
-    assert next(workspace.rglob("*.executor-result.yaml")).read_bytes() == before
+    path = next(workspace.rglob("*.executor-result.yaml"))
+    created = yaml.safe_load(path.read_text(encoding="utf-8"))["date_created"]
+    repaired = _executor_semantics()
+    repaired["summary"] = "Implemented the corrected bounded task."
+    repaired_input = _write_yaml(tmp_path, "repaired.yaml", repaired)
+    handoffs.cmd_write_executor_result(
+        _args(
+            workspace,
+            id="result-stage5",
+            plan_id="plan-stage5",
+            task_id="task-stage5",
+            content_file=str(repaired_input),
+        )
+    )
+    stored = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert stored["date_created"] == created
+    assert stored["summary"] == "Implemented the corrected bounded task."
+    assert len(list(workspace.rglob("*.executor-result.yaml"))) == 1
 
 
 def test_review_accepted_result_and_final_review_form_compact_current_chain(
@@ -299,7 +313,7 @@ def test_review_accepted_result_and_final_review_form_compact_current_chain(
     candidate = _candidate(workspace)
     review_input = _write_yaml(
         tmp_path, "review.yaml",
-        _review_semantics(candidate, plan_identity=plan_identity),
+        _review_semantics(candidate, plan_identity=plan_identity, verdict="repair"),
     )
     review_runtime.cmd_write_implementation_review(
         _args(
@@ -374,9 +388,62 @@ def test_review_accepted_result_and_final_review_form_compact_current_chain(
             content_file=str(final_input),
         )
     )
+
+    accepted_repair = yaml.safe_load(accepted_input.read_text(encoding="utf-8"))
+    accepted_repair["validation_outcomes"][0]["summary"] = "Focused current pass."
+    accepted_repair_input = _write_yaml(tmp_path, "accepted-repaired.yaml", accepted_repair)
+    review_runtime.cmd_write_accepted_task_result(
+        _args(
+            workspace,
+            id="accepted-stage5",
+            plan_id="plan-stage5",
+            task_id="task-stage5",
+            content_file=str(accepted_repair_input),
+        )
+    )
+    current_accepted_digest = hashlib.sha256(accepted_path.read_bytes()).hexdigest()
+    final_repair = yaml.safe_load(final_input.read_text(encoding="utf-8"))
+    final_repair["accepted_results"][0]["sha256"] = current_accepted_digest
+    final_repair["reasons"] = ["The current complete workflow is ready."]
+    final_repair_input = _write_yaml(tmp_path, "final-repaired.yaml", final_repair)
+    review_runtime.cmd_write_final_workflow_review(
+        _args(
+            workspace,
+            id="final-stage5",
+            plan_id="plan-stage5",
+            content_file=str(final_repair_input),
+        )
+    )
+
     assert [row["id"] for row in review_runtime.list_implementation_reviews(_args(workspace))] == ["review-stage5"]
+    assert review_runtime.list_implementation_reviews(_args(workspace))[0]["verdict"] == "repair"
     assert [row["id"] for row in review_runtime.list_accepted_task_results(_args(workspace))] == ["accepted-stage5"]
     assert [row["id"] for row in review_runtime.list_final_workflow_reviews(_args(workspace))] == ["final-stage5"]
+
+    final_path = next(workspace.rglob("final-stage5.final-workflow-review.yaml"))
+    final_before = final_path.read_bytes()
+    changed_executor = _executor_semantics()
+    changed_executor["summary"] = "Changed after controller acceptance."
+    changed_executor_input = _write_yaml(tmp_path, "executor-changed.yaml", changed_executor)
+    handoffs.cmd_write_executor_result(
+        _args(
+            workspace,
+            id="result-stage5",
+            plan_id="plan-stage5",
+            task_id="task-stage5",
+            content_file=str(changed_executor_input),
+        )
+    )
+    with pytest.raises(SystemExit, match="executor reference is stale"):
+        review_runtime.cmd_write_final_workflow_review(
+            _args(
+                workspace,
+                id="final-stage5",
+                plan_id="plan-stage5",
+                content_file=str(final_repair_input),
+            )
+        )
+    assert final_path.read_bytes() == final_before
 
 
 def test_review_verdict_remains_agent_authored_and_supporting_state_is_not_required(
@@ -402,6 +469,78 @@ def test_review_verdict_remains_agent_authored_and_supporting_state_is_not_requi
     row = review_runtime.list_implementation_reviews(_args(workspace))[0]
     assert row["verdict"] == "repair"
     assert "receipt" not in row and "publication" not in row and "history" not in row
+
+
+def test_implementation_review_updates_same_active_identity_after_full_rereview(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    plan_identity = _write_stage5_plan_tree(workspace)
+    candidate = _candidate(workspace)
+    repair_input = _write_yaml(
+        tmp_path, "repair-review.yaml",
+        _review_semantics(candidate, plan_identity=plan_identity, verdict="repair"),
+    )
+    args = _args(
+        workspace,
+        id="review-current",
+        plan_id="plan-stage5",
+        task_id="task-stage5",
+        source_root=str(workspace),
+        content_file=str(repair_input),
+    )
+    review_runtime.cmd_write_implementation_review(args)
+    path = next(workspace.rglob("review-current.implementation-review.yaml"))
+    created = yaml.safe_load(path.read_text(encoding="utf-8"))["date_created"]
+    before = path.read_bytes()
+
+    integrated = _review_semantics(candidate, plan_identity=plan_identity, verdict="accept")
+    integrated["scope"] = "integrated"
+    integrated_input = _write_yaml(tmp_path, "integrated-review.yaml", integrated)
+    with pytest.raises(SystemExit, match="scope or task binding"):
+        review_runtime.cmd_write_implementation_review(
+            _args(
+                workspace,
+                id="review-current",
+                plan_id="plan-stage5",
+                source_root=str(workspace),
+                content_file=str(integrated_input),
+            )
+        )
+    assert path.read_bytes() == before
+
+    with pytest.raises(SystemExit, match="Integrated.*task binding"):
+        review_runtime.cmd_write_implementation_review(
+            _args(
+                workspace,
+                id="review-integrated-invalid",
+                plan_id="plan-stage5",
+                task_id="task-stage5",
+                source_root=str(workspace),
+                content_file=str(integrated_input),
+            )
+        )
+    assert not list(workspace.rglob("review-integrated-invalid.implementation-review.yaml"))
+
+    accepted = _review_semantics(candidate, plan_identity=plan_identity, verdict="accept")
+    accepted["reviewed_obligations"][0]["summary"] = (
+        "The complete repaired candidate satisfies the obligation."
+    )
+    accept_input = _write_yaml(tmp_path, "accept-review.yaml", accepted)
+    review_runtime.cmd_write_implementation_review(
+        _args(
+            workspace,
+            id="review-current",
+            plan_id="plan-stage5",
+            task_id="task-stage5",
+            source_root=str(workspace),
+            content_file=str(accept_input),
+        )
+    )
+
+    stored = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert stored["date_created"] == created
+    assert stored["verdict"] == "accept"
+    assert len(list(workspace.rglob("review-current.implementation-review.yaml"))) == 1
 
 
 def test_review_writer_rejects_stale_plan_tree_identity_before_mutation(

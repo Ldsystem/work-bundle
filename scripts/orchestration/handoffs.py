@@ -15,6 +15,7 @@ from artifact_store import (
     canonical_artifact_path,
     family_policy,
     load_catalog,
+    read_artifact,
     read_yaml_mapping,
     rebuild_index,
     transition_artifact,
@@ -72,9 +73,23 @@ def _bindings(args: argparse.Namespace) -> dict[str, str]:
     return {"plan": str(args.plan_id), "task": str(args.task_id)}
 
 
-def _assert_identity_available(args: argparse.Namespace) -> None:
+def _active_result_or_none(args: argparse.Namespace) -> dict[str, Any] | None:
     policy = _policy()
+    active = canonical_artifact_path(
+        policy,
+        _anchors(args),
+        identity=str(args.id),
+        state="active",
+        bindings=_bindings(args),
+    )
+    if active.is_file():
+        return read_artifact(
+            CATALOG_PATH, FAMILY, _anchors(args), identity=str(args.id),
+            state="active", bindings=_bindings(args),
+        )
     for state in policy["lifecycle"]["states"]:
+        if state == "active":
+            continue
         target = canonical_artifact_path(
             policy,
             _anchors(args),
@@ -84,11 +99,12 @@ def _assert_identity_available(args: argparse.Namespace) -> None:
         )
         if target.exists():
             raise SystemExit(f"Executor-result canonical identity collision: {args.id}")
+    return None
 
 
 def write_executor_result(args: argparse.Namespace) -> dict[str, Any]:
     semantic = _semantic_input(Path(str(args.content_file)))
-    _assert_identity_available(args)
+    existing = _active_result_or_none(args)
     today = now_date()
     data = {
         **semantic,
@@ -98,7 +114,7 @@ def write_executor_result(args: argparse.Namespace) -> dict[str, Any]:
         "plan_id": str(args.plan_id),
         "phase_id": getattr(args, "phase_id", None),
         "task_id": str(args.task_id),
-        "date_created": today,
+        "date_created": str(existing["data"]["date_created"]) if existing else today,
         "last_updated": today,
     }
     return write_artifact(

@@ -51,7 +51,7 @@ def test_handoff_skill_owns_only_canonical_factual_continuation() -> None:
         "executor-result-v1",
         "exact plan/task bindings",
         "Validate the full semantic input",
-        "immutable YAML artifact",
+        "repair the active YAML artifact atomically at the same canonical identity",
         "derived index",
         "lightweight integrity checks",
         "partial effect",
@@ -65,7 +65,7 @@ def test_review_skill_separates_product_review_from_compact_final_audit() -> Non
     for token in (
         "exact frozen commit or worktree candidate",
         "Passing tests cannot hide omitted behavior",
-        "implementation-review-v1",
+        "implementation-review-v2",
         "accepted-task-result-v1",
         "final-workflow-review-v1",
         "Do not reread source for code quality or repeat implementation review",
@@ -86,7 +86,7 @@ def test_active_rules_keep_semantic_judgment_agent_owned_and_non_recursive() -> 
         "implementation review",
         "accepted task result",
         "final workflow review",
-        "product verdict",
+        "product decision",
     ):
         assert token in corpus
     for retired in (

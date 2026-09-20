@@ -39,6 +39,8 @@ Keep orchestration artifacts human-readable, contract-compliant, and executable 
 - Summarize spec intent at most once in a root plan, then cite IDs for downstream detail.
 - Require leading spec-repair tasks when a phase or task lacks stable IDs, exact paths, validation details, or file-level execution context.
 - Let the shared store rebuild the distinct per-family indexes when registered artifacts change; derived indexes are projections and do not replace canonical artifacts.
+- Update an active orchestration artifact at its existing canonical identity when repairing its content. Allocate a new identity only for a genuinely distinct semantic artifact, not for an intermediate review revision. Transitioned historical records remain immutable.
+- After plan repair, require the distinct reviewer to assess the complete current canonical tree against all accepted specification obligations and bounded source evidence. The controller/orchestrator evaluates that advice and owns qualification; earlier opinions and delta-only checks are supporting context, not semantic qualification of the current tree.
 
 Contract loading by artifact type:
 
@@ -64,6 +66,7 @@ Contract loading by artifact type:
 - Embed implementation plan tasks inside specifications.
 - Write raw chat logs, unsupported facts, or hidden reasoning into orchestration artifacts.
 - Infer artifact identity, lifecycle state, relationships, or acceptance from filenames, headings, search order, or fallback defaults when a registered structural contract owns those facts.
+- Preserve intermediate repair versions as additional active canonical artifacts or qualify repaired content from a review limited to changed fields.
 
 ## Validation
 
@@ -75,7 +78,8 @@ Contract loading by artifact type:
 - Confirm task files are self-contained for execution from the related spec plus their own instructions.
 - Confirm artifact sections satisfy the loaded contract or explicitly add missing required sections named by the directive.
 - Confirm registered families use the shared structural owner, unregistered families have not gained placeholder authority, and any search is both declared and followed by canonical structural validation.
-- Confirm plan semantic qualification came from direct agent review of specification coverage, ownership, dependencies, validation, authority, scope, and executability; structural checks and supporting ceremony did not issue that verdict.
+- Confirm plan semantic qualification came from the controller/orchestrator's assessment of distinct-agent advice on specification coverage, ownership, dependencies, validation, authority, scope, and executability; neither the reviewer recommendation nor structural checks and supporting ceremony issued the qualification automatically.
+- Confirm repaired artifacts retained their canonical identities, the complete current plan tree—not merely its delta—received independent review, and the controller/orchestrator assessed that advice before qualification.
 
 ## On Violation
 

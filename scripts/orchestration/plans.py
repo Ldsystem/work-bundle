@@ -35,7 +35,7 @@ PLAN_FAMILIES = ("root-plan", "phase", "task")
 PLAN_QUALIFICATION_STATUSES = {"draft", "verified", "superseded"}
 PLAN_QUALIFICATION_TRANSITIONS = {
     "draft": {"verified", "superseded"},
-    "verified": {"superseded"},
+    "verified": {"draft", "superseded"},
     "superseded": set(),
 }
 PLANNED_STATUS = "planned"
@@ -200,6 +200,27 @@ def _active_artifact(
     )
 
 
+def _active_artifact_or_none(
+    args: argparse.Namespace, family: str, identity: str, bindings: dict[str, str]
+) -> dict[str, object] | None:
+    path = canonical_artifact_path(
+        _plan_policy(family), _plan_anchors(args), identity=identity,
+        state="active", bindings=bindings,
+    )
+    if not path.is_file():
+        return None
+    return _active_artifact(args, family, identity, bindings)
+
+
+def _require_draft_plan(args: argparse.Namespace, plan_id: str) -> dict[str, object]:
+    plan = _active_root_plan(args, plan_id)
+    if plan.get("status") != "draft":
+        raise SystemExit(
+            f"Plan content can be created or updated only while the plan is draft: {plan_id}"
+        )
+    return plan
+
+
 
 
 
@@ -232,6 +253,20 @@ def cmd_write_plan(args: argparse.Namespace) -> None:
     source_spec_id = str(getattr(args, "source_spec_id", "") or "")
     if not source_spec_id:
         raise SystemExit("Root plan requires --source-spec-id")
+    bindings = {"source_spec": source_spec_id}
+    existing = _active_artifact_or_none(args, "root-plan", pid, bindings)
+    if existing is not None:
+        if existing.get("status") == "superseded":
+            raise SystemExit("Superseded root plan content cannot be changed")
+        if existing.get("source_spec_id") != source_spec_id:
+            raise SystemExit("Root plan update cannot change source specification binding")
+        if args.status != "draft":
+            raise SystemExit("Root plan content updates must return the plan to draft")
+        created = str(existing["date_created"])
+    else:
+        if _identity_collision(args, "root-plan", pid, bindings=bindings):
+            raise SystemExit(f"Root plan canonical identity collision: {pid}")
+        created = now_date()
     today = now_date()
     data = {
         **semantic,
@@ -244,10 +279,9 @@ def cmd_write_plan(args: argparse.Namespace) -> None:
         "version": args.version,
         "source_spec_id": source_spec_id,
         "status": args.status,
-        "date_created": today,
+        "date_created": created,
         "last_updated": today,
     }
-    bindings = {"source_spec": source_spec_id}
     _validate_candidate("root-plan", data, bindings)
     source = read_artifact(
         CATALOG_PATH, "specification", _plan_anchors(args),
@@ -255,8 +289,6 @@ def cmd_write_plan(args: argparse.Namespace) -> None:
     )
     if source["data"].get("status") != "verified":
         raise SystemExit("Root plan source specification must be active and verified")
-    if _identity_collision(args, "root-plan", pid, bindings=bindings):
-        raise SystemExit(f"Root plan canonical identity collision: {pid}")
     result = write_artifact(
         CATALOG_PATH, "root-plan", _plan_anchors(args), data, state="active",
         bindings=bindings,
@@ -398,18 +430,21 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
     semantic = _semantic_yaml(
         Path(args.content_file), PHASE_STRUCTURAL_INPUT_FIELDS, "Phase"
     )
+    _require_draft_plan(args, str(args.plan_id))
+    bindings = {"plan": args.plan_id}
+    existing = _active_artifact_or_none(args, "phase", args.phase_id, bindings)
+    if existing is None and _identity_collision(args, "phase", args.phase_id, bindings=bindings):
+        raise SystemExit(f"Phase canonical identity collision: {args.phase_id}")
     today = now_date()
     data = {
         **semantic,
         "artifact_type": "phase", "schema_version": 1,
         "id": args.phase_id, "plan_id": args.plan_id, "name": args.title,
-        "status": PLANNED_STATUS, "date_created": today, "last_updated": today,
+        "status": PLANNED_STATUS,
+        "date_created": str(existing["date_created"]) if existing else today,
+        "last_updated": today,
     }
-    bindings = {"plan": args.plan_id}
     _validate_candidate("phase", data, bindings)
-    _active_root_plan(args, str(args.plan_id))
-    if _identity_collision(args, "phase", args.phase_id, bindings=bindings):
-        raise SystemExit(f"Phase canonical identity collision: {args.phase_id}")
     result = write_artifact(
         CATALOG_PATH, "phase", _plan_anchors(args), data, state="active",
         bindings=bindings,
@@ -424,17 +459,21 @@ def cmd_write_task(args: argparse.Namespace) -> None:
         Path(args.content_file), TASK_STRUCTURAL_INPUT_FIELDS, "Task"
     )
     source_obligation_records(semantic, label="Task")
+    _require_draft_plan(args, str(args.plan_id))
+    bindings = {"plan": args.plan_id, "phase": args.phase_id}
+    existing = _active_artifact_or_none(args, "task", args.task_id, bindings)
+    if existing is None and _identity_collision(args, "task", args.task_id, bindings=bindings):
+        raise SystemExit(f"Task canonical identity collision: {args.task_id}")
     today = now_date()
     data = {
         **semantic,
         "artifact_type": "task", "schema_version": 2,
         "id": args.task_id, "plan_id": args.plan_id, "phase_id": args.phase_id,
         "name": args.title, "status": PLANNED_STATUS,
-        "date_created": today, "last_updated": today,
+        "date_created": str(existing["date_created"]) if existing else today,
+        "last_updated": today,
     }
-    bindings = {"plan": args.plan_id, "phase": args.phase_id}
     _validate_candidate("task", data, bindings)
-    _active_root_plan(args, str(args.plan_id))
     try:
         read_artifact(
             CATALOG_PATH,
@@ -448,8 +487,6 @@ def cmd_write_task(args: argparse.Namespace) -> None:
         raise SystemExit(
             f"Task parent phase is not canonical for plan {args.plan_id}: {args.phase_id}"
         ) from error
-    if _identity_collision(args, "task", args.task_id, bindings=bindings):
-        raise SystemExit(f"Task canonical identity collision: {args.task_id}")
     result = write_artifact(
         CATALOG_PATH, "task", _plan_anchors(args), data, state="active",
         bindings=bindings,
@@ -461,7 +498,7 @@ def cmd_finalize_reviewed_plan(args: argparse.Namespace) -> None:
     """Mechanically archive one exact accepted current plan and release bindings."""
 
     from artifact_store import transition_artifact
-    from review_runtime import CURRENT_CATALOG
+    from review_runtime import CURRENT_CATALOG, validate_final_workflow_chain
 
     anchors = _plan_anchors(args)
     review = read_artifact(
@@ -488,103 +525,13 @@ def cmd_finalize_reviewed_plan(args: argparse.Namespace) -> None:
         CATALOG_PATH, "root-plan", anchors, identity=str(args.plan_id),
         state="active", bindings=plan_bindings,
     )
-    plan_ref = data.get("plan_identity")
-    if (
-        not isinstance(plan_ref, dict)
-        or plan_ref.get("id") != args.plan_id
-        or plan_ref != canonical_plan_tree_identity(
-            resolve_workspace_root(args), str(args.plan_id), state="active"
-        )
-        or data.get("specification_id") != plan_record["data"].get("source_spec_id")
-    ):
-        raise SystemExit("Final workflow review plan/specification identity is stale")
-
-    task_rows = [row for row in _index_rows(args, "task") if row.get("plan_id") == args.plan_id]
-    task_ids = {str(row["id"]) for row in task_rows}
-    review_required_by_task: dict[str, bool] = {}
-    for row in task_rows:
-        task_id = str(row["id"])
-        task_record = read_artifact(
-            CATALOG_PATH,
-            "task",
-            anchors,
-            identity=task_id,
-            state="active",
-            bindings=_family_bindings("task", row),
-        )
-        acceptance_review = task_record["data"].get("acceptance_review")
-        required = acceptance_review.get("required") if isinstance(acceptance_review, dict) else None
-        if type(required) is not bool:
-            raise SystemExit(f"Finalization task acceptance-review contract is invalid: {task_id}")
-        review_required_by_task[task_id] = required
-    accepted_refs = data.get("accepted_results")
-    if not isinstance(accepted_refs, list) or {str(ref.get("task_id")) for ref in accepted_refs if isinstance(ref, dict)} != task_ids:
-        raise SystemExit("Final workflow review does not reference every planned task exactly once")
-    if len(accepted_refs) != len(task_ids):
-        raise SystemExit("Final workflow review accepted-result coverage is duplicated")
-    coverage = data.get("coverage")
-    if not isinstance(coverage, dict) or coverage != {"planned": len(task_ids), "accepted": len(task_ids), "missing": []}:
-        raise SystemExit("Final workflow review coverage does not match canonical tasks")
-
-    accepted_records: list[tuple[dict[str, object], dict[str, str]]] = []
-    executor_records: list[tuple[dict[str, object], dict[str, str], str]] = []
-    declared_review_refs = {
-        (str(reference.get("id")), str(reference.get("sha256")))
-        for reference in data.get("accepted_reviews", []) if isinstance(reference, dict)
-    }
-    expected_review_refs: set[tuple[str, str]] = set()
-    for reference in accepted_refs:
-        task_id = str(reference["task_id"])
-        bindings = {"plan": str(args.plan_id), "task": task_id}
-        record = read_artifact(
-            CURRENT_CATALOG, "accepted-task-result", anchors,
-            identity=str(reference["id"]), state="active", bindings=bindings,
-        )
-        if record["digest"] != reference.get("sha256") or record["data"].get("task_id") != reference["task_id"]:
-            raise SystemExit("Final workflow review accepted-result reference is stale")
-        accepted_data = record["data"]
-        implementation_ref = accepted_data.get("implementation_review")
-        if implementation_ref is None:
-            if review_required_by_task[task_id]:
-                raise SystemExit("Final workflow review omits a required implementation review")
-        elif isinstance(implementation_ref, dict):
-            implementation_identity = (
-                str(implementation_ref.get("id")),
-                str(implementation_ref.get("sha256")),
-            )
-            if implementation_identity not in declared_review_refs:
-                raise SystemExit("Final workflow review implementation-review reference is invalid")
-            expected_review_refs.add(implementation_identity)
-        else:
-            raise SystemExit("Final workflow review implementation-review reference is invalid")
-        executor_ref = accepted_data.get("executor_result")
-        executor_matches = []
-        if isinstance(executor_ref, dict):
-            for state in _plan_policy("executor-result")["lifecycle"]["states"]:
-                try:
-                    executor_matches.append(read_artifact(
-                        CURRENT_CATALOG, "executor-result", anchors,
-                        identity=str(executor_ref.get("id")), state=str(state), bindings=bindings,
-                    ))
-                except (FileNotFoundError, SystemExit):
-                    continue
-        if len(executor_matches) != 1 or executor_matches[0]["digest"] != executor_ref.get("sha256"):
-            raise SystemExit("Final workflow review accepted-result executor reference is stale")
-        executor_records.append((executor_matches[0], bindings, str(executor_matches[0]["state"])))
-        accepted_records.append((record, bindings))
-
-    if declared_review_refs != expected_review_refs:
-        raise SystemExit("Final workflow review implementation-review coverage is not exact")
-
-    review_records: list[dict[str, object]] = []
-    for reference in data.get("accepted_reviews", []):
-        record = read_artifact(
-            CURRENT_CATALOG, "implementation-review", anchors,
-            identity=str(reference["id"]), state="active", bindings={"plan": str(args.plan_id)},
-        )
-        if record["digest"] != reference.get("sha256") or record["data"].get("verdict") != "accept":
-            raise SystemExit("Final workflow review implementation-review reference is stale")
-        review_records.append(record)
+    current_chain = validate_final_workflow_chain(args, data)
+    accepted_records = current_chain["accepted_records"]
+    executor_records = current_chain["executor_records"]
+    review_records = current_chain["review_records"]
+    task_rows = [
+        row for row in _index_rows(args, "task") if row.get("plan_id") == args.plan_id
+    ]
 
     repository = data.get("repository_finalization")
     repositories = repository.get("repositories") if isinstance(repository, dict) else None

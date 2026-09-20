@@ -17,7 +17,7 @@ Require one canonical factual executor result for safe continuation without gran
 ## Must
 
 - Create one canonical `executor-result-v1` after task execution, including factual scope, changed paths, focused observations, blockers, task fit, repository/CodeGraph facts, delegation, and knowledge disposition.
-- Validate identity, bindings, schema, canonical path, collisions, and transition before mutation; after creation perform only lightweight integrity and index checks.
+- Validate identity, bindings, schema, canonical path, and transition before mutation; create or repair the active result at the same canonical identity, while transitioned results remain immutable. After the write perform only lightweight integrity and index checks.
 - Keep executor reporting separate from independent product judgment and controller finalization.
 - Treat an invalid result as blocking only continuation that requires it. Permit direct product review when exact specification/plan, frozen implementation identity, and focused observations are independently available.
 
@@ -28,7 +28,7 @@ Require one canonical factual executor result for safe continuation without gran
 
 ## Validation
 
-- Confirm the canonical artifact and bindings, factual closed content, immutable bytes, and truthful partial-effect reporting.
+- Confirm the canonical artifact and bindings, factual closed content, in-place active repair, and truthful partial-effect reporting.
 
 ## On Violation
 
