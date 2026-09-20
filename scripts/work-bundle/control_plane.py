@@ -286,6 +286,27 @@ def validated_remote(value: object) -> str:
     return canonical_remote(raw)
 
 
+def _declared_remote_values(repository: dict[str, object]) -> frozenset[str]:
+    canonical = repository.get("canonical_remote") or repository.get("remote")
+    aliases = repository.get("remote_aliases") or ()
+    values = [canonical, *(aliases if isinstance(aliases, (list, tuple)) else ())]
+    return frozenset(validated_remote(value) for value in values if str(value or "").strip())
+
+
+def _remote_matches_declared(actual: object, repository: dict[str, object]) -> bool:
+    return validated_remote(actual) in _declared_remote_values(repository)
+
+
+def _member_with_declared_remotes(
+    member: dict[str, object], repository: dict[str, object]
+) -> dict[str, object]:
+    return {
+        **member,
+        "remote": str(repository.get("canonical_remote") or repository.get("remote") or ""),
+        "remote_aliases": list(repository.get("remote_aliases") or []),
+    }
+
+
 def _git(path: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(path), *args], check=False, capture_output=True, text=True
@@ -477,8 +498,14 @@ def _v4_repositories(text: str) -> list[dict[str, object]]:
             repository["canonical_remote"] = validated_remote(
                 "" if str(canonical_value).lower() in {"null", "~", "none"} else canonical_value
             )
+            aliases = remote.get("aliases")
+            repository["remote_aliases"] = [
+                validated_remote(alias)
+                for alias in aliases
+            ] if isinstance(aliases, list) else []
         else:
             repository["canonical_remote"] = validated_remote(repository.get("canonical"))
+            repository["remote_aliases"] = []
         materialization = repository.get("materialization")
         locator = repository.get("locator")
         repository["locator_type"] = str(locator.get("type", "")) if isinstance(locator, dict) else ""
@@ -1644,7 +1671,6 @@ def _classify_workspace_member(
         binding_type = str(repository.get("workspace_binding_type") or "")
         name = str(repository.get("workspace_binding_name") or "")
         path = _member_segment(repository, name) if binding_type == "member" else ""
-        remote = str(repository.get("canonical_remote") or "")
         branch = str(repository.get("default_branch") or "")
         same_id = repository_id == member["repository_id"]
         same_name = bool(name) and name == member["name"]
@@ -1655,7 +1681,7 @@ def _classify_workspace_member(
             same_id
             and same_name
             and same_path
-            and remote == member["remote"]
+            and _remote_matches_declared(member["remote"], repository)
             and branch == member["default_branch"]
         ):
             return "match"
@@ -1760,6 +1786,7 @@ def _add_workspace_member_preflight(workspace_root: Path, text: str) -> dict[str
             _require_multi_member_checkout(workspace_root, path, {
                 "repository_id": repository_id,
                 "remote": str(repo.get("canonical_remote") or ""),
+                "remote_aliases": list(repo.get("remote_aliases") or []),
                 "default_branch": str(repo.get("default_branch") or ""),
             })
         return binding
@@ -1787,8 +1814,7 @@ def _add_workspace_member_preflight(workspace_root: Path, text: str) -> dict[str
     ):
         raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_GIT_INVALID:{root_id}")
     actual_remote = _resolved_git_remote(project_root)
-    expected_remote = str(root.get("canonical_remote") or "")
-    if actual_remote != expected_remote:
+    if not _remote_matches_declared(actual_remote, root):
         raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_REMOTE_CONFLICT:{root_id}")
     _require_observed_branch(project_root, str(root.get("default_branch") or ""), root_id)
     return binding
@@ -1825,7 +1851,7 @@ def _require_add_workspace_member_replay_state(
     if not member_path.is_dir() or not (member_path / ".git").exists():
         raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_CHECKOUT_MISSING:{member['repository_id']}")
     actual_remote = _resolved_git_remote(member_path)
-    if actual_remote != member["remote"]:
+    if not _remote_matches_declared(actual_remote, member):
         raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_REMOTE_CONFLICT:{member['repository_id']}")
     _require_observed_branch(member_path, member["default_branch"], member["repository_id"])
     repositories = binding.get("repositories")
@@ -1848,7 +1874,7 @@ def _inspect_existing_member_checkout(member_path: Path, member: dict[str, str])
     if not member_path.is_dir():
         raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
     actual_remote = _resolved_git_remote(member_path)
-    if actual_remote != member["remote"]:
+    if not _remote_matches_declared(actual_remote, member):
         raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
     _require_observed_branch(member_path, member["default_branch"], member["repository_id"])
 
@@ -1927,13 +1953,14 @@ def _deferred_member_record(
     }
 
 
-def _deferred_member_from_repository(repository: dict[str, object]) -> dict[str, str]:
+def _deferred_member_from_repository(repository: dict[str, object]) -> dict[str, object]:
     name = str(repository.get("workspace_binding_name") or repository.get("id") or "")
     return {
         "repository_id": str(repository.get("id") or ""),
         "name": name,
         "path": _member_segment(repository, name),
         "remote": str(repository.get("canonical_remote") or ""),
+        "remote_aliases": list(repository.get("remote_aliases") or []),
         "default_branch": str(repository.get("default_branch") or ""),
         "materialization": str(repository.get("materialization_state") or ""),
         "proposal_id": str(repository.get("deferred_proposal_id") or ""),
@@ -1985,7 +2012,7 @@ def _deferred_proposal(workspace_root: Path, text: str, member: dict[str, str]) 
 def _attach_deferred_proposal(text: str, repository_id: str, remote: str) -> dict[str, object]:
     repository = _find_deferred_repository(text, repository_id)
     member = _deferred_member_from_repository(repository)
-    if member["materialization"] == "attached" and member["remote"] != remote:
+    if member["materialization"] == "attached" and not _remote_matches_declared(remote, repository):
         raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
     facts = {
         "metadata_digest": _metadata_digest(text),
@@ -2205,7 +2232,7 @@ def _attach(
             if candidate is not None and candidate.exists():
                 manual_observation = _git_checkout_observation(candidate) if manual_locator else None
                 actual_remote = "" if manual_locator else _resolved_git_remote(candidate)
-                if not manual_locator and actual_remote != canonical_remote(remote):
+                if not manual_locator and not _remote_matches_declared(actual_remote, repository):
                     raise ControlPlaneError(
                         "WB_CONTROL_PLANE_REMOTE_CONFLICT",
                         {"repository_id": repository_id},
@@ -2481,7 +2508,7 @@ def cmd_doctor_workspace(args: list[str], *, command_name: str = "doctor-workspa
                 except ControlPlaneError as exc:
                     local_failures.append(f"{exc.code}:{repository_id}")
                     actual_remote = ""
-                if actual_remote != str(repo.get("canonical_remote") or ""):
+                if not _remote_matches_declared(actual_remote, repo):
                     local_failures.append(f"WB_CONTROL_PLANE_BOUND_REMOTE_CONFLICT:{repository_id}")
                     if repo.get("required"):
                         missing_required.append(repository_id)
@@ -2726,7 +2753,9 @@ def cmd_attach_deferred_remote(args: list[str]) -> int:
         metadata_path = workspace_root / ".work-bundle/project.yaml"
         text = read(metadata_path)
         proposal = _attach_deferred_proposal(text, parsed.repository_id, remote)
-        member = {**proposal["member"], "remote": remote}
+        member = dict(proposal["member"])
+        if member["materialization"] != "attached":
+            member["remote"] = remote
         _deferred_attachment_preflight(workspace_root, text, member)
         payload = {"command": "attach-deferred-remote", "proposal_id": proposal["proposal_id"]}
         if parsed.dry_run:
@@ -2736,7 +2765,9 @@ def cmd_attach_deferred_remote(args: list[str]) -> int:
         live = _attach_deferred_proposal(live_text, parsed.repository_id, remote)
         if parsed.accepted_proposal_id != live["proposal_id"]:
             raise ControlPlaneError("WB_CONTROL_PLANE_PROPOSAL_STALE")
-        member = {**live["member"], "remote": remote}
+        member = dict(live["member"])
+        if member["materialization"] != "attached":
+            member["remote"] = remote
         binding, member_path, multi = _deferred_attachment_preflight(workspace_root, live_text, member)
         if member["materialization"] == "attached":
             _require_add_workspace_member_replay_state(workspace_root, member, binding, multi=multi)
@@ -2829,14 +2860,21 @@ def cmd_add_workspace_member(args: list[str]) -> int:
         _add_workspace_member_preflight(workspace_root, text)
         if _root_index_tracks(workspace_root, path):
             raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_PATH_TRACKED")
-        member_path = workspace_root / path
-        if member_path.exists() or member_path.is_symlink():
-            _inspect_existing_member_checkout(member_path, member)
-            if multi:
-                _require_multi_member_checkout(workspace_root, member_path, member)
-        classification = _classify_workspace_member(_v4_repositories(text), member)
+        repositories = _v4_repositories(text)
+        classification = _classify_workspace_member(repositories, member)
         if classification == "collision":
             raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
+        checkout_member = member
+        if classification == "match":
+            repository = next(
+                item for item in repositories if str(item.get("id") or "") == member["repository_id"]
+            )
+            checkout_member = _member_with_declared_remotes(member, repository)
+        member_path = workspace_root / path
+        if member_path.exists() or member_path.is_symlink():
+            _inspect_existing_member_checkout(member_path, checkout_member)
+            if multi:
+                _require_multi_member_checkout(workspace_root, member_path, checkout_member)
         _require_add_workspace_member_target(text, member, classification)
         proposal = _add_workspace_member_proposal(workspace_root, text, member)
         payload = {
@@ -2854,7 +2892,15 @@ def cmd_add_workspace_member(args: list[str]) -> int:
             return 1
         if classification == "match":
             live_binding = _add_workspace_member_preflight(workspace_root, live_text)
-            _require_add_workspace_member_replay_state(workspace_root, member, live_binding, multi=multi)
+            live_repository = next(
+                item
+                for item in _v4_repositories(live_text)
+                if str(item.get("id") or "") == member["repository_id"]
+            )
+            replay_member = _member_with_declared_remotes(member, live_repository)
+            _require_add_workspace_member_replay_state(
+                workspace_root, replay_member, live_binding, multi=multi
+            )
             out({**payload, "status": "passed", "dry_run": False, "replay": True, "changed_files": []})
             return 0
         applied = _apply_add_workspace_member(workspace_root, live_text, member)

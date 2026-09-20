@@ -39,6 +39,13 @@ class AnchorContext:
     repository_id: str | None
 
 
+@dataclass(frozen=True)
+class WorkspaceContext:
+    config_root: Path
+    workspace_root: Path
+    workspace_id: str
+
+
 class _UniqueKeyLoader(yaml.SafeLoader):
     pass
 
@@ -284,6 +291,73 @@ def find_workspace_root(start: str | Path) -> Path | None:
         if (current / ".work-bundle/project.yaml").is_file():
             return current
     return None
+
+
+def resolve_workspace_context(
+    *,
+    workspace_root: str | Path | None = None,
+    project_root: str | Path | None = None,
+    cwd: str | Path | None = None,
+    config_root: str | Path | None = None,
+    toolkit_root: str | Path | None = None,
+) -> WorkspaceContext:
+    """Resolve workspace authority without asserting source-checkout freshness."""
+    selected_project = Path(project_root).expanduser().resolve() if project_root is not None else None
+    selected_workspace = Path(workspace_root).expanduser().resolve() if workspace_root is not None else None
+    current = Path(cwd).expanduser().resolve() if cwd is not None else Path.cwd().resolve()
+    inferred = find_workspace_root(selected_project or current)
+    if selected_workspace is None:
+        selected_workspace = inferred
+    elif selected_project is not None and inferred != selected_workspace:
+        raise InfrastructureError(
+            "WB_INFRASTRUCTURE_ANCHOR_CONFLICT",
+            "Workspace and project selectors do not identify the same workspace",
+        )
+    if selected_workspace is None:
+        raise InfrastructureError(
+            "WB_INFRASTRUCTURE_WORKSPACE_NOT_FOUND", "No containing WorkBundle workspace metadata was found"
+        )
+
+    metadata = load_workspace_metadata(selected_workspace, toolkit_root=toolkit_root)
+    registry = load_yaml_mapping(
+        resolve_project_registry_path(config_root=config_root, toolkit_root=toolkit_root)
+    )
+    if registry.get("registry_schema_version") != 1 or not isinstance(registry.get("device_bindings"), Mapping):
+        raise InfrastructureError(
+            "WB_INFRASTRUCTURE_SCHEMA_INVALID",
+            "Project registry workspace identity fields are invalid",
+        )
+    workspace = metadata.get("workspace")
+    workspace_id = workspace.get("id") if isinstance(workspace, Mapping) else None
+    bindings = registry.get("device_bindings")
+    binding = bindings.get(workspace_id) if isinstance(bindings, Mapping) else None
+    if not isinstance(binding, Mapping):
+        raise InfrastructureError(
+            "WB_INFRASTRUCTURE_WORKSPACE_BINDING_MISSING",
+            f"No device binding exists for workspace {workspace_id!r}",
+            details={"workspace_id": workspace_id},
+        )
+    if binding.get("slug") != workspace.get("slug"):
+        raise InfrastructureError(
+            "WB_INFRASTRUCTURE_WORKSPACE_BINDING_CONTRADICTORY",
+            "The device binding slug contradicts portable workspace metadata",
+        )
+    if not isinstance(binding.get("repositories"), Mapping):
+        raise InfrastructureError(
+            "WB_INFRASTRUCTURE_SCHEMA_INVALID",
+            "The device binding repository collection is invalid",
+        )
+    bound_workspace = Path(str(binding.get("workspace_root", ""))).expanduser().resolve()
+    if bound_workspace != selected_workspace:
+        raise InfrastructureError(
+            "WB_INFRASTRUCTURE_WORKSPACE_BINDING_CONTRADICTORY",
+            "The device binding workspace root contradicts the selected workspace",
+        )
+    return WorkspaceContext(
+        config_root=resolve_config_root(config_root),
+        workspace_root=selected_workspace,
+        workspace_id=str(workspace_id),
+    )
 
 
 def load_workspace_metadata(

@@ -73,6 +73,12 @@ def _catalog() -> dict[str, object]:
     return catalog
 
 
+def _catalog_metavar(catalog: dict[str, object], key: str) -> str:
+    values = catalog[key]
+    assert isinstance(values, list)
+    return '{' + ','.join(str(value) for value in values) + '}'
+
+
 def _store_root() -> Path:
     return work_bundle_config_root() / 'defect'
 
@@ -522,18 +528,18 @@ def cmd_defect_ensure_store(argv: list[str]) -> int:
 
 
 def cmd_defect_create_evidence(argv: list[str]) -> int:
+    catalog = _catalog()
     parser = argparse.ArgumentParser(prog='wb.py defect-create-evidence')
-    parser.add_argument('--status', required=True)
+    parser.add_argument('--status', required=True, metavar=_catalog_metavar(catalog, 'statuses'))
     parser.add_argument('--short-description', required=True)
     parser.add_argument('--deviation', required=True)
     parser.add_argument('--occurrence', required=True)
     parser.add_argument('--evidence', action='append', required=True)
-    parser.add_argument('--severity', required=True)
-    parser.add_argument('--action')
+    parser.add_argument('--severity', required=True, metavar=_catalog_metavar(catalog, 'severities'))
+    parser.add_argument('--action', metavar=_catalog_metavar(catalog, 'actions'))
     parsed = parser.parse_args(argv)
 
     def handler() -> int:
-        catalog = _catalog()
         _validate_slug(parsed.short_description, catalog)
         _validate_status_action(parsed.status, parsed.action, catalog)
         _validate_severity(parsed.severity, catalog)
@@ -584,13 +590,13 @@ def cmd_defect_write_index(argv: list[str]) -> int:
 
 
 def cmd_defect_archive_evidence(argv: list[str]) -> int:
+    catalog = _catalog()
     parser = argparse.ArgumentParser(prog='wb.py defect-archive-evidence')
     parser.add_argument('evidence')
-    parser.add_argument('--action', required=True)
+    parser.add_argument('--action', required=True, metavar=_catalog_metavar(catalog, 'actions'))
     parsed = parser.parse_args(argv)
 
     def handler() -> int:
-        catalog = _catalog()
         _validate_status_action('archived', parsed.action, catalog)
         _ensure_store()
         supplied = Path(parsed.evidence)

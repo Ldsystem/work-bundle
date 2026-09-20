@@ -270,6 +270,36 @@ def test_agents_template_load_always_is_unconditional_and_three_scopes_are_named
     assert "decompose the current user request before rule selection" not in text
 
 
+def test_agents_authority_and_evidence_contract_is_bounded_and_synchronized() -> None:
+    template = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
+    source = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    for text in (template, source):
+        for phrase in (
+            "Agents own semantic correctness, relevance, qualification, and acceptance",
+            "Scripts and schemas own deterministic structure",
+            "current implementation and workspace state as evidence",
+            "controller/orchestrator owns scope, delegation, repair routing, continuation, acceptance, re-entry",
+            "Reviewers provide independent advice",
+            "Enforce necessary constraints before an authoritative write",
+            "prefer lightweight integrity checks",
+            "Escalate to targeted durable knowledge, orchestration lineage, or Git history only when",
+            "at the owning workflow's completion boundary, record one knowledge disposition",
+        ):
+            assert phrase in text
+        assert "Find its corresponding design purpose and decisions in the knowledge base" not in text
+        assert "Find its corresponding orchestration evidence" not in text
+        assert "after each meaningful validated move, record a knowledge disposition" not in text
+
+    template_body = template.strip()
+    source_body = source.strip().removeprefix(
+        "# ========================\n# Work Bundle RULE START\n# ========================\n"
+    ).removesuffix(
+        "\n# ========================\n# Work Bundle RULE END\n# ========================"
+    ).strip()
+    assert source_body == template_body
+
+
 def test_validate_rules_rejects_nested_scope_index(tmp_path: Path) -> None:
     root = tmp_path / "rules"
     scope = root / "work-bundle"
@@ -614,6 +644,21 @@ def test_initialize_project_guidance_matches_create_rule_project_scope() -> None
     assert "`.work-bundle/project.yaml`, `rules/index.yaml`" not in initialize
 
 
+def test_create_rule_ends_with_practical_semantic_self_check() -> None:
+    create_rule = (REPO_ROOT / "skills/wb-create-rule/SKILL.md").read_text(encoding="utf-8")
+
+    self_check = create_rule.split("## Self-check", maxsplit=1)[1]
+    for obligation in (
+        "canonical current path",
+        "user-visible or workflow-visible signal",
+        "procedure, conditional policy, and deterministic mechanics",
+        "accepted purpose",
+        "pre-write mechanical constraints",
+        "lightweight post-write integrity",
+    ):
+        assert obligation in self_check
+
+
 def test_initialize_project_v4_migration_guardrails_and_pressure_scenarios() -> None:
     initialize = (REPO_ROOT / "skills/wb-initialize-project/SKILL.md").read_text(encoding="utf-8")
     evals = json.loads((REPO_ROOT / "references/evals/work-bundle/evals.json").read_text(encoding="utf-8"))
@@ -694,6 +739,9 @@ def test_workspace_ecosystem_documentation_and_external_registry_boundary() -> N
     assert "singular `script/`" in readme
     assert "credentials/credentials.yaml" in readme
     assert "--scope project --workspace-root <workspace-root>" in scripts_readme
+    assert "normalized `remote.canonical` or declared `remote.aliases`" in scripts_readme
+    assert "Undeclared remotes fail before mutation" in scripts_readme
+    assert "never promoted into or rewritten as canonical metadata" in scripts_readme
     assert "bootstrap.yaml` field `skill_registry`" in scripts_readme
     assert "runtime skill registry" in scripts_readme and "external-only" in scripts_readme
     assert "wb-credential-use` and `wb-migrate-to-multi-repository" in scripts_readme

@@ -136,6 +136,7 @@ def test_defect_create_evidence_rejects_invalid_severity(tmp_path: Path) -> None
     assert result.returncode == 1
     payload = json.loads(result.stdout)
     assert "invalid severity: p11" in payload["error"]
+    assert not (tmp_path / ".work-bundle" / "defect").exists()
 
 
 def test_defect_create_evidence_rejects_archived_without_action(tmp_path: Path) -> None:
@@ -284,6 +285,21 @@ def test_defect_dispatcher_routes_all_commands_and_command_help(tmp_path: Path) 
         result = run_wb(tmp_path, command, "--help")
         assert result.returncode == 0, result.stdout + result.stderr
         assert f"usage: wb.py {command}" in result.stdout
+
+
+def test_defect_help_publishes_supported_values_before_invocation(tmp_path: Path) -> None:
+    created = run_wb(tmp_path, "defect-create-evidence", "--help")
+
+    assert created.returncode == 0, created.stdout + created.stderr
+    assert "--status {active,archived}" in created.stdout
+    assert "--severity {p0,p1,p2,p3,p4,p5,p6,p7,p8,p9,p10}" in created.stdout
+    assert "--action {dismiss,completed}" in created.stdout
+
+    archived = run_wb(tmp_path, "defect-archive-evidence", "--help")
+
+    assert archived.returncode == 0, archived.stdout + archived.stderr
+    assert "--action {dismiss,completed}" in archived.stdout
+    assert not (tmp_path / ".work-bundle" / "defect").exists()
 
 
 def test_defect_catalog_ignores_cwd_shadow(tmp_path: Path) -> None:

@@ -6,16 +6,24 @@ These two boundaries apply to every agent, every task, and every workflow withou
 1. **DO NOT OVERENGINEER.** Implement only the requested behavior in its existing owner with the smallest sufficient change. Do not add speculative abstractions, gates, recovery systems, or repeated work without a concrete requirement.
 2. **MAKE NO MISTAKES.** Verify assumptions against actual authority and source, check the affected behavior before claiming success, and correct discovered errors at their owning layer. Never guess, conceal uncertainty, fabricate evidence, or claim unverified completion. This is a mandatory working discipline, not permission to promise infallibility or add endless verification loops.
 
+## Authority and change discipline
+
+- Agents own semantic correctness, relevance, qualification, and acceptance. Scripts and schemas own deterministic structure, identity, serialization, and other declared mechanics; their output is evidence, not a semantic verdict.
+- Treat the current implementation and workspace state as evidence of what exists, never as correctness authority. Reconcile them with the user purpose and accepted decisions.
+- In an orchestration flow, the controller/orchestrator owns scope, delegation, repair routing, continuation, acceptance, re-entry, and any explicitly authorized delivery. Reviewers provide independent advice; the controller/orchestrator assesses that advice instead of applying it automatically.
+- Enforce necessary constraints before an authoritative write. After the write, prefer lightweight integrity checks and capable product validation over repeated evidence ceremony.
+- Judge the accuracy and reviewability of the concrete product. A defect in incidental plans, handoffs, indexes, receipts, or other supporting state does not manufacture or veto a product decision unless it makes the product ambiguous, unsafe, inaccessible, or impossible to review.
+
 ## Evidence-first change principle
 
 Before or during evidence exploration, every agent must:
 
-1. Locate the feature in the codebase.
-2. Find its corresponding design purpose and decisions in the knowledge base.
-3. Find its corresponding orchestration evidence—specification, plan, and handoff—and Git history. Use that lineage to understand why each implementation was created, whether it introduced the defect, and whether it is a valid basis for the current user purpose.
-4. If a legacy implementation introduced the defect, prefer reverting or correcting that implementation over adding another patch around it.
-5. If a legacy implementation introduced the intended feature, understand its design and make the fewest updates necessary to satisfy the current request.
-6. In either case, use available source-navigation tools—including CodeGraph when indexed, `rg`, `grep`, and equivalent tools—to find related references and update them consistently.
+1. Locate the feature and build a bounded current-state view with the applicable source-navigation tools, including CodeGraph when indexed and text search otherwise.
+2. Identify the accepted user purpose and directly relevant design or decision authority already carried by the workflow.
+3. Classify the implementation, tests, documentation, and workspace state as evidence. Trace only relations that can materially change scope, a user-visible or contractual outcome, an architectural boundary, a validation target, or safety.
+4. Escalate to targeted durable knowledge, orchestration lineage, or Git history only when current evidence is contradictory or insufficient to resolve ownership, regression cause, a governing legacy decision, or another material risk.
+5. Correct a demonstrated defect at its owning layer with the smallest sufficient change. Prefer removing or correcting the cause over adding compatibility or recovery machinery around it.
+6. Stop exploring when further evidence cannot change an accepted outcome or validation target, and record the stopping reason when it matters to continuation or review.
 
 purpose:
 - Seeing this rule means that you are working with the `work-bundle` toolkit, it provides skills and rules to finish a bunch of works, including:
@@ -41,8 +49,8 @@ must:
 - resolve `work_bundle_root` from `$work_bundle_config_root/bootstrap.yaml` -> `work_bundle_root`
 - resolve project registry from `$work_bundle_config_root/bootstrap.yaml` -> `project_registry`
 - resolve skill registry from `$work_bundle_config_root/bootstrap.yaml` -> `skill_registry`
-- before material implementation, establish or consume one Truth Basis containing purpose, as-is evidence, accepted decision authority, expected delta, and conflict status; after preflight and source grounding, lightweight planning runs one bounded `ks-what-is-helpful` gateway and records accepted authority or evidence-backed `none relevant`, while heavy execution compiles carried authority without executor retrieval
-- after each meaningful validated move, record a knowledge disposition of `none`, `update`, `supersede`, or `reclassify`; the lightweight completion owner resolves its approved `ks-*` follow-up, while heavy executors return task-local evidence only and final orchestration review owns heavy-path persistence follow-up
+- before material implementation, establish or consume one Truth Basis containing purpose, as-is evidence, accepted decision authority, expected delta, and conflict status; after preflight and bounded source grounding, lightweight planning runs one bounded `ks-what-is-helpful` gateway and records accepted authority or evidence-backed `none relevant`, while heavy execution uses compiled carried authority without executor retrieval
+- at the owning workflow's completion boundary, record one knowledge disposition of `none`, `update`, `supersede`, or `reclassify`; the lightweight completion owner resolves its approved `ks-*` follow-up, while heavy executors return task-local evidence only and final orchestration review owns heavy-path persistence follow-up
 - use `work_bundle_root` only for toolkit assets, builtin skills, builtin rules, and references
 - use `work_bundle_config_root` only for non-project runtime state produced by tool use
 - resolve workspace-owned metadata, rules, knowledge, orchestration, `AGENTS.md`, `script/index.yaml`, and `credentials/credentials.yaml` from `workspace_root` in both workspace modes

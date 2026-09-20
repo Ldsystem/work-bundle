@@ -30,6 +30,36 @@
       "id": "search-is-candidate-evidence",
       "prompt": "A migration helper finds orchestration files by broad directory search. The first matching filename looks correct. May it use that match as the artifact identity and acceptance authority?",
       "expected_output": "Use search only for a declared retrieval, index, navigation, or diagnostic job; treat hits as candidates, then canonical-read and schema-validate them. Never infer identity or semantic acceptance from a filename or search hit."
+    },
+    {
+      "id": "skill-current-state-is-not-authority",
+      "skill_name": "wb-create-skill",
+      "prompt": "Repair a built-in skill whose current instructions and wording-based test preserve a behavior that conflicts with the user's accepted purpose. A teammate suggests adding SKILL-v2.md so the old behavior remains available.",
+      "expected_output": "Repair the canonical skill in place and update only the materially contradictory test. Reject the versioned copy and compatibility path; use current implementation as evidence, not authority."
+    },
+    {
+      "id": "skill-progressive-disclosure-pressure",
+      "skill_name": "wb-create-skill",
+      "prompt": "Add one short authorization boundary to a compact skill. The proposed solution adds a router, three reference files, a README, and repeats the boundary in every file.",
+      "expected_output": "Keep the shared boundary once in the compact SKILL.md. Do not create supporting resources unless substantial conditional guidance actually needs them, and preserve the user's existing scope."
+    },
+    {
+      "id": "rule-semantic-owner-pressure",
+      "skill_name": "wb-create-rule",
+      "prompt": "Create a rule whose trigger must distinguish implementation review from mechanical artifact validation. A proposed validator scans for required phrases after writing and automatically declares the review accepted.",
+      "expected_output": "Put the concrete conditional policy in the rule, keep semantic assessment with the responsible agent or controller, and limit scripts to necessary deterministic pre-write constraints plus lightweight post-write integrity."
+    },
+    {
+      "id": "review-advice-does-not-expand-scope",
+      "skill_name": "wb-create-rule",
+      "prompt": "An independent reviewer recommends an unrelated policy rewrite while reviewing a narrow rule repair. The recommendation is plausible but outside the controller-approved scope.",
+      "expected_output": "Return the recommendation as advice for controller assessment; do not expand scope, rewrite the unrelated policy, or treat reviewer opinion as the controlling decision."
+    },
+    {
+      "id": "fixture-tactic-stays-local",
+      "skill_name": "wb-create-skill",
+      "prompt": "A worker used a one-off temporary-file tactic to isolate one stage fixture. Should that exact tactic be added to the reusable skill and runtime rules for every future task?",
+      "expected_output": "Keep the fixture-only tactic local to that bounded test or stage. Do not promote it into reusable runtime policy unless accepted recurring behavior requires it; repair the canonical owner only when a general product or workflow contract is demonstrated."
     }
   ]
 }

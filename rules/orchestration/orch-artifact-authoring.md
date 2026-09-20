@@ -41,6 +41,7 @@ Keep orchestration artifacts human-readable, contract-compliant, and executable 
 - Let the shared store rebuild the distinct per-family indexes when registered artifacts change; derived indexes are projections and do not replace canonical artifacts.
 - Update an active orchestration artifact at its existing canonical identity when repairing its content. Allocate a new identity only for a genuinely distinct semantic artifact, not for an intermediate review revision. Transitioned historical records remain immutable.
 - After plan repair, require the distinct reviewer to assess the complete current canonical tree against all accepted specification obligations and bounded source evidence. The controller/orchestrator evaluates that advice and owns qualification; earlier opinions and delta-only checks are supporting context, not semantic qualification of the current tree.
+- Keep controller/orchestrator authority explicit when an artifact records review or continuation: review remains advisory, accurate findings are assessed and routed by the controller/orchestrator, and a suggestion cannot silently expand scope or authorize delivery.
 
 Contract loading by artifact type:
 

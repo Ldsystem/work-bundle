@@ -1892,6 +1892,96 @@ def init_single_v4(
     return config, workspace, remote, workspace_id
 
 
+def set_single_v4_declared_remotes(
+    workspace: Path, *, canonical: str, aliases: list[str]
+) -> None:
+    metadata = workspace / ".work-bundle/project.yaml"
+    document = yaml.safe_load(metadata.read_text(encoding="utf-8"))
+    document["source_repositories"][0]["remote"] = {
+        "canonical": canonical,
+        "aliases": aliases,
+    }
+    metadata.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+
+def test_attach_and_doctor_accept_normalized_declared_remote_alias(tmp_path: Path) -> None:
+    config, workspace, _, _ = init_single_v4(tmp_path, attach=False)
+    canonical = "git@example.test:team/source.git"
+    alias = "https://example.test/team/source.git"
+    set_single_v4_declared_remotes(workspace, canonical=canonical, aliases=[alias])
+    git(workspace, "add", "-f", ".work-bundle/project.yaml")
+    git(workspace, "commit", "-q", "-m", "declare remote alias")
+    git(workspace, "remote", "set-url", "origin", "ssh://git@example.test/team/source")
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config / "registry/projects.yaml"
+    metadata_before = metadata.read_bytes()
+    registry_before = registry.read_bytes()
+
+    dry_run = run_wb(
+        config,
+        "attach-workspace",
+        str(workspace),
+        "--materialize",
+        "none",
+        "--dry-run",
+    )
+    assert dry_run.returncode == 0, dry_run.stdout + dry_run.stderr
+    assert metadata.read_bytes() == metadata_before
+    assert registry.read_bytes() == registry_before
+
+    git(workspace, "remote", "set-url", "origin", alias[:-4])
+
+    attached = run_wb(
+        config,
+        "attach-workspace",
+        str(workspace),
+        "--materialize",
+        "none",
+        "--apply",
+    )
+    assert attached.returncode == 0, attached.stdout + attached.stderr
+    assert metadata.read_bytes() == metadata_before
+    assert git(workspace, "remote", "get-url", "origin") == alias[:-4]
+    git(workspace, "add", "AGENTS.md", "script")
+    git(workspace, "commit", "-q", "-m", "install workspace instructions")
+
+    doctor = run_wb(config, "doctor-workspace", str(workspace))
+    assert doctor.returncode == 0, doctor.stdout + doctor.stderr
+    doctor_payload = json.loads(doctor.stdout)
+    assert doctor_payload["execution_readiness"]["status"] == "passed", {
+        "doctor": doctor_payload,
+        "git_status": git(workspace, "status", "--short"),
+    }
+
+
+def test_attach_rejects_undeclared_remote_before_mutation_with_aliases(tmp_path: Path) -> None:
+    config, workspace, _, _ = init_single_v4(tmp_path, attach=False)
+    set_single_v4_declared_remotes(
+        workspace,
+        canonical="git@example.test:team/source.git",
+        aliases=["https://example.test/team/source.git"],
+    )
+    git(workspace, "remote", "set-url", "origin", "https://example.test/other/source.git")
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config / "registry/projects.yaml"
+    metadata_before = metadata.read_bytes()
+    registry_before = registry.read_bytes()
+
+    rejected = run_wb(
+        config,
+        "attach-workspace",
+        str(workspace),
+        "--materialize",
+        "none",
+        "--apply",
+    )
+
+    assert rejected.returncode == 1
+    assert json.loads(rejected.stdout)["failure_code"] == "WB_CONTROL_PLANE_REMOTE_CONFLICT"
+    assert metadata.read_bytes() == metadata_before
+    assert registry.read_bytes() == registry_before
+
+
 def test_register_project_uses_structured_v4_registry_without_binding_loss(tmp_path: Path) -> None:
     config, workspace, _, workspace_id = init_single_v4(tmp_path, attach=False)
     registry = config / "registry/projects.yaml"
@@ -1975,6 +2065,18 @@ def write_composite_metadata(workspace: Path, *, include_root: bool = True, memb
     )
     text = text.replace("agents_sync:", member + "agents_sync:", 1)
     metadata.write_text(text, encoding="utf-8")
+
+
+def set_member_declared_remotes(
+    workspace: Path, repository_id: str, *, canonical: str, aliases: list[str]
+) -> None:
+    metadata = workspace / ".work-bundle/project.yaml"
+    document = yaml.safe_load(metadata.read_text(encoding="utf-8"))
+    repository = next(
+        item for item in document["source_repositories"] if item["id"] == repository_id
+    )
+    repository["remote"] = {"canonical": canonical, "aliases": aliases}
+    metadata.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
 
 class CompositeMemberLifecycleTests(unittest.TestCase):
@@ -2263,6 +2365,156 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         self.assertEqual(data["changed_files"], [])
         self.assertEqual((workspace / ".work-bundle/project.yaml").read_bytes(), metadata_before)
         self.assertEqual((config / "registry/projects.yaml").read_bytes(), registry_before)
+
+    def test_add_workspace_member_replay_uses_declared_remote_set_for_checkout_identity(self) -> None:
+        for case, canonical_is_checkout in (
+            ("canonical-request-alias-checkout", False),
+            ("alias-request-canonical-checkout", True),
+        ):
+            with self.subTest(case=case):
+                config, workspace, _, _ = init_single_v4(self.tmp_path / case)
+                member_remote, _, _ = make_remote(
+                    self.tmp_path / f"{case}-member", "execution-flow"
+                )
+                self._apply_first_member(config, workspace, member_remote)
+                url_remote = f"https://example.test/team/{case}.git"
+                canonical = str(member_remote) if canonical_is_checkout else url_remote
+                alias = url_remote if canonical_is_checkout else str(member_remote)
+                requested = alias if canonical_is_checkout else canonical
+                set_member_declared_remotes(
+                    workspace,
+                    "execution-flow",
+                    canonical=canonical,
+                    aliases=[alias],
+                )
+                metadata = workspace / ".work-bundle/project.yaml"
+                registry = config / "registry/projects.yaml"
+                before = metadata.read_bytes(), registry.read_bytes()
+
+                proposed = run_wb(
+                    config,
+                    *add_workspace_member_args(workspace, requested),
+                    "--dry-run",
+                )
+                self.assertEqual(proposed.returncode, 0, proposed.stdout + proposed.stderr)
+                replayed = run_wb(
+                    config,
+                    *add_workspace_member_args(workspace, requested),
+                    "--accepted-proposal-id",
+                    json.loads(proposed.stdout)["proposal_id"],
+                    "--apply",
+                )
+
+                self.assertEqual(replayed.returncode, 0, replayed.stdout + replayed.stderr)
+                self.assertTrue(json.loads(replayed.stdout)["replay"])
+                self.assertEqual(before, (metadata.read_bytes(), registry.read_bytes()))
+
+    def test_add_workspace_member_replay_rejects_undeclared_checkout_origin_before_mutation(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path / "undeclared-origin")
+        member_remote, _, _ = make_remote(
+            self.tmp_path / "undeclared-origin-member", "execution-flow"
+        )
+        self._apply_first_member(config, workspace, member_remote)
+        canonical = "https://example.test/team/execution-flow.git"
+        set_member_declared_remotes(
+            workspace,
+            "execution-flow",
+            canonical=canonical,
+            aliases=[str(member_remote)],
+        )
+        member_path = workspace / "execution-flow"
+        git(member_path, "remote", "set-url", "origin", "https://other.test/team/execution-flow.git")
+        metadata = workspace / ".work-bundle/project.yaml"
+        registry = config / "registry/projects.yaml"
+        before = metadata.read_bytes(), registry.read_bytes()
+
+        rejected = run_wb(
+            config,
+            *add_workspace_member_args(workspace, canonical),
+            "--accepted-proposal-id",
+            "awm-unaccepted",
+            "--apply",
+        )
+
+        self.assertEqual(rejected.returncode, 1, rejected.stdout + rejected.stderr)
+        self.assertEqual(
+            json.loads(rejected.stdout)["failure_code"],
+            "WB_CONTROL_PLANE_MEMBER_COLLISION",
+        )
+        self.assertEqual(before, (metadata.read_bytes(), registry.read_bytes()))
+
+    def test_attached_deferred_replay_accepts_declared_alias_without_metadata_change(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path / "deferred-alias")
+        member_remote, _, _ = make_remote(
+            self.tmp_path / "deferred-alias-member", "execution-flow"
+        )
+        deferred_args = [
+            "defer-workspace-member",
+            str(workspace),
+            "--repository-id",
+            "execution-flow",
+            "--name",
+            "execution-flow",
+            "--path",
+            "execution-flow",
+            "--default-branch",
+            "main",
+            "--replay-key",
+            "replay-alias",
+        ]
+        deferred = run_wb(config, *deferred_args, "--dry-run")
+        self.assertEqual(deferred.returncode, 0, deferred.stdout + deferred.stderr)
+        applied = run_wb(
+            config,
+            *deferred_args,
+            "--accepted-proposal-id",
+            json.loads(deferred.stdout)["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+        attach_args = [
+            "attach-deferred-remote",
+            str(workspace),
+            "--repository-id",
+            "execution-flow",
+            "--remote",
+            str(member_remote),
+        ]
+        attach = run_wb(config, *attach_args, "--dry-run")
+        self.assertEqual(attach.returncode, 0, attach.stdout + attach.stderr)
+        attached = run_wb(
+            config,
+            *attach_args,
+            "--accepted-proposal-id",
+            json.loads(attach.stdout)["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(attached.returncode, 0, attached.stdout + attached.stderr)
+
+        alias = "https://example.test/team/execution-flow.git"
+        set_member_declared_remotes(
+            workspace,
+            "execution-flow",
+            canonical=str(member_remote),
+            aliases=[alias],
+        )
+        metadata = workspace / ".work-bundle/project.yaml"
+        registry = config / "registry/projects.yaml"
+        before = metadata.read_bytes(), registry.read_bytes()
+        replay_args = [*attach_args[:-1], alias]
+        replay = run_wb(config, *replay_args, "--dry-run")
+        self.assertEqual(replay.returncode, 0, replay.stdout + replay.stderr)
+        replayed = run_wb(
+            config,
+            *replay_args,
+            "--accepted-proposal-id",
+            json.loads(replay.stdout)["proposal_id"],
+            "--apply",
+        )
+
+        self.assertEqual(replayed.returncode, 0, replayed.stdout + replayed.stderr)
+        self.assertTrue(json.loads(replayed.stdout)["replay"])
+        self.assertEqual(before, (metadata.read_bytes(), registry.read_bytes()))
 
     def test_add_workspace_member_different_remote_or_path_collides(self) -> None:
         config, workspace, _, _ = init_single_v4(self.tmp_path)

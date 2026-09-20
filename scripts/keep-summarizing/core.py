@@ -204,9 +204,16 @@ def _anchor_context(**selectors: object):
         raise SystemExit(exc.code) from exc
 
 
+def _workspace_context(**selectors: object):
+    try:
+        return _infrastructure.resolve_workspace_context(**selectors)
+    except _infrastructure.InfrastructureError as exc:
+        raise SystemExit(exc.code) from exc
+
+
 def resolve_workspace_root(start: Path) -> Path:
-    """Resolve a containing current workspace through schema and binding authority."""
-    return _anchor_context(cwd=start).workspace_root
+    """Resolve workspace authority without requiring a trusted source checkout."""
+    return _workspace_context(cwd=start).workspace_root
 
 
 def read_project_slug(root: Path, fallback: str) -> str:
@@ -235,18 +242,18 @@ def resolve_knowledge_base(args: argparse.Namespace | None = None) -> tuple[Path
             return Path(explicit_root).resolve(), "work-bundle"
         workspace_arg = getattr(args, "workspace_root", None)
         if workspace_arg:
-            context = _anchor_context(workspace_root=workspace_arg)
+            context = _workspace_context(workspace_root=workspace_arg)
             return work_bundle_knowledge_root(context.workspace_root), "work-bundle"
         project_root = getattr(args, "project_root", None)
         if project_root:
             explicit = Path(project_root).expanduser().resolve()
-            context = _anchor_context(project_root=explicit, cwd=explicit)
+            context = _workspace_context(project_root=explicit, cwd=explicit)
             return work_bundle_knowledge_root(context.workspace_root), "work-bundle"
         cwd_arg = getattr(args, "cwd", None)
         if cwd_arg:
-            context = _anchor_context(cwd=Path(cwd_arg))
+            context = _workspace_context(cwd=Path(cwd_arg))
             return work_bundle_knowledge_root(context.workspace_root), "work-bundle"
-    context = _anchor_context(cwd=Path(os.getcwd()))
+    context = _workspace_context(cwd=Path(os.getcwd()))
     return work_bundle_knowledge_root(context.workspace_root), "work-bundle"
 
 
