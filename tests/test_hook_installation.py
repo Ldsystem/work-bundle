@@ -20,6 +20,7 @@ HOOK_SCRIPT = REPO_ROOT / "bin" / "work-bundle-session-start.py"
 def run_install(home: Path, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(home)
+    env["USERPROFILE"] = str(home)
     return subprocess.run(
         [sys.executable, str(INSTALLER), *args],
         cwd=cwd or REPO_ROOT,
@@ -83,6 +84,7 @@ def test_default_install_from_source_archive_uses_only_python_and_is_idempotent(
     home.mkdir()
     env = os.environ.copy()
     env["HOME"] = str(home)
+    env["USERPROFILE"] = str(home)
 
     first = subprocess.run(
         [sys.executable, str(isolated_root / "bin" / "install.py")],
@@ -536,7 +538,7 @@ def test_hooks_auto_scans_codex_and_claude_without_gemini(tmp_path: Path) -> Non
     result = run_install(home, "--dry-run", "--hooks", "auto")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Codex" in result.stdout
-    assert ".claude/settings.json" in result.stdout
+    assert ".claude/settings.json" in result.stdout.replace("\\", "/")
     assert "gemini" not in result.stdout.lower()
 
 
