@@ -21,7 +21,7 @@ def _hold_shared(path: str, ready, release) -> None:
     with open(path, "a+b") as stream:
         with platform_runtime.blocking_file_lock(stream, shared=True):
             ready.set()
-            release.wait(5)
+            release.wait()
 
 
 def _hold_exclusive(path: str, acquired) -> None:
@@ -126,6 +126,37 @@ def test_windows_lock_does_not_retry_resource_exhaustion(monkeypatch, tmp_path: 
             with platform_runtime.blocking_file_lock(stream):
                 pass
 
+    assert attempts == 1
+
+
+@pytest.mark.parametrize("error_number", [errno.EAGAIN, errno.EDEADLK])
+def test_windows_lock_does_not_retry_undocumented_errno(
+    monkeypatch, tmp_path: Path, error_number: int
+) -> None:
+    attempts = 0
+
+    class FakeMsvcrt:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        @staticmethod
+        def locking(_descriptor: int, mode: int, _length: int) -> None:
+            nonlocal attempts
+            if mode != FakeMsvcrt.LK_NBLCK:
+                return
+            attempts += 1
+            if attempts == 1:
+                raise OSError(error_number, "not documented contention")
+            raise AssertionError("undocumented errno was retried")
+
+    monkeypatch.setattr(platform_runtime, "_IS_WINDOWS", True)
+    monkeypatch.setattr(platform_runtime, "_MSVCRT", FakeMsvcrt)
+    with (tmp_path / "windows.lock").open("a+b") as stream:
+        with pytest.raises(OSError) as captured:
+            with platform_runtime.blocking_file_lock(stream):
+                pass
+
+    assert captured.value.errno == error_number
     assert attempts == 1
 
 

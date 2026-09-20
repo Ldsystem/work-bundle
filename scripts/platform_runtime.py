@@ -91,7 +91,7 @@ def _windows_lock_unavailable(error: OSError) -> bool:
     winerror = getattr(error, "winerror", None)
     if winerror is not None:
         return winerror == 33
-    return error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}
+    return error.errno == errno.EACCES
 
 
 def _lock_windows(descriptor: int) -> None:
