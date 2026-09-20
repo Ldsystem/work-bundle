@@ -30,6 +30,100 @@ def _hold_exclusive(path: str, acquired) -> None:
             acquired.set()
 
 
+def test_lock_path_input_owns_and_closes_opened_stream(monkeypatch, tmp_path: Path) -> None:
+    lock_path = tmp_path / "owned.lock"
+    opened = []
+
+    def open_lock_path(path):
+        stream = open(path, "a+b")
+        opened.append(stream)
+        return stream
+
+    monkeypatch.setattr(platform_runtime, "_open_lock_path", open_lock_path, raising=False)
+    with platform_runtime.blocking_file_lock(lock_path, shared=True):
+        assert opened and not opened[0].closed
+
+    assert opened[0].closed
+    assert lock_path.is_file()
+
+
+def test_lock_path_input_closes_owned_stream_on_body_error(monkeypatch, tmp_path: Path) -> None:
+    lock_path = tmp_path / "owned-error.lock"
+    opened = []
+
+    def open_lock_path(path):
+        stream = open(path, "a+b")
+        opened.append(stream)
+        return stream
+
+    monkeypatch.setattr(platform_runtime, "_open_lock_path", open_lock_path, raising=False)
+    with pytest.raises(RuntimeError, match="body failed"):
+        with platform_runtime.blocking_file_lock(lock_path):
+            raise RuntimeError("body failed")
+
+    assert opened[0].closed
+
+
+def test_lock_path_input_closes_owned_stream_when_acquisition_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    lock_path = tmp_path / "owned-acquisition-error.lock"
+    opened = []
+
+    def open_lock_path(path):
+        stream = open(path, "a+b")
+        opened.append(stream)
+        return stream
+
+    class FakeMsvcrt:
+        LK_NBLCK = 1
+
+        @staticmethod
+        def locking(_descriptor: int, _mode: int, _length: int) -> None:
+            raise OSError(errno.EIO, "acquisition failed")
+
+    monkeypatch.setattr(platform_runtime, "_open_lock_path", open_lock_path)
+    monkeypatch.setattr(platform_runtime, "_IS_WINDOWS", True)
+    monkeypatch.setattr(platform_runtime, "_MSVCRT", FakeMsvcrt)
+    with pytest.raises(OSError, match="acquisition failed"):
+        with platform_runtime.blocking_file_lock(lock_path):
+            pass
+
+    assert opened[0].closed
+
+
+@pytest.mark.parametrize("body_fails", [False, True])
+def test_lock_preserves_caller_owned_stream(tmp_path: Path, body_fails: bool) -> None:
+    with (tmp_path / "caller.lock").open("a+b") as stream:
+        if body_fails:
+            with pytest.raises(RuntimeError, match="body failed"):
+                with platform_runtime.blocking_file_lock(stream):
+                    raise RuntimeError("body failed")
+        else:
+            with platform_runtime.blocking_file_lock(stream):
+                pass
+        assert not stream.closed
+
+
+def test_lock_preserves_caller_owned_stream_when_acquisition_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class FakeMsvcrt:
+        LK_NBLCK = 1
+
+        @staticmethod
+        def locking(_descriptor: int, _mode: int, _length: int) -> None:
+            raise OSError(errno.EIO, "acquisition failed")
+
+    monkeypatch.setattr(platform_runtime, "_IS_WINDOWS", True)
+    monkeypatch.setattr(platform_runtime, "_MSVCRT", FakeMsvcrt)
+    with (tmp_path / "caller-acquisition-error.lock").open("a+b") as stream:
+        with pytest.raises(OSError, match="acquisition failed"):
+            with platform_runtime.blocking_file_lock(stream):
+                pass
+        assert not stream.closed
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shared-lock behavior")
 def test_posix_shared_readers_do_not_block_each_other(tmp_path: Path) -> None:
     lock_path = tmp_path / "shared.lock"

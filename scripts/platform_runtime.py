@@ -14,7 +14,7 @@ from pathlib import Path
 import stat
 import tempfile
 import time
-from typing import BinaryIO, Iterator, TextIO
+from typing import BinaryIO, Iterator, TextIO, cast
 
 
 _IS_WINDOWS = os.name == "nt"
@@ -107,39 +107,53 @@ def _lock_windows(descriptor: int) -> None:
             time.sleep(0.05)
 
 
+def _open_lock_path(path: str | os.PathLike[str]) -> BinaryIO:
+    return open(path, "a+b")
+
+
 @contextmanager
 def blocking_file_lock(
-    stream: BinaryIO | TextIO, *, shared: bool = False
+    target: str | os.PathLike[str] | BinaryIO | TextIO, *, shared: bool = False
 ) -> Iterator[None]:
-    """Hold a blocking file lock; Windows conservatively serializes all access."""
+    """Hold one blocking path or stream lock; Windows serializes all access."""
 
-    descriptor = stream.fileno()
-    if _IS_WINDOWS:
-        original_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
-        _lock_windows(descriptor)
+    owned_stream: BinaryIO | None = None
+    if isinstance(target, (str, os.PathLike)):
+        owned_stream = _open_lock_path(target)
+        stream: BinaryIO | TextIO = owned_stream
+    else:
+        stream = cast(BinaryIO | TextIO, target)
+    try:
+        descriptor = stream.fileno()
+        if _IS_WINDOWS:
+            original_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
+            _lock_windows(descriptor)
+            try:
+                os.lseek(descriptor, original_offset, os.SEEK_SET)
+                yield
+            finally:
+                current_offset: int | None = None
+                try:
+                    current_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
+                finally:
+                    try:
+                        os.lseek(descriptor, 0, os.SEEK_SET)
+                    finally:
+                        assert _MSVCRT is not None
+                        _MSVCRT.locking(descriptor, _MSVCRT.LK_UNLCK, 1)
+                        if current_offset is not None:
+                            os.lseek(descriptor, current_offset, os.SEEK_SET)
+            return
+
+        operation = _FCNTL.LOCK_SH if shared else _FCNTL.LOCK_EX
+        _FCNTL.flock(descriptor, operation)
         try:
-            os.lseek(descriptor, original_offset, os.SEEK_SET)
             yield
         finally:
-            current_offset: int | None = None
-            try:
-                current_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
-            finally:
-                try:
-                    os.lseek(descriptor, 0, os.SEEK_SET)
-                finally:
-                    assert _MSVCRT is not None
-                    _MSVCRT.locking(descriptor, _MSVCRT.LK_UNLCK, 1)
-                    if current_offset is not None:
-                        os.lseek(descriptor, current_offset, os.SEEK_SET)
-        return
-
-    operation = _FCNTL.LOCK_SH if shared else _FCNTL.LOCK_EX
-    _FCNTL.flock(descriptor, operation)
-    try:
-        yield
+            _FCNTL.flock(descriptor, _FCNTL.LOCK_UN)
     finally:
-        _FCNTL.flock(descriptor, _FCNTL.LOCK_UN)
+        if owned_stream is not None:
+            owned_stream.close()
 
 
 def _unsupported_capability(error: OSError) -> bool:
