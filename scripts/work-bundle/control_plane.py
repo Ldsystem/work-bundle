@@ -293,6 +293,23 @@ def _git(path: Path, *args: str) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def _git_checkout_observation(path: Path) -> dict[str, str] | None:
+    resolved = path.expanduser().resolve()
+    top_level = _git(resolved, "rev-parse", "--show-toplevel")
+    if not top_level or Path(top_level).expanduser().resolve() != resolved:
+        return None
+    branch = _git(resolved, "branch", "--show-current")
+    head = _git(resolved, "rev-parse", "HEAD")
+    common_dir = _git(resolved, "rev-parse", "--git-common-dir")
+    if not branch or not head or not common_dir:
+        raise ControlPlaneError("WB_CONTROL_PLANE_BOUND_GIT_INVALID")
+    return {
+        "observed_branch": branch,
+        "observed_head": head,
+        "git_common_dir": common_dir,
+    }
+
+
 def _git_remote(path: Path) -> str:
     return validated_remote(_git(path, "remote", "get-url", "origin"))
 
@@ -2186,6 +2203,7 @@ def _attach(
                         owned_member_paths.append(candidate)
             state = "absent"
             if candidate is not None and candidate.exists():
+                manual_observation = _git_checkout_observation(candidate) if manual_locator else None
                 actual_remote = "" if manual_locator else _resolved_git_remote(candidate)
                 if not manual_locator and actual_remote != canonical_remote(remote):
                     raise ControlPlaneError(
@@ -2214,12 +2232,24 @@ def _attach(
                             )
                         )
                     ),
-                    "observed_branch": "" if manual_locator else _git(candidate, "branch", "--show-current"),
-                    "observed_head": "" if manual_locator else _git(candidate, "rev-parse", "HEAD"),
+                    "observed_branch": (
+                        manual_observation["observed_branch"]
+                        if manual_observation is not None
+                        else ("" if manual_locator else _git(candidate, "branch", "--show-current"))
+                    ),
+                    "observed_head": (
+                        manual_observation["observed_head"]
+                        if manual_observation is not None
+                        else ("" if manual_locator else _git(candidate, "rev-parse", "HEAD"))
+                    ),
                     "observed_at": utc_now_rfc3339(),
-                    "git_common_dir": "" if manual_locator else _git(candidate, "rev-parse", "--git-common-dir"),
+                    "git_common_dir": (
+                        manual_observation["git_common_dir"]
+                        if manual_observation is not None
+                        else ("" if manual_locator else _git(candidate, "rev-parse", "--git-common-dir"))
+                    ),
                 }
-                if not manual_locator:
+                if not manual_locator or manual_observation is not None:
                     readiness_failures.extend(
                         _repository_execution_issues(candidate, str(repository.get("default_branch") or ""), repository_id)
                     )
@@ -2365,6 +2395,21 @@ def cmd_doctor_workspace(args: list[str], *, command_name: str = "doctor-workspa
     bindings = _registry_bindings()
     binding = bindings.get(workspace_id)
     local_failures: list[str] = []
+    if parsed.repair and not portable_failures:
+        try:
+            _, code = _attach(
+                workspace_root,
+                "none",
+                {},
+                True,
+                create_script_index=False,
+            )
+        except ControlPlaneError as exc:
+            local_failures.append(exc.code)
+            code = 1
+        if code == 0:
+            bindings = _registry_bindings()
+            binding = bindings.get(workspace_id)
     if not binding:
         local_failures.append("WB_CONTROL_PLANE_BINDING_MISSING")
     elif Path(str(binding.get("workspace_root") or "")).resolve() != workspace_root:
@@ -2401,6 +2446,35 @@ def cmd_doctor_workspace(args: list[str], *, command_name: str = "doctor-workspa
                 if repo.get("required"):
                     missing_required.append(repository_id)
                 continue
+            if repo.get("locator_type") == "manual":
+                try:
+                    observation = _git_checkout_observation(project_path)
+                except ControlPlaneError as exc:
+                    local_failures.append(f"{exc.code}:{repository_id}")
+                    if repo.get("required"):
+                        missing_required.append(f"{exc.code}:{repository_id}")
+                    continue
+                if observation is None:
+                    continue
+                if (
+                    not local.get("observed_branch")
+                    or not local.get("observed_head")
+                    or not local.get("git_common_dir")
+                ):
+                    missing_required.append(f"WB_REPOSITORY_OBSERVATION_MISSING:{repository_id}")
+                elif (
+                    str(local.get("observed_branch")) != observation["observed_branch"]
+                    or str(local.get("observed_head")) != observation["observed_head"]
+                    or str(local.get("git_common_dir")) != observation["git_common_dir"]
+                ):
+                    missing_required.append(f"WB_REPOSITORY_OBSERVATION_STALE:{repository_id}")
+                readiness_issues = _repository_execution_issues(
+                    project_path, str(repo.get("default_branch") or ""), repository_id
+                )
+                for issue in readiness_issues:
+                    if issue not in missing_required:
+                        missing_required.append(issue)
+                continue
             if repo.get("locator_type") != "manual":
                 try:
                     actual_remote = _resolved_git_remote(project_path)
@@ -2419,23 +2493,6 @@ def cmd_doctor_workspace(args: list[str], *, command_name: str = "doctor-workspa
                 for issue in readiness_issues:
                     if issue not in missing_required:
                         missing_required.append(issue)
-    if parsed.repair and not portable_failures:
-        try:
-            result, code = _attach(
-                workspace_root,
-                "none",
-                {},
-                True,
-                create_script_index=False,
-            )
-        except ControlPlaneError as exc:
-            local_failures.append(exc.code)
-            result, code = {"status": "issues-found"}, 1
-        if code == 0:
-            bindings = _registry_bindings()
-            binding = bindings.get(workspace_id)
-            if binding:
-                local_failures = [item for item in local_failures if item != "WB_CONTROL_PLANE_BINDING_MISSING"]
     status = "passed" if not portable_failures and not local_failures else "issues-found"
     out(
         {
