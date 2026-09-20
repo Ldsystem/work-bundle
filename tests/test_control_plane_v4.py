@@ -1491,6 +1491,104 @@ def test_non_git_v3_member_migrates_with_manual_locator(tmp_path: Path) -> None:
     assert run_wb(config, "doctor-workspace", str(workspace)).returncode == 0
 
 
+def test_manual_git_member_attach_and_doctor_repair_publish_observations(tmp_path: Path) -> None:
+    config = config_root(tmp_path / "config-root")
+    workspace = tmp_path / "workspace"
+    local = workspace / "manual-main"
+    local.mkdir(parents=True)
+    control = workspace / ".work-bundle"
+    control.mkdir(parents=True)
+    (control / "project.yaml").write_text(
+        "\n".join([
+            "metadata_version: 3", f"workspace_root: {workspace}", "workspace_mode: multi-repository",
+            f"project_root: {local}", "source_repositories:", "  - id: manual-main",
+            f"    project_root: {local}", "    origin_id: manual-main", "    git_repository: false",
+            '    remote: ""', "    checkout_kind: local-project", "",
+        ]), encoding="utf-8"
+    )
+    proposal = run_wb(config, "migrate-control-plane", str(workspace), "--dry-run")
+    assert proposal.returncode == 0, proposal.stdout + proposal.stderr
+    proposal_id = json.loads(proposal.stdout)["migration"]["proposal_id"]
+    applied = run_wb(
+        config,
+        "migrate-control-plane",
+        str(workspace),
+        "--apply",
+        "--accepted-proposal-id",
+        proposal_id,
+    )
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    portable = yaml.safe_load((control / "project.yaml").read_text(encoding="utf-8"))
+    workspace_id = portable["workspace"]["id"]
+    default_branch = portable["source_repositories"][0]["default_branch"]
+
+    subprocess.run(["git", "init", "-q", "-b", default_branch, str(local)], check=True)
+    git(local, "config", "user.email", "test@example.com")
+    git(local, "config", "user.name", "Test")
+    (local / "README.md").write_text("# manual Git member\n", encoding="utf-8")
+    git(local, "add", "README.md")
+    git(local, "commit", "-q", "-m", "init")
+    head = git(local, "rev-parse", "HEAD")
+
+    attached = run_wb(
+        config,
+        "attach-workspace",
+        str(workspace),
+        "--repository-path",
+        f"manual-main={local}",
+        "--materialize",
+        "none",
+        "--apply",
+    )
+    assert attached.returncode == 0, attached.stdout + attached.stderr
+    registry = yaml.safe_load((config / "registry/projects.yaml").read_text(encoding="utf-8"))
+    observation = registry["device_bindings"][workspace_id]["repositories"]["manual-main"]
+    assert observation["checkout_kind"] == "manual"
+    assert observation["observed_branch"] == default_branch
+    assert observation["observed_head"] == head
+    assert observation["git_common_dir"]
+
+    preflight = run_orch(
+        config,
+        "--workspace-root",
+        str(workspace),
+        "repository-preflight",
+        "--repository",
+        str(local),
+    )
+    assert preflight.returncode == 0, preflight.stdout + preflight.stderr
+    row = json.loads(preflight.stdout)["repository_preflight"]["repositories"][0]
+    assert row["status"] == "clean"
+
+    observation["git_common_dir"] = ""
+    (config / "registry/projects.yaml").write_text(
+        yaml.safe_dump(registry, sort_keys=False), encoding="utf-8"
+    )
+    doctor = run_wb(config, "doctor-workspace", str(workspace))
+    assert doctor.returncode == 0, doctor.stdout + doctor.stderr
+    doctor_data = json.loads(doctor.stdout)
+    assert doctor_data["execution_readiness"]["status"] == "not-ready"
+    assert "WB_REPOSITORY_OBSERVATION_MISSING:manual-main" in doctor_data["execution_readiness"]["execution_readiness_failures"]
+
+    observation["git_common_dir"] = "/stale/git/common-dir"
+    (config / "registry/projects.yaml").write_text(
+        yaml.safe_dump(registry, sort_keys=False), encoding="utf-8"
+    )
+    doctor = run_wb(config, "doctor-workspace", str(workspace))
+    assert doctor.returncode == 0, doctor.stdout + doctor.stderr
+    doctor_data = json.loads(doctor.stdout)
+    assert doctor_data["execution_readiness"]["status"] == "not-ready"
+    assert "WB_REPOSITORY_OBSERVATION_STALE:manual-main" in doctor_data["execution_readiness"]["execution_readiness_failures"]
+
+    repaired = run_wb(config, "doctor-workspace", str(workspace), "--repair")
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    repaired_registry = yaml.safe_load((config / "registry/projects.yaml").read_text(encoding="utf-8"))
+    repaired_observation = repaired_registry["device_bindings"][workspace_id]["repositories"]["manual-main"]
+    assert repaired_observation["observed_branch"] == default_branch
+    assert repaired_observation["observed_head"] == head
+    assert repaired_observation["git_common_dir"]
+
+
 def test_existing_checkout_credential_remote_is_rejected_without_echo(tmp_path: Path) -> None:
     config = config_root(tmp_path / "config-root")
     workspace, remote, _ = make_v3_workspace(tmp_path / "fixture")
