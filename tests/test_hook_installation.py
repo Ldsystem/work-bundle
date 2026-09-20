@@ -276,7 +276,7 @@ def test_codex_refresh_preserves_unrelated_outer_group_fields(tmp_path: Path) ->
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": "/old/work-bundle-session-start.py",
+                                    "command": "python3 /old/bin/work-bundle-session-start.py",
                                 }
                             ],
                             "timeout": 30,

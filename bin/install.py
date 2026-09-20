@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path, PureWindowsPath
+import re
 import shlex
 import subprocess
 import sys
