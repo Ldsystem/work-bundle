@@ -169,7 +169,7 @@ def _active_blockers(root: Path, control: Mapping[str, Any]) -> list[Mapping[str
         except ValueError:
             valid_boundary = False
         else:
-            valid_boundary = not contains_link_like_component(lexical, anchor=store)
+            valid_boundary = not contains_link_like_component(unresolved, anchor=store)
         spec = lexical.resolve(strict=False)
         if not valid_boundary or not spec.is_relative_to(store) or not spec.is_file():
             raise BoundedClosureError(

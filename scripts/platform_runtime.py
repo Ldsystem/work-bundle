@@ -69,6 +69,8 @@ def is_link_like(path: str | os.PathLike[str]) -> bool:
 def contains_link_like_component(path: Path, *, anchor: Path) -> bool:
     """Report link-like components between an existing authority anchor and path."""
 
+    if ".." in path.parts or ".." in anchor.parts:
+        return True
     lexical_anchor = Path(os.path.abspath(anchor))
     lexical_path = Path(os.path.abspath(path))
     try:
@@ -86,9 +88,10 @@ def contains_link_like_component(path: Path, *, anchor: Path) -> bool:
 
 
 def _windows_lock_unavailable(error: OSError) -> bool:
-    return error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK} or getattr(
-        error, "winerror", None
-    ) in {33, 36}
+    winerror = getattr(error, "winerror", None)
+    if winerror is not None:
+        return winerror == 33
+    return error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}
 
 
 def _lock_windows(descriptor: int) -> None:
@@ -114,15 +117,21 @@ def blocking_file_lock(
     if _IS_WINDOWS:
         original_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
         _lock_windows(descriptor)
-        os.lseek(descriptor, original_offset, os.SEEK_SET)
         try:
+            os.lseek(descriptor, original_offset, os.SEEK_SET)
             yield
         finally:
-            current_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
-            os.lseek(descriptor, 0, os.SEEK_SET)
-            assert _MSVCRT is not None
-            _MSVCRT.locking(descriptor, _MSVCRT.LK_UNLCK, 1)
-            os.lseek(descriptor, current_offset, os.SEEK_SET)
+            current_offset: int | None = None
+            try:
+                current_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
+            finally:
+                try:
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                finally:
+                    assert _MSVCRT is not None
+                    _MSVCRT.locking(descriptor, _MSVCRT.LK_UNLCK, 1)
+                    if current_offset is not None:
+                        os.lseek(descriptor, current_offset, os.SEEK_SET)
         return
 
     operation = _FCNTL.LOCK_SH if shared else _FCNTL.LOCK_EX
@@ -187,11 +196,15 @@ def atomic_replace_bytes(path: Path, content: bytes, *, mode: int | None = None)
     temporary = Path(temporary_name)
     try:
         _harden_mode(descriptor, mode)
-        with os.fdopen(descriptor, "wb") as stream:
+        stream = os.fdopen(descriptor, "wb")
+        descriptor = -1
+        with stream:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, target)
         _sync_parent_directory(target.parent)
     finally:
+        if descriptor >= 0:
+            os.close(descriptor)
         temporary.unlink(missing_ok=True)

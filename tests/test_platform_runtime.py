@@ -101,6 +101,70 @@ def test_windows_lock_retries_beyond_native_retry_window(monkeypatch, tmp_path: 
     assert len(attempts) == 13
 
 
+def test_windows_lock_does_not_retry_resource_exhaustion(monkeypatch, tmp_path: Path) -> None:
+    attempts = 0
+
+    class ResourceExhausted(OSError):
+        errno = errno.EACCES
+        winerror = 36
+
+    class FakeMsvcrt:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        @staticmethod
+        def locking(_descriptor: int, mode: int, _length: int) -> None:
+            nonlocal attempts
+            if mode == FakeMsvcrt.LK_NBLCK:
+                attempts += 1
+                raise ResourceExhausted("resource exhaustion")
+
+    monkeypatch.setattr(platform_runtime, "_IS_WINDOWS", True)
+    monkeypatch.setattr(platform_runtime, "_MSVCRT", FakeMsvcrt)
+    with (tmp_path / "windows.lock").open("a+b") as stream:
+        with pytest.raises(ResourceExhausted):
+            with platform_runtime.blocking_file_lock(stream):
+                pass
+
+    assert attempts == 1
+
+
+@pytest.mark.parametrize("failing_seek_call", [3, 4])
+def test_windows_lock_attempts_unlock_when_offset_restoration_fails(
+    monkeypatch, tmp_path: Path, failing_seek_call: int
+) -> None:
+    lock_modes: list[int] = []
+
+    class FakeMsvcrt:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        @staticmethod
+        def locking(_descriptor: int, mode: int, _length: int) -> None:
+            lock_modes.append(mode)
+
+    real_lseek = platform_runtime.os.lseek
+    seek_calls = 0
+
+    def lseek(*args):
+        nonlocal seek_calls
+        seek_calls += 1
+        if seek_calls == failing_seek_call:
+            raise OSError(errno.EIO, "offset failure")
+        return real_lseek(*args)
+
+    monkeypatch.setattr(platform_runtime, "_IS_WINDOWS", True)
+    monkeypatch.setattr(platform_runtime, "_MSVCRT", FakeMsvcrt)
+    monkeypatch.setattr(platform_runtime.os, "lseek", lseek)
+    with (tmp_path / "windows.lock").open("a+b") as stream:
+        with pytest.raises(OSError, match="offset failure"):
+            with platform_runtime.blocking_file_lock(stream):
+                if failing_seek_call == 4:
+                    pass
+
+    assert lock_modes == [FakeMsvcrt.LK_NBLCK, FakeMsvcrt.LK_UNLCK]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="native Windows contention behavior")
 def test_native_windows_contention_blocks_beyond_ten_seconds(tmp_path: Path) -> None:
     lock_path = tmp_path / "native-windows.lock"
@@ -195,6 +259,39 @@ def test_atomic_replace_propagates_replace_failure_and_preserves_old_file(
         platform_runtime.atomic_replace_bytes(target, b"new")
 
     assert target.read_bytes() == b"old"
+    assert not list(tmp_path.glob(f".{target.name}.*"))
+
+
+def test_atomic_replace_closes_descriptor_when_mode_hardening_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "state.json"
+    real_mkstemp = platform_runtime.tempfile.mkstemp
+    real_close = platform_runtime.os.close
+    descriptor = -1
+    closed: list[int] = []
+
+    def mkstemp(*args, **kwargs):
+        nonlocal descriptor
+        descriptor, name = real_mkstemp(*args, **kwargs)
+        return descriptor, name
+
+    def close(value: int) -> None:
+        closed.append(value)
+        real_close(value)
+
+    monkeypatch.setattr(platform_runtime.tempfile, "mkstemp", mkstemp)
+    monkeypatch.setattr(platform_runtime.os, "close", close)
+    monkeypatch.setattr(
+        platform_runtime.os,
+        "fchmod",
+        lambda *_args: (_ for _ in ()).throw(OSError(errno.EIO, "mode failed")),
+    )
+
+    with pytest.raises(OSError, match="mode failed"):
+        platform_runtime.atomic_replace_bytes(target, b"new", mode=0o600)
+
+    assert descriptor in closed
     assert not list(tmp_path.glob(f".{target.name}.*"))
 
 

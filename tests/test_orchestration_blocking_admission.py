@@ -126,6 +126,30 @@ def test_blocker_evidence_symlink_is_rejected_before_resolution(tmp_path: Path) 
         )
 
 
+def test_blocker_reference_cannot_erase_link_component_with_parent_traversal(
+    tmp_path: Path,
+) -> None:
+    control = _control()
+    control["blockers"][0]["specification"] = (
+        "detour/../.work-bundle/orchestration/spec/active/block.md"
+    )
+    root = _workspace(tmp_path / "workspace", control=control)
+    _write_blocker_evidence(root)
+    detour = root / "detour"
+    try:
+        detour.symlink_to(root / ".work-bundle", target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {error}")
+
+    with pytest.raises(
+        bounded.BoundedClosureError,
+        match="WB_ORCHESTRATION_BLOCKER_EVIDENCE_INVALID",
+    ):
+        bounded.require_orchestration_admission(
+            root, operation="ordinary_new", flow_id="other"
+        )
+
+
 def test_workspace_symlink_is_rejected_before_resolution(tmp_path: Path) -> None:
     root = _workspace(tmp_path / "workspace", control=None)
     alias = tmp_path / "workspace-alias"
