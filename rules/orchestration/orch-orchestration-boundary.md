@@ -18,13 +18,13 @@ Keep every current orchestration artifact in its canonical role and keep structu
 
 - Keep specifications, plans, tasks, executor results, implementation reviews, accepted task results, and final workflow reviews in their catalog-owned roles under `.work-bundle/orchestration/`.
 - Keep durable knowledge under `.work-bundle/knowledge/` and delegate approved writes to `ks-*` owners.
-- Treat canonical artifacts as authority and indexes as disposable projections.
-- Use executor results for facts, implementation reviews for product verdicts, accepted task results for dependency continuation, and final workflow reviews for compact closure judgment.
+- Treat each canonical artifact as authority only for its declared role and indexes as disposable projections.
+- Use executor results for facts, implementation reviews for independent advisory findings, accepted task results for controller/orchestrator acceptance and dependency continuation, and final workflow reviews for the controller/orchestrator's compact closure decision after considering final-audit advice.
 - Validate structural mechanics before mutation and keep post-write checks lightweight.
 
 ## Must Not
 
-- Do not merge artifact roles, reconstruct authority from history, create compatibility sidecars, or let structural helpers decide correctness or acceptance.
+- Do not merge artifact roles, reconstruct authority from history, create compatibility sidecars, let structural helpers decide correctness or acceptance, or treat reviewer advice as an automatic acceptance/rejection command.
 - Do not read, migrate, or rewrite historical orchestration artifacts during current-path work.
 
 ## Validation

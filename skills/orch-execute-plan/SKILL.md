@@ -13,9 +13,9 @@ Execute only the task authority supplied by the controller. Use its verified spe
 2. Follow the task methodology. For behavior changes, use GROUND → RED → GREEN → REFACTOR and retain focused observations that can disprove the claim.
 3. Keep each worker inside its existing task ownership. A worker reports source changes and factual observations; it does not accept the product.
 4. Freeze the resulting commit or worktree candidate with a path-sorted changed-path manifest.
-5. Write one canonical `executor-result-v1` with implemented scope, changed paths, focused observations, unresolved product blockers, task fit, repository/CodeGraph facts, delegation provenance, and knowledge disposition.
-6. When review is required, send the exact candidate, verified specification and plan, every obligation, and focused observations to a distinct reviewer. Supporting-state defects are routed separately unless the product itself is ambiguous, unsafe, inaccessible, or impossible to review.
-7. On `repair`, resume the owning task and review the new exact candidate. On `blocked`, report the product blocker. On `accept`, let the controller create the compact accepted task result.
+5. Write one canonical `executor-result-v1` with implemented scope, changed paths, focused observations, unresolved product blockers, task fit, repository/CodeGraph facts, delegation provenance, and knowledge disposition. Repair that active result in place instead of retaining intermediate versions.
+6. When review is required, send the exact candidate, verified specification and plan, every obligation, and focused observations to a distinct reviewer for advisory findings. Supporting-state defects are routed separately unless the product itself is ambiguous, unsafe, inaccessible, or impossible to review.
+7. The controller/orchestrator assesses the advice against the product and accepted authority, then decides whether to resume repair, block, or create the compact accepted task result. Do not treat the reviewer's recommendation as an automatic command.
 
 Executor results must not contain product verdicts, recommended repair strategy, final-audit conclusions, or knowledge-write authorization. Missing historical records, indexes, or handoffs do not become product findings.
 
@@ -24,5 +24,5 @@ Executor results must not contain product verdicts, recommended repair strategy,
 - [ ] The executed task and repository/write scope match accepted authority.
 - [ ] The executor result is canonical, factual, schema-valid, and bound to the exact plan/task.
 - [ ] Focused observations are current and claim-relevant; green tests do not substitute for checking every obligation.
-- [ ] A distinct reviewer, not the executor or controller, authored any product verdict.
+- [ ] A distinct reviewer authored the independent advice, and the controller/orchestrator—not the reviewer or a script—owned the product decision.
 - [ ] No receipt, history replay, or supporting-state defect issued or changed a semantic verdict.

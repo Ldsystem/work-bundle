@@ -23,6 +23,8 @@ execution_workspace:
 
 The immutable `specification-v1` schema owns this structural front matter. The agent supplies the human-readable semantic body and semantic metadata, while `scripts/orch.py write-spec` owns family, schema version, identity, qualification, timestamps, canonical `.work-bundle/orchestration/spec/{state}/{id}.spec.md` location, atomic write, lifecycle movement, and index projection. Caller-authored structural overrides and filenames are invalid.
 
+`write-spec` updates an existing active specification at its canonical identity and returns repaired content to `draft`. Allocate a new identity only for a genuinely distinct specification, not for an intermediate review revision. A distinct reviewer then advises on the complete current specification against the original purpose, accepted authority, and workspace evidence. The controller/orchestrator assesses that advice and owns qualification; review of only the changed passages and an inherited earlier opinion are insufficient.
+
 The front-matter `source_knowledge` contains accepted authority only, as established by bounded retrieval and Source Context reconciliation. Each accepted entry carries a provenance `path` and the already-reconciled task-relevant `constraint`. Candidate, background, blocked, and superseded knowledge remains classified in Source Context or Open Questions and must not appear in this carried-authority list. Downstream planning allocates deterministic `AUTH-NNN` aliases by list order so executor packets remain traceable without exposing knowledge paths. The compiler resolves each allocated alias to `AUTH-NNN: <carried constraint>` in the task brief and review package.
 
 # Introduction

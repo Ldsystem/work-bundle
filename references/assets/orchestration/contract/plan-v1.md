@@ -10,6 +10,8 @@ Assign parallel tasks only when dependencies are satisfied and write scopes are 
 
 Every task declares `evidence_capability`. Use `mapped` with a lightest-capable task-local oracle for validation-bearing obligations, or `no_validation_bearing_obligation` with a concrete reason.
 
-Run canonical static task admission before semantic review. Structural success cannot establish source-ID coverage, appropriate decomposition, capable validation, or executability. A distinct reviewer compares the stored tree directly with the verified specification and current source evidence and issues `accept`, `repair`, or `blocked`.
+Run canonical static task admission before semantic review. Structural success cannot establish source-ID coverage, appropriate decomposition, capable validation, or executability. A distinct reviewer compares the complete stored tree directly with the verified specification and current source evidence and provides advisory `accept`, `repair`, or `blocked` findings. The controller/orchestrator assesses that advice and owns plan qualification. After a repair, review the complete current tree again; a previous opinion or a review of only the changed fields does not establish the accuracy of the current plan.
+
+`write-plan`, `write-phase`, and `write-task` update an existing active identity at its canonical path. Use a new identity only for a genuinely distinct plan, phase, or task, never to retain intermediate repair versions. Return a verified root plan to `draft` before changing phase or task content, then qualify the complete repaired tree through semantic review.
 
 The canonical semantic plan projection is `canonical-yaml-plan-tree-v1`. A status-only or append-only evidence change declared by the schema is excluded at the exact top-level control locations; all other semantics remain identity-bearing. Current plan and specification revisions do not consume post-execution review rounds.

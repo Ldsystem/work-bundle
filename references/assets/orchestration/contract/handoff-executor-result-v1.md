@@ -6,7 +6,7 @@ The agent-authored semantic content records implemented scope, changed paths, fo
 
 An executor result never issues a product verdict. It contains no implementation-review decision, accepted-result decision, final-audit conclusion, repair recommendation, or knowledge-write authorization. A distinct reviewer compares the exact frozen implementation directly with the verified specification and plan.
 
-Before creation or transition, validate the entire schema, identity, plan/task bindings, canonical path, collision state, and requested lifecycle operation. Write one artifact atomically. After creation, perform only lightweight integrity checks and rebuild the disposable index projection. If an index update fails after the canonical write, report the partial effect truthfully.
+Before creation, active repair, or transition, validate the entire schema, identity, plan/task bindings, canonical path, and requested lifecycle operation. Create or repair the active artifact atomically at the same canonical identity; allocate a new identity only for a genuinely distinct result, and never rewrite a transitioned result. After the write, perform only lightweight integrity checks and rebuild the disposable index projection. If an index update fails after the canonical write, report the partial effect truthfully.
 
 Missing or defective executor-result structure blocks continuation that requires that artifact. It does not veto direct product review when the exact implementation candidate, verified specification/plan, and claim-relevant observations are independently available.
 

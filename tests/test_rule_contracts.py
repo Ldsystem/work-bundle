@@ -553,7 +553,8 @@ def test_orchestration_rules_define_closed_executor_result_and_direct_review_bou
         "distinct implementation reviewer",
         "exact frozen candidate",
         "canonical `accepted-task-result-v1`",
-        "one compact final workflow review",
+        "one compact final audit",
+        "controller/orchestrator",
         "Keep finalization mechanical",
     ):
         assert current in review
@@ -583,9 +584,9 @@ def test_execution_and_review_skills_define_current_optional_direct_review_flow(
 
     for current in (
         "exact frozen commit or worktree candidate",
-        "implementation-review-v1",
-            "accepted implementation review when required",
-            "one compact final workflow review",
+        "implementation-review-v2",
+            "implementation review advice when required",
+            "controller/orchestrator",
             "they do not reconstruct review history",
             "Do not reread source for code quality or repeat implementation review",
         ):

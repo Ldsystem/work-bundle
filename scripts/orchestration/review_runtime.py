@@ -86,17 +86,39 @@ def _bindings(family: str, *, plan_id: str, task_id: str | None = None) -> dict[
     return result
 
 
-def _available(args: argparse.Namespace, family: str, bindings: Mapping[str, str]) -> None:
+def _active_or_none(
+    args: argparse.Namespace, family: str, bindings: Mapping[str, str]
+) -> dict[str, Any] | None:
     policy = _policy(family)
+    active = canonical_artifact_path(
+        policy, _anchors(args), identity=str(args.id), state="active", bindings=bindings
+    )
+    if active.is_file():
+        return read_artifact(
+            CURRENT_CATALOG, family, _anchors(args), identity=str(args.id),
+            state="active", bindings=bindings,
+        )
     for state in policy["lifecycle"]["states"]:
-        if canonical_artifact_path(policy, _anchors(args), identity=str(args.id), state=str(state), bindings=bindings).exists():
+        if state != "active" and canonical_artifact_path(
+            policy, _anchors(args), identity=str(args.id), state=str(state), bindings=bindings
+        ).exists():
             raise SystemExit(f"{family} canonical identity collision: {args.id}")
+    return None
 
 
 def _write(args: argparse.Namespace, family: str, data: Mapping[str, Any], bindings: Mapping[str, str]) -> dict[str, Any]:
     from artifact_store import write_artifact
 
-    _available(args, family, bindings)
+    existing = _active_or_none(args, family, bindings)
+    if family == "implementation-review" and existing is not None:
+        existing_data = existing["data"]
+        if (
+            existing_data.get("scope") != data.get("scope")
+            or existing_data.get("task_id") != getattr(args, "task_id", None)
+        ):
+            raise SystemExit(
+                "Implementation review update cannot change scope or task binding"
+            )
     today = now_date()
     schema_id = str(_policy(family)["schema"]["id"])
     try:
@@ -106,7 +128,9 @@ def _write(args: argparse.Namespace, family: str, data: Mapping[str, Any], bindi
     document = {
         **dict(data), "artifact_type": family, "schema_version": schema_version,
         "id": str(args.id), "plan_id": str(args.plan_id),
-        "task_id": getattr(args, "task_id", None), "date_created": today, "last_updated": today,
+        "task_id": getattr(args, "task_id", None),
+        "date_created": str(existing["data"]["date_created"]) if existing else today,
+        "last_updated": today,
     }
     if family == "final-workflow-review":
         document.pop("task_id", None)
@@ -175,8 +199,11 @@ def write_implementation_review(args: argparse.Namespace) -> dict[str, Any]:
         raise SystemExit(str(error)) from error
     data["target"] = checked["target"]
     data["target_sha256"] = checked["target"]["sha256"]
-    if data.get("scope") == "task" and not getattr(args, "task_id", None):
+    task_id = getattr(args, "task_id", None)
+    if data.get("scope") == "task" and not task_id:
         raise SystemExit("Task implementation review requires task binding")
+    if data.get("scope") == "integrated" and task_id:
+        raise SystemExit("Integrated implementation review cannot use task binding")
     return _write(args, "implementation-review", data, _bindings("implementation-review", plan_id=str(args.plan_id), task_id=getattr(args, "task_id", None)))
 
 
@@ -203,8 +230,8 @@ def write_accepted_task_result(args: argparse.Namespace) -> dict[str, Any]:
         if not isinstance(review, dict):
             raise SystemExit("Accepted task result implementation review reference is invalid")
         reviewed = _reference(args, "implementation-review", str(review.get("id")), _bindings("implementation-review", plan_id=str(args.plan_id), task_id=str(args.task_id)))
-        if reviewed["digest"] != review.get("sha256") or reviewed["data"].get("verdict") != "accept":
-            raise SystemExit("Accepted task result requires an exact accept implementation review")
+        if reviewed["digest"] != review.get("sha256"):
+            raise SystemExit("Accepted task result requires the exact implementation review advice")
         if reviewed["data"].get("target_sha256") != product.get("sha256"):
             raise SystemExit("Accepted task result product identity does not match review target")
     data["product_sha256"] = product.get("sha256")
@@ -216,30 +243,103 @@ def list_accepted_task_results(args: argparse.Namespace) -> list[dict[str, Any]]
     return _rows(args, "accepted-task-result")
 
 
-def write_final_workflow_review(args: argparse.Namespace) -> dict[str, Any]:
-    data = _semantic_input(args, "final-workflow-review")
-    _validate_plan_authority(args, data)
-    candidate = data.get("candidate_identity")
-    if not isinstance(candidate, dict) or not isinstance(candidate.get("sha256"), str):
-        raise SystemExit("Final workflow review requires exact candidate identity")
-    seen_tasks: set[str] = set()
-    for reference in data.get("accepted_results", []):
-        if not isinstance(reference, dict) or not str(reference.get("task_id") or ""):
-            raise SystemExit("Final workflow review contains invalid accepted-result reference")
+def validate_final_workflow_chain(
+    args: argparse.Namespace, data: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Validate current mechanical references before storing or finalizing a decision."""
+
+    tree = _validate_plan_authority(args, data)
+    task_ids = set(tree["tasks"])
+    accepted_refs = data.get("accepted_results")
+    if not isinstance(accepted_refs, list):
+        raise SystemExit("Final workflow review requires accepted task results")
+    referenced_task_ids = [
+        str(reference.get("task_id"))
+        for reference in accepted_refs
+        if isinstance(reference, dict)
+    ]
+    if set(referenced_task_ids) != task_ids or len(referenced_task_ids) != len(task_ids):
+        raise SystemExit("Final workflow review must reference every planned task exactly once")
+    coverage = data.get("coverage")
+    expected_coverage = {"planned": len(task_ids), "accepted": len(task_ids), "missing": []}
+    if coverage != expected_coverage:
+        raise SystemExit("Final workflow review coverage does not match canonical tasks")
+
+    declared_review_refs = {
+        (str(reference.get("id")), str(reference.get("sha256")))
+        for reference in data.get("accepted_reviews", [])
+        if isinstance(reference, dict)
+    }
+    if len(declared_review_refs) != len(data.get("accepted_reviews", [])):
+        raise SystemExit("Final workflow review contains invalid or duplicate review references")
+
+    accepted_records: list[tuple[dict[str, Any], dict[str, str]]] = []
+    executor_records: list[tuple[dict[str, Any], dict[str, str], str]] = []
+    expected_review_refs: set[tuple[str, str]] = set()
+    for reference in accepted_refs:
+        if not isinstance(reference, dict):
+            raise SystemExit("Final workflow review contains an invalid accepted-result reference")
         task_id = str(reference["task_id"])
-        if task_id in seen_tasks:
-            raise SystemExit("Final workflow review duplicates an accepted task")
-        seen_tasks.add(task_id)
+        bindings = {"plan": str(args.plan_id), "task": task_id}
         accepted = _reference(
-            args, "accepted-task-result", str(reference.get("id")),
-            {"plan": str(args.plan_id), "task": task_id},
+            args, "accepted-task-result", str(reference.get("id")), bindings
         )
         if accepted["digest"] != reference.get("sha256"):
             raise SystemExit("Final workflow review accepted-result digest mismatch")
-    for reference in data.get("accepted_reviews", []):
-        reviewed = _reference(args, "implementation-review", str(reference.get("id")), {"plan": str(args.plan_id)})
-        if reviewed["digest"] != reference.get("sha256") or reviewed["data"].get("verdict") != "accept":
-            raise SystemExit("Final workflow review requires exact accepted implementation reviews")
+        accepted_data = accepted["data"]
+
+        executor_ref = accepted_data.get("executor_result")
+        if not isinstance(executor_ref, dict):
+            raise SystemExit("Accepted task result executor reference is invalid")
+        executor = _reference(args, "executor-result", str(executor_ref.get("id")), bindings)
+        if executor["digest"] != executor_ref.get("sha256"):
+            raise SystemExit("Accepted task result executor reference is stale")
+        executor_records.append((executor, bindings, str(executor["state"])))
+
+        task = tree["tasks"][task_id]
+        acceptance_review = task.get("acceptance_review")
+        required = acceptance_review.get("required") if isinstance(acceptance_review, dict) else None
+        if type(required) is not bool:
+            raise SystemExit(f"Canonical task acceptance_review.required is invalid: {task_id}")
+        review_ref = accepted_data.get("implementation_review")
+        if review_ref is None:
+            if required:
+                raise SystemExit("Final workflow review omits a required implementation review")
+        elif isinstance(review_ref, dict):
+            review_identity = (str(review_ref.get("id")), str(review_ref.get("sha256")))
+            reviewed = _reference(
+                args, "implementation-review", review_identity[0], {"plan": str(args.plan_id)}
+            )
+            if reviewed["digest"] != review_identity[1]:
+                raise SystemExit("Accepted task result implementation review is stale")
+            product = accepted_data.get("product_identity")
+            if not isinstance(product, dict) or reviewed["data"].get("target_sha256") != product.get("sha256"):
+                raise SystemExit("Accepted task result product identity does not match review target")
+            expected_review_refs.add(review_identity)
+        else:
+            raise SystemExit("Accepted task result implementation review reference is invalid")
+        accepted_records.append((accepted, bindings))
+
+    if declared_review_refs != expected_review_refs:
+        raise SystemExit("Final workflow review implementation-review coverage is not exact")
+    review_records = [
+        _reference(args, "implementation-review", identity, {"plan": str(args.plan_id)})
+        for identity, _digest in sorted(expected_review_refs)
+    ]
+    return {
+        "tree": tree,
+        "accepted_records": accepted_records,
+        "executor_records": executor_records,
+        "review_records": review_records,
+    }
+
+
+def write_final_workflow_review(args: argparse.Namespace) -> dict[str, Any]:
+    data = _semantic_input(args, "final-workflow-review")
+    candidate = data.get("candidate_identity")
+    if not isinstance(candidate, dict) or not isinstance(candidate.get("sha256"), str):
+        raise SystemExit("Final workflow review requires exact candidate identity")
+    validate_final_workflow_chain(args, data)
     data["target_sha256"] = candidate["sha256"]
     return _write(args, "final-workflow-review", data, _bindings("final-workflow-review", plan_id=str(args.plan_id)))
 

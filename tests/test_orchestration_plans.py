@@ -270,11 +270,75 @@ def test_structural_override_and_unverified_source_fail_before_mutation(
     assert not list((workspace / ".work-bundle/orchestration/plan/active").glob("*.plan.yaml"))
 
 
-def test_collision_and_wrong_parent_preserve_existing_bytes(workspace: Path, tmp_path: Path) -> None:
+def test_existing_plan_tree_is_updated_in_place_without_revision_copies(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    root_path, phase_path, task_path = _create_tree(workspace, tmp_path)
+    plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="verified"))
+    plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="draft"))
+
+    plan_semantic = _plan_semantics()
+    plan_semantic["completion_criteria"] = ["The complete current plan is semantically accurate."]
+    plan_input = _write_yaml(tmp_path / "updated-plan.yaml", plan_semantic)
+    plans.cmd_write_plan(_args(workspace, content_file=str(plan_input), status="draft"))
+
+    phase_semantic = _phase_semantics()
+    phase_semantic["completion_criteria"] = ["The complete current phase is semantically accurate."]
+    phase_input = _write_yaml(tmp_path / "updated-phase.yaml", phase_semantic)
+    plans.cmd_write_phase(
+        _args(
+            workspace, plan_id="plan-stage4", phase_id="phase-stage4",
+            title="Updated Stage 4 phase", content_file=str(phase_input), status="planned",
+        )
+    )
+
+    task_semantic = _task_semantics()
+    task_semantic["completion_criteria"] = ["The complete current task is semantically accurate."]
+    task_input = _write_yaml(tmp_path / "updated-task.yaml", task_semantic)
+    plans.cmd_write_task(
+        _args(
+            workspace, plan_id="plan-stage4", phase_id="phase-stage4",
+            task_id="task-stage4", title="Updated Stage 4 task",
+            content_file=str(task_input), status="planned",
+        )
+    )
+
+    root = workspace / ".work-bundle/orchestration/plan/active"
+    assert sorted(path.name for path in root.glob("*.plan.yaml")) == ["plan-stage4.plan.yaml"]
+    assert sorted(path.name for path in (root / "plan-stage4").glob("*.phase.yaml")) == ["phase-stage4.phase.yaml"]
+    assert sorted(path.name for path in (root / "plan-stage4/phase-stage4").glob("*.task.yaml")) == ["task-stage4.task.yaml"]
+    assert yaml.safe_load(root_path.read_text())["completion_criteria"] == [
+        "The complete current plan is semantically accurate."
+    ]
+    assert yaml.safe_load(phase_path.read_text())["name"] == "Updated Stage 4 phase"
+    assert yaml.safe_load(task_path.read_text())["name"] == "Updated Stage 4 task"
+
+
+def test_verified_plan_rejects_child_updates_until_returned_to_draft(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
+    plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="verified"))
+    before = task_path.read_bytes()
+    task_semantic = _task_semantics()
+    task_semantic["completion_criteria"] = ["Updated content"]
+    task_input = _write_yaml(tmp_path / "updated-task.yaml", task_semantic)
+
+    with pytest.raises(SystemExit, match="draft"):
+        plans.cmd_write_task(
+            _args(
+                workspace, plan_id="plan-stage4", phase_id="phase-stage4",
+                task_id="task-stage4", title="Updated Stage 4 task",
+                content_file=str(task_input), status="planned",
+            )
+        )
+
+    assert task_path.read_bytes() == before
+
+
+def test_wrong_parent_preserves_existing_bytes(workspace: Path, tmp_path: Path) -> None:
     root_path, phase_path, task_path = _create_tree(workspace, tmp_path)
     before = {path: path.read_bytes() for path in (root_path, phase_path, task_path)}
-    with pytest.raises(SystemExit, match="collision"):
-        plans.cmd_write_plan(_args(workspace, content_file=str(tmp_path / "plan.yaml")))
     wrong = _write_yaml(tmp_path / "wrong-task.yaml", _task_semantics())
     with pytest.raises(SystemExit, match="parent|phase|canonical"):
         plans.cmd_write_task(
@@ -345,13 +409,17 @@ def test_plan_qualification_transitions_are_monotonic(
 ) -> None:
     root_path, _phase_path, _task_path = _create_tree(workspace, tmp_path)
     plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="verified"))
-    with pytest.raises(SystemExit, match="Invalid plan qualification transition"):
-        plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="draft"))
-    assert yaml.safe_load(root_path.read_text())["status"] == "verified"
+    plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="draft"))
+    assert yaml.safe_load(root_path.read_text())["status"] == "draft"
 
+    plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="verified"))
     plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="superseded"))
     with pytest.raises(SystemExit, match="Invalid plan qualification transition"):
         plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="verified"))
+    with pytest.raises(SystemExit, match="Superseded"):
+        plans.cmd_write_plan(
+            _args(workspace, content_file=str(tmp_path / "plan.yaml"), status="draft")
+        )
     assert yaml.safe_load(root_path.read_text())["status"] == "superseded"
 
 

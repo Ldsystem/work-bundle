@@ -66,7 +66,7 @@ def test_current_workflow_defines_direct_review_and_compact_final_audit() -> Non
     workflow = read("references/assets/orchestration/workflow.md").lower()
     for family in (
         "executor-result-v1",
-        "implementation-review-v1",
+        "implementation-review-v2",
         "accepted-task-result-v1",
         "final-workflow-review-v1",
     ):
@@ -99,7 +99,7 @@ def test_current_orchestration_evals_cover_stage5_boundary() -> None:
     ).lower()
     for term in (
         "executor-result-v1",
-        "implementation-review-v1",
+        "implementation-review-v2",
         "accepted-task-result-v1",
         "final-workflow-review-v1",
         "frozen worktree",

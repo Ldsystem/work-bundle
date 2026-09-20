@@ -156,7 +156,7 @@ def test_legacy_markdown_is_ignored_and_only_canonical_identity_lookup_is_suppor
         _resolve_spec_paths(workspace, {}, {"source_spec_id": "spec-legacy"})
 
 
-def test_structural_override_collision_and_filename_override_fail_before_mutation(
+def test_structural_override_update_and_filename_override_fail_before_mutation(
     workspace: Path, tmp_path: Path,
 ) -> None:
     content = tmp_path / "content.md"
@@ -170,10 +170,53 @@ def test_structural_override_collision_and_filename_override_fail_before_mutatio
     with pytest.raises(SystemExit, match="filename override"):
         specs.cmd_write_spec(_args(workspace, content, filename="custom.md"))
     specs.cmd_write_spec(args)
-    before = (workspace / ".work-bundle/orchestration/spec/index.jsonl").read_bytes()
+    active = workspace / ".work-bundle/orchestration/spec/active/spec-20990101-001a.spec.md"
+    created = read_artifact(
+        CATALOG, "specification", {"workspace_root": workspace},
+        identity="spec-20990101-001a", state="active",
+    )["data"]["date_created"]
+
+    specs.cmd_set_spec_status(_args(workspace, id=args.id, status="verified"))
+    _content(
+        content,
+        body=(
+            "# Repaired semantic specification\n\n"
+            "- **REQ-001A:** Preserve the suffixed requirement.\n"
+            "- **REQ-002:** Cover the omitted behavior.\n"
+        ),
+    )
+    specs.cmd_write_spec(args)
+
+    stored = read_artifact(
+        CATALOG, "specification", {"workspace_root": workspace},
+        identity="spec-20990101-001a", state="active",
+    )
+    assert stored["data"]["status"] == "draft"
+    assert stored["data"]["date_created"] == created
+    assert "REQ-002" in stored["body"]
+    assert [path.name for path in active.parent.glob("*.spec.md")] == [active.name]
+
+
+def test_specification_update_rejects_non_draft_and_archived_identity(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    content = tmp_path / "content.md"
+    _content(content)
+    args = _args(workspace, content)
+    specs.cmd_write_spec(args)
+
+    with pytest.raises(SystemExit, match="updates must return.*draft"):
+        specs.cmd_write_spec(_args(workspace, content, status="verified"))
+
+    specs.cmd_set_spec_status(_args(workspace, id=args.id, status="superseded"))
+    with pytest.raises(SystemExit, match="Superseded"):
+        specs.cmd_write_spec(args)
+    with pytest.raises(SystemExit, match="Invalid specification qualification transition"):
+        specs.cmd_set_spec_status(_args(workspace, id=args.id, status="draft"))
+
+    specs.cmd_set_spec_status(_args(workspace, id=args.id, status="archived"))
     with pytest.raises(SystemExit, match="collision"):
         specs.cmd_write_spec(args)
-    assert (workspace / ".work-bundle/orchestration/spec/index.jsonl").read_bytes() == before
 
 
 def test_shared_front_matter_mutation_remains_available_to_plan_consumers(
@@ -223,7 +266,7 @@ def test_skill_contract_requires_direct_semantic_review_and_self_check() -> None
         "material conflicts",
         "scope",
         "## Self-check",
-        "Supporting evidence files do not issue the semantic verdict",
+        "Supporting evidence files do not issue the semantic decision",
     ]:
         assert term in skill
     assert "require_specification_review" not in skill
