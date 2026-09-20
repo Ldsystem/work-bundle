@@ -6,6 +6,8 @@ The top-level `../wb.py` entrypoint is the supported public command. It declares
 
 Command examples:
 
+The examples use the macOS/Linux `python3` launcher. On Windows, use `py -3.13` or a resolved `python` executable instead.
+
 ```bash
 python3 scripts/wb.py init-workspace <workspace-root> --mode single-repository --slug <slug> --repository <id>=<source-remote> --dry-run
 python3 scripts/wb.py init-workspace <workspace-root> --mode multi-repository --slug <slug> --repository <id>=<source-remote> --dry-run

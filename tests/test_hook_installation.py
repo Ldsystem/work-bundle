@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
+import shlex
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = REPO_ROOT / "bin" / "install.sh"
+INSTALLER = REPO_ROOT / "bin" / "install.py"
 HOOK_SCRIPT = REPO_ROOT / "bin" / "work-bundle-session-start.py"
 
 
@@ -15,7 +19,7 @@ def run_install(home: Path, *args: str, cwd: Path | None = None) -> subprocess.C
     env = os.environ.copy()
     env["HOME"] = str(home)
     return subprocess.run(
-        ["bash", str(INSTALLER), *args],
+        [sys.executable, str(INSTALLER), *args],
         cwd=cwd or REPO_ROOT,
         env=env,
         check=False,
@@ -28,47 +32,66 @@ def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_installer_module():
+    name = "work_bundle_installer_test_module"
+    spec = importlib.util.spec_from_file_location(name, INSTALLER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def codex_work_bundle_entry() -> dict:
+    command = subprocess.list2cmdline([sys.executable, str(HOOK_SCRIPT)]) if os.name == "nt" else shlex.join(
+        [sys.executable, str(HOOK_SCRIPT)]
+    )
     return {
         "matcher": "startup|resume",
         "hooks": [
             {
                 "id": "work-bundle-session-start",
                 "type": "command",
-                "command": str(HOOK_SCRIPT),
+                "command": command,
                 "statusMessage": "Syncing WorkBundle rules",
             }
         ],
     }
 
 
-def test_default_install_invokes_supported_installer_with_zero_options_under_bash_3(tmp_path: Path) -> None:
+def test_default_install_from_source_archive_uses_only_python_and_is_idempotent(tmp_path: Path) -> None:
     isolated_root = tmp_path / "work-bundle"
-    isolated_bin = isolated_root / "bin"
-    template_root = isolated_root / "references" / "assets" / "template"
-    isolated_bin.mkdir(parents=True)
-    template_root.mkdir(parents=True)
-    isolated_installer = isolated_bin / "install.sh"
-    isolated_installer.write_bytes(INSTALLER.read_bytes())
-    supported_installer = isolated_bin / "install-work-bundle-skills"
-    supported_installer.write_text(
-        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$#" > "$HOME/supported-installer-arg-count"\n',
-        encoding="utf-8",
-    )
-    supported_installer.chmod(0o755)
-    (template_root / "bootstrap.yaml").write_text(
-        "work_bundle_root: __WORK_BUNDLE_ROOT__\n",
-        encoding="utf-8",
-    )
-    (template_root / "projects.yaml").write_text("projects: []\n", encoding="utf-8")
-    (template_root / "skill-registry.yaml").write_text("skills: []\n", encoding="utf-8")
+    for relative in [
+        "bin/install.py",
+        "bin/work-bundle-skill",
+        "bin/work-bundle-session-start.py",
+        "scripts/platform_runtime.py",
+        "references/assets/template/bootstrap.yaml",
+        "references/assets/template/projects.yaml",
+        "references/assets/template/skill-registry.yaml",
+    ]:
+        source = REPO_ROOT / relative
+        destination = isolated_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+    skill = isolated_root / "skills" / "sample" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: sample\ndescription: Sample skill.\n---\n", encoding="utf-8")
     home = tmp_path / "home"
     home.mkdir()
     env = os.environ.copy()
     env["HOME"] = str(home)
 
-    result = subprocess.run(
-        ["/bin/bash", str(isolated_installer)],
+    first = subprocess.run(
+        [sys.executable, str(isolated_root / "bin" / "install.py")],
+        cwd=isolated_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    second = subprocess.run(
+        [sys.executable, str(isolated_root / "bin" / "install.py")],
         cwd=isolated_root,
         env=env,
         check=False,
@@ -76,10 +99,12 @@ def test_default_install_invokes_supported_installer_with_zero_options_under_bas
         text=True,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert (home / "supported-installer-arg-count").read_text(encoding="utf-8") == "0\n"
-    assert "updated:" in result.stdout
-    assert str(supported_installer) in result.stdout
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert str(isolated_root) in (home / ".work-bundle" / "bootstrap.yaml").read_text(encoding="utf-8")
+    assert (home / ".agents" / "skills" / "sample").resolve() == skill.parent.resolve()
+    assert "created:" in first.stdout
+    assert "skipped:" in second.stdout
 
 
 def test_codex_register_hook_merges_unrelated_hooks_and_is_idempotent(tmp_path: Path) -> None:
@@ -162,7 +187,7 @@ def test_claude_register_hook_merges_settings_and_is_idempotent(tmp_path: Path) 
         "hooks": [
             {
                 "type": "command",
-                "command": str(HOOK_SCRIPT),
+                "command": codex_work_bundle_entry()["hooks"][0]["command"],
                 "name": "work-bundle-session-start",
             }
         ]
@@ -235,6 +260,88 @@ def test_dry_run_reports_planned_write_without_changing_files(tmp_path: Path) ->
     assert claude.returncode == 0, claude.stdout + claude.stderr
     assert "would update" in claude.stdout
     assert settings_path.read_text(encoding="utf-8") == before
+
+
+def test_invalid_hook_json_fails_before_default_install_writes(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    hooks_path = home / ".codex" / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text("not-json\n", encoding="utf-8")
+
+    result = run_install(home, "--hooks", "auto")
+
+    assert result.returncode == 1
+    assert "invalid JSON" in result.stderr
+    assert not (home / ".work-bundle").exists()
+    assert hooks_path.read_text(encoding="utf-8") == "not-json\n"
+
+
+def test_unknown_argument_returns_two_without_mutation(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+
+    result = run_install(home, "--unknown")
+
+    assert result.returncode == 2
+    assert not home.exists()
+
+
+def test_skill_collision_fails_before_default_install_writes(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    first_skill = sorted(path.name for path in (REPO_ROOT / "skills").iterdir() if (path / "SKILL.md").is_file())[0]
+    (home / ".agents" / "skills" / first_skill).mkdir(parents=True)
+
+    result = run_install(home)
+
+    assert result.returncode == 1
+    assert "skill activation preflight failed" in result.stderr
+    assert not (home / ".work-bundle").exists()
+
+
+def test_late_io_failure_reports_exact_partial_effects(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    installer = load_installer_module()
+    directory = tmp_path / "output"
+    first = directory / "first.txt"
+    blocked = directory / "blocked.txt"
+    plan = installer.EffectPlan(
+        (
+            installer.DirectoryEffect(directory, "created"),
+            installer.FileEffect(first, b"first", "created"),
+            installer.FileEffect(blocked, b"blocked", "created"),
+        )
+    )
+    real_replace = installer.atomic_replace_bytes
+
+    def fail_second(path: Path, content: bytes) -> None:
+        if path == blocked:
+            raise OSError(5, "simulated failure", str(path))
+        real_replace(path, content)
+
+    monkeypatch.setattr(installer, "build_effect_plan", lambda args: plan)
+    monkeypatch.setattr(installer, "atomic_replace_bytes", fail_second)
+
+    assert installer.main([]) == 1
+    output = capsys.readouterr()
+    assert first.read_bytes() == b"first"
+    assert not blocked.exists()
+    assert str(first) in output.out
+    assert str(blocked) in output.out
+    assert "partial effects" in output.err
+
+
+def test_hook_script_need_not_be_executable_and_command_uses_active_interpreter(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    original_mode = HOOK_SCRIPT.stat().st_mode
+    try:
+        HOOK_SCRIPT.chmod(0o644)
+        result = run_install(home, "register-hook", "--agent", "codex", "--scope", "user")
+    finally:
+        HOOK_SCRIPT.chmod(original_mode)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    command = read_json(home / ".codex" / "hooks.json")["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert command == codex_work_bundle_entry()["hooks"][0]["command"]
 
 
 def test_direct_project_mode_accepts_config_override(tmp_path: Path) -> None:

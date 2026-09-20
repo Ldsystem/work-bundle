@@ -46,6 +46,8 @@ Portable control-plane v4 keeps the single-repository layout flat: the source re
 To add another source to an initialized v4 multi-repository workspace, use the
 proposal-bound lifecycle (the direct member name and path must agree):
 
+Command examples use the macOS/Linux `python3` launcher. On Windows, use `py -3.13` or a resolved `python` executable instead.
+
 ```bash
 python3 scripts/wb.py add-workspace-member <workspace-root> \
   --repository-id <id> --remote <remote> --name <member> --path <member> \
@@ -61,31 +63,35 @@ ones. Single/composite workspaces retain their root-source and exclusion behavio
 
 ## Skill Links
 
-Install bootstrap/registry and symlink all work-bundle skills into the shared agent skill root:
+Install bootstrap/registry and activate all WorkBundle skills from a readable source checkout or source archive. On macOS/Linux use `python3`; on Windows use `py -3.13` or a resolved `python` executable:
 
 ```bash
-bin/install.sh
+python3 bin/install.py
 ```
 
-Install or refresh skill symlinks only:
+```powershell
+py -3.13 bin\install.py
+```
+
+Install or refresh skill links only (directory symlinks on POSIX and directory junctions on Windows):
 
 ```bash
-bin/install-work-bundle-skills
+python3 bin/work-bundle-skill enable-all
 ```
 
 Useful checks:
 
 ```bash
-bin/work-bundle-skill list
-bin/work-bundle-skill validate
-bin/install-work-bundle-skills --dry-run
+python3 bin/work-bundle-skill list
+python3 bin/work-bundle-skill validate
+python3 bin/work-bundle-skill enable-all --dry-run
 ```
 
 Run the deterministic repository gate with isolated dependencies:
 
 ```bash
 uvx --python 3.13 --from pytest==9.1.1 --with pyyaml==6.0.3 --with sqlite-vec==0.1.9 --with fastembed==0.8.0 pytest -q
-bin/work-bundle-skill validate
+python3 bin/work-bundle-skill validate
 ```
 
 Run the keep-summarizing CLI through its pinned uv-managed environment:

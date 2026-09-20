@@ -6,6 +6,8 @@ The top-level `../ks.py` entrypoint remains for compatibility with existing agen
 
 Command examples:
 
+The examples use the macOS/Linux `python3` launcher. On Windows, use `py -3.13` or a resolved `python` executable instead.
+
 ```bash
 python3 scripts/ks.py breakdown-design --project <slug> --input <file>
 python3 scripts/ks.py index --project <slug>

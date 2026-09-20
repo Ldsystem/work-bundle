@@ -23,7 +23,7 @@ Perform a read-only keep-summarizing boundary audit across:
 - all `rules/keep-summarizing/*.md`;
 - `references/assets/keep-summarizing/workflow.md`;
 - `tests/test_keep_summarizing_skill_rule_boundary.py`;
-- `bin/work-bundle-skill validate` output when available.
+- `python3 bin/work-bundle-skill validate` output when available on macOS/Linux, or the equivalent `py -3.13`/resolved `python` command on Windows.
 
 Do not inspect `.work-bundle/knowledge/` note bodies unless the user explicitly expands diagnosis scope. Do not inspect unrelated project files unless the user explicitly expands the diagnosis scope.
 
@@ -38,7 +38,7 @@ Verify:
 5. workflow body rule references are covered by Runtime Rules (OQ-001–003 pattern);
 6. Boundary sections use pointer-only format (OQ-004);
 7. no duplicated shared Must/Must Not prose in skill bodies for rule-owned policy;
-8. `bin/install-work-bundle-skills` symlinks resolve to this repo.
+8. activated skill links under the shared agent skill root resolve to this repo.
 
 ## Output
 

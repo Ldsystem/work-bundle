@@ -6,6 +6,8 @@ The top-level `../orch.py` entrypoint is the public command surface. Implementat
 
 Command examples:
 
+The examples use the macOS/Linux `python3` launcher. On Windows, use `py -3.13` or a resolved `python` executable instead.
+
 ```bash
 python3 scripts/orch.py write-spec --title "<title>" --purpose "<purpose>" --component "<component>" --content-file <file>
 python3 scripts/orch.py write-plan --title "<title>" --purpose "<purpose>" --component "<component>" --content-file <file>

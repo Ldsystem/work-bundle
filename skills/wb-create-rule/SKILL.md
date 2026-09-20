@@ -136,6 +136,8 @@ Scripts load this manifest for mechanical checks. Agents use it when verifying p
 
 Use the unified work-bundle dispatcher. Prefer scoped commands:
 
+The examples use the macOS/Linux `python3` launcher. On Windows, use `py -3.13` or a resolved `python` executable instead.
+
 | Command | Behavior |
 |---|---|
 | `python3 scripts/wb.py create-rules --scope toolkit` | Sync toolkit rules; allowed only when `$project_root == $work_bundle_root`. |
