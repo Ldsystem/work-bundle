@@ -51,7 +51,7 @@ jobs:
         run: |
           $archive = Join-Path '${{ runner.temp }}' 'work-bundle-source.zip'
           git archive --format=zip --output=$archive HEAD
-          Expand-Archive -LiteralPath $archive -DestinationPath '${{ env.WB_CI_SOURCE_ROOT }}'
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:WB_CI_SOURCE_ROOT
 
       - name: Hydrate Windows runtime dependencies
         if: runner.os == 'Windows'
@@ -110,5 +110,12 @@ jobs:
             "$env:WB_CI_SOURCE_ROOT/tests/test_ci_release_gate.py" `
             "$env:WB_CI_SOURCE_ROOT/tests/test_public_runtime_hydration.py"
 
-      - name: Run canonical release gate
-        run: python "${{ env.WB_CI_SOURCE_ROOT }}/bin/work-bundle-ci"
+      - name: Run canonical release gate (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python "$WB_CI_SOURCE_ROOT/bin/work-bundle-ci"
+
+      - name: Run canonical release gate (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python "$env:WB_CI_SOURCE_ROOT/bin/work-bundle-ci"

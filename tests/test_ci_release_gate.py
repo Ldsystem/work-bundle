@@ -76,6 +76,8 @@ def test_windows_source_root_is_exported_from_step_runtime_context() -> None:
     assert "WB_CI_SOURCE_ROOT=" in source_root["run"]
     assert "GITHUB_ENV" in source_root["run"]
     assert steps.index(source_root) < steps.index(archive)
+    assert "$env:WB_CI_SOURCE_ROOT" in archive["run"]
+    assert "${{ env.WB_CI_SOURCE_ROOT }}" not in archive["run"]
 
 
 def test_release_gate_continues_after_early_module_failure() -> None:
@@ -214,9 +216,30 @@ def test_release_gate_collects_test_and_skill_failures() -> None:
 def test_workflow_delegates_to_canonical_release_gate() -> None:
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     entry = CI_ENTRY.read_text(encoding="utf-8")
+    parsed = yaml.safe_load(workflow)
+    job = parsed["jobs"]["deterministic"]
+    posix = next(
+        step for step in job["steps"] if step.get("name") == "Run canonical release gate (POSIX)"
+    )
+    windows = next(
+        step for step in job["steps"] if step.get("name") == "Run canonical release gate (Windows)"
+    )
 
-    assert workflow.count("bin/work-bundle-ci") == 2
-    assert 'python "${{ env.WB_CI_SOURCE_ROOT }}/bin/work-bundle-ci"' in workflow
+    assert workflow.count("bin/work-bundle-ci") == 3
+    assert posix == {
+        "name": "Run canonical release gate (POSIX)",
+        "if": "runner.os != 'Windows'",
+        "shell": "bash",
+        "run": 'python "$WB_CI_SOURCE_ROOT/bin/work-bundle-ci"',
+    }
+    assert windows == {
+        "name": "Run canonical release gate (Windows)",
+        "if": "runner.os == 'Windows'",
+        "shell": "pwsh",
+        "run": 'python "$env:WB_CI_SOURCE_ROOT/bin/work-bundle-ci"',
+    }
+    assert job["env"]["WB_CI_SOURCE_ROOT"] == "${{ github.workspace }}"
+    assert "${{ env.WB_CI_SOURCE_ROOT }}" not in workflow
     assert "run: bin/work-bundle-ci" not in workflow
     assert "python -c" not in workflow
     assert "Validate skill packages" not in workflow
