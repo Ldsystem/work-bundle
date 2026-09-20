@@ -60,6 +60,24 @@ def test_workflow_cache_uses_pinned_dependency_owner_without_reducing_matrix() -
     assert setup["with"]["cache-dependency-glob"] == "bin/work-bundle-ci"
 
 
+def test_windows_source_root_is_exported_from_step_runtime_context() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    job = workflow["jobs"]["deterministic"]
+    steps = job["steps"]
+    source_root = next(step for step in steps if step.get("name") == "Select Windows source root")
+    archive = next(step for step in steps if step.get("name") == "Create readable source archive")
+
+    assert job["env"]["WB_CI_SOURCE_ROOT"] == "${{ github.workspace }}"
+    assert source_root["if"] == "runner.os == 'Windows'"
+    assert source_root["shell"] == "pwsh"
+    assert "${{ runner.temp }}" in source_root["run"]
+    assert "WB_CI_SOURCE_ROOT=" in source_root["run"]
+    assert "GITHUB_ENV" in source_root["run"]
+    assert steps.index(source_root) < steps.index(archive)
+
+
 def test_release_gate_continues_after_early_module_failure() -> None:
     commands: list[list[str]] = []
     output: list[str] = []
@@ -91,17 +109,25 @@ def test_release_gate_continues_after_early_module_failure() -> None:
 
 
 def test_release_gate_inputs_are_tracked_and_execution_independent() -> None:
-    eligible = subprocess.run(
-        [
-            "git", "ls-files", "--cached", "--others", "--exclude-standard",
-            "tests/test_*.py",
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    discovered = sorted(path for path in eligible if (REPO_ROOT / path).is_file())
+    git_checkout = (REPO_ROOT / ".git").exists()
+    if git_checkout:
+        eligible = subprocess.run(
+            [
+                "git", "ls-files", "--cached", "--others", "--exclude-standard",
+                "tests/test_*.py",
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        discovered = sorted(path for path in eligible if (REPO_ROOT / path).is_file())
+    else:
+        discovered = sorted(
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in (REPO_ROOT / "tests").glob("test_*.py")
+            if path.is_file()
+        )
 
     observed = _gate_api()(
         REPO_ROOT,
@@ -112,14 +138,20 @@ def test_release_gate_inputs_are_tracked_and_execution_independent() -> None:
         emit=lambda _line: None,
     )
     assert observed["modules"] == discovered
-    for path in [CI_ENTRY, REPO_ROOT / "bin" / "work-bundle-skill", REPO_ROOT / ".github" / "workflows" / "ci.yml"]:
-        subprocess.run(
-            ["git", "ls-files", "--error-unmatch", path.relative_to(REPO_ROOT).as_posix()],
-            cwd=REPO_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+    if git_checkout:
+        tracked_inputs = [
+            CI_ENTRY,
+            REPO_ROOT / "bin" / "work-bundle-skill",
+            REPO_ROOT / ".github" / "workflows" / "ci.yml",
+        ]
+        for path in tracked_inputs:
+            subprocess.run(
+                ["git", "ls-files", "--error-unmatch", path.relative_to(REPO_ROOT).as_posix()],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
     assert ".work-bundle" not in CI_ENTRY.read_text(encoding="utf-8")
     assert not (REPO_ROOT / "evals" / "wor105").exists()
     assert not (REPO_ROOT / "evals" / "wor108").exists()

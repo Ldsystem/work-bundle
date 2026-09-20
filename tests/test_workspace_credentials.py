@@ -63,6 +63,16 @@ def _consumer_for(mechanism: str) -> list[str]:
     return [sys.executable, '-c', snippets[mechanism]]
 
 
+def _git_surface(root: Path) -> str:
+    if not (root / '.git').exists():
+        return ''
+    return subprocess.check_output(['git', 'diff', '--', *TASK_TARGETS], cwd=root, text=True)
+
+
+def test_credential_canary_git_surface_is_empty_outside_checkout(tmp_path: Path) -> None:
+    assert _git_surface(tmp_path) == ''
+
+
 @pytest.mark.parametrize(
     ('kind', 'mechanism'),
     [
@@ -117,7 +127,7 @@ def test_canonical_yaml_six_form_adapter_matrix_has_zero_visible_leakage(
     audit = (tmp_path / '.work-bundle/orchestration/execution-state/credential-use.jsonl').read_text(encoding='utf-8')
     handoff_fixture = json.dumps({'credential_id': result['credential_id'], 'result': result['result']})
     index_fixture = json.dumps([item.__dict__ for item in metadata])
-    git_surface = subprocess.check_output(['git', 'diff', '--', *TASK_TARGETS], cwd=ROOT, text=True)
+    git_surface = _git_surface(ROOT)
     visible = json.dumps(result) + repr(metadata) + audit + handoff_fixture + index_fixture + git_surface
     assert marker not in visible
 
