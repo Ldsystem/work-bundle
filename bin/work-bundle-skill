@@ -129,10 +129,19 @@ def _resolved_target(path: Path) -> Path:
     return path.resolve(strict=False)
 
 
-def _reject_link_like_parent(path: Path) -> None:
+def _validated_link_path(path: Path) -> Path:
+    if ".." in path.parts:
+        raise FileExistsError(f"Refusing destination with unresolved parent traversal: {path}")
     lexical = Path(os.path.abspath(path))
     if contains_link_like_component(lexical.parent, anchor=Path(lexical.anchor)):
         raise FileExistsError(f"Refusing destination beneath link-like parent: {path}")
+    anchor = Path(lexical.anchor)
+    current = anchor
+    for component in lexical.parent.relative_to(anchor).parts:
+        current /= component
+        if classify_path(current) is PathKind.ORDINARY and not current.is_dir():
+            raise FileExistsError(f"Refusing destination beneath non-directory parent: {current}")
+    return lexical
 
 
 def plan_enable(name: str, *, home: str | None, force: bool) -> LinkOperation:
@@ -140,8 +149,7 @@ def plan_enable(name: str, *, home: str | None, force: bool) -> LinkOperation:
     validation = validate_one(source)
     if not validation["ok"]:
         raise ValueError(f"Invalid skill `{name}`: {validation['issues']}")
-    dest = link_path(source.name, home)
-    _reject_link_like_parent(dest)
+    dest = _validated_link_path(link_path(source.name, home))
     kind = classify_path(dest)
     if kind is PathKind.MISSING:
         return LinkOperation(source.name, source, dest, "create", kind)
@@ -158,8 +166,7 @@ def plan_enable(name: str, *, home: str | None, force: bool) -> LinkOperation:
 
 def plan_disable(name: str, *, home: str | None) -> LinkOperation:
     source = skill_dir(name).resolve()
-    dest = link_path(source.name, home)
-    _reject_link_like_parent(dest)
+    dest = _validated_link_path(link_path(source.name, home))
     kind = classify_path(dest)
     if kind is PathKind.MISSING:
         return LinkOperation(source.name, source, dest, "absent", kind)

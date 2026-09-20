@@ -8,7 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shlex
 import subprocess
 import sys
@@ -27,6 +27,7 @@ from scripts.platform_runtime import (  # noqa: E402
 
 
 MARKER = "work-bundle-session-start"
+HOOK_SCRIPT_NAME = "work-bundle-session-start.py"
 
 
 class InstallError(RuntimeError):
@@ -97,44 +98,76 @@ def _require_readable_file(path: Path, label: str) -> bytes:
     return content
 
 
-def _validate_destination(path: Path, *, allow_file: bool) -> PathKind:
-    lexical = Path(os.path.abspath(path))
+def _lexical_absolute(path: Path) -> Path:
+    if ".." in path.parts:
+        raise InstallError(f"refusing destination with unresolved parent traversal: {path}")
+    return Path(os.path.abspath(path))
+
+
+def _validate_destination(path: Path, *, allow_file: bool) -> tuple[Path, PathKind]:
+    lexical = _lexical_absolute(path)
     anchor = Path(lexical.anchor)
     if contains_link_like_component(lexical.parent, anchor=anchor):
         raise InstallError(f"refusing destination beneath link-like parent: {path}")
-    kind = classify_path(path)
+    current = anchor
+    for component in lexical.parent.relative_to(anchor).parts:
+        current /= component
+        if classify_path(current) is PathKind.ORDINARY and not current.is_dir():
+            raise InstallError(f"refusing destination beneath non-directory parent: {current}")
+
+    kind = classify_path(lexical)
     if kind in {PathKind.SYMLINK, PathKind.JUNCTION, PathKind.REPARSE}:
         raise InstallError(f"refusing link-like destination: {path}")
     if kind is PathKind.ORDINARY:
-        if allow_file and path.is_file():
-            return kind
-        if not allow_file and path.is_dir():
-            return kind
+        if allow_file and lexical.is_file():
+            return lexical, kind
+        if not allow_file and lexical.is_dir():
+            return lexical, kind
         expected = "file" if allow_file else "directory"
         raise InstallError(f"refusing destination that is not an ordinary {expected}: {path}")
 
-    return kind
+    return lexical, kind
 
 
 def _directory_effect(path: Path) -> DirectoryEffect:
-    kind = _validate_destination(path, allow_file=False)
-    return DirectoryEffect(path=path, action="skipped" if kind is PathKind.ORDINARY else "created")
+    lexical, kind = _validate_destination(path, allow_file=False)
+    return DirectoryEffect(path=lexical, action="skipped" if kind is PathKind.ORDINARY else "created")
 
 
 def _file_effect(path: Path, content: bytes, *, force: bool) -> FileEffect:
-    kind = _validate_destination(path, allow_file=True)
+    lexical, kind = _validate_destination(path, allow_file=True)
     if kind is PathKind.MISSING:
         action = "created"
     elif force:
         action = "updated"
     else:
         action = "skipped"
-    return FileEffect(path=path, content=content, action=action)
+    return FileEffect(path=lexical, content=content, action=action)
 
 
 def _hook_command(hook_script: Path) -> str:
     arguments = [sys.executable, str(hook_script)]
     return subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)
+
+
+def _command_token_name(token: str) -> str:
+    stripped = token.strip('"\'')
+    return PureWindowsPath(stripped).name if "\\" in stripped else Path(stripped).name
+
+
+def _is_legacy_hook_command(command: object) -> bool:
+    if not isinstance(command, str):
+        return False
+    try:
+        tokens = shlex.split(command, posix=os.name != "nt")
+    except ValueError:
+        return False
+    if len(tokens) == 1:
+        return _command_token_name(tokens[0]) == HOOK_SCRIPT_NAME
+    if len(tokens) != 2 or _command_token_name(tokens[1]) != HOOK_SCRIPT_NAME:
+        return False
+    interpreter = _command_token_name(tokens[0]).lower()
+    return bool(re.fullmatch(r"(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?", interpreter))
 
 
 def _is_owned(value: object) -> bool:
@@ -143,7 +176,7 @@ def _is_owned(value: object) -> bool:
     return (
         value.get("id") == MARKER
         or value.get("name") == MARKER
-        or MARKER in str(value.get("command", ""))
+        or _is_legacy_hook_command(value.get("command"))
     )
 
 
@@ -198,11 +231,13 @@ def _merge_hook(data: dict[str, Any], *, agent: str, command: str) -> dict[str, 
 
     outer_index, inner_index = locations[0]
     if agent == "codex":
-        if inner_index is None or len(session_hooks[outer_index]["hooks"]) == 1:
+        if inner_index is None:
             session_hooks[outer_index] = codex_entry
             keep = (outer_index, 0)
         else:
-            session_hooks[outer_index]["hooks"][inner_index] = codex_hook
+            matcher_entry = session_hooks[outer_index]
+            matcher_entry["matcher"] = "startup|resume"
+            matcher_entry["hooks"][inner_index] = codex_hook
             keep = (outer_index, inner_index)
     else:
         if inner_index is None:
@@ -215,28 +250,28 @@ def _merge_hook(data: dict[str, Any], *, agent: str, command: str) -> dict[str, 
     return merged
 
 
-def _load_json_object(path: Path) -> dict[str, Any]:
-    if classify_path(path) is PathKind.MISSING:
-        return {}
-    _validate_destination(path, allow_file=True)
+def _load_json_object(path: Path) -> tuple[Path, dict[str, Any]]:
+    lexical, kind = _validate_destination(path, allow_file=True)
+    if kind is PathKind.MISSING:
+        return lexical, {}
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(lexical.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
-        raise InstallError(f"invalid JSON in {path}: {error}") from error
+        raise InstallError(f"invalid JSON in {lexical}: {error}") from error
     except OSError as error:
-        raise InstallError(f"cannot read hook configuration {path}: {error}") from error
+        raise InstallError(f"cannot read hook configuration {lexical}: {error}") from error
     if not isinstance(value, dict):
-        raise InstallError(f"expected JSON object in {path}")
-    return value
+        raise InstallError(f"expected JSON object in {lexical}")
+    return lexical, value
 
 
 def _hook_effect(path: Path, *, agent: str, command: str, force: bool) -> FileEffect:
-    current = _load_json_object(path)
+    lexical, current = _load_json_object(path)
     merged = _merge_hook(current, agent=agent, command=command)
     content = (json.dumps(merged, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    effect = _file_effect(path, content, force=True)
+    effect = _file_effect(lexical, content, force=True)
     if current == merged and not force:
-        return FileEffect(path=path, content=content, action="skipped")
+        return FileEffect(path=lexical, content=content, action="skipped")
     return effect
 
 
@@ -287,7 +322,7 @@ def _run_skill_preview(home: Path, *, force: bool) -> SkillEffect:
 
 
 def _bootstrap_content(template: bytes) -> bytes:
-    root = str(ROOT).encode("utf-8")
+    root = json.dumps(str(ROOT), ensure_ascii=False).encode("utf-8")
     return template.replace(b"__WORK_BUNDLE_ROOT__", root).replace(
         b"${PLACEHOLDER} --> replace by install script", root
     )
@@ -322,7 +357,7 @@ def _selected_hooks() -> list[tuple[str, str]]:
 def build_effect_plan(args: argparse.Namespace) -> EffectPlan:
     _require_python()
     home = Path.home()
-    project_root = Path(getattr(args, "project_root", None) or Path.cwd()).resolve()
+    project_root = _lexical_absolute(Path(getattr(args, "project_root", None) or Path.cwd()).expanduser())
     effects: list[Effect] = []
     notices: list[str] = []
 
@@ -332,7 +367,7 @@ def build_effect_plan(args: argparse.Namespace) -> EffectPlan:
             scope=args.scope,
             home=home,
             project_root=project_root,
-            config=Path(os.path.abspath(Path(args.config).expanduser())) if args.config else None,
+            config=Path(args.config).expanduser() if args.config else None,
             force=args.force,
         )
         effects.append(effect)

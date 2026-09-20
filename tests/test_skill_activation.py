@@ -137,6 +137,27 @@ def test_skill_root_beneath_symlink_parent_is_rejected(tmp_path: Path) -> None:
     assert not (external / "skills" / name).exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink fixture")
+def test_skill_home_rejects_raw_parent_traversal_before_normalization(tmp_path: Path) -> None:
+    linked = tmp_path / "linked"
+    linked.symlink_to(tmp_path / "external", target_is_directory=True)
+    raw_home = linked / ".." / "home"
+
+    result = run_skill(raw_home, "enable", "--name", skill_names()[0])
+
+    assert result.returncode == 1
+    assert "parent traversal" in result.stderr
+    assert not (tmp_path / "home" / ".agents").exists()
+
+
+def test_projected_windows_skill_home_rejects_raw_parent_traversal(tmp_path: Path) -> None:
+    module = load_skill_module()
+    raw_home = tmp_path / "junction" / ".." / "home"
+
+    with pytest.raises(FileExistsError, match="parent traversal"):
+        module.plan_enable(skill_names()[0], home=str(raw_home), force=False)
+
+
 def test_projected_junction_or_reparse_skill_parent_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -155,7 +176,8 @@ def test_unowned_windows_link_like_destinations_are_rejected(
     name = skill_names()[0]
     destination = module.link_path(name, str(tmp_path))
     kind = getattr(module.PathKind, kind_name)
-    monkeypatch.setattr(module, "classify_path", lambda path: kind if path == destination else module.PathKind.ORDINARY)
+    original_classifier = module.classify_path
+    monkeypatch.setattr(module, "classify_path", lambda path: kind if path == destination else original_classifier(path))
     monkeypatch.setattr(module, "_resolved_target", lambda path: tmp_path / "unrelated")
 
     with pytest.raises(FileExistsError, match="unmanaged"):

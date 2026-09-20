@@ -62,7 +62,7 @@ def codex_work_bundle_entry() -> dict:
 
 
 def test_default_install_from_source_archive_uses_only_python_and_is_idempotent(tmp_path: Path) -> None:
-    isolated_root = tmp_path / "work-bundle"
+    isolated_root = tmp_path / "archive # copy"
     for relative in [
         "bin/install.py",
         "bin/work-bundle-skill",
@@ -103,7 +103,8 @@ def test_default_install_from_source_archive_uses_only_python_and_is_idempotent(
 
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 0, second.stdout + second.stderr
-    assert str(isolated_root) in (home / ".work-bundle" / "bootstrap.yaml").read_text(encoding="utf-8")
+    bootstrap_line = (home / ".work-bundle" / "bootstrap.yaml").read_text(encoding="utf-8").splitlines()[2]
+    assert json.loads(bootstrap_line.split(":", 1)[1].strip()) == str(isolated_root)
     assert (home / ".agents" / "skills" / "sample").resolve() == skill.parent.resolve()
     assert "created:" in first.stdout
     assert "skipped:" in second.stdout
@@ -244,6 +245,58 @@ def test_force_refreshes_only_work_bundle_hook_entry(tmp_path: Path) -> None:
     ]
 
 
+def test_command_substring_does_not_claim_unrelated_hook(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    hooks_path = home / ".codex" / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    unrelated = {
+        "matcher": "startup",
+        "hooks": [{"type": "command", "command": "echo work-bundle-session-start"}],
+    }
+    hooks_path.write_text(json.dumps({"hooks": {"SessionStart": [unrelated]}}), encoding="utf-8")
+
+    result = run_install(home, "register-hook", "--agent", "codex", "--scope", "user")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    session = read_json(hooks_path)["hooks"]["SessionStart"]
+    assert session == [unrelated, codex_work_bundle_entry()]
+
+
+def test_codex_refresh_preserves_unrelated_outer_group_fields(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    hooks_path = home / ".codex" / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "old",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "/old/work-bundle-session-start.py",
+                                }
+                            ],
+                            "timeout": 30,
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_install(home, "register-hook", "--agent", "codex", "--scope", "user", "--force")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    group = read_json(hooks_path)["hooks"]["SessionStart"][0]
+    assert group["matcher"] == "startup|resume"
+    assert group["timeout"] == 30
+    assert group["hooks"] == codex_work_bundle_entry()["hooks"]
+
+
 def test_dry_run_reports_planned_write_without_changing_files(tmp_path: Path) -> None:
     home = tmp_path / "home"
     hooks_path = home / ".codex" / "hooks.json"
@@ -296,6 +349,18 @@ def test_skill_collision_fails_before_default_install_writes(tmp_path: Path) -> 
 
     assert result.returncode == 1
     assert "skill activation preflight failed" in result.stderr
+    assert not (home / ".work-bundle").exists()
+
+
+def test_skill_parent_file_fails_before_default_install_writes(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".agents").write_text("obstruction\n", encoding="utf-8")
+
+    result = run_install(home)
+
+    assert result.returncode == 1
+    assert "non-directory parent" in result.stderr
     assert not (home / ".work-bundle").exists()
 
 
@@ -371,6 +436,53 @@ def test_custom_hook_config_beneath_symlink_parent_is_rejected_lexically(tmp_pat
     assert not (real_parent / "hooks.json").exists()
 
 
+def test_hook_config_beneath_file_parent_is_rejected_before_default_writes(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    blocked_parent = tmp_path / "blocked"
+    blocked_parent.write_text("file\n", encoding="utf-8")
+
+    result = run_install(
+        home,
+        "register-hook",
+        "--agent",
+        "codex",
+        "--scope",
+        "user",
+        "--config",
+        str(blocked_parent / "hooks.json"),
+    )
+
+    assert result.returncode == 1
+    assert "non-directory parent" in result.stderr
+    assert blocked_parent.read_text(encoding="utf-8") == "file\n"
+    assert not (home / ".work-bundle").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink fixture")
+def test_hook_config_rejects_raw_parent_traversal_before_normalization(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    linked = tmp_path / "linked"
+    linked.symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    raw_config = linked / ".." / "hooks.json"
+
+    result = run_install(
+        home,
+        "register-hook",
+        "--agent",
+        "codex",
+        "--scope",
+        "user",
+        "--config",
+        str(raw_config),
+        "--dry-run",
+    )
+
+    assert result.returncode == 1
+    assert "parent traversal" in result.stderr
+    assert not (tmp_path / "hooks.json").exists()
+
+
 def test_projected_link_like_hook_parent_is_rejected(tmp_path: Path, monkeypatch) -> None:
     installer = load_installer_module()
     target = tmp_path / "junction-parent" / "hooks.json"
@@ -382,6 +494,14 @@ def test_projected_link_like_hook_parent_is_rejected(tmp_path: Path, monkeypatch
 
     with pytest.raises(installer.InstallError, match="link-like parent"):
         installer._validate_destination(target, allow_file=True)
+
+
+def test_projected_windows_hook_path_rejects_raw_parent_traversal(tmp_path: Path) -> None:
+    installer = load_installer_module()
+    raw_target = tmp_path / "junction" / ".." / "hooks.json"
+
+    with pytest.raises(installer.InstallError, match="parent traversal"):
+        installer._validate_destination(raw_target, allow_file=True)
 
 
 def test_direct_project_mode_accepts_config_override(tmp_path: Path) -> None:
