@@ -15,7 +15,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.platform_runtime import PathKind, classify_path  # noqa: E402
+from scripts.platform_runtime import PathKind, classify_path, contains_link_like_component  # noqa: E402
 
 
 def repo_root() -> Path:
@@ -129,12 +129,19 @@ def _resolved_target(path: Path) -> Path:
     return path.resolve(strict=False)
 
 
+def _reject_link_like_parent(path: Path) -> None:
+    lexical = Path(os.path.abspath(path))
+    if contains_link_like_component(lexical.parent, anchor=Path(lexical.anchor)):
+        raise FileExistsError(f"Refusing destination beneath link-like parent: {path}")
+
+
 def plan_enable(name: str, *, home: str | None, force: bool) -> LinkOperation:
     source = skill_dir(name).resolve()
     validation = validate_one(source)
     if not validation["ok"]:
         raise ValueError(f"Invalid skill `{name}`: {validation['issues']}")
     dest = link_path(source.name, home)
+    _reject_link_like_parent(dest)
     kind = classify_path(dest)
     if kind is PathKind.MISSING:
         return LinkOperation(source.name, source, dest, "create", kind)
@@ -152,6 +159,7 @@ def plan_enable(name: str, *, home: str | None, force: bool) -> LinkOperation:
 def plan_disable(name: str, *, home: str | None) -> LinkOperation:
     source = skill_dir(name).resolve()
     dest = link_path(source.name, home)
+    _reject_link_like_parent(dest)
     kind = classify_path(dest)
     if kind is PathKind.MISSING:
         return LinkOperation(source.name, source, dest, "absent", kind)

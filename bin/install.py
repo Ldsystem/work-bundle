@@ -18,7 +18,12 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.platform_runtime import PathKind, atomic_replace_bytes, classify_path  # noqa: E402
+from scripts.platform_runtime import (  # noqa: E402
+    PathKind,
+    atomic_replace_bytes,
+    classify_path,
+    contains_link_like_component,
+)
 
 
 MARKER = "work-bundle-session-start"
@@ -93,6 +98,10 @@ def _require_readable_file(path: Path, label: str) -> bytes:
 
 
 def _validate_destination(path: Path, *, allow_file: bool) -> PathKind:
+    lexical = Path(os.path.abspath(path))
+    anchor = Path(lexical.anchor)
+    if contains_link_like_component(lexical.parent, anchor=anchor):
+        raise InstallError(f"refusing destination beneath link-like parent: {path}")
     kind = classify_path(path)
     if kind in {PathKind.SYMLINK, PathKind.JUNCTION, PathKind.REPARSE}:
         raise InstallError(f"refusing link-like destination: {path}")
@@ -104,16 +113,6 @@ def _validate_destination(path: Path, *, allow_file: bool) -> PathKind:
         expected = "file" if allow_file else "directory"
         raise InstallError(f"refusing destination that is not an ordinary {expected}: {path}")
 
-    current = path.parent
-    while current != current.parent:
-        current_kind = classify_path(current)
-        if current_kind in {PathKind.SYMLINK, PathKind.JUNCTION, PathKind.REPARSE}:
-            raise InstallError(f"refusing destination beneath link-like parent: {current}")
-        if current_kind is PathKind.ORDINARY:
-            if not current.is_dir():
-                raise InstallError(f"refusing destination beneath non-directory parent: {current}")
-            break
-        current = current.parent
     return kind
 
 
@@ -333,7 +332,7 @@ def build_effect_plan(args: argparse.Namespace) -> EffectPlan:
             scope=args.scope,
             home=home,
             project_root=project_root,
-            config=Path(args.config).expanduser().resolve() if args.config else None,
+            config=Path(os.path.abspath(Path(args.config).expanduser())) if args.config else None,
             force=args.force,
         )
         effects.append(effect)

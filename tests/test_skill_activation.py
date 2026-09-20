@@ -123,6 +123,30 @@ def test_disable_all_validates_every_destination_before_mutation(tmp_path: Path)
     assert blocked.is_dir()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink fixture")
+def test_skill_root_beneath_symlink_parent_is_rejected(tmp_path: Path) -> None:
+    name = skill_names()[0]
+    external = tmp_path / "external"
+    external.mkdir()
+    (tmp_path / ".agents").symlink_to(external, target_is_directory=True)
+
+    result = run_skill(tmp_path, "enable", "--name", name)
+
+    assert result.returncode == 1
+    assert "link-like parent" in result.stderr
+    assert not (external / "skills" / name).exists()
+
+
+def test_projected_junction_or_reparse_skill_parent_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_skill_module()
+    monkeypatch.setattr(module, "contains_link_like_component", lambda path, *, anchor: True)
+
+    with pytest.raises(FileExistsError, match="link-like parent"):
+        module.plan_enable(skill_names()[0], home=str(tmp_path), force=False)
+
+
 @pytest.mark.parametrize("kind_name", ["JUNCTION", "REPARSE"])
 def test_unowned_windows_link_like_destinations_are_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind_name: str
@@ -153,3 +177,22 @@ def test_native_windows_enable_and_disable_use_directory_junction(tmp_path: Path
     disabled = run_skill(tmp_path, "disable", "--name", name)
     assert disabled.returncode == 0, disabled.stderr
     assert not destination.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows junction behavior")
+def test_native_windows_junction_parent_is_rejected(tmp_path: Path) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    junction = tmp_path / ".agents"
+    created = subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(external)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert created.returncode == 0, created.stdout + created.stderr
+
+    result = run_skill(tmp_path, "enable", "--name", skill_names()[0])
+
+    assert result.returncode == 1
+    assert "link-like parent" in result.stderr

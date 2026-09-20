@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = REPO_ROOT / "bin" / "install.py"
@@ -342,6 +344,44 @@ def test_hook_script_need_not_be_executable_and_command_uses_active_interpreter(
     assert result.returncode == 0, result.stdout + result.stderr
     command = read_json(home / ".codex" / "hooks.json")["hooks"]["SessionStart"][0]["hooks"][0]["command"]
     assert command == codex_work_bundle_entry()["hooks"][0]["command"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink fixture")
+def test_custom_hook_config_beneath_symlink_parent_is_rejected_lexically(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    real_parent = tmp_path / "real-config"
+    real_parent.mkdir()
+    linked_parent = tmp_path / "linked-config"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+
+    result = run_install(
+        home,
+        "register-hook",
+        "--agent",
+        "codex",
+        "--scope",
+        "user",
+        "--config",
+        str(linked_parent / "hooks.json"),
+        "--dry-run",
+    )
+
+    assert result.returncode == 1
+    assert "link-like" in result.stderr
+    assert not (real_parent / "hooks.json").exists()
+
+
+def test_projected_link_like_hook_parent_is_rejected(tmp_path: Path, monkeypatch) -> None:
+    installer = load_installer_module()
+    target = tmp_path / "junction-parent" / "hooks.json"
+    monkeypatch.setattr(
+        installer,
+        "contains_link_like_component",
+        lambda path, *, anchor: path == target.parent,
+    )
+
+    with pytest.raises(installer.InstallError, match="link-like parent"):
+        installer._validate_destination(target, allow_file=True)
 
 
 def test_direct_project_mode_accepts_config_override(tmp_path: Path) -> None:
