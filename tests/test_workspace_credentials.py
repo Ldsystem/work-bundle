@@ -9,9 +9,12 @@ from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts/work-bundle'))
 
+import credential as credential_module
 from credential import CredentialError, inject_secret, list_metadata, parse_credential_yaml
+from platform_runtime import PathKind
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,7 +54,7 @@ def _store(root: Path, yaml_text: str) -> Path:
 def _consumer_for(mechanism: str) -> list[str]:
     snippets = {
         'path-reference': 'import os,pathlib; pathlib.Path(os.environ["WB_CREDENTIAL_PATH"]).exists(); print("hidden")',
-        'protected-fd': 'import json,os; json.load(os.fdopen(int(os.environ["WB_CREDENTIAL_FD"]))); print("hidden")',
+        'stdin-json': 'import json,sys; value=json.load(sys.stdin); assert set(value)=={"username","password"}; print("hidden")',
         'stdin': 'import sys; sys.stdin.read(); print("hidden")',
         'child-environment': 'import os; os.environ["WB_CREDENTIAL_VALUE"]; print("hidden")',
         'keychain': 'import os; os.environ["WB_CREDENTIAL_REFERENCE"]; print("hidden")',
@@ -64,7 +67,7 @@ def _consumer_for(mechanism: str) -> list[str]:
     ('kind', 'mechanism'),
     [
         ('password_file', 'path-reference'),
-        ('username_password', 'protected-fd'),
+        ('username_password', 'stdin-json'),
         ('ssh_private_key', 'path-reference'),
         ('passphrase', 'stdin'),
         ('environment_reference', 'child-environment'),
@@ -190,6 +193,77 @@ def test_authority_operation_and_adapter_gates_block_before_consumer(tmp_path: P
         assert not invoked.exists()
 
 
+def test_windows_subprocess_seam_sends_one_exact_utf8_json_object_without_disclosure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    username = 'synthetic-用户'
+    password = _canary()
+    _store(tmp_path, _yaml_entry('username_password', {'username': username, 'password': password}))
+    monkeypatch.setenv('WB_SYNTHETIC_EXISTING', password)
+    parent_before = dict(os.environ)
+    observed: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> object:
+        observed['command'] = command
+        observed.update(kwargs)
+        return type('Completed', (), {'returncode': 0})()
+
+    monkeypatch.setattr(credential_module.subprocess, 'run', fake_run)
+    command = ['synthetic-consumer', '--bounded']
+
+    result = inject_secret(
+        tmp_path, 'synthetic', 'local', 'read-only', True, command,
+        mechanism='stdin-json', purpose='synthetic adapter test',
+    )
+
+    expected = json.dumps(
+        {'username': username, 'password': password},
+        ensure_ascii=False,
+        separators=(',', ':'),
+    ).encode('utf-8')
+    assert observed['input'] == expected
+    assert observed['command'] == command
+    assert observed['stdout'] is subprocess.DEVNULL
+    assert observed['stderr'] is subprocess.DEVNULL
+    assert 'pass_fds' not in observed
+    assert 'text' not in observed
+    assert password not in json.dumps(observed['command'])
+    assert password not in json.dumps(observed['env'])
+    assert password not in json.dumps(result)
+    assert dict(os.environ) == parent_before
+
+
+@pytest.mark.parametrize(
+    ('command', 'mechanism', 'code'),
+    [
+        ([], 'stdin-json', 'CONSUMER_INVALID'),
+        (['synthetic-consumer'], 'protected-fd', 'ADAPTER_UNSUPPORTED'),
+    ],
+)
+def test_command_and_mechanism_fail_before_credential_store_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+    mechanism: str,
+    code: str,
+) -> None:
+    store_read = False
+
+    def forbidden_read(workspace_root: Path) -> list[dict[str, object]]:
+        nonlocal store_read
+        store_read = True
+        raise AssertionError(f'unexpected credential read from {workspace_root}')
+
+    monkeypatch.setattr(credential_module, '_entries', forbidden_read)
+
+    with pytest.raises(CredentialError, match=code):
+        inject_secret(
+            tmp_path, 'synthetic', 'local', 'read-only', True, command,
+            mechanism=mechanism, purpose='synthetic validation test',
+        )
+    assert not store_read
+
+
 def test_passphrase_protected_ssh_key_and_unsafe_external_provider_block(tmp_path: Path) -> None:
     marker = _canary()
     key = tmp_path / 'synthetic-key'
@@ -213,6 +287,54 @@ def test_permissions_extra_files_and_symlink_fail_closed(tmp_path: Path) -> None
     (tmp_path / 'credentials/extra').write_text('x', encoding='utf-8')
     with pytest.raises(CredentialError, match='EXTRA_FILE'):
         list_metadata(tmp_path)
+
+
+@pytest.mark.parametrize('kind', [PathKind.SYMLINK, PathKind.JUNCTION, PathKind.REPARSE])
+def test_credential_store_rejects_every_link_like_boundary_before_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: PathKind
+) -> None:
+    store = _store(tmp_path, 'version: 1\ncredentials: []\n')
+    original_classifier = credential_module.classify_path
+    monkeypatch.setattr(
+        credential_module,
+        'classify_path',
+        lambda path: kind if Path(path) == store else original_classifier(path),
+    )
+
+    with pytest.raises(CredentialError, match='WB_CREDENTIAL_LINK_LIKE'):
+        list_metadata(tmp_path)
+
+
+@pytest.mark.parametrize('kind', [PathKind.SYMLINK, PathKind.JUNCTION, PathKind.REPARSE])
+def test_path_reference_rejects_every_link_like_kind_before_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: PathKind
+) -> None:
+    marker = _canary()
+    referenced_file = tmp_path / 'synthetic-reference'
+    referenced_file.write_text(marker, encoding='utf-8')
+    _store(tmp_path, _yaml_entry('password_file', {'path': str(referenced_file)}))
+    original_classifier = credential_module.classify_path
+    monkeypatch.setattr(
+        credential_module,
+        'classify_path',
+        lambda path: kind if Path(path) == referenced_file else original_classifier(path),
+    )
+    spawned = False
+
+    def forbidden_spawn(*args: object, **kwargs: object) -> object:
+        nonlocal spawned
+        spawned = True
+        raise AssertionError('consumer must not spawn')
+
+    monkeypatch.setattr(credential_module.subprocess, 'run', forbidden_spawn)
+
+    with pytest.raises(CredentialError, match='WB_CREDENTIAL_REFERENCE_INVALID') as captured:
+        inject_secret(
+            tmp_path, 'synthetic', 'local', 'read-only', True,
+            ['synthetic-consumer'], mechanism='path-reference', purpose='synthetic path test',
+        )
+    assert marker not in str(captured.value)
+    assert not spawned
 
 
 def test_dispatcher_lists_metadata_only_from_canonical_yaml(tmp_path: Path) -> None:

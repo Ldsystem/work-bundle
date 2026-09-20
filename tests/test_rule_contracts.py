@@ -769,7 +769,7 @@ def test_credential_contract_skill_and_rules_use_closed_form_specific_adapters()
         assert f"{form}:" in contract
     skill_mechanisms = {
         "path-reference": "path reference",
-        "protected-fd": "protected file descriptor",
+        "stdin-json": "stdin json",
         "stdin": "stdin",
         "child-environment": "child-scoped environment",
         "keychain": "keychain",
@@ -777,6 +777,10 @@ def test_credential_contract_skill_and_rules_use_closed_form_specific_adapters()
     }
     for mechanism, phrase in skill_mechanisms.items():
         assert mechanism in contract and phrase in skill.lower()
+    assert "protected-fd" not in contract
+    assert "protected file descriptor" not in skill.lower()
+    assert "junctions and other reparse points" in skill
+    assert "python3" in skill and "py -3.13" in skill
     assert "Suppress raw child stdout/stderr" in skill
     assert "adapter-result contract" in security_rule
     assert "form-specific adapter" in credential_rule
