@@ -199,7 +199,9 @@ def test_windows_subprocess_seam_sends_one_exact_utf8_json_object_without_disclo
     username = 'synthetic-用户'
     password = _canary()
     _store(tmp_path, _yaml_entry('username_password', {'username': username, 'password': password}))
-    monkeypatch.setenv('WB_SYNTHETIC_EXISTING', password)
+    monkeypatch.setenv(f'WB_{password}_KEY', 'ordinary')
+    monkeypatch.setenv('WB_SYNTHETIC_PASSWORD_VALUE', f'prefix-{password}-suffix')
+    monkeypatch.setenv('WB_SYNTHETIC_USERNAME_VALUE', f'prefix-{username}-suffix')
     parent_before = dict(os.environ)
     observed: dict[str, object] = {}
 
@@ -229,6 +231,7 @@ def test_windows_subprocess_seam_sends_one_exact_utf8_json_object_without_disclo
     assert 'text' not in observed
     assert password not in json.dumps(observed['command'])
     assert password not in json.dumps(observed['env'])
+    assert username not in json.dumps(observed['env'], ensure_ascii=False)
     assert password not in json.dumps(result)
     assert dict(os.environ) == parent_before
 
@@ -262,6 +265,122 @@ def test_command_and_mechanism_fail_before_credential_store_read(
             mechanism=mechanism, purpose='synthetic validation test',
         )
     assert not store_read
+
+
+def test_supported_form_mismatch_fails_before_secret_value_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class MetadataOnlyCredential(dict[str, object]):
+        def __getitem__(self, key: str) -> object:
+            if key in {'username', 'password'}:
+                raise AssertionError(f'secret field accessed: {key}')
+            return super().__getitem__(key)
+
+        def get(self, key: str, default: object = None) -> object:
+            if key in {'username', 'password'}:
+                raise AssertionError(f'secret field accessed: {key}')
+            return super().get(key, default)
+
+    credential = MetadataOnlyCredential(
+        kind='username_password', username='synthetic-user', password=_canary(),
+    )
+    _store(tmp_path, 'version: 1\ncredentials: []\n')
+    monkeypatch.setattr(
+        credential_module,
+        'parse_credential_yaml',
+        lambda text: {'version': 1, 'credentials': [{
+            'id': 'synthetic',
+            'description': 'synthetic test only',
+            'severity': 'high',
+            'operation': 'read-only',
+            'targets': ['local'],
+            'credential': credential,
+        }]},
+    )
+
+    with pytest.raises(CredentialError, match='WB_CREDENTIAL_ADAPTER_UNSUPPORTED'):
+        inject_secret(
+            tmp_path, 'synthetic', 'local', 'read-only', True,
+            ['synthetic-consumer'], mechanism='stdin', purpose='synthetic mismatch test',
+        )
+
+
+def test_non_secret_adapter_fields_remain_permitted_in_command_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    referenced_file = tmp_path / 'synthetic-reference'
+    referenced_file.write_text('synthetic', encoding='utf-8')
+    referenced_file.chmod(0o600)
+    monkeypatch.setenv('WB_SYNTHETIC_REFERENCE', 'synthetic-environment-value')
+    monkeypatch.setattr(
+        credential_module.subprocess,
+        'run',
+        lambda *args, **kwargs: type('Completed', (), {'returncode': 0})(),
+    )
+    cases = [
+        ('password_file', {'path': str(referenced_file)}, 'path-reference', str(referenced_file)),
+        ('environment_reference', {'variable': 'WB_SYNTHETIC_REFERENCE'}, 'child-environment', 'WB_SYNTHETIC_REFERENCE'),
+        ('external_secret_reference', {'provider': 'keychain', 'reference': 'synthetic-reference'}, 'keychain', 'synthetic-reference'),
+    ]
+
+    for kind, fields, mechanism, argument in cases:
+        root = tmp_path / kind
+        _store(root, _yaml_entry(kind, fields))
+        result = inject_secret(
+            root, 'synthetic', 'local', 'read-only', True,
+            ['synthetic-consumer', argument], mechanism=mechanism, purpose='synthetic compatibility test',
+        )
+        assert result['result'] == 'passed'
+
+
+def test_secret_command_argument_and_non_utf8_username_password_fail_redacted_before_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spawned = False
+
+    def forbidden_spawn(*args: object, **kwargs: object) -> object:
+        nonlocal spawned
+        spawned = True
+        raise AssertionError('consumer must not spawn')
+
+    monkeypatch.setattr(credential_module.subprocess, 'run', forbidden_spawn)
+    marker = _canary()
+    passphrase_root = tmp_path / 'passphrase'
+    _store(passphrase_root, _yaml_entry('passphrase', {'passphrase': marker}))
+    with pytest.raises(CredentialError, match='WB_CREDENTIAL_CONSUMER_INVALID') as argument_error:
+        inject_secret(
+            passphrase_root, 'synthetic', 'local', 'read-only', True,
+            ['synthetic-consumer', f'prefix-{marker}-suffix'], mechanism='stdin',
+            purpose='synthetic containment test',
+        )
+    assert marker not in str(argument_error.value)
+
+    surrogate = '\ud800'
+    credential = {'kind': 'username_password', 'username': surrogate, 'password': marker}
+    monkeypatch.setattr(
+        credential_module,
+        '_entries',
+        lambda workspace_root, **kwargs: [{
+            'id': 'synthetic',
+            'description': 'synthetic test only',
+            'severity': 'high',
+            'operation': 'read-only',
+            'targets': ['local'],
+            'credential': credential,
+        }],
+    )
+    with pytest.raises(CredentialError, match='WB_CREDENTIAL_VALUE_ENCODING') as encoding_error:
+        inject_secret(
+            tmp_path, 'synthetic', 'local', 'read-only', True,
+            ['synthetic-consumer'], mechanism='stdin-json', purpose='synthetic encoding test',
+        )
+    captured = capsys.readouterr()
+    visible = str(encoding_error.value) + captured.out + captured.err
+    assert marker not in visible
+    assert surrogate not in visible
+    assert not spawned
 
 
 def test_passphrase_protected_ssh_key_and_unsafe_external_provider_block(tmp_path: Path) -> None:
