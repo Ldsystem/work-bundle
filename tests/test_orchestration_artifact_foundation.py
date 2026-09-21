@@ -177,11 +177,21 @@ def test_runtime_catalog_is_valid_and_registers_only_itself() -> None:
         "references/assets/orchestration/contract/artifact-family-catalog-v1.yaml"
     )
     schema = RUNTIME_CATALOG.with_name("artifact-family-catalog-v1.schema.json")
-    committed_schema = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "show", f"HEAD:{schema.relative_to(REPO_ROOT).as_posix()}"],
+    relative_schema = schema.relative_to(REPO_ROOT).as_posix()
+    git_root = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--show-toplevel"],
         capture_output=True,
-        check=True,
-    ).stdout
+        check=False,
+    )
+    if git_root.returncode == 0:
+        committed_schema = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "show", f"HEAD:{relative_schema}"],
+            capture_output=True,
+            check=True,
+        ).stdout
+    else:
+        # The Windows CI gate runs from a git archive, which intentionally has no .git directory.
+        committed_schema = schema.read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha256(committed_schema).hexdigest() == (
         "f7272e56eb04a9c13dd9ba64e24c9e905730abf252a43ca07664f2f35e401935"
     )
