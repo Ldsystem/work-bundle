@@ -29,6 +29,7 @@ from control_plane import ControlPlaneError
 def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(config_root.parent)
+    env["USERPROFILE"] = str(config_root.parent)
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/wb.py"), *args],
         cwd=REPO_ROOT,
@@ -42,6 +43,7 @@ def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def run_orch(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(config_root.parent)
+    env["USERPROFILE"] = str(config_root.parent)
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/orch.py"), *args],
         cwd=REPO_ROOT,

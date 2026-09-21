@@ -23,6 +23,7 @@ def prepare_cwd(tmp_path: Path, catalog: str = CATALOG) -> Path:
 def run_wb(tmp_path: Path, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
+    env["USERPROFILE"] = str(tmp_path)
     return subprocess.run(
         [sys.executable, str(WB), *args],
         cwd=cwd or prepare_cwd(tmp_path),

@@ -109,6 +109,7 @@ def isolated_workspace_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
 
 def _temporary_catalog(tmp_path: Path) -> Path:

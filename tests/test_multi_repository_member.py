@@ -168,6 +168,7 @@ def test_deferred_remote_attach_interruption_rolls_back_and_retry_converges(mult
     before = metadata.read_bytes(), registry.read_bytes()
     original_publish = control_plane._atomic_publish
     monkeypatch.setenv("HOME", str(config.parent))
+    monkeypatch.setenv("USERPROFILE", str(config.parent))
     monkeypatch.setattr(control_plane, "_atomic_publish", lambda payloads: (_ for _ in ()).throw(OSError("injected")))
 
     result = control_plane.cmd_attach_deferred_remote(

@@ -56,6 +56,7 @@ def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env.update(
         {
             "HOME": str(config_root.parent),
+            "USERPROFILE": str(config_root.parent),
             "WB_WORK_BUNDLE_ROOT": str(REPO_ROOT),
             "GIT_AUTHOR_NAME": "Test",
             "GIT_AUTHOR_EMAIL": "test@example.com",
@@ -225,6 +226,7 @@ def test_current_registry_consumers_reject_malformed_yaml_without_mutation(
     )
     before = registry.read_bytes()
     monkeypatch.setenv("HOME", str(config.parent))
+    monkeypatch.setenv("USERPROFILE", str(config.parent))
     monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
 
     with pytest.raises(InfrastructureError) as caught:
@@ -272,6 +274,7 @@ def test_current_registry_consumers_reject_unsupported_schema_without_mutation(
     )
     before = registry.read_bytes()
     monkeypatch.setenv("HOME", str(config.parent))
+    monkeypatch.setenv("USERPROFILE", str(config.parent))
     monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
 
     with pytest.raises(InfrastructureError) as caught:
@@ -584,6 +587,7 @@ def test_validation_failure_after_transformation_restores_state(tmp_path: Path, 
     before_registry = registry.read_bytes()
     before_metadata = (workspace / ".work-bundle/project.yaml").read_bytes()
     monkeypatch.setenv("HOME", str(config.parent))
+    monkeypatch.setenv("USERPROFILE", str(config.parent))
     monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
 
     def failing_validate(root: Path, version: str) -> list[str]:
@@ -617,6 +621,7 @@ def test_intermediate_step_failure_restores_pre_migration_state(tmp_path: Path, 
     before_registry = registry.read_bytes()
     before_metadata = (workspace / ".work-bundle/project.yaml").read_bytes()
     monkeypatch.setenv("HOME", str(config.parent))
+    monkeypatch.setenv("USERPROFILE", str(config.parent))
     monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
 
     def fail_v4(step, root, entry):
@@ -666,6 +671,7 @@ def test_failed_migration_preserves_symlink_and_nested_credentials(
     before_registry = registry.read_bytes()
     before_metadata = (workspace / ".work-bundle/project.yaml").read_bytes()
     monkeypatch.setenv("HOME", str(config.parent))
+    monkeypatch.setenv("USERPROFILE", str(config.parent))
     monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
 
     def failing_validate(root: Path, version: str) -> list[str]:

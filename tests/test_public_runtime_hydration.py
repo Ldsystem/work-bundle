@@ -112,6 +112,7 @@ def test_v3_mutating_public_commands_are_typed_refusals(
 ) -> None:
     environment = os.environ.copy()
     environment["HOME"] = str(tmp_path)
+    environment["USERPROFILE"] = str(tmp_path)
     completed = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/wb.py"), command],
         cwd=REPO_ROOT,
@@ -129,6 +130,7 @@ def test_removed_wor107_migration_stop_route_is_not_publicly_dispatchable(
 ) -> None:
     environment = os.environ.copy()
     environment["HOME"] = str(tmp_path)
+    environment["USERPROFILE"] = str(tmp_path)
     completed = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/wb.py"), "assert-migration-stop"],
         cwd=REPO_ROOT,

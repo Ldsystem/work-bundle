@@ -181,9 +181,18 @@ def test_scoped_validate_rules_resolves_global_and_project_roots(tmp_path: Path)
     for root, rule_id in [(global_root, "global-cross-cutting"), (project_root, "project-cross-cutting")]:
         root.mkdir(parents=True)
         (root / f"{rule_id}.md").write_text(valid_rule_md(rule_id), encoding="utf-8")
-        assert run_wb("create-rules", str(root), env={"HOME": str(tmp_path)}).returncode == 0
+        assert run_wb(
+            "create-rules",
+            str(root),
+            env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
+        ).returncode == 0
 
-    global_result = run_wb("validate-rules", "--scope", "global", env={"HOME": str(tmp_path)})
+    global_result = run_wb(
+        "validate-rules",
+        "--scope",
+        "global",
+        env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
+    )
     global_payload = json.loads(global_result.stdout)
     assert global_result.returncode == 0, global_result.stdout + global_result.stderr
     assert global_payload["scope"] == "global"
@@ -195,7 +204,7 @@ def test_scoped_validate_rules_resolves_global_and_project_roots(tmp_path: Path)
         "project",
         "--project-root",
         str(project),
-        env={"HOME": str(tmp_path)},
+        env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
     )
     project_payload = json.loads(project_result.stdout)
     assert project_result.returncode == 0, project_result.stdout + project_result.stderr
@@ -227,9 +236,11 @@ def test_effective_rule_registry_reports_optional_missing_and_duplicate_ids(tmp_
     sys.path.insert(0, str(REPO_ROOT / "scripts" / "work-bundle"))
     old_root = os.environ.get("WB_WORK_BUNDLE_ROOT")
     old_home = os.environ.get("HOME")
+    old_userprofile = os.environ.get("USERPROFILE")
     try:
         os.environ["WB_WORK_BUNDLE_ROOT"] = str(tmp_path / "toolkit")
         os.environ["HOME"] = str(tmp_path / "home")
+        os.environ["USERPROFILE"] = str(tmp_path / "home")
         sys.modules.pop("rules", None)
         import rules as rules_module
 
@@ -254,6 +265,10 @@ def test_effective_rule_registry_reports_optional_missing_and_duplicate_ids(tmp_
             os.environ.pop("HOME", None)
         else:
             os.environ["HOME"] = old_home
+        if old_userprofile is None:
+            os.environ.pop("USERPROFILE", None)
+        else:
+            os.environ["USERPROFILE"] = old_userprofile
         if sys.path and sys.path[0] == str(REPO_ROOT / "scripts" / "work-bundle"):
             sys.path.pop(0)
 

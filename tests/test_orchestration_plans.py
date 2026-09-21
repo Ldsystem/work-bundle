@@ -538,7 +538,7 @@ def test_public_entrypoint_writes_and_lists_canonical_plan_tree(tmp_path: Path) 
         encoding="utf-8",
     )
     plan_input = _write_yaml(tmp_path / "plan.yaml", _plan_semantics())
-    env = {**os.environ, "HOME": str(home)}
+    env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
     entry = str(REPO_ROOT / "scripts/orch.py")
     create_spec = subprocess.run(
         [

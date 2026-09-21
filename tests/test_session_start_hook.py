@@ -65,6 +65,7 @@ def bootstrap_config(tmp_path: Path) -> Path:
 def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(config_root.parent)
+    env["USERPROFILE"] = str(config_root.parent)
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/wb.py"), *args],
         cwd=REPO_ROOT, env=env, check=False, capture_output=True, text=True,
@@ -106,6 +107,7 @@ def _init_project(tmp_path: Path) -> tuple[Path, Path]:
 def _run_hook(config_root: Path, stdin: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(config_root.parent)
+    env["USERPROFILE"] = str(config_root.parent)
     return subprocess.run(
         [sys.executable, str(HOOK)],
         input=stdin,
@@ -279,6 +281,7 @@ def test_agents_sync_owner_rejects_invalid_v4_before_any_write(
     agents_before = agents_path.read_bytes()
     metadata_before = metadata_path.read_bytes()
     monkeypatch.setenv("HOME", str(config_root.parent))
+    monkeypatch.setenv("USERPROFILE", str(config_root.parent))
     monkeypatch.setenv("WB_WORK_BUNDLE_ROOT", str(REPO_ROOT))
     project_module = load_work_bundle_project_module()
 

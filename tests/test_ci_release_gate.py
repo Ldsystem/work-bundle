@@ -284,3 +284,11 @@ def test_workflow_windows_archive_job_is_native_and_python_owned() -> None:
     assert "wsl" not in install["run"].lower()
     assert "git " not in install["run"].lower()
     assert "uv" not in install["run"].lower()
+
+
+def test_isolated_home_fixtures_also_set_windows_user_profile() -> None:
+    for path in sorted((REPO_ROOT / "tests").glob("test_*.py")):
+        source = path.read_text(encoding="utf-8")
+        home_occurrences = source.count('"HOME"')
+        if home_occurrences:
+            assert source.count('"USERPROFILE"') == home_occurrences, path.name
