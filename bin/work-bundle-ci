@@ -52,6 +52,18 @@ def _discovered_test_files(repo_root: Path) -> list[Path]:
     ]
 
 
+def _release_environment(
+    source: dict[str, str] | None = None,
+    *,
+    platform_name: str = os.name,
+) -> dict[str, str]:
+    environment = dict(os.environ if source is None else source)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    if platform_name == "nt":
+        environment.pop("USERPROFILE", None)
+    return environment
+
+
 def run_release_gate(
     repo_root: Path,
     *,
@@ -66,7 +78,7 @@ def run_release_gate(
         for path in (test_files if test_files is not None else _discovered_test_files(repo_root))
     )
     failed_modules: list[str] = []
-    environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    environment = _release_environment()
     emit(
         "WB_CI_RUNTIME "
         f"python={PYTHON_VERSION} "
