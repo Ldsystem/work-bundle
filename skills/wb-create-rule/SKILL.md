@@ -136,6 +136,8 @@ Scripts load this manifest for mechanical checks. Agents use it when verifying p
 
 Use the unified work-bundle dispatcher. Prefer scoped commands:
 
+The examples use the macOS/Linux `python3` launcher. On Windows, use `py -3.13` or a resolved `python` executable instead.
+
 | Command | Behavior |
 |---|---|
 | `python3 scripts/wb.py create-rules --scope toolkit` | Sync toolkit rules; allowed only when `$project_root == $work_bundle_root`. |
@@ -297,3 +299,12 @@ python3 scripts/wb.py validate-rules --scope <toolkit|global|project>
 ## On Violation
 
 Stop rule creation or migration, report the violated field or section, and make the minimal correction before registering the rule. For `enforcement: should` rules, report deviations explicitly instead of silently continuing.
+
+## Self-check
+
+- Is the rule the smallest enforceable contract at the canonical current path, with no versioned copy, compatibility rule, or duplicated authority?
+- Does each `applies_when` entry begin from a concrete user-visible or workflow-visible signal, and can an agent apply the body without consulting unrelated material?
+- Are procedure, conditional policy, and deterministic mechanics owned respectively by skills, rules, and scripts instead of being copied across them?
+- If current prose, tests, or implementation conflict with accepted purpose, did the repair correct the owning rule and any materially contradictory assertion rather than preserving the as-is state?
+- Did the agent assess semantic scope and trigger quality while the script checked only pre-write mechanical constraints and lightweight post-write integrity?
+- Does the index mirror the canonical rule, and were only the relevant structural checks and behavior-pressure cases reported as actually run?

@@ -205,7 +205,14 @@ def _remove_present_path(path: Path) -> None:
         path.unlink()
         return
     if path.is_dir():
-        shutil.rmtree(path)
+        def onerror(function, target, _exc_info):
+            try:
+                Path(target).chmod(0o777)
+            except OSError:
+                pass
+            function(target)
+
+        shutil.rmtree(path, onerror=onerror)
 
 
 def _ignore_root_credential_store(workspace_root: Path) -> Callable[[str, list[str]], list[str]]:
@@ -233,7 +240,7 @@ def _remove_created_credential_store(workspace_root: Path) -> None:
 
 def snapshot_workspace(workspace_root: Path, destination: Path) -> dict[str, object]:
     if destination.exists():
-        shutil.rmtree(destination)
+        _remove_present_path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     credential_present = _path_present(_root_credential_dir(workspace_root))
     shutil.copytree(
@@ -261,7 +268,7 @@ def restore_workspace(snapshot: dict[str, object]) -> None:
             _remove_present_path(parked)
         shutil.move(str(credential_dir), str(parked))
     if _path_present(workspace_root):
-        shutil.rmtree(workspace_root)
+        _remove_present_path(workspace_root)
     shutil.copytree(snapshot_root, workspace_root, symlinks=True)
     if parked is not None and credential_existed:
         target = _root_credential_dir(workspace_root)

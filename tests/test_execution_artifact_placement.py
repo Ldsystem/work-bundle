@@ -90,10 +90,12 @@ def test_execution_artifacts_resolve_to_workspace_root_outside_source_member(tmp
     assert not target.is_relative_to(source)
 
 
-@pytest.mark.parametrize("artifact_path", ["../escape.json", "/tmp/escape.json", "."])
+@pytest.mark.parametrize("artifact_path", ["../escape.json", "native-absolute", "."])
 def test_execution_artifact_resolution_rejects_unsafe_paths(
     tmp_path: Path, artifact_path: str
 ) -> None:
+    if artifact_path == "native-absolute":
+        artifact_path = str(tmp_path.anchor + "tmp" + ("\\" if tmp_path.anchor.endswith("\\") else "/") + "escape.json")
     with pytest.raises(SystemExit, match="artifact path"):
         resolve_execution_artifact_path(
             tmp_path,

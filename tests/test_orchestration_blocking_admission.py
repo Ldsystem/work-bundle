@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -101,6 +103,91 @@ def test_absent_control_is_allowed_but_malformed_or_missing_evidence_fails_close
     ):
         bounded.require_orchestration_admission(
             missing, operation="ordinary_new", flow_id="other"
+        )
+
+
+def test_blocker_evidence_symlink_is_rejected_before_resolution(tmp_path: Path) -> None:
+    root = _workspace(tmp_path / "workspace", control=_control())
+    real = root / ".work-bundle/orchestration/spec/active/real.md"
+    real.parent.mkdir(parents=True)
+    real.write_text("# unresolved\n", encoding="utf-8")
+    link = real.with_name("block.md")
+    try:
+        link.symlink_to(real)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {error}")
+
+    with pytest.raises(
+        bounded.BoundedClosureError,
+        match="WB_ORCHESTRATION_BLOCKER_EVIDENCE_INVALID",
+    ):
+        bounded.require_orchestration_admission(
+            root, operation="ordinary_new", flow_id="other"
+        )
+
+
+def test_blocker_reference_cannot_erase_link_component_with_parent_traversal(
+    tmp_path: Path,
+) -> None:
+    control = _control()
+    control["blockers"][0]["specification"] = (
+        "detour/../.work-bundle/orchestration/spec/active/block.md"
+    )
+    root = _workspace(tmp_path / "workspace", control=control)
+    _write_blocker_evidence(root)
+    detour = root / "detour"
+    try:
+        detour.symlink_to(root / ".work-bundle", target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {error}")
+
+    with pytest.raises(
+        bounded.BoundedClosureError,
+        match="WB_ORCHESTRATION_BLOCKER_EVIDENCE_INVALID",
+    ):
+        bounded.require_orchestration_admission(
+            root, operation="ordinary_new", flow_id="other"
+        )
+
+
+def test_workspace_symlink_is_rejected_before_resolution(tmp_path: Path) -> None:
+    root = _workspace(tmp_path / "workspace", control=None)
+    alias = tmp_path / "workspace-alias"
+    try:
+        alias.symlink_to(root, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {error}")
+
+    with pytest.raises(
+        bounded.BoundedClosureError,
+        match="WB_POST_EXECUTION_WORKSPACE_INVALID",
+    ):
+        bounded.require_orchestration_admission(
+            alias, operation="ordinary_new", flow_id="new"
+        )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows junction behavior")
+def test_blocker_evidence_junction_is_rejected_before_resolution(tmp_path: Path) -> None:
+    root = _workspace(tmp_path / "workspace", control=_control())
+    target = root / ".work-bundle/real-active"
+    target.mkdir(parents=True)
+    (target / "block.md").write_text("# unresolved\n", encoding="utf-8")
+    active = root / ".work-bundle/orchestration/spec/active"
+    active.parent.mkdir(parents=True)
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(active), str(target)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    with pytest.raises(
+        bounded.BoundedClosureError,
+        match="WB_ORCHESTRATION_BLOCKER_EVIDENCE_INVALID",
+    ):
+        bounded.require_orchestration_admission(
+            root, operation="ordinary_new", flow_id="other"
         )
 
 

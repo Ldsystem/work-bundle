@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import importlib.util
 import json
@@ -11,7 +10,6 @@ import os
 import platform
 import re
 import sys
-import tempfile
 import uuid
 from contextlib import contextmanager
 from copy import deepcopy
@@ -19,6 +17,17 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
+
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from platform_runtime import (
+    atomic_replace_bytes,
+    blocking_file_lock,
+    contains_link_like_component,
+)
 
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
@@ -96,11 +105,8 @@ class ManagedProvenanceStore:
     def locked(self):
         self.lock_path.touch(mode=0o600, exist_ok=True)
         with self.lock_path.open("r+") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            try:
+            with blocking_file_lock(lock):
                 yield
-            finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def _read_unlocked(self) -> dict[str, Any]:
         if not self.path.exists():
@@ -124,25 +130,12 @@ class ManagedProvenanceStore:
         identity = _canonical_digest({key: request[key] for key in OBSERVATION_IDENTITY_FIELDS})
         path = self.root / f".observation-{identity}.lock"
         with path.open("a+") as reservation:
-            fcntl.flock(reservation.fileno(), fcntl.LOCK_EX)
-            try:
+            with blocking_file_lock(reservation):
                 yield
-            finally:
-                fcntl.flock(reservation.fileno(), fcntl.LOCK_UN)
 
     def _write_unlocked(self, state: Mapping[str, Any]) -> None:
         payload = json.dumps(state, sort_keys=True, ensure_ascii=False, indent=2) + "\n"
-        fd, raw_path = tempfile.mkstemp(prefix=".completion-provenance-", dir=self.root)
-        try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(raw_path, self.path)
-        finally:
-            if os.path.exists(raw_path):
-                os.unlink(raw_path)
+        atomic_replace_bytes(self.path, payload.encode("utf-8"), mode=0o600)
 
     @staticmethod
     def _register_unlocked(state: dict[str, Any], identity: str, kind: str) -> None:
@@ -618,7 +611,12 @@ def validation_environment_identity(root: Path, policy: Mapping[str, Any]) -> di
     dependencies = {}
     for relative in policy["dependency_files"]:
         path = root / relative
-        if "credentials" in path.resolve().parts or path.resolve().name == ".env" or path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+        if (
+            "credentials" in path.resolve().parts
+            or path.resolve().name == ".env"
+            or contains_link_like_component(path, anchor=root)
+            or not path.resolve().is_relative_to(root.resolve())
+        ):
             raise CompletionProvenanceError("protected or escaping dependency identity")
         if not path.is_file():
             raise CompletionProvenanceError(f"dependency identity unavailable: {relative}")

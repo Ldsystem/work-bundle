@@ -181,9 +181,18 @@ def test_scoped_validate_rules_resolves_global_and_project_roots(tmp_path: Path)
     for root, rule_id in [(global_root, "global-cross-cutting"), (project_root, "project-cross-cutting")]:
         root.mkdir(parents=True)
         (root / f"{rule_id}.md").write_text(valid_rule_md(rule_id), encoding="utf-8")
-        assert run_wb("create-rules", str(root), env={"HOME": str(tmp_path)}).returncode == 0
+        assert run_wb(
+            "create-rules",
+            str(root),
+            env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
+        ).returncode == 0
 
-    global_result = run_wb("validate-rules", "--scope", "global", env={"HOME": str(tmp_path)})
+    global_result = run_wb(
+        "validate-rules",
+        "--scope",
+        "global",
+        env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
+    )
     global_payload = json.loads(global_result.stdout)
     assert global_result.returncode == 0, global_result.stdout + global_result.stderr
     assert global_payload["scope"] == "global"
@@ -195,7 +204,7 @@ def test_scoped_validate_rules_resolves_global_and_project_roots(tmp_path: Path)
         "project",
         "--project-root",
         str(project),
-        env={"HOME": str(tmp_path)},
+        env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
     )
     project_payload = json.loads(project_result.stdout)
     assert project_result.returncode == 0, project_result.stdout + project_result.stderr
@@ -227,9 +236,11 @@ def test_effective_rule_registry_reports_optional_missing_and_duplicate_ids(tmp_
     sys.path.insert(0, str(REPO_ROOT / "scripts" / "work-bundle"))
     old_root = os.environ.get("WB_WORK_BUNDLE_ROOT")
     old_home = os.environ.get("HOME")
+    old_userprofile = os.environ.get("USERPROFILE")
     try:
         os.environ["WB_WORK_BUNDLE_ROOT"] = str(tmp_path / "toolkit")
         os.environ["HOME"] = str(tmp_path / "home")
+        os.environ["USERPROFILE"] = str(tmp_path / "home")
         sys.modules.pop("rules", None)
         import rules as rules_module
 
@@ -254,6 +265,10 @@ def test_effective_rule_registry_reports_optional_missing_and_duplicate_ids(tmp_
             os.environ.pop("HOME", None)
         else:
             os.environ["HOME"] = old_home
+        if old_userprofile is None:
+            os.environ.pop("USERPROFILE", None)
+        else:
+            os.environ["USERPROFILE"] = old_userprofile
         if sys.path and sys.path[0] == str(REPO_ROOT / "scripts" / "work-bundle"):
             sys.path.pop(0)
 
@@ -268,6 +283,36 @@ def test_agents_template_load_always_is_unconditional_and_three_scopes_are_named
     assert "decompose the current user request into task signals, then check all discovered rule metadata" in text
     assert "load `load: always` rules only when their scope is relevant" not in text
     assert "decompose the current user request before rule selection" not in text
+
+
+def test_agents_authority_and_evidence_contract_is_bounded_and_synchronized() -> None:
+    template = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
+    source = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    for text in (template, source):
+        for phrase in (
+            "Agents own semantic correctness, relevance, qualification, and acceptance",
+            "Scripts and schemas own deterministic structure",
+            "current implementation and workspace state as evidence",
+            "controller/orchestrator owns scope, delegation, repair routing, continuation, acceptance, re-entry",
+            "Reviewers provide independent advice",
+            "Enforce necessary constraints before an authoritative write",
+            "prefer lightweight integrity checks",
+            "Escalate to targeted durable knowledge, orchestration lineage, or Git history only when",
+            "at the owning workflow's completion boundary, record one knowledge disposition",
+        ):
+            assert phrase in text
+        assert "Find its corresponding design purpose and decisions in the knowledge base" not in text
+        assert "Find its corresponding orchestration evidence" not in text
+        assert "after each meaningful validated move, record a knowledge disposition" not in text
+
+    template_body = template.strip()
+    source_body = source.strip().removeprefix(
+        "# ========================\n# Work Bundle RULE START\n# ========================\n"
+    ).removesuffix(
+        "\n# ========================\n# Work Bundle RULE END\n# ========================"
+    ).strip()
+    assert source_body == template_body
 
 
 def test_validate_rules_rejects_nested_scope_index(tmp_path: Path) -> None:
@@ -614,6 +659,21 @@ def test_initialize_project_guidance_matches_create_rule_project_scope() -> None
     assert "`.work-bundle/project.yaml`, `rules/index.yaml`" not in initialize
 
 
+def test_create_rule_ends_with_practical_semantic_self_check() -> None:
+    create_rule = (REPO_ROOT / "skills/wb-create-rule/SKILL.md").read_text(encoding="utf-8")
+
+    self_check = create_rule.split("## Self-check", maxsplit=1)[1]
+    for obligation in (
+        "canonical current path",
+        "user-visible or workflow-visible signal",
+        "procedure, conditional policy, and deterministic mechanics",
+        "accepted purpose",
+        "pre-write mechanical constraints",
+        "lightweight post-write integrity",
+    ):
+        assert obligation in self_check
+
+
 def test_initialize_project_v4_migration_guardrails_and_pressure_scenarios() -> None:
     initialize = (REPO_ROOT / "skills/wb-initialize-project/SKILL.md").read_text(encoding="utf-8")
     evals = json.loads((REPO_ROOT / "references/evals/work-bundle/evals.json").read_text(encoding="utf-8"))
@@ -694,6 +754,9 @@ def test_workspace_ecosystem_documentation_and_external_registry_boundary() -> N
     assert "singular `script/`" in readme
     assert "credentials/credentials.yaml" in readme
     assert "--scope project --workspace-root <workspace-root>" in scripts_readme
+    assert "normalized `remote.canonical` or declared `remote.aliases`" in scripts_readme
+    assert "Undeclared remotes fail before mutation" in scripts_readme
+    assert "never promoted into or rewritten as canonical metadata" in scripts_readme
     assert "bootstrap.yaml` field `skill_registry`" in scripts_readme
     assert "runtime skill registry" in scripts_readme and "external-only" in scripts_readme
     assert "wb-credential-use` and `wb-migrate-to-multi-repository" in scripts_readme
@@ -721,7 +784,7 @@ def test_credential_contract_skill_and_rules_use_closed_form_specific_adapters()
         assert f"{form}:" in contract
     skill_mechanisms = {
         "path-reference": "path reference",
-        "protected-fd": "protected file descriptor",
+        "stdin-json": "stdin json",
         "stdin": "stdin",
         "child-environment": "child-scoped environment",
         "keychain": "keychain",
@@ -729,6 +792,10 @@ def test_credential_contract_skill_and_rules_use_closed_form_specific_adapters()
     }
     for mechanism, phrase in skill_mechanisms.items():
         assert mechanism in contract and phrase in skill.lower()
+    assert "protected-fd" not in contract
+    assert "protected file descriptor" not in skill.lower()
+    assert "junctions and other reparse points" in skill
+    assert "python3" in skill and "py -3.13" in skill
     assert "Suppress raw child stdout/stderr" in skill
     assert "adapter-result contract" in security_rule
     assert "form-specific adapter" in credential_rule

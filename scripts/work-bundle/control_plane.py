@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
+import stat
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Iterable
 from urllib.parse import parse_qsl, urlsplit
 
@@ -25,6 +26,7 @@ from workspace_resources import (
 )
 from infrastructure import (
     InfrastructureError,
+    atomic_write_bytes,
     atomic_write_text,
     dump_canonical_yaml,
     join_workspace_binding,
@@ -267,8 +269,19 @@ def canonical_remote(value: object) -> str:
         user_host, path = remote.split(":", 1)
         remote = f"ssh://{user_host}/{path}"
     if remote.startswith("file://"):
-        remote = str(Path(remote[7:]).expanduser().resolve())
+        parsed = urlsplit(remote)
+        if parsed.netloc and re.fullmatch(r"[A-Za-z]:", parsed.netloc):
+            candidate = parsed.netloc + parsed.path
+        elif parsed.netloc:
+            candidate = "//" + parsed.netloc + parsed.path
+        else:
+            candidate = parsed.path
+        if re.match(r"^/[A-Za-z]:[\\/]", candidate):
+            candidate = candidate[1:]
+        remote = str(Path(candidate).expanduser().resolve())
     elif remote.startswith(("/", "./", "../", "~")):
+        remote = str(Path(remote).expanduser().resolve())
+    elif re.match(r"^[A-Za-z]:[\\/]", remote) or remote.startswith("\\\\"):
         remote = str(Path(remote).expanduser().resolve())
     remote = remote.rstrip("/")
     return remote[:-4] if remote.endswith(".git") and "://" in remote else remote
@@ -284,6 +297,27 @@ def validated_remote(value: object) -> str:
         ):
             raise ControlPlaneError("WB_CONTROL_PLANE_REMOTE_CREDENTIALS_FORBIDDEN")
     return canonical_remote(raw)
+
+
+def _declared_remote_values(repository: dict[str, object]) -> frozenset[str]:
+    canonical = repository.get("canonical_remote") or repository.get("remote")
+    aliases = repository.get("remote_aliases") or ()
+    values = [canonical, *(aliases if isinstance(aliases, (list, tuple)) else ())]
+    return frozenset(validated_remote(value) for value in values if str(value or "").strip())
+
+
+def _remote_matches_declared(actual: object, repository: dict[str, object]) -> bool:
+    return validated_remote(actual) in _declared_remote_values(repository)
+
+
+def _member_with_declared_remotes(
+    member: dict[str, object], repository: dict[str, object]
+) -> dict[str, object]:
+    return {
+        **member,
+        "remote": str(repository.get("canonical_remote") or repository.get("remote") or ""),
+        "remote_aliases": list(repository.get("remote_aliases") or []),
+    }
 
 
 def _git(path: Path, *args: str) -> str:
@@ -317,12 +351,36 @@ def _git_remote(path: Path) -> str:
 def _local_remote_path(remote: str, repository_path: Path) -> Path | None:
     raw = remote.strip()
     if raw.startswith("file://"):
-        return Path(raw[7:]).expanduser().resolve()
+        parsed = urlsplit(raw)
+        if parsed.netloc and re.fullmatch(r"[A-Za-z]:", parsed.netloc):
+            candidate = parsed.netloc + parsed.path
+        elif parsed.netloc:
+            candidate = "//" + parsed.netloc + parsed.path
+        else:
+            candidate = parsed.path
+        if re.match(r"^/[A-Za-z]:[\\/]", candidate):
+            candidate = candidate[1:]
+        return Path(candidate).expanduser().resolve()
     if raw.startswith(("/", "~")):
         return Path(raw).expanduser().resolve()
     if raw.startswith(("./", "../")):
         return (repository_path / raw).resolve()
+    if re.match(r"^[A-Za-z]:[\\/]", raw) or raw.startswith("\\\\"):
+        return Path(raw).expanduser().resolve()
     return None
+
+
+def _remove_owned_tree(path: Path) -> None:
+    """Remove a transaction-owned tree, including read-only Git object files."""
+    def onerror(function, target, _exc_info):
+        target_path = Path(target)
+        try:
+            target_path.chmod(stat.S_IWRITE | stat.S_IREAD)
+        except OSError:
+            pass
+        function(target)
+
+    shutil.rmtree(path, onerror=onerror)
 
 
 def _resolved_git_remote(path: Path) -> str:
@@ -477,8 +535,14 @@ def _v4_repositories(text: str) -> list[dict[str, object]]:
             repository["canonical_remote"] = validated_remote(
                 "" if str(canonical_value).lower() in {"null", "~", "none"} else canonical_value
             )
+            aliases = remote.get("aliases")
+            repository["remote_aliases"] = [
+                validated_remote(alias)
+                for alias in aliases
+            ] if isinstance(aliases, list) else []
         else:
             repository["canonical_remote"] = validated_remote(repository.get("canonical"))
+            repository["remote_aliases"] = []
         materialization = repository.get("materialization")
         locator = repository.get("locator")
         repository["locator_type"] = str(locator.get("type", "")) if isinstance(locator, dict) else ""
@@ -701,7 +765,7 @@ def _atomic_publish(payloads: dict[Path, str]) -> list[str]:
                     if path.is_file() and path.read_bytes() == value:
                         continue
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    atomic_write_text(path, value.decode("utf-8"))
+                    atomic_write_bytes(path, value)
             except (OSError, InfrastructureError):
                 rollback_failures.append(str(path))
         if rollback_failures:
@@ -1193,6 +1257,7 @@ def cmd_publish_control_plane(args: list[str]) -> int:
         out({"command": "publish-control-plane", "status": "passed", "dry_run": True, "remote": remote, "changed_files": [], "git_actions": ["init", "configure-origin", "commit", "push"]})
         return 0
     metadata_before = text
+    metadata_before_bytes = metadata.read_bytes()
     git_existed = (control / ".git").exists()
     snapshot_failures: list[str] = []
     previous_origin = ""
@@ -1292,8 +1357,9 @@ def cmd_publish_control_plane(args: list[str]) -> int:
     except ControlPlaneError as exc:
         rollback_failures: list[str] = []
         if not git_existed and (control / ".git").is_dir():
-            _atomic_write(metadata, metadata_before)
-            shutil.rmtree(control / ".git")
+            if metadata.read_bytes() != metadata_before_bytes:
+                atomic_write_bytes(metadata, metadata_before_bytes)
+            _remove_owned_tree(control / ".git")
         elif git_existed:
             reset = subprocess.run(
                 ["git", "-C", str(control), "reset", "--hard", previous_head],
@@ -1305,11 +1371,19 @@ def cmd_publish_control_plane(args: list[str]) -> int:
                 rollback_failures.append("head_reset_failed")
             if config_before is not None:
                 config_path.write_bytes(config_before)
-            if metadata.read_text(encoding="utf-8") != metadata_before:
-                _atomic_write(metadata, metadata_before)
+            if metadata.read_bytes() != metadata_before_bytes:
+                atomic_write_bytes(metadata, metadata_before_bytes)
+            refresh = subprocess.run(
+                ["git", "-C", str(control), "add", "--", "project.yaml"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if refresh.returncode != 0:
+                rollback_failures.append("index_refresh_failed")
             if _git(control, "rev-parse", "HEAD") != previous_head:
                 rollback_failures.append("head_mismatch")
-            if metadata.read_text(encoding="utf-8") != metadata_before:
+            if metadata.read_bytes() != metadata_before_bytes:
                 rollback_failures.append("metadata_mismatch")
             if _git(control, "remote", "get-url", "origin") != previous_origin:
                 rollback_failures.append("origin_mismatch")
@@ -1535,7 +1609,7 @@ def _materialize(remote: str, path: Path) -> None:
         if path.is_symlink() or path.is_file():
             path.unlink(missing_ok=True)
         elif path.is_dir():
-            shutil.rmtree(path)
+            _remove_owned_tree(path)
         raise ControlPlaneError("WB_CONTROL_PLANE_MATERIALIZATION_FAILED")
 
 
@@ -1644,7 +1718,6 @@ def _classify_workspace_member(
         binding_type = str(repository.get("workspace_binding_type") or "")
         name = str(repository.get("workspace_binding_name") or "")
         path = _member_segment(repository, name) if binding_type == "member" else ""
-        remote = str(repository.get("canonical_remote") or "")
         branch = str(repository.get("default_branch") or "")
         same_id = repository_id == member["repository_id"]
         same_name = bool(name) and name == member["name"]
@@ -1655,7 +1728,7 @@ def _classify_workspace_member(
             same_id
             and same_name
             and same_path
-            and remote == member["remote"]
+            and _remote_matches_declared(member["remote"], repository)
             and branch == member["default_branch"]
         ):
             return "match"
@@ -1760,6 +1833,7 @@ def _add_workspace_member_preflight(workspace_root: Path, text: str) -> dict[str
             _require_multi_member_checkout(workspace_root, path, {
                 "repository_id": repository_id,
                 "remote": str(repo.get("canonical_remote") or ""),
+                "remote_aliases": list(repo.get("remote_aliases") or []),
                 "default_branch": str(repo.get("default_branch") or ""),
             })
         return binding
@@ -1787,8 +1861,7 @@ def _add_workspace_member_preflight(workspace_root: Path, text: str) -> dict[str
     ):
         raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_GIT_INVALID:{root_id}")
     actual_remote = _resolved_git_remote(project_root)
-    expected_remote = str(root.get("canonical_remote") or "")
-    if actual_remote != expected_remote:
+    if not _remote_matches_declared(actual_remote, root):
         raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_REMOTE_CONFLICT:{root_id}")
     _require_observed_branch(project_root, str(root.get("default_branch") or ""), root_id)
     return binding
@@ -1825,7 +1898,7 @@ def _require_add_workspace_member_replay_state(
     if not member_path.is_dir() or not (member_path / ".git").exists():
         raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_CHECKOUT_MISSING:{member['repository_id']}")
     actual_remote = _resolved_git_remote(member_path)
-    if actual_remote != member["remote"]:
+    if not _remote_matches_declared(actual_remote, member):
         raise ControlPlaneError(f"WB_CONTROL_PLANE_BOUND_REMOTE_CONFLICT:{member['repository_id']}")
     _require_observed_branch(member_path, member["default_branch"], member["repository_id"])
     repositories = binding.get("repositories")
@@ -1848,7 +1921,7 @@ def _inspect_existing_member_checkout(member_path: Path, member: dict[str, str])
     if not member_path.is_dir():
         raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
     actual_remote = _resolved_git_remote(member_path)
-    if actual_remote != member["remote"]:
+    if not _remote_matches_declared(actual_remote, member):
         raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
     _require_observed_branch(member_path, member["default_branch"], member["repository_id"])
 
@@ -1927,13 +2000,14 @@ def _deferred_member_record(
     }
 
 
-def _deferred_member_from_repository(repository: dict[str, object]) -> dict[str, str]:
+def _deferred_member_from_repository(repository: dict[str, object]) -> dict[str, object]:
     name = str(repository.get("workspace_binding_name") or repository.get("id") or "")
     return {
         "repository_id": str(repository.get("id") or ""),
         "name": name,
         "path": _member_segment(repository, name),
         "remote": str(repository.get("canonical_remote") or ""),
+        "remote_aliases": list(repository.get("remote_aliases") or []),
         "default_branch": str(repository.get("default_branch") or ""),
         "materialization": str(repository.get("materialization_state") or ""),
         "proposal_id": str(repository.get("deferred_proposal_id") or ""),
@@ -1985,7 +2059,7 @@ def _deferred_proposal(workspace_root: Path, text: str, member: dict[str, str]) 
 def _attach_deferred_proposal(text: str, repository_id: str, remote: str) -> dict[str, object]:
     repository = _find_deferred_repository(text, repository_id)
     member = _deferred_member_from_repository(repository)
-    if member["materialization"] == "attached" and member["remote"] != remote:
+    if member["materialization"] == "attached" and not _remote_matches_declared(remote, repository):
         raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
     facts = {
         "metadata_digest": _metadata_digest(text),
@@ -2009,7 +2083,7 @@ def _rollback_workspace_root_materialization(workspace_root: Path, before: set[s
             except OSError:
                 pass
     if (workspace_root / ".git").is_dir():
-        shutil.rmtree(workspace_root / ".git")
+        _remove_owned_tree(workspace_root / ".git")
 
 
 def _materialize_workspace_root(remote: str, workspace_root: Path, default_branch: str) -> set[str]:
@@ -2133,7 +2207,7 @@ def _attach(
             if owned_path.is_symlink() or owned_path.is_file():
                 owned_path.unlink(missing_ok=True)
             elif owned_path.is_dir():
-                shutil.rmtree(owned_path)
+                _remove_owned_tree(owned_path)
         if root_materialization_before is not None:
             _rollback_workspace_root_materialization(workspace_root, root_materialization_before)
         if agents_before is None:
@@ -2205,7 +2279,7 @@ def _attach(
             if candidate is not None and candidate.exists():
                 manual_observation = _git_checkout_observation(candidate) if manual_locator else None
                 actual_remote = "" if manual_locator else _resolved_git_remote(candidate)
-                if not manual_locator and actual_remote != canonical_remote(remote):
+                if not manual_locator and not _remote_matches_declared(actual_remote, repository):
                     raise ControlPlaneError(
                         "WB_CONTROL_PLANE_REMOTE_CONFLICT",
                         {"repository_id": repository_id},
@@ -2481,7 +2555,7 @@ def cmd_doctor_workspace(args: list[str], *, command_name: str = "doctor-workspa
                 except ControlPlaneError as exc:
                     local_failures.append(f"{exc.code}:{repository_id}")
                     actual_remote = ""
-                if actual_remote != str(repo.get("canonical_remote") or ""):
+                if not _remote_matches_declared(actual_remote, repo):
                     local_failures.append(f"WB_CONTROL_PLANE_BOUND_REMOTE_CONFLICT:{repository_id}")
                     if repo.get("required"):
                         missing_required.append(repository_id)
@@ -2596,7 +2670,7 @@ def _apply_add_workspace_member(
             if member_path.is_symlink() or member_path.is_file():
                 member_path.unlink(missing_ok=True)
             elif member_path.is_dir():
-                shutil.rmtree(member_path)
+                _remove_owned_tree(member_path)
         if isinstance(exc, ControlPlaneError):
             raise
         raise ControlPlaneError("WB_CONTROL_PLANE_TRANSACTION_FAILED") from exc
@@ -2726,7 +2800,9 @@ def cmd_attach_deferred_remote(args: list[str]) -> int:
         metadata_path = workspace_root / ".work-bundle/project.yaml"
         text = read(metadata_path)
         proposal = _attach_deferred_proposal(text, parsed.repository_id, remote)
-        member = {**proposal["member"], "remote": remote}
+        member = dict(proposal["member"])
+        if member["materialization"] != "attached":
+            member["remote"] = remote
         _deferred_attachment_preflight(workspace_root, text, member)
         payload = {"command": "attach-deferred-remote", "proposal_id": proposal["proposal_id"]}
         if parsed.dry_run:
@@ -2736,7 +2812,9 @@ def cmd_attach_deferred_remote(args: list[str]) -> int:
         live = _attach_deferred_proposal(live_text, parsed.repository_id, remote)
         if parsed.accepted_proposal_id != live["proposal_id"]:
             raise ControlPlaneError("WB_CONTROL_PLANE_PROPOSAL_STALE")
-        member = {**live["member"], "remote": remote}
+        member = dict(live["member"])
+        if member["materialization"] != "attached":
+            member["remote"] = remote
         binding, member_path, multi = _deferred_attachment_preflight(workspace_root, live_text, member)
         if member["materialization"] == "attached":
             _require_add_workspace_member_replay_state(workspace_root, member, binding, multi=multi)
@@ -2776,7 +2854,7 @@ def cmd_attach_deferred_remote(args: list[str]) -> int:
         return 0
     except (ControlPlaneError, OSError) as exc:
         if owned_member and member_path is not None and member_path.exists():
-            shutil.rmtree(member_path)
+            _remove_owned_tree(member_path)
         code = exc.code if isinstance(exc, ControlPlaneError) else "WB_CONTROL_PLANE_TRANSACTION_FAILED"
         out({"command": "attach-deferred-remote", "status": "issues-found", "failure_code": code, "changed_files": []})
         return 1
@@ -2829,14 +2907,21 @@ def cmd_add_workspace_member(args: list[str]) -> int:
         _add_workspace_member_preflight(workspace_root, text)
         if _root_index_tracks(workspace_root, path):
             raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_PATH_TRACKED")
-        member_path = workspace_root / path
-        if member_path.exists() or member_path.is_symlink():
-            _inspect_existing_member_checkout(member_path, member)
-            if multi:
-                _require_multi_member_checkout(workspace_root, member_path, member)
-        classification = _classify_workspace_member(_v4_repositories(text), member)
+        repositories = _v4_repositories(text)
+        classification = _classify_workspace_member(repositories, member)
         if classification == "collision":
             raise ControlPlaneError("WB_CONTROL_PLANE_MEMBER_COLLISION")
+        checkout_member = member
+        if classification == "match":
+            repository = next(
+                item for item in repositories if str(item.get("id") or "") == member["repository_id"]
+            )
+            checkout_member = _member_with_declared_remotes(member, repository)
+        member_path = workspace_root / path
+        if member_path.exists() or member_path.is_symlink():
+            _inspect_existing_member_checkout(member_path, checkout_member)
+            if multi:
+                _require_multi_member_checkout(workspace_root, member_path, checkout_member)
         _require_add_workspace_member_target(text, member, classification)
         proposal = _add_workspace_member_proposal(workspace_root, text, member)
         payload = {
@@ -2854,7 +2939,15 @@ def cmd_add_workspace_member(args: list[str]) -> int:
             return 1
         if classification == "match":
             live_binding = _add_workspace_member_preflight(workspace_root, live_text)
-            _require_add_workspace_member_replay_state(workspace_root, member, live_binding, multi=multi)
+            live_repository = next(
+                item
+                for item in _v4_repositories(live_text)
+                if str(item.get("id") or "") == member["repository_id"]
+            )
+            replay_member = _member_with_declared_remotes(member, live_repository)
+            _require_add_workspace_member_replay_state(
+                workspace_root, replay_member, live_binding, multi=multi
+            )
             out({**payload, "status": "passed", "dry_run": False, "replay": True, "changed_files": []})
             return 0
         applied = _apply_add_workspace_member(workspace_root, live_text, member)

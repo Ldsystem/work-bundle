@@ -11,6 +11,8 @@ Never blindly register skills. This workflow is only for external skills. Built-
 
 Use the unified work-bundle dispatcher:
 
+The examples use the macOS/Linux `python3` launcher. On Windows, use `py -3.13` or a resolved `python` executable instead.
+
 - Inspect candidate skill: `python3 scripts/wb.py inspect-skill <skill-file>`
 - Validate registry entry: `python3 scripts/wb.py validate-registry-entry <entry-file>`
 - Merge confirmed external entry: `python3 scripts/wb.py register-skill --registry ~/.work-bundle/registry/skill-registry.yaml --entry <entry-file> --confirmed`

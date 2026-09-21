@@ -4,11 +4,18 @@ import json
 import os
 import re
 import subprocess
-import tempfile
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from platform_runtime import PathKind, classify_path
 
 
 class CredentialError(Exception):
@@ -43,6 +50,14 @@ _ENTRY_REQUIRED = frozenset({'id', 'description', 'severity', 'operation', 'cred
 _ENTRY_OPTIONAL = frozenset({'targets', 'scopes'})
 _SEVERITIES = frozenset({'low', 'medium', 'high', 'critical'})
 _OPERATIONS = frozenset({'read-only', 'read-write'})
+_MECHANISMS = frozenset({
+    'path-reference', 'stdin-json', 'stdin', 'child-environment', 'keychain', 'ssh-agent',
+})
+_SECRET_FIELDS = {
+    'username_password': ('username', 'password'),
+    'passphrase': ('passphrase',),
+    'ssh_private_key': ('passphrase',),
+}
 _KEY = re.compile(r'^[A-Za-z_][A-Za-z0-9_-]*$')
 
 
@@ -53,8 +68,10 @@ def _fail(code: str) -> None:
 def validate_store(workspace_root: Path) -> Path:
     directory = workspace_root / 'credentials'
     store = directory / 'credentials.yaml'
-    if directory.is_symlink() or store.is_symlink():
-        _fail('WB_CREDENTIAL_SYMLINK')
+    if classify_path(directory) in {PathKind.SYMLINK, PathKind.JUNCTION, PathKind.REPARSE}:
+        _fail('WB_CREDENTIAL_LINK_LIKE')
+    if classify_path(store) in {PathKind.SYMLINK, PathKind.JUNCTION, PathKind.REPARSE}:
+        _fail('WB_CREDENTIAL_LINK_LIKE')
     if not directory.is_dir() or not store.is_file():
         _fail('WB_CREDENTIAL_STORE_MISSING')
     if sorted(path.name for path in directory.iterdir()) != ['credentials.yaml']:
@@ -213,7 +230,7 @@ def _string_list(value: object, *, allow_empty: bool = True) -> tuple[str, ...]:
     return tuple(str(item) for item in value)
 
 
-def validate_credential_variant(credential: object) -> dict[str, object]:
+def validate_credential_structure(credential: object) -> dict[str, object]:
     if not isinstance(credential, dict):
         _fail('WB_CREDENTIAL_VARIANT_INVALID')
     kind = credential.get('kind')
@@ -225,13 +242,20 @@ def validate_credential_variant(credential: object) -> dict[str, object]:
         _fail('WB_CREDENTIAL_VARIANT_INCOMPLETE')
     if not set(credential).issubset(allowed):
         _fail('WB_CREDENTIAL_VARIANT_FIELDS')
+    return credential
+
+
+def validate_credential_variant(credential: object) -> dict[str, object]:
+    credential = validate_credential_structure(credential)
+    kind = str(credential['kind'])
+    required, optional = _KINDS[kind]
     for field in required | (set(credential) & optional):
         if not _nonempty(credential[field]):
             _fail('WB_CREDENTIAL_REFERENCE_EMPTY')
     return credential
 
 
-def _entries(workspace_root: Path) -> list[dict[str, object]]:
+def _entries(workspace_root: Path, *, validate_values: bool = True) -> list[dict[str, object]]:
     try:
         data = parse_credential_yaml(validate_store(workspace_root).read_text(encoding='utf-8'))
     except CredentialError:
@@ -261,7 +285,9 @@ def _entries(workspace_root: Path) -> list[dict[str, object]]:
         raw['targets'] = list(_string_list(raw.get('targets', [])))
         if 'scopes' in raw:
             raw['scopes'] = list(_string_list(raw['scopes']))
-        validate_credential_variant(raw['credential'])
+        validate_credential_structure(raw['credential'])
+        if validate_values:
+            validate_credential_variant(raw['credential'])
         entries.append(raw)
     return entries
 
@@ -295,7 +321,7 @@ def select_consumer_adapter(credential: dict[str, object], requested_mechanism: 
     kind = str(credential['kind'])
     adapters = {
         'password_file': ConsumerAdapter('path-reference', ('path',)),
-        'username_password': ConsumerAdapter('protected-fd', ('username', 'password')),
+        'username_password': ConsumerAdapter('stdin-json', ('username', 'password')),
         'ssh_private_key': ConsumerAdapter('path-reference', ('private_key_path',)),
         'passphrase': ConsumerAdapter('stdin', ('passphrase',)),
         'environment_reference': ConsumerAdapter('child-environment', ('variable',)),
@@ -314,26 +340,68 @@ def select_consumer_adapter(credential: dict[str, object], requested_mechanism: 
     return adapter
 
 
-def _run_consumer(command: list[str], credential: dict[str, object], adapter: ConsumerAdapter) -> int:
+def _validate_consumer_inputs(command: list[str], mechanism: str | None) -> None:
     if not command or any(not isinstance(part, str) or not part for part in command):
+        _fail('WB_CREDENTIAL_CONSUMER_INVALID')
+    if mechanism is not None and mechanism not in _MECHANISMS:
+        _fail('WB_CREDENTIAL_ADAPTER_UNSUPPORTED')
+
+
+def _without_secret_values(
+    environment: dict[str, str], credential: dict[str, object],
+) -> dict[str, str]:
+    secret_values = _secret_values(credential)
+    if not secret_values:
+        return environment
+    return {
+        key: value
+        for key, value in environment.items()
+        if not any(secret in key or secret in value for secret in secret_values)
+    }
+
+
+def _secret_values(credential: dict[str, object]) -> tuple[str, ...]:
+    fields = _SECRET_FIELDS.get(str(credential['kind']), ())
+    return tuple(
+        str(credential[field])
+        for field in fields
+        if field in credential and _nonempty(credential[field])
+    )
+
+
+def _run_consumer(command: list[str], credential: dict[str, object], adapter: ConsumerAdapter) -> int:
+    _validate_consumer_inputs(command, adapter.mechanism)
+    if any(
+        secret in part
+        for secret in _secret_values(credential)
+        for part in command
+    ):
         _fail('WB_CREDENTIAL_CONSUMER_INVALID')
     kind = str(credential['kind'])
     child_environment = os.environ.copy()
     if adapter.mechanism == 'path-reference':
         field = 'path' if kind == 'password_file' else 'private_key_path'
         path = Path(str(credential[field])).expanduser()
-        if not path.is_file() or path.is_symlink():
+        if classify_path(path) is not PathKind.ORDINARY or not path.is_file():
             _fail('WB_CREDENTIAL_REFERENCE_INVALID')
         child_environment['WB_CREDENTIAL_PATH'] = str(path)
         process = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=child_environment, check=False)
         return process.returncode
-    if adapter.mechanism == 'protected-fd':
-        with tempfile.TemporaryFile() as protected:
-            protected.write(json.dumps({'username': credential['username'], 'password': credential['password']}).encode('utf-8'))
-            protected.seek(0)
-            child_environment['WB_CREDENTIAL_FD'] = str(protected.fileno())
-            process = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=child_environment, pass_fds=(protected.fileno(),), check=False)
-            return process.returncode
+    if adapter.mechanism == 'stdin-json':
+        child_environment = _without_secret_values(child_environment, credential)
+        try:
+            payload = json.dumps(
+                {'username': credential['username'], 'password': credential['password']},
+                ensure_ascii=False,
+                separators=(',', ':'),
+            ).encode('utf-8')
+        except UnicodeEncodeError:
+            _fail('WB_CREDENTIAL_VALUE_ENCODING')
+        process = subprocess.run(
+            command, input=payload, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=child_environment, check=False,
+        )
+        return process.returncode
     if adapter.mechanism == 'stdin':
         process = subprocess.run(command, input=str(credential['passphrase']), text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=child_environment, check=False)
         return process.returncode
@@ -371,7 +439,14 @@ def inject_secret(
     purpose: str = 'current-task',
     authorization_source: str = 'current-task',
 ) -> dict[str, object]:
-    entries = _entries(workspace_root)
+    _validate_consumer_inputs(command, mechanism)
+    if requested not in _OPERATIONS:
+        _fail('WB_CREDENTIAL_OPERATION_INVALID')
+    if not _nonempty(credential_id) or not _nonempty(target):
+        _fail('WB_CREDENTIAL_TARGET_MISMATCH')
+    if not _nonempty(purpose) or not _nonempty(authorization_source):
+        _fail('WB_CREDENTIAL_AUTHORITY_REQUIRED')
+    entries = _entries(workspace_root, validate_values=False)
     entry = next((candidate for candidate in entries if candidate['id'] == credential_id), None)
     if entry is None:
         _fail('WB_CREDENTIAL_NOT_FOUND')
@@ -381,10 +456,9 @@ def inject_secret(
         id=str(entry['id']), description=str(entry['description']), severity=str(entry['severity']),
         operation=str(entry['operation']), kind=str(credential['kind']), targets=tuple(entry['targets']),
     )
-    if not _nonempty(purpose) or not _nonempty(authorization_source):
-        _fail('WB_CREDENTIAL_AUTHORITY_REQUIRED')
     authorize_operation(metadata, target, requested, authorized)
     adapter = select_consumer_adapter(credential, mechanism)
+    validate_credential_variant(credential)
     returncode = _run_consumer(command, credential, adapter)
     result_state = 'passed' if returncode == 0 else 'failed'
     result = {

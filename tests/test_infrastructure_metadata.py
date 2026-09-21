@@ -309,6 +309,31 @@ def test_materialized_binding_requires_complete_observation_evidence(tmp_path: P
     assert invalid.value.code == "WB_INFRASTRUCTURE_SCHEMA_INVALID"
 
 
+def test_workspace_context_does_not_require_source_observation_fields(tmp_path: Path) -> None:
+    infrastructure = load_infrastructure()
+    config, workspace, member = write_context(tmp_path)
+    registry_path = config / "registry/projects.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["device_bindings"]["wb-example"]["repositories"]["source"].pop("observed_head")
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+
+    context = infrastructure.resolve_workspace_context(
+        cwd=member,
+        config_root=config,
+        toolkit_root=REPO_ROOT,
+    )
+    assert context.workspace_root == workspace.resolve()
+    assert context.workspace_id == "wb-example"
+
+    with pytest.raises(infrastructure.InfrastructureError) as source_context:
+        infrastructure.resolve_anchor_context(
+            cwd=member,
+            config_root=config,
+            toolkit_root=REPO_ROOT,
+        )
+    assert source_context.value.code == "WB_INFRASTRUCTURE_SCHEMA_INVALID"
+
+
 def test_explicitly_unmaterialized_binding_carries_no_invented_observations(tmp_path: Path) -> None:
     infrastructure = load_infrastructure()
     workspace = tmp_path / "workspace"

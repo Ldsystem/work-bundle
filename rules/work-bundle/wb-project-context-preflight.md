@@ -18,7 +18,7 @@ requires: []
 
 ## Purpose
 
-Require agents to resolve the containing `workspace_root`, portable topology, and version-appropriate local repository authority before using repository evidence, modifying source files, delegating execution, or reviewing implementation work.
+Require agents to resolve the containing `workspace_root`, portable topology, and version-appropriate local repository authority before using repository evidence or mutating source, while escalating only material repository conflicts.
 
 ## Must
 
@@ -33,13 +33,13 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 - Establish a compact workspace/member map from v4 portable metadata plus its matching device binding before source inspection, planning, or edits.
 - Treat metadata v2/v3 as migration input only. Legacy `working_branch`, `last_commit_id`, and other local checkout fields are migration evidence, not current authority. Do not silently relocate legacy metadata, infer topology, or create/move worktrees without explicit migration apply authority.
 - Require explicit `single-repository` or `multi-repository` mode for new creation. Existing v3 metadata may supply its declared mode; v2 inspection never silently supplies a topology conversion decision.
-- Inspect every applicable `source_repositories[]` entry before specification evidence collection, implementation planning, execution, review, and project-scope metadata updates.
+- Inspect the selected `source_repositories[]` entry before source work. Inspect additional members only when current topology or task evidence shows they can materially change scope, an accepted interface, validation, safety, or the implementation outcome.
 - Treat each v4 portable repository joined to its device binding as a separate `project_root` source boundary for preflight, CodeGraph checks, edits, validation, and delegation.
-- For Git-backed repositories, compare live Git evidence with portable v4 branch policy and device-local observations.
-- Carry verified repository structure, branch/HEAD, baseline, and CodeGraph evidence into the as-is evidence of the current Truth Basis. If portable topology, device-local observations, live Git, or expected delta conflict materially, stop through the existing repository- or decision-blocked route before source edits.
+- For Git-backed repositories that participate in the requested change or candidate review, compare live Git evidence with portable v4 branch policy and device-local observations.
+- Carry the material repository structure, branch/HEAD, baseline, and CodeGraph facts into the as-is evidence of the current Truth Basis. If portable topology, device-local observations, live Git, or expected delta conflict materially, stop through the existing repository- or decision-blocked route before source edits.
 - For a managed worktree, verify `project_root` and absolute `git-common-dir` are under `workspace_root`; treat an external origin path as a read-only locator outside bounded provisioning or refresh.
-- Block on branch mismatch, missing required repository metadata, stale commit baseline not explained by accepted executor-result handoffs, inaccessible repositories, unresolved Git status, or unexplained dirty status.
-- Preserve accepted-handoff baseline semantics: only validated executor-result handoffs may explain expected dirty worktree changes during plan execution.
+- Block on a branch or baseline mismatch, missing required repository metadata, inaccessible repository, or unexplained dirty state only when it overlaps the authorized scope, makes candidate identity ambiguous, invalidates accepted dependency evidence, or otherwise creates a material safety or correctness risk. Record unrelated dirt without treating its mere presence as a semantic verdict.
+- Preserve accepted-handoff baseline semantics: only accepted executor-result handoffs with validated bindings may explain expected dirty worktree changes during plan execution.
 - Treat source changes produced by another task as an untrusted proposal until the current owning workflow verifies its exact repository, worktree, write scope, diff, and validation evidence.
 - Before asking another task to mutate source, verify that it already owns the exact repository/worktree and write scope through its accepted task binding or an explicit user-authorized ownership handoff. Otherwise keep mutation authority with the current owning workflow; cross-task communication may request status, read-only evidence, or continuation of already-owned work only.
 - For repositories without `.codegraph/`, record `no-index` or `not-indexed` fallback and do not initialize CodeGraph or run `codegraph sync`.
@@ -49,7 +49,7 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 
 - Do not infer active workspaces or source repositories from conversation memory when workspace metadata or the bootstrap-resolved registry is available.
 - Do not treat the shell working directory as the full project boundary when project metadata lists additional source repositories.
-- Do not inspect broad source trees before reading project metadata and establishing the compact project-structure map.
+- Do not inspect broad source trees before reading project metadata and establishing the compact project-structure map, and do not expand from that map into unrelated repositories without a material relation.
 - Do not store metadata-v4 local checkout paths or observations in portable `project.yaml`; store them only in the matching bootstrap-resolved `device_bindings` entry.
 - Do not apply the metadata-v3 project-local authority model to metadata v4.
 - Do not write project registry state under `work_bundle_root` or `project_root`.
@@ -63,15 +63,15 @@ Require agents to resolve the containing `workspace_root`, portable topology, an
 
 ## Validation
 
-- Confirm metadata v4 portable topology was read from `$workspace_root/.work-bundle/project.yaml` and local paths/observations were read from the matching bootstrap-resolved `device_bindings` entry before repository evidence collection, planning, execution, or review.
+- Confirm metadata v4 portable topology was read from `$workspace_root/.work-bundle/project.yaml` and local paths/observations were read from the matching bootstrap-resolved `device_bindings` entry before repository evidence collection, planning, execution, or review of participating repositories.
 - Confirm the Truth Basis cites verified portable topology and device-local observations without moving local fields into v4 project metadata.
 - Confirm registry access, when needed, used the bootstrap-resolved `project_registry` path.
-- Confirm the active workspace, mode, portable repositories, local member project roots, and repository boundaries were identified from the correct authority for the active metadata version.
-- Confirm Git-backed repositories recorded expected branch, actual branch, expected commit, actual commit, branch status, commit status, and accepted-baseline status.
+- Confirm the active workspace, mode, participating portable repositories, local member project roots, and repository boundaries were identified from the correct authority for the active metadata version.
+- Confirm participating Git-backed repositories recorded the branch, commit, status, and accepted-baseline facts needed to identify the candidate, and that any additional repository expansion has a material reason.
 - Confirm CodeGraph evidence records indexed or `no-index` state by repository and never initializes missing indexes.
 - Confirm any bypass or fallback records the concrete reason in the task, phase, review, or executor-result handoff.
 - Confirm every cross-task source contribution had pre-existing bound ownership or remained proposal-only until the repository owner audited and integrated it.
 
 ## On Violation
 
-Stop before source investigation, file modification, delegation, review archive, or project metadata update. Report the missing metadata, registry mismatch, unresolved project structure, branch mismatch, stale baseline, dirty worktree, unresolved Git status, inaccessible repository, or CodeGraph policy violation, then rerun preflight after repair.
+Stop the affected source investigation, file modification, delegation, review archive, or project metadata update. Report the material metadata, registry, structure, baseline, dirty-state, access, or CodeGraph conflict, then rerun only the affected preflight after repair.

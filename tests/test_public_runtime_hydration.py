@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -111,6 +112,7 @@ def test_v3_mutating_public_commands_are_typed_refusals(
 ) -> None:
     environment = os.environ.copy()
     environment["HOME"] = str(tmp_path)
+    environment["USERPROFILE"] = str(tmp_path)
     completed = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/wb.py"), command],
         cwd=REPO_ROOT,
@@ -128,6 +130,7 @@ def test_removed_wor107_migration_stop_route_is_not_publicly_dispatchable(
 ) -> None:
     environment = os.environ.copy()
     environment["HOME"] = str(tmp_path)
+    environment["USERPROFILE"] = str(tmp_path)
     completed = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/wb.py"), "assert-migration-stop"],
         cwd=REPO_ROOT,
@@ -138,3 +141,26 @@ def test_removed_wor107_migration_stop_route_is_not_publicly_dispatchable(
     )
     assert completed.returncode == 2, completed.stdout + completed.stderr
     assert "unknown command: assert-migration-stop" in completed.stderr
+
+
+def test_windows_archive_job_exercises_public_runtime_and_focused_tests() -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["deterministic"]["steps"]
+    public_runtime = next(
+        step for step in steps if step.get("name") == "Exercise Windows public runtime"
+    )
+
+    assert public_runtime["if"] == "runner.os == 'Windows'"
+    assert public_runtime["shell"] == "pwsh"
+    command = public_runtime["run"]
+    assert "scripts/wb.py" in command and "--help" in command
+    assert "scripts/orch.py" in command
+    for module in (
+        "tests/test_platform_runtime.py",
+        "tests/test_hook_installation.py",
+        "tests/test_skill_activation.py",
+        "tests/test_workspace_credentials.py",
+        "tests/test_ci_release_gate.py",
+        "tests/test_public_runtime_hydration.py",
+    ):
+        assert module in command

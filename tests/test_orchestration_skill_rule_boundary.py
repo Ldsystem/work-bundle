@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import re
 
 import yaml
@@ -115,3 +116,55 @@ def test_stage_events_are_diagnostic_only() -> None:
         assert token in text
     assert "never issue or reinterpret a" in text
     assert "product-review verdict, artifact qualification, or lifecycle decision" in text
+
+
+def test_instruction_rules_keep_controller_authority_and_claim_boundaries_explicit() -> None:
+    boundary = read("rules/orchestration/orch-orchestration-boundary.md")
+    review = read("rules/orchestration/orch-review-completion.md")
+    verification = read("rules/verification-evidence-before-claim.md")
+    preflight = read("rules/work-bundle/wb-project-context-preflight.md")
+
+    assert "scope, delegation, repair routing, continuation, acceptance, re-entry" in boundary
+    assert "does not direct workers, expand scope, deliver changes" in boundary
+    assert "reviewer-proposed scope changes" in review
+    assert "explicit user authority" in review
+    assert "semantic product judgment or a mechanical/workflow fact" in verification
+    assert "deterministic helper" in verification and "manufacture or veto" in verification
+    assert "Inspect additional members only when" in preflight
+    assert "makes candidate identity ambiguous" in preflight
+
+
+def test_orchestration_pressure_cases_cover_authority_accuracy_and_write_discipline() -> None:
+    data = json.loads(read("references/evals/orchestration/evals.json"))
+    numbered = {item["id"]: item for item in data["evals"]}
+    scenarios = {item["id"]: item for item in data["v4_evals"]}
+
+    assert "unrelated path" in numbered[15]["expected_output"]
+    assert "not an automatic semantic veto" in numbered[16]["expected_output"]
+    assert "Preserves any already-supported product review judgment" in numbered[64]["expected_output"]
+    assert "does not retroactively manufacture or veto product acceptance" in numbered[64]["expected_output"]
+
+    expected = {
+        "v4-controller-retains-scope-and-worker-routing": (
+            "review as advice",
+            "prevents the reviewer from directing the worker or expanding scope",
+            "required user decision",
+        ),
+        "v4-product-correct-supporting-state-defect": (
+            "supporting-state defects separately",
+            "cannot manufacture or veto acceptance",
+        ),
+        "v4-strict-prewrite-light-postwrite": (
+            "before the authoritative mutation",
+            "lightweight integrity checks afterward",
+            "rather than a semantic verdict",
+        ),
+        "v4-explicit-delivery-authority": (
+            "withholds every delivery action",
+            "explicit user authority",
+        ),
+    }
+    for scenario_id, phrases in expected.items():
+        output = scenarios[scenario_id]["expected_output"]
+        for phrase in phrases:
+            assert phrase in output

@@ -1177,7 +1177,11 @@ def test_worktree_candidate_rejects_manifest_state_that_disagrees_with_path(
 def test_commit_candidate_uses_commit_bytes_and_review_recomputes_manifest(
     workspace: Path, tmp_path: Path,
 ) -> None:
-    committed = (workspace / "src/current.py").read_bytes()
+    committed = subprocess.run(
+        ["git", "-C", str(workspace), "show", "HEAD:src/current.py"],
+        capture_output=True,
+        check=True,
+    ).stdout
     commit_candidate = _candidate(workspace, kind="commit")
     (workspace / "src/current.py").write_text("print('worktree')\n", encoding="utf-8")
     worktree_candidate = _candidate(workspace, kind="worktree")

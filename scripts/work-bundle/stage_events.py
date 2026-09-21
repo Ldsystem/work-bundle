@@ -7,7 +7,6 @@ product-review verdict, artifact qualification, or lifecycle decision.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import re
@@ -16,6 +15,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from platform_runtime import blocking_file_lock, contains_link_like_component, is_link_like
 
 
 EVENT_TYPES = frozenset(
@@ -450,18 +456,23 @@ def redact_event_payload(payload: Mapping[str, object]) -> dict[str, object]:
 
 
 def _event_store_path(workspace_root: Path, *, create_parent: bool) -> Path:
+    if is_link_like(workspace_root.expanduser()):
+        _fail("WB_STAGE_EVENT_STORE_BOUNDARY_INVALID")
     root = workspace_root.resolve(strict=True)
     path = root / ".work-bundle" / "runtime" / "stage-events" / "events-v1.jsonl"
     current = root
     for component in path.relative_to(root).parts[:-1]:
         current = current / component
-        if current.is_symlink():
+        if is_link_like(current):
             _fail("WB_STAGE_EVENT_STORE_BOUNDARY_INVALID")
     if create_parent:
         path.parent.mkdir(parents=True, exist_ok=True)
-    if path.parent.exists() and path.parent.resolve() != path.parent:
+    if path.parent.exists() and (
+        path.parent.resolve() != path.parent
+        or contains_link_like_component(path.parent, anchor=root)
+    ):
         _fail("WB_STAGE_EVENT_STORE_BOUNDARY_INVALID")
-    if path.is_symlink():
+    if is_link_like(path):
         _fail("WB_STAGE_EVENT_STORE_BOUNDARY_INVALID")
     return path
 
@@ -509,34 +520,34 @@ def append_stage_event(workspace_root: Path, payload: Mapping[str, object]) -> S
     except OSError:
         _fail("WB_STAGE_EVENT_STORE_BOUNDARY_INVALID")
     with os.fdopen(descriptor, "r+b") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        existing = _load_locked(handle)
-        if any(item.event_id == record.event_id for item in existing):
-            _fail("WB_STAGE_EVENT_DUPLICATE_ID")
-        same_attempt = [
-            item
-            for item in existing
-            if item.process_id == record.process_id and item.attempt_id == record.attempt_id
-        ]
-        if same_attempt:
-            previous = same_attempt[-1]
-            if _parse_timestamp(record.timestamp) < _parse_timestamp(previous.timestamp):
-                _fail("WB_STAGE_EVENT_TIMESTAMP_ORDER_INVALID")
-            if int(record.clocks["wall_ms"]) < int(previous.clocks["wall_ms"]):
-                _fail("WB_STAGE_EVENT_WALL_CLOCK_ORDER_INVALID")
-        if record.event_type == "stage_completed" and record.stage == "integrated_implementation":
-            derived = record.to_dict()
-            derived["planning_economics"] = derive_planning_economics(
-                [*existing, record],
-                process_id=record.process_id,
-                plan_id=record.join_ids["plan_id"],
-            )
-            record = _validate_stage_event(derived, allow_derived_economics=True)
-        encoded = (json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-        handle.seek(0, os.SEEK_END)
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
+        with blocking_file_lock(handle):
+            existing = _load_locked(handle)
+            if any(item.event_id == record.event_id for item in existing):
+                _fail("WB_STAGE_EVENT_DUPLICATE_ID")
+            same_attempt = [
+                item
+                for item in existing
+                if item.process_id == record.process_id and item.attempt_id == record.attempt_id
+            ]
+            if same_attempt:
+                previous = same_attempt[-1]
+                if _parse_timestamp(record.timestamp) < _parse_timestamp(previous.timestamp):
+                    _fail("WB_STAGE_EVENT_TIMESTAMP_ORDER_INVALID")
+                if int(record.clocks["wall_ms"]) < int(previous.clocks["wall_ms"]):
+                    _fail("WB_STAGE_EVENT_WALL_CLOCK_ORDER_INVALID")
+            if record.event_type == "stage_completed" and record.stage == "integrated_implementation":
+                derived = record.to_dict()
+                derived["planning_economics"] = derive_planning_economics(
+                    [*existing, record],
+                    process_id=record.process_id,
+                    plan_id=record.join_ids["plan_id"],
+                )
+                record = _validate_stage_event(derived, allow_derived_economics=True)
+            encoded = (json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+            handle.seek(0, os.SEEK_END)
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
     return record
 
 
@@ -558,8 +569,8 @@ def query_stage_events(
     if not path.exists():
         return []
     with path.open("rb") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
-        records = _load_locked(handle)
+        with blocking_file_lock(handle, shared=True):
+            records = _load_locked(handle)
     return [
         record
         for record in records
@@ -576,10 +587,10 @@ def export_stage_events(workspace_root: Path) -> str:
     if not path.exists():
         return ""
     with path.open("rb") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
-        raw = handle.read()
-        handle.seek(0)
-        _load_locked(handle)
+        with blocking_file_lock(handle, shared=True):
+            raw = handle.read()
+            handle.seek(0)
+            _load_locked(handle)
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:

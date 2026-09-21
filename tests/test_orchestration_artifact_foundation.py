@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import stat
 from pathlib import Path
 import subprocess
@@ -109,6 +110,7 @@ def isolated_workspace_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
 
 def _temporary_catalog(tmp_path: Path) -> Path:
@@ -175,7 +177,22 @@ def test_runtime_catalog_is_valid_and_registers_only_itself() -> None:
         "references/assets/orchestration/contract/artifact-family-catalog-v1.yaml"
     )
     schema = RUNTIME_CATALOG.with_name("artifact-family-catalog-v1.schema.json")
-    assert hashlib.sha256(schema.read_bytes()).hexdigest() == (
+    relative_schema = schema.relative_to(REPO_ROOT).as_posix()
+    git_root = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        check=False,
+    )
+    if git_root.returncode == 0:
+        committed_schema = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "show", f"HEAD:{relative_schema}"],
+            capture_output=True,
+            check=True,
+        ).stdout
+    else:
+        # The Windows CI gate runs from a git archive, which intentionally has no .git directory.
+        committed_schema = schema.read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha256(committed_schema).hexdigest() == (
         "f7272e56eb04a9c13dd9ba64e24c9e905730abf252a43ca07664f2f35e401935"
     )
     with pytest.raises(SystemExit, match="Unregistered artifact family"):
@@ -370,6 +387,7 @@ def test_generic_store_validates_location_bindings_atomicity_and_lifecycle(tmp_p
         )
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not expose POSIX file mode preservation")
 def test_atomic_write_preserves_existing_file_mode(tmp_path: Path) -> None:
     path = tmp_path / "artifact.yaml"
     path.write_bytes(b"before\n")

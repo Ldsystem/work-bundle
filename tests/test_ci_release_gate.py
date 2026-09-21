@@ -16,6 +16,10 @@ def _gate_api():
     return runpy.run_path(str(CI_ENTRY))["run_release_gate"]
 
 
+def _gate_namespace():
+    return runpy.run_path(str(CI_ENTRY))
+
+
 def test_release_gate_reports_start_before_running_each_module() -> None:
     events = []
 
@@ -42,10 +46,38 @@ def test_default_ci_output_flushes_immediately(monkeypatch) -> None:
 def test_workflow_cache_uses_pinned_dependency_owner_without_reducing_matrix() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text())
     job = workflow["jobs"]["deterministic"]
-    assert job["strategy"]["matrix"]["os"] == ["ubuntu-latest", "macos-latest"]
+    assert job["strategy"]["matrix"]["os"] == [
+        "ubuntu-latest",
+        "macos-latest",
+        "windows-latest",
+    ]
+    python_setup = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-python@")
+    )
+    assert python_setup["with"]["python-version"] == "3.13"
     setup = next(step for step in job["steps"] if step.get("uses", "").startswith("astral-sh/setup-uv@"))
     assert setup["with"]["enable-cache"] is True
     assert setup["with"]["cache-dependency-glob"] == "bin/work-bundle-ci"
+
+
+def test_windows_source_root_is_exported_from_step_runtime_context() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    job = workflow["jobs"]["deterministic"]
+    steps = job["steps"]
+    source_root = next(step for step in steps if step.get("name") == "Select Windows source root")
+    archive = next(step for step in steps if step.get("name") == "Create readable source archive")
+
+    assert job["env"]["WB_CI_SOURCE_ROOT"] == "${{ github.workspace }}"
+    assert source_root["if"] == "runner.os == 'Windows'"
+    assert source_root["shell"] == "pwsh"
+    assert "${{ runner.temp }}" in source_root["run"]
+    assert "WB_CI_SOURCE_ROOT=" in source_root["run"]
+    assert "GITHUB_ENV" in source_root["run"]
+    assert steps.index(source_root) < steps.index(archive)
+    assert "$env:WB_CI_SOURCE_ROOT" in archive["run"]
+    assert "${{ env.WB_CI_SOURCE_ROOT }}" not in archive["run"]
 
 
 def test_release_gate_continues_after_early_module_failure() -> None:
@@ -72,23 +104,32 @@ def test_release_gate_continues_after_early_module_failure() -> None:
         "tests/test_c.py",
     ]
     assert commands[3][-1] == "validate"
+    assert commands[3][:2] == ["/python", str(REPO_ROOT / "bin" / "work-bundle-skill")]
     assert result["exit_code"] == 1
     assert result["failed_modules"] == ["tests/test_a.py"]
     assert "WB_CI_MODULE PASS tests/test_c.py" in output
 
 
 def test_release_gate_inputs_are_tracked_and_execution_independent() -> None:
-    eligible = subprocess.run(
-        [
-            "git", "ls-files", "--cached", "--others", "--exclude-standard",
-            "tests/test_*.py",
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    discovered = sorted(path for path in eligible if (REPO_ROOT / path).is_file())
+    git_checkout = (REPO_ROOT / ".git").exists()
+    if git_checkout:
+        eligible = subprocess.run(
+            [
+                "git", "ls-files", "--cached", "--others", "--exclude-standard",
+                "tests/test_*.py",
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        discovered = sorted(path for path in eligible if (REPO_ROOT / path).is_file())
+    else:
+        discovered = sorted(
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in (REPO_ROOT / "tests").glob("test_*.py")
+            if path.is_file()
+        )
 
     observed = _gate_api()(
         REPO_ROOT,
@@ -99,18 +140,36 @@ def test_release_gate_inputs_are_tracked_and_execution_independent() -> None:
         emit=lambda _line: None,
     )
     assert observed["modules"] == discovered
-    for path in [CI_ENTRY, REPO_ROOT / "bin" / "work-bundle-skill", REPO_ROOT / ".github" / "workflows" / "ci.yml"]:
-        subprocess.run(
-            ["git", "ls-files", "--error-unmatch", path.relative_to(REPO_ROOT).as_posix()],
-            cwd=REPO_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+    if git_checkout:
+        tracked_inputs = [
+            CI_ENTRY,
+            REPO_ROOT / "bin" / "work-bundle-skill",
+            REPO_ROOT / ".github" / "workflows" / "ci.yml",
+        ]
+        for path in tracked_inputs:
+            subprocess.run(
+                ["git", "ls-files", "--error-unmatch", path.relative_to(REPO_ROOT).as_posix()],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
     assert ".work-bundle" not in CI_ENTRY.read_text(encoding="utf-8")
     assert not (REPO_ROOT / "evals" / "wor105").exists()
     assert not (REPO_ROOT / "evals" / "wor108").exists()
     assert not any(re.match(r"test_(?:wor|issue)[-_]?\d+", Path(path).stem) for path in discovered)
+
+
+def test_release_gate_discovers_tests_from_readable_source_archive(tmp_path: Path) -> None:
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_b.py").write_text("", encoding="utf-8")
+    (tests / "test_a.py").write_text("", encoding="utf-8")
+    (tests / "helper.py").write_text("", encoding="utf-8")
+
+    discovered = _gate_namespace()["_discovered_test_files"](tmp_path)
+
+    assert discovered == [tests / "test_a.py", tests / "test_b.py"]
 
 
 def test_release_gate_does_not_read_workspace_execution_evidence() -> None:
@@ -157,8 +216,31 @@ def test_release_gate_collects_test_and_skill_failures() -> None:
 def test_workflow_delegates_to_canonical_release_gate() -> None:
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     entry = CI_ENTRY.read_text(encoding="utf-8")
+    parsed = yaml.safe_load(workflow)
+    job = parsed["jobs"]["deterministic"]
+    posix = next(
+        step for step in job["steps"] if step.get("name") == "Run canonical release gate (POSIX)"
+    )
+    windows = next(
+        step for step in job["steps"] if step.get("name") == "Run canonical release gate (Windows)"
+    )
 
-    assert workflow.count("run: bin/work-bundle-ci") == 1
+    assert workflow.count("bin/work-bundle-ci") == 3
+    assert posix == {
+        "name": "Run canonical release gate (POSIX)",
+        "if": "runner.os != 'Windows'",
+        "shell": "bash",
+        "run": 'python "$WB_CI_SOURCE_ROOT/bin/work-bundle-ci"',
+    }
+    assert windows == {
+        "name": "Run canonical release gate (Windows)",
+        "if": "runner.os == 'Windows'",
+        "shell": "pwsh",
+        "run": 'python "$env:WB_CI_SOURCE_ROOT/bin/work-bundle-ci"',
+    }
+    assert job["env"]["WB_CI_SOURCE_ROOT"] == "${{ github.workspace }}"
+    assert "${{ env.WB_CI_SOURCE_ROOT }}" not in workflow
+    assert "run: bin/work-bundle-ci" not in workflow
     assert "python -c" not in workflow
     assert "Validate skill packages" not in workflow
     for pin in [
@@ -178,3 +260,27 @@ def test_workflow_uses_default_checkout_history_for_current_project_tests() -> N
 
     assert len(checkout) == 1
     assert "with" not in checkout[0]
+
+
+def test_workflow_windows_archive_job_is_native_and_python_owned() -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["deterministic"]["steps"]
+    archive = next(step for step in steps if step.get("name") == "Create readable source archive")
+    install = next(step for step in steps if step.get("name") == "Install native Windows archive")
+
+    assert archive["if"] == "runner.os == 'Windows'"
+    assert archive["shell"] == "pwsh"
+    assert "git archive" in archive["run"]
+    assert "Expand-Archive" in archive["run"]
+
+    assert install["if"] == "runner.os == 'Windows'"
+    assert install["shell"] == "pwsh"
+    assert install["run"].count("bin/install.py") == 2
+    assert "bin/work-bundle-skill" in install["run"]
+    assert "is_junction" in install["run"]
+    assert "hooks.json" in install["run"]
+    assert "subprocess.run" in install["run"]
+    assert "bash" not in install["run"].lower()
+    assert "wsl" not in install["run"].lower()
+    assert "git " not in install["run"].lower()
+    assert "uv" not in install["run"].lower()

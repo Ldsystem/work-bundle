@@ -19,6 +19,7 @@ def run_wb(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     cwd.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
+    env["USERPROFILE"] = str(tmp_path)
     return subprocess.run(
         [sys.executable, str(WB), *args],
         cwd=cwd,

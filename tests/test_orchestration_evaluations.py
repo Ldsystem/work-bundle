@@ -64,7 +64,11 @@ def test_validation_source_identity_preserves_every_index_stage(evaluator):
     other = git(root, "rev-parse", "HEAD:verifier.py")
     def unmerged(ours):
         entries = f"0 {'0' * 40}\trunner.py\n100644 {first} 1\trunner.py\n100644 {ours} 2\trunner.py\n100644 {other} 3\trunner.py\n"
-        subprocess.run(["git", "-C", str(root), "update-index", "--index-info"], input=entries, text=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "update-index", "--index-info"],
+            input=entries.encode("ascii"),
+            check=True,
+        )
     unmerged(first)
     before = evaluation_identity.validation_source_identity(root)
     unmerged(other)

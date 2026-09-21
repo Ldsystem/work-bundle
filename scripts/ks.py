@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import subprocess
 import sys
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -105,11 +106,11 @@ def _ensure_managed_runtime(
 
     current_argv = list(sys.argv if argv is None else argv)
     current_environment[UV_REEXEC_ENV] = "1"
-    os.execve(
-        uv_path,
-        [uv_path, "run", str(Path(__file__).resolve()), *current_argv[1:]],
-        current_environment,
-    )
+    command = [uv_path, "run", str(Path(__file__).resolve()), *current_argv[1:]]
+    if os.name == "nt":
+        result = subprocess.run(command, env=current_environment, check=False)
+        raise SystemExit(result.returncode)
+    os.execve(uv_path, command, current_environment)
     raise RuntimeError("uv runtime re-exec returned unexpectedly")
 
 

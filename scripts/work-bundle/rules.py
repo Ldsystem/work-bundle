@@ -516,7 +516,7 @@ def index_entry(root: Path, path: Path) -> dict[str, object]:
         front = {}
     return {
         "id": str(front.get("id", path.stem)),
-        "path": str(path.relative_to(root)),
+        "path": path.relative_to(root).as_posix(),
         "applies_when": yaml_list(front.get("applies_when")),
         "enforcement": str(front.get("enforcement", "")),
         "load": str(front.get("load", "")),
@@ -578,7 +578,7 @@ def cmd_create_rules(args: list[str]) -> int:
 def validate_rule_path_placement(root: Path, path: Path) -> list[str]:
     failures: list[str] = []
     rel = path.relative_to(root)
-    rel_text = str(rel)
+    rel_text = rel.as_posix()
     parts = rel.parts
 
     if parts and parts[0] in forbidden_path_prefixes():
@@ -616,7 +616,7 @@ def validate_rule_file(root: Path, path: Path) -> list[str]:
     failures: list[str] = []
     text = read(path)
     front, body = split_front_matter(text)
-    rel = str(path.relative_to(root))
+    rel = path.relative_to(root).as_posix()
     if front is None:
         return [f"{rel}:missing_front_matter"]
     for field in required_front_matter():
@@ -666,7 +666,7 @@ def validate_index(root: Path) -> list[str]:
         front, _ = split_front_matter(read(path))
         if front and front.get("id"):
             rule_ids.add(str(front["id"]))
-            rel_path = str(path.relative_to(root))
+            rel_path = path.relative_to(root).as_posix()
             for token in [f"- id: {front['id']}", f"path: {rel_path}"]:
                 if token not in text:
                     failures.append(f"index.yaml:missing_or_mismatched:{front['id']}:{token}")
@@ -688,7 +688,7 @@ def cmd_validate_rules(args: list[str]) -> int:
     failures: list[str] = []
     if list(root.glob("**/*.mdc")):
         failures.append("generated_mdc_present")
-    legacy_yaml = [str(path.relative_to(root)) for path in root.glob("**/*.yaml") if path.name != "index.yaml"]
+    legacy_yaml = [path.relative_to(root).as_posix() for path in root.glob("**/*.yaml") if path.name != "index.yaml"]
     if legacy_yaml:
         failures.extend(f"legacy_yaml_rule:{path}" for path in legacy_yaml)
     for path in markdown_rules(root):

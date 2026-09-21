@@ -309,5 +309,31 @@ def test_create_skill_contract_uses_pressure_first_iteration_and_real_gates() ->
         "scenario storage",
         "automated LLM harness",
         "WHEN",
+        "## Self-check",
+        "current implementation as evidence, not authority",
+        "substantial conditional guidance",
+        "structural validation",
+        "semantic verdict",
+        "system skill-creator principles",
     ]:
         assert token in text
+
+
+def test_authoring_pressure_cases_require_decisions_not_phrase_copying() -> None:
+    payload = json.loads(
+        (REPO_ROOT / "references/evals/script-authoring/evals.json").read_text(encoding="utf-8")
+    )
+    by_id = {item["id"]: item for item in payload["evals"]}
+
+    cases = {
+        "skill-current-state-is-not-authority": ("wb-create-skill", "canonical skill in place"),
+        "skill-progressive-disclosure-pressure": ("wb-create-skill", "Do not create supporting resources"),
+        "rule-semantic-owner-pressure": ("wb-create-rule", "responsible agent or controller"),
+        "review-advice-does-not-expand-scope": ("wb-create-rule", "controller assessment"),
+        "fixture-tactic-stays-local": ("wb-create-skill", "fixture-only tactic local"),
+    }
+    for case_id, (skill_name, expected_decision) in cases.items():
+        case = by_id[case_id]
+        assert case["skill_name"] == skill_name
+        assert expected_decision in case["expected_output"]
+        assert case["prompt"] != case["expected_output"]

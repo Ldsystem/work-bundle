@@ -2,15 +2,24 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts.platform_runtime import PathKind, classify_path, contains_link_like_component  # noqa: E402
+
+
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return ROOT
 
 
 def slugify(name: str) -> str:
@@ -84,47 +93,128 @@ def link_path(name: str, home: str | None = None) -> Path:
     return shared_root(home) / slugify(name)
 
 
-def enable_one(name: str, *, home: str | None, dry_run: bool, force: bool) -> dict[str, Any]:
+@dataclass(frozen=True)
+class LinkOperation:
+    name: str
+    source: Path
+    destination: Path
+    verb: str
+    kind: PathKind
+
+    @property
+    def noun(self) -> str:
+        return "junction" if os.name == "nt" else "symlink"
+
+    @property
+    def action(self) -> str:
+        if self.verb == "create":
+            return f"create {self.noun} {self.destination} -> {self.source}"
+        if self.verb == "remove":
+            return f"remove {self.noun} {self.destination}"
+        if self.verb == "absent":
+            return f"{self.noun} absent {self.destination}"
+        return f"{self.noun} already exists {self.destination} -> {self.source}"
+
+    def result(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "name": self.name,
+            "source": str(self.source),
+            "link": str(self.destination),
+            "action": self.action,
+        }
+
+
+def _resolved_target(path: Path) -> Path:
+    return path.resolve(strict=False)
+
+
+def _validated_link_path(path: Path) -> Path:
+    if ".." in path.parts:
+        raise FileExistsError(f"Refusing destination with unresolved parent traversal: {path}")
+    lexical = Path(os.path.abspath(path))
+    if contains_link_like_component(lexical.parent, anchor=Path(lexical.anchor)):
+        raise FileExistsError(f"Refusing destination beneath link-like parent: {path}")
+    anchor = Path(lexical.anchor)
+    current = anchor
+    for component in lexical.parent.relative_to(anchor).parts:
+        current /= component
+        if classify_path(current) is PathKind.ORDINARY and not current.is_dir():
+            raise FileExistsError(f"Refusing destination beneath non-directory parent: {current}")
+    return lexical
+
+
+def plan_enable(name: str, *, home: str | None, force: bool) -> LinkOperation:
     source = skill_dir(name).resolve()
     validation = validate_one(source)
     if not validation["ok"]:
         raise ValueError(f"Invalid skill `{name}`: {validation['issues']}")
-    dest = link_path(source.name, home)
-    action: str
-    if dest.is_symlink():
-        current = dest.resolve()
+    dest = _validated_link_path(link_path(source.name, home))
+    kind = classify_path(dest)
+    if kind is PathKind.MISSING:
+        return LinkOperation(source.name, source, dest, "create", kind)
+    if kind in {PathKind.SYMLINK, PathKind.JUNCTION}:
+        current = _resolved_target(dest)
         if current == source:
-            action = f"symlink already exists {dest} -> {source}"
-        elif force:
-            action = f"replace symlink {dest} -> {source}"
-            if not dry_run:
-                dest.unlink()
-                dest.symlink_to(source, target_is_directory=True)
+            return LinkOperation(source.name, source, dest, "already", kind)
+        noun = "junction" if kind is PathKind.JUNCTION else "symlink"
+        raise FileExistsError(f"Refusing to replace unmanaged {noun}: {dest} -> {current}")
+    if kind is PathKind.REPARSE:
+        raise FileExistsError(f"Refusing to replace unmanaged reparse point: {dest}")
+    raise FileExistsError(f"Refusing to replace non-link path: {dest}")
+
+
+def plan_disable(name: str, *, home: str | None) -> LinkOperation:
+    source = skill_dir(name).resolve()
+    dest = _validated_link_path(link_path(source.name, home))
+    kind = classify_path(dest)
+    if kind is PathKind.MISSING:
+        return LinkOperation(source.name, source, dest, "absent", kind)
+    if kind not in {PathKind.SYMLINK, PathKind.JUNCTION}:
+        noun = "reparse point" if kind is PathKind.REPARSE else "non-link path"
+        raise FileExistsError(f"Refusing to remove {noun}: {dest}")
+    current = _resolved_target(dest)
+    if current != source:
+        noun = "junction" if kind is PathKind.JUNCTION else "symlink"
+        raise FileExistsError(f"Refusing to remove unmanaged {noun}: {dest} -> {current}")
+    return LinkOperation(source.name, source, dest, "remove", kind)
+
+
+def _create_junction(destination: Path, source: Path) -> None:
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(destination), str(source)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "mklink failed"
+        raise OSError(f"Unable to create directory junction {destination}: {detail}")
+
+
+def apply_operation(operation: LinkOperation, *, dry_run: bool) -> dict[str, Any]:
+    if dry_run or operation.verb in {"already", "absent"}:
+        return operation.result()
+    if operation.verb == "create":
+        operation.destination.parent.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            _create_junction(operation.destination, operation.source)
         else:
-            raise FileExistsError(f"Refusing to replace unmanaged symlink: {dest} -> {current}")
-    elif dest.exists():
-        raise FileExistsError(f"Refusing to replace non-symlink path: {dest}")
-    else:
-        action = f"create symlink {dest} -> {source}"
-        if not dry_run:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.symlink_to(source, target_is_directory=True)
-    return {"ok": True, "name": source.name, "source": str(source), "link": str(dest), "action": action}
+            operation.destination.symlink_to(operation.source, target_is_directory=True)
+    elif operation.verb == "remove":
+        if operation.kind is PathKind.JUNCTION:
+            os.rmdir(operation.destination)
+        else:
+            operation.destination.unlink()
+    return operation.result()
+
+
+def enable_one(name: str, *, home: str | None, dry_run: bool, force: bool) -> dict[str, Any]:
+    return apply_operation(plan_enable(name, home=home, force=force), dry_run=dry_run)
 
 
 def disable_one(name: str, *, home: str | None, dry_run: bool) -> dict[str, Any]:
-    source = skill_dir(name).resolve()
-    dest = link_path(source.name, home)
-    if not dest.exists() and not dest.is_symlink():
-        return {"ok": True, "name": source.name, "link": str(dest), "action": f"symlink absent {dest}"}
-    if not dest.is_symlink():
-        raise FileExistsError(f"Refusing to remove non-symlink path: {dest}")
-    current = dest.resolve()
-    if current != source:
-        raise FileExistsError(f"Refusing to remove unmanaged symlink: {dest} -> {current}")
-    if not dry_run:
-        dest.unlink()
-    return {"ok": True, "name": source.name, "link": str(dest), "action": f"remove symlink {dest}"}
+    return apply_operation(plan_disable(name, home=home), dry_run=dry_run)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -163,13 +253,12 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "disable":
         return disable_one(args.name, home=args.home, dry_run=args.dry_run)
     if args.command == "enable-all":
-        results = [
-            enable_one(path.name, home=args.home, dry_run=args.dry_run, force=args.force)
-            for path in all_skill_dirs()
-        ]
+        operations = [plan_enable(path.name, home=args.home, force=args.force) for path in all_skill_dirs()]
+        results = [apply_operation(operation, dry_run=args.dry_run) for operation in operations]
         return {"ok": True, "count": len(results), "actions": results}
     if args.command == "disable-all":
-        results = [disable_one(path.name, home=args.home, dry_run=args.dry_run) for path in all_skill_dirs()]
+        operations = [plan_disable(path.name, home=args.home) for path in all_skill_dirs()]
+        results = [apply_operation(operation, dry_run=args.dry_run) for operation in operations]
         return {"ok": True, "count": len(results), "actions": results}
     raise ValueError(f"Unsupported command: {args.command}")
 

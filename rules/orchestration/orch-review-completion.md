@@ -19,18 +19,19 @@ Keep independent product review advisory, keep controller/orchestrator acceptanc
 - Require a distinct implementation reviewer to compare the exact frozen candidate with every verified specification and plan obligation plus capable focused observations.
 - Let the reviewer issue an advisory `accept`, `repair`, or `blocked` assessment with concrete findings. Green tests cannot hide missing behavior.
 - Require the controller/orchestrator to assess the review advice against user purpose, accepted authority, and the product before deciding acceptance, repair, blocking, or continuation. Reviewer advice is not an automatic veto or acceptance.
+- Keep reviewer-proposed scope changes, delivery actions, worker directions, and new ceremony non-authoritative. The controller/orchestrator accepts, rejects, narrows, or reports the proposal and waits for user authority when it would materially expand the accepted scope.
 - Keep missing historical records, indexes, knowledge state, and controller ceremony outside the controller/orchestrator product decision unless the product is ambiguous, unsafe, inaccessible, or impossible to review.
 - Carry controller/orchestrator accepted task decisions through canonical `accepted-task-result-v1` records, preserving the exact review advice considered.
 - Use one compact final audit for coverage, review advice, current tests, material defects, knowledge disposition/return, repository facts, and archive readiness; the controller/orchestrator assesses that advice and owns the final workflow decision.
-- Keep finalization mechanical: canonical references, lifecycle, clean baselines, destinations, indexes, and binding release only.
+- Keep finalization mechanical and controller-directed: canonical references, lifecycle, clean baselines, destinations, indexes, and binding release only. Commit, push, merge, release, install, or other delivery occurs only under explicit user authority.
 
 ## Must Not
 
-- Do not repeat code review during final audit, reconstruct history, replay transient evidence, let helpers infer semantic sufficiency, or mechanically promote a reviewer recommendation into acceptance or rejection.
+- Do not repeat code review during final audit, reconstruct history, replay transient evidence, let helpers infer semantic sufficiency, mechanically promote a reviewer recommendation into acceptance or rejection, or let a reviewer take control of scope, workers, continuation, or delivery.
 
 ## Validation
 
-- Confirm exact candidate identity, distinct reviewers, obligation coverage, explicit controller/orchestrator assessment, compact accepted results, and a non-recursive final audit.
+- Confirm exact candidate identity, distinct reviewers, obligation coverage, explicit controller/orchestrator assessment, compact accepted results, a non-recursive final audit, and explicit authority for any delivery action.
 
 ## On Violation
 

@@ -8,15 +8,26 @@ workspace discovery, admission checks, and scoped blocker-exception cleanup.
 from __future__ import annotations
 
 from contextlib import contextmanager
-import fcntl
 import hashlib
 import os
 from pathlib import Path
 import re
-import tempfile
+import sys
 from typing import Any, Iterator, Mapping
 
 import yaml
+
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from platform_runtime import (
+    atomic_replace_bytes,
+    blocking_file_lock,
+    contains_link_like_component,
+    is_link_like,
+)
 
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -38,9 +49,15 @@ class BoundedClosureError(RuntimeError):
 
 
 def _workspace_root(value: Path) -> Path:
-    root = value.expanduser().resolve()
+    unresolved = value.expanduser()
+    if is_link_like(unresolved):
+        raise BoundedClosureError("WB_POST_EXECUTION_WORKSPACE_INVALID")
+    root = unresolved.resolve()
     metadata = root / ".work-bundle/project.yaml"
-    if not metadata.is_file() or metadata.is_symlink():
+    if (
+        not metadata.is_file()
+        or contains_link_like_component(metadata, anchor=root)
+    ):
         raise BoundedClosureError("WB_POST_EXECUTION_WORKSPACE_INVALID")
     return root
 
@@ -48,12 +65,15 @@ def _workspace_root(value: Path) -> Path:
 def resolve_working_workspace(start: Path, *, workspace_id: str | None = None) -> Path | None:
     """Resolve portable authority from a workspace, member, or bound worktree."""
 
-    current = start.expanduser().resolve()
+    current = Path(os.path.abspath(start.expanduser()))
     if current.is_file():
         current = current.parent
     for candidate in (current, *current.parents):
-        if (candidate / ".work-bundle/project.yaml").is_file():
-            return candidate
+        metadata = candidate / ".work-bundle/project.yaml"
+        if metadata.is_file():
+            if is_link_like(candidate) or contains_link_like_component(metadata, anchor=candidate):
+                return None
+            return candidate.resolve()
     config_root = Path(os.environ.get("WB_CONFIG_ROOT", Path.home() / ".work-bundle")).expanduser()
     bootstrap = config_root / "bootstrap.yaml"
     if not bootstrap.is_file():
@@ -142,8 +162,16 @@ def _active_blockers(root: Path, control: Mapping[str, Any]) -> list[Mapping[str
                 "WB_ORCHESTRATION_BLOCKER_EVIDENCE_INVALID", str(_metadata_path(root))
             )
         candidate = Path(reference)
-        spec = candidate.resolve(strict=False) if candidate.is_absolute() else (root / candidate).resolve(strict=False)
-        if not spec.is_relative_to(store) or spec.is_symlink() or not spec.is_file():
+        unresolved = candidate if candidate.is_absolute() else root / candidate
+        lexical = Path(os.path.abspath(unresolved))
+        try:
+            lexical.relative_to(store)
+        except ValueError:
+            valid_boundary = False
+        else:
+            valid_boundary = not contains_link_like_component(unresolved, anchor=store)
+        spec = lexical.resolve(strict=False)
+        if not valid_boundary or not spec.is_relative_to(store) or not spec.is_file():
             raise BoundedClosureError(
                 "WB_ORCHESTRATION_BLOCKER_EVIDENCE_INVALID",
                 f"metadata={_metadata_path(root)} blocker={blocker_id} specification={spec} "
@@ -199,30 +227,12 @@ def _locked(root: Path) -> Iterator[None]:
     lock_path = _lock_path(root)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+b") as stream:
-        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-        try:
+        with blocking_file_lock(stream):
             yield
-        finally:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 def _atomic_write(path: Path, content: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        temporary.unlink(missing_ok=True)
+    atomic_replace_bytes(path, content)
 
 
 def restore_implementation_exception(

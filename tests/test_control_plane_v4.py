@@ -29,6 +29,7 @@ from control_plane import ControlPlaneError
 def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(config_root.parent)
+    env["USERPROFILE"] = str(config_root.parent)
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/wb.py"), *args],
         cwd=REPO_ROOT,
@@ -42,6 +43,7 @@ def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def run_orch(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(config_root.parent)
+    env["USERPROFILE"] = str(config_root.parent)
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/orch.py"), *args],
         cwd=REPO_ROOT,
@@ -57,6 +59,19 @@ def git(path: Path, *args: str) -> str:
         ["git", "-C", str(path), *args], check=True, capture_output=True, text=True
     )
     return result.stdout.strip()
+
+
+def assert_mode_if_supported(path: Path, expected: int) -> None:
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == expected
+
+
+def remove_readonly_tree(path: Path) -> None:
+    def onerror(function, target, _exc_info):
+        os.chmod(target, 0o777)
+        function(target)
+
+    shutil.rmtree(path, onerror=onerror)
 
 
 def config_root(tmp_path: Path) -> Path:
@@ -333,7 +348,8 @@ def test_v3_to_v4_migration_is_deterministic_and_splits_local_state(tmp_path: Pa
     metadata = (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
     assert "metadata_version: 4" in metadata
     assert "workspace:\n  id: wb-" in metadata
-    assert f"canonical: {remote}" in metadata
+    metadata_document = yaml.safe_load(metadata)
+    assert metadata_document["source_repositories"][0]["remote"]["canonical"] == str(remote)
     assert "custom_portable:" in metadata
     for forbidden in ("workspace_root:", "project_root:", "observed_head:", "observation_time:", "git_control_root:", "prefer_subagent:"):
         assert forbidden not in metadata
@@ -642,7 +658,8 @@ def test_single_repository_migration_keeps_same_root_and_preserves_tracked_agent
     metadata = (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
     assert "mode: single-repository" in metadata
     assert "workspace_binding:\n      type: root" in metadata
-    assert f"canonical: {remote}" in metadata
+    metadata_document = yaml.safe_load(metadata)
+    assert metadata_document["source_repositories"][0]["remote"]["canonical"] == str(remote)
     assert "project_root:" not in metadata
     registry = (config / "registry/projects.yaml").read_text(encoding="utf-8")
     assert f"project_root: {workspace}" in registry
@@ -672,8 +689,8 @@ def test_single_repository_init_creates_workspace_resources(tmp_path: Path) -> N
     assert (workspace / "script/index.yaml").read_text(encoding="utf-8") == SCRIPT_INDEX_TEMPLATE
     credential_file = workspace / "credentials/credentials.yaml"
     assert credential_file.read_text(encoding="utf-8") == CREDENTIAL_TEMPLATE
-    assert credential_file.parent.stat().st_mode & 0o777 == 0o700
-    assert credential_file.stat().st_mode & 0o777 == 0o600
+    assert_mode_if_supported(credential_file.parent, 0o700)
+    assert_mode_if_supported(credential_file, 0o600)
     orchestration = workspace / ".work-bundle/orchestration"
     for retired in ("handoff", "plan/index.jsonl", "handoff/index.jsonl"):
         assert not (orchestration / retired).exists()
@@ -728,8 +745,8 @@ def test_single_repository_init_preserves_workspace_resources(tmp_path: Path) ->
     assert initialized.returncode == 0, initialized.stdout + initialized.stderr
     assert script_index.read_bytes() == script_before
     assert credential_file.read_bytes() == credential_before
-    assert credential_file.parent.stat().st_mode & 0o777 == 0o700
-    assert credential_file.stat().st_mode & 0o777 == 0o600
+    assert_mode_if_supported(credential_file.parent, 0o700)
+    assert_mode_if_supported(credential_file, 0o600)
     exclude_text = exclude.read_text(encoding="utf-8")
     assert "# preserve-existing-exclude" in exclude_text
     assert ".work-bundle/" in exclude_text
@@ -768,8 +785,8 @@ def test_single_repository_attach_creates_resources_without_topology_drift(tmp_p
     assert attached.returncode == 0, attached.stdout + attached.stderr
     assert script_index.read_text(encoding="utf-8") == SCRIPT_INDEX_TEMPLATE
     assert credential_file.read_text(encoding="utf-8") == CREDENTIAL_TEMPLATE
-    assert credential_file.parent.stat().st_mode & 0o777 == 0o700
-    assert credential_file.stat().st_mode & 0o777 == 0o600
+    assert_mode_if_supported(credential_file.parent, 0o700)
+    assert_mode_if_supported(credential_file, 0o600)
     assert "credentials/" in (workspace / ".git/info/exclude").read_text(encoding="utf-8")
     doctor = run_wb(config_b, "doctor-workspace", str(workspace))
     assert doctor.returncode == 0, doctor.stdout + doctor.stderr
@@ -960,7 +977,7 @@ def test_attach_reconstructs_distinct_device_binding_without_portable_diff(tmp_p
     assert (workspace_b / "script/index.yaml").is_file()
     credential = workspace_b / "credentials/credentials.yaml"
     assert credential.is_file()
-    assert credential.stat().st_mode & 0o777 == 0o600
+    assert_mode_if_supported(credential, 0o600)
     agents = (workspace_b / "AGENTS.md").read_text(encoding="utf-8")
     assert agents.count("# Work Bundle RULE START") == 1
 
@@ -1435,7 +1452,7 @@ def test_migration_rejects_metadata_checkout_remote_mismatch(tmp_path: Path) -> 
     subprocess.run(["git", "init", "--bare", "-q", str(wrong_remote)], check=True)
     metadata = workspace / ".work-bundle/project.yaml"
     text = metadata.read_text(encoding="utf-8")
-    text = re.sub(r"(?m)^    remote: .+$", f"    remote: {wrong_remote}", text)
+    text = re.sub(r"(?m)^    remote: .+$", lambda _match: f"    remote: {wrong_remote}", text)
     metadata.write_text(text, encoding="utf-8")
     blocked = run_wb(config, "migrate-control-plane", str(workspace), "--dry-run")
     assert blocked.returncode == 1
@@ -1892,6 +1909,96 @@ def init_single_v4(
     return config, workspace, remote, workspace_id
 
 
+def set_single_v4_declared_remotes(
+    workspace: Path, *, canonical: str, aliases: list[str]
+) -> None:
+    metadata = workspace / ".work-bundle/project.yaml"
+    document = yaml.safe_load(metadata.read_text(encoding="utf-8"))
+    document["source_repositories"][0]["remote"] = {
+        "canonical": canonical,
+        "aliases": aliases,
+    }
+    metadata.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+
+def test_attach_and_doctor_accept_normalized_declared_remote_alias(tmp_path: Path) -> None:
+    config, workspace, _, _ = init_single_v4(tmp_path, attach=False)
+    canonical = "git@example.test:team/source.git"
+    alias = "https://example.test/team/source.git"
+    set_single_v4_declared_remotes(workspace, canonical=canonical, aliases=[alias])
+    git(workspace, "add", "-f", ".work-bundle/project.yaml")
+    git(workspace, "commit", "-q", "-m", "declare remote alias")
+    git(workspace, "remote", "set-url", "origin", "ssh://git@example.test/team/source")
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config / "registry/projects.yaml"
+    metadata_before = metadata.read_bytes()
+    registry_before = registry.read_bytes()
+
+    dry_run = run_wb(
+        config,
+        "attach-workspace",
+        str(workspace),
+        "--materialize",
+        "none",
+        "--dry-run",
+    )
+    assert dry_run.returncode == 0, dry_run.stdout + dry_run.stderr
+    assert metadata.read_bytes() == metadata_before
+    assert registry.read_bytes() == registry_before
+
+    git(workspace, "remote", "set-url", "origin", alias[:-4])
+
+    attached = run_wb(
+        config,
+        "attach-workspace",
+        str(workspace),
+        "--materialize",
+        "none",
+        "--apply",
+    )
+    assert attached.returncode == 0, attached.stdout + attached.stderr
+    assert metadata.read_bytes() == metadata_before
+    assert git(workspace, "remote", "get-url", "origin") == alias[:-4]
+    git(workspace, "add", "AGENTS.md", "script")
+    git(workspace, "commit", "-q", "-m", "install workspace instructions")
+
+    doctor = run_wb(config, "doctor-workspace", str(workspace))
+    assert doctor.returncode == 0, doctor.stdout + doctor.stderr
+    doctor_payload = json.loads(doctor.stdout)
+    assert doctor_payload["execution_readiness"]["status"] == "passed", {
+        "doctor": doctor_payload,
+        "git_status": git(workspace, "status", "--short"),
+    }
+
+
+def test_attach_rejects_undeclared_remote_before_mutation_with_aliases(tmp_path: Path) -> None:
+    config, workspace, _, _ = init_single_v4(tmp_path, attach=False)
+    set_single_v4_declared_remotes(
+        workspace,
+        canonical="git@example.test:team/source.git",
+        aliases=["https://example.test/team/source.git"],
+    )
+    git(workspace, "remote", "set-url", "origin", "https://example.test/other/source.git")
+    metadata = workspace / ".work-bundle/project.yaml"
+    registry = config / "registry/projects.yaml"
+    metadata_before = metadata.read_bytes()
+    registry_before = registry.read_bytes()
+
+    rejected = run_wb(
+        config,
+        "attach-workspace",
+        str(workspace),
+        "--materialize",
+        "none",
+        "--apply",
+    )
+
+    assert rejected.returncode == 1
+    assert json.loads(rejected.stdout)["failure_code"] == "WB_CONTROL_PLANE_REMOTE_CONFLICT"
+    assert metadata.read_bytes() == metadata_before
+    assert registry.read_bytes() == registry_before
+
+
 def test_register_project_uses_structured_v4_registry_without_binding_loss(tmp_path: Path) -> None:
     config, workspace, _, workspace_id = init_single_v4(tmp_path, attach=False)
     registry = config / "registry/projects.yaml"
@@ -1975,6 +2082,18 @@ def write_composite_metadata(workspace: Path, *, include_root: bool = True, memb
     )
     text = text.replace("agents_sync:", member + "agents_sync:", 1)
     metadata.write_text(text, encoding="utf-8")
+
+
+def set_member_declared_remotes(
+    workspace: Path, repository_id: str, *, canonical: str, aliases: list[str]
+) -> None:
+    metadata = workspace / ".work-bundle/project.yaml"
+    document = yaml.safe_load(metadata.read_text(encoding="utf-8"))
+    repository = next(
+        item for item in document["source_repositories"] if item["id"] == repository_id
+    )
+    repository["remote"] = {"canonical": canonical, "aliases": aliases}
+    metadata.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
 
 class CompositeMemberLifecycleTests(unittest.TestCase):
@@ -2264,6 +2383,156 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         self.assertEqual((workspace / ".work-bundle/project.yaml").read_bytes(), metadata_before)
         self.assertEqual((config / "registry/projects.yaml").read_bytes(), registry_before)
 
+    def test_add_workspace_member_replay_uses_declared_remote_set_for_checkout_identity(self) -> None:
+        for case, canonical_is_checkout in (
+            ("canonical-request-alias-checkout", False),
+            ("alias-request-canonical-checkout", True),
+        ):
+            with self.subTest(case=case):
+                config, workspace, _, _ = init_single_v4(self.tmp_path / case)
+                member_remote, _, _ = make_remote(
+                    self.tmp_path / f"{case}-member", "execution-flow"
+                )
+                self._apply_first_member(config, workspace, member_remote)
+                url_remote = f"https://example.test/team/{case}.git"
+                canonical = str(member_remote) if canonical_is_checkout else url_remote
+                alias = url_remote if canonical_is_checkout else str(member_remote)
+                requested = alias if canonical_is_checkout else canonical
+                set_member_declared_remotes(
+                    workspace,
+                    "execution-flow",
+                    canonical=canonical,
+                    aliases=[alias],
+                )
+                metadata = workspace / ".work-bundle/project.yaml"
+                registry = config / "registry/projects.yaml"
+                before = metadata.read_bytes(), registry.read_bytes()
+
+                proposed = run_wb(
+                    config,
+                    *add_workspace_member_args(workspace, requested),
+                    "--dry-run",
+                )
+                self.assertEqual(proposed.returncode, 0, proposed.stdout + proposed.stderr)
+                replayed = run_wb(
+                    config,
+                    *add_workspace_member_args(workspace, requested),
+                    "--accepted-proposal-id",
+                    json.loads(proposed.stdout)["proposal_id"],
+                    "--apply",
+                )
+
+                self.assertEqual(replayed.returncode, 0, replayed.stdout + replayed.stderr)
+                self.assertTrue(json.loads(replayed.stdout)["replay"])
+                self.assertEqual(before, (metadata.read_bytes(), registry.read_bytes()))
+
+    def test_add_workspace_member_replay_rejects_undeclared_checkout_origin_before_mutation(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path / "undeclared-origin")
+        member_remote, _, _ = make_remote(
+            self.tmp_path / "undeclared-origin-member", "execution-flow"
+        )
+        self._apply_first_member(config, workspace, member_remote)
+        canonical = "https://example.test/team/execution-flow.git"
+        set_member_declared_remotes(
+            workspace,
+            "execution-flow",
+            canonical=canonical,
+            aliases=[str(member_remote)],
+        )
+        member_path = workspace / "execution-flow"
+        git(member_path, "remote", "set-url", "origin", "https://other.test/team/execution-flow.git")
+        metadata = workspace / ".work-bundle/project.yaml"
+        registry = config / "registry/projects.yaml"
+        before = metadata.read_bytes(), registry.read_bytes()
+
+        rejected = run_wb(
+            config,
+            *add_workspace_member_args(workspace, canonical),
+            "--accepted-proposal-id",
+            "awm-unaccepted",
+            "--apply",
+        )
+
+        self.assertEqual(rejected.returncode, 1, rejected.stdout + rejected.stderr)
+        self.assertEqual(
+            json.loads(rejected.stdout)["failure_code"],
+            "WB_CONTROL_PLANE_MEMBER_COLLISION",
+        )
+        self.assertEqual(before, (metadata.read_bytes(), registry.read_bytes()))
+
+    def test_attached_deferred_replay_accepts_declared_alias_without_metadata_change(self) -> None:
+        config, workspace, _, _ = init_single_v4(self.tmp_path / "deferred-alias")
+        member_remote, _, _ = make_remote(
+            self.tmp_path / "deferred-alias-member", "execution-flow"
+        )
+        deferred_args = [
+            "defer-workspace-member",
+            str(workspace),
+            "--repository-id",
+            "execution-flow",
+            "--name",
+            "execution-flow",
+            "--path",
+            "execution-flow",
+            "--default-branch",
+            "main",
+            "--replay-key",
+            "replay-alias",
+        ]
+        deferred = run_wb(config, *deferred_args, "--dry-run")
+        self.assertEqual(deferred.returncode, 0, deferred.stdout + deferred.stderr)
+        applied = run_wb(
+            config,
+            *deferred_args,
+            "--accepted-proposal-id",
+            json.loads(deferred.stdout)["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+        attach_args = [
+            "attach-deferred-remote",
+            str(workspace),
+            "--repository-id",
+            "execution-flow",
+            "--remote",
+            str(member_remote),
+        ]
+        attach = run_wb(config, *attach_args, "--dry-run")
+        self.assertEqual(attach.returncode, 0, attach.stdout + attach.stderr)
+        attached = run_wb(
+            config,
+            *attach_args,
+            "--accepted-proposal-id",
+            json.loads(attach.stdout)["proposal_id"],
+            "--apply",
+        )
+        self.assertEqual(attached.returncode, 0, attached.stdout + attached.stderr)
+
+        alias = "https://example.test/team/execution-flow.git"
+        set_member_declared_remotes(
+            workspace,
+            "execution-flow",
+            canonical=str(member_remote),
+            aliases=[alias],
+        )
+        metadata = workspace / ".work-bundle/project.yaml"
+        registry = config / "registry/projects.yaml"
+        before = metadata.read_bytes(), registry.read_bytes()
+        replay_args = [*attach_args[:-1], alias]
+        replay = run_wb(config, *replay_args, "--dry-run")
+        self.assertEqual(replay.returncode, 0, replay.stdout + replay.stderr)
+        replayed = run_wb(
+            config,
+            *replay_args,
+            "--accepted-proposal-id",
+            json.loads(replay.stdout)["proposal_id"],
+            "--apply",
+        )
+
+        self.assertEqual(replayed.returncode, 0, replayed.stdout + replayed.stderr)
+        self.assertTrue(json.loads(replayed.stdout)["replay"])
+        self.assertEqual(before, (metadata.read_bytes(), registry.read_bytes()))
+
     def test_add_workspace_member_different_remote_or_path_collides(self) -> None:
         config, workspace, _, _ = init_single_v4(self.tmp_path)
         member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
@@ -2290,6 +2559,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         self.assertEqual(path_collision.returncode, 1)
         self.assertEqual(json.loads(path_collision.stdout)["failure_code"], "WB_CONTROL_PLANE_MEMBER_COLLISION")
 
+    @unittest.skipIf(os.name == "nt", "Windows chmod does not deny directory writes")
     def test_add_workspace_member_rollback_restores_owned_state_only(self) -> None:
         config, workspace, source_remote, _ = init_single_v4(self.tmp_path)
         member_remote, _, member_head = make_remote(self.tmp_path / "member-fixture", "execution-flow")
@@ -2381,7 +2651,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
         self.assertEqual(git(workspace, "check-ignore", "--no-index", "execution-flow/README.md"), "execution-flow/README.md")
 
-        shutil.rmtree(workspace / "execution-flow" / ".git")
+        remove_readonly_tree(workspace / "execution-flow" / ".git")
         git(workspace, "add", "-f", "execution-flow/README.md")
         git(workspace, "commit", "-q", "-m", "accidentally track member")
         doctor = run_wb(config, "doctor-workspace", str(workspace))
@@ -2417,7 +2687,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
         registry = config / "registry/projects.yaml"
         registry.write_text("projects: []\nbindings: []\n", encoding="utf-8")
-        shutil.rmtree(workspace / ".git")
+        remove_readonly_tree(workspace / ".git")
         metadata = workspace / ".work-bundle/project.yaml"
         metadata_before = metadata.read_bytes()
         registry_before = registry.read_bytes()
@@ -2480,7 +2750,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         )
 
         invalid_config, invalid_workspace, _, _ = init_single_v4(self.tmp_path / "invalid-git", slug="invalid-git")
-        shutil.rmtree(invalid_workspace / ".git")
+        remove_readonly_tree(invalid_workspace / ".git")
         invalid = run_wb(
             invalid_config,
             *add_workspace_member_args(invalid_workspace, member_remote),
@@ -2653,7 +2923,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         config, workspace, _, _ = init_single_v4(self.tmp_path)
         member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
         self._apply_first_member(config, workspace, member_remote)
-        shutil.rmtree(workspace / "execution-flow")
+        remove_readonly_tree(workspace / "execution-flow")
         metadata_before = (workspace / ".work-bundle/project.yaml").read_bytes()
         registry_before = (config / "registry/projects.yaml").read_bytes()
         exclude_before = (workspace / ".git/info/exclude").read_bytes()

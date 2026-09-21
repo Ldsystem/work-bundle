@@ -23,6 +23,8 @@ Use the public `scripts/wb.py` entrypoint. It owns its maintained YAML and JSON 
 
 Create current workspaces with:
 
+The example uses the macOS/Linux `python3` launcher. On Windows, use `py -3.13` or a resolved `python` executable instead.
+
 ```text
 python3 scripts/wb.py init-workspace <workspace-root> --slug <slug> --repository <id=remote> --mode <single-repository|multi-repository> (--dry-run|--apply)
 ```

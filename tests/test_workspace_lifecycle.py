@@ -36,8 +36,9 @@ def test_multi_repository_workspace_context_and_resources(tmp_path: Path) -> Non
     assert len(changed) == 2
     assert ensure_workspace_resources(tmp_path) == []
     assert validate_script_index(tmp_path) == []
-    assert (tmp_path / 'credentials').stat().st_mode & 0o777 == 0o700
-    assert (tmp_path / 'credentials/credentials.yaml').stat().st_mode & 0o777 == 0o600
+    if os.name != 'nt':
+        assert (tmp_path / 'credentials').stat().st_mode & 0o777 == 0o700
+        assert (tmp_path / 'credentials/credentials.yaml').stat().st_mode & 0o777 == 0o600
 
 
 def test_two_workspaces_have_independent_git_control(tmp_path: Path) -> None:

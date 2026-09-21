@@ -97,6 +97,7 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
 
 def test_nested_member_resolves_workspace_and_member_independently(
@@ -213,6 +214,86 @@ def test_keep_summarizing_resolve_and_doctor_use_v4_anchor_join(tmp_path: Path) 
     )
     assert missing.returncode != 0
     assert "WB_INFRASTRUCTURE_WORKSPACE_BINDING_MISSING" in missing.stderr
+
+
+def test_knowledge_commands_ignore_stale_source_observation_but_source_preflight_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    member = workspace / "member"
+    deep = member / "nested"
+    member.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(member)], check=True)
+    subprocess.run(["git", "-C", str(member), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(member), "config", "user.name", "Test"], check=True)
+    member.joinpath("README.md").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(member), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(member), "commit", "-q", "-m", "fixture"], check=True)
+    deep.mkdir()
+    write_workspace_metadata(workspace, member)
+
+    metadata_path = workspace / ".work-bundle/project.yaml"
+    metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+    repository = metadata["source_repositories"][0]
+    repository.pop("locator")
+    repository["remote"] = {
+        "canonical": "ssh://git@example.test/member",
+        "aliases": [],
+    }
+    metadata_path.write_text(yaml.safe_dump(metadata, sort_keys=False), encoding="utf-8")
+
+    registry_path = Path.home() / ".work-bundle/registry/projects.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    local = registry["device_bindings"]["wb-discovery"]["repositories"]["member-main"]
+    local.update(
+        {
+            "checkout_kind": "managed-worktree",
+            "observed_branch": "main",
+            "observed_head": "0" * 40,
+            "git_common_dir": str(member / ".git"),
+        }
+    )
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+
+    knowledge = workspace / ".work-bundle/knowledge"
+    knowledge.mkdir()
+    knowledge.joinpath("project.yaml").write_text("slug: demo\n", encoding="utf-8")
+    dispatcher = REPO_ROOT / "scripts/keep-summarizing/dispatcher.py"
+    env = os.environ.copy()
+
+    indexed = subprocess.run(
+        [sys.executable, str(dispatcher), "index", "--project", "demo", "--cwd", str(deep)],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert indexed.returncode == 0, indexed.stdout + indexed.stderr
+    queried = subprocess.run(
+        [
+            sys.executable,
+            str(dispatcher),
+            "query",
+            "--project",
+            "demo",
+            "--query",
+            "workspace knowledge",
+            "--limit",
+            "1",
+            "--cwd",
+            str(deep),
+        ],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert queried.returncode == 0, queried.stdout + queried.stderr
+
+    monkeypatch.chdir(deep)
+    args = argparse.Namespace(workspace_root=None, project_root=None)
+    with pytest.raises(SystemExit, match="WB_INFRASTRUCTURE_OBSERVATION_STALE"):
+        orchestration_core.resolve_member_project_root(args)
 
 
 def test_single_repository_compatibility_resolves_same_root(
