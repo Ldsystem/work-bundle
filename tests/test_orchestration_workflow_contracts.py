@@ -66,12 +66,13 @@ def test_current_workflow_defines_direct_review_and_compact_final_audit() -> Non
     workflow = read("references/assets/orchestration/workflow.md").lower()
     for family in (
         "executor-result-v1",
-        "implementation-review-v2",
-        "accepted-task-result-v1",
+        "implementation-review-v3",
+        "accepted-task-result-v2",
         "final-workflow-review-v1",
     ):
         assert family in workflow
-    assert "reviewer compares the actual candidate directly" in workflow
+    assert "task review, a distinct reviewer compares the actual candidate" in workflow
+    assert "integrated review compares the exact candidate with every planned feature" in workflow
     assert "does not reread source for code quality or repeat implementation review" in workflow
     for retired in (
         "reviewer-native-receipt",
@@ -99,8 +100,8 @@ def test_current_orchestration_evals_cover_stage5_boundary() -> None:
     ).lower()
     for term in (
         "executor-result-v1",
-        "implementation-review-v2",
-        "accepted-task-result-v1",
+        "implementation-review-v3",
+        "accepted-task-result-v2",
         "final-workflow-review-v1",
         "frozen worktree",
     ):

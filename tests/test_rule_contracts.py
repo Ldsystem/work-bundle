@@ -595,9 +595,9 @@ def test_orchestration_rules_define_closed_executor_result_and_direct_review_bou
         assert retired not in handoff
 
     for current in (
-        "distinct implementation reviewer",
+        "distinct task implementation reviewer",
         "exact frozen candidate",
-        "canonical `accepted-task-result-v1`",
+        "canonical `accepted-task-result-v2`",
         "one compact final audit",
         "controller/orchestrator",
         "Keep finalization mechanical",
@@ -614,7 +614,7 @@ def test_execution_and_review_skills_define_current_optional_direct_review_flow(
     for current in (
         "path-sorted changed-path manifest",
         "canonical `executor-result-v1`",
-        "When review is required",
+        "When task review is required",
         "distinct reviewer",
         "does not accept the product",
     ):
@@ -629,7 +629,7 @@ def test_execution_and_review_skills_define_current_optional_direct_review_flow(
 
     for current in (
         "exact frozen commit or worktree candidate",
-        "implementation-review-v2",
+        "implementation-review-v3",
             "implementation review advice when required",
             "controller/orchestrator",
             "they do not reconstruct review history",

@@ -16,12 +16,12 @@ Keep independent product review advisory, keep controller/orchestrator acceptanc
 
 ## Must
 
-- Require a distinct implementation reviewer to compare the exact frozen candidate with every verified specification and plan obligation plus capable focused observations.
+- Require a distinct task implementation reviewer to compare the exact frozen candidate with every obligation in the complete current task authority closure plus capable focused observations. Require every verified specification and plan obligation only for an integrated implementation review.
 - Let the reviewer issue an advisory `accept`, `repair`, or `blocked` assessment with concrete findings. Green tests cannot hide missing behavior.
 - Require the controller/orchestrator to assess the review advice against user purpose, accepted authority, and the product before deciding acceptance, repair, blocking, or continuation. Reviewer advice is not an automatic veto or acceptance.
 - Keep reviewer-proposed scope changes, delivery actions, worker directions, and new ceremony non-authoritative. The controller/orchestrator accepts, rejects, narrows, or reports the proposal and waits for user authority when it would materially expand the accepted scope.
 - Keep missing historical records, indexes, knowledge state, and controller ceremony outside the controller/orchestrator product decision unless the product is ambiguous, unsafe, inaccessible, or impossible to review.
-- Carry controller/orchestrator accepted task decisions through canonical `accepted-task-result-v1` records, preserving the exact review advice considered.
+- Carry controller/orchestrator accepted task decisions through canonical `accepted-task-result-v2` records, preserving the exact current task-authority identity and review advice considered; admit already-active v1 records only for non-mutating continuity.
 - Use one compact final audit for coverage, review advice, current tests, material defects, knowledge disposition/return, repository facts, and archive readiness; the controller/orchestrator assesses that advice and owns the final workflow decision.
 - Keep finalization mechanical and controller-directed: canonical references, lifecycle, clean baselines, destinations, indexes, and binding release only. Commit, push, merge, release, install, or other delivery occurs only under explicit user authority.
 
@@ -31,7 +31,7 @@ Keep independent product review advisory, keep controller/orchestrator acceptanc
 
 ## Validation
 
-- Confirm exact candidate identity, distinct reviewers, obligation coverage, explicit controller/orchestrator assessment, compact accepted results, a non-recursive final audit, and explicit authority for any delivery action.
+- Confirm exact candidate identity, distinct reviewers, complete closure-scoped task coverage or complete-tree integrated coverage as applicable, explicit controller/orchestrator assessment, compact accepted results, a non-recursive final audit, and explicit authority for any delivery action.
 
 ## On Violation
 

@@ -10,7 +10,7 @@ from artifact_store import family_policy, load_catalog
 
 CATALOG = (
     Path(__file__).resolve().parents[2]
-    / "references/assets/orchestration/contract/artifact-family-catalog-v5.yaml"
+    / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
 )
 STAGE5_FAMILIES = (
     "executor-result",

@@ -46,6 +46,7 @@ cmd_set_plan_status = _lazy_command("plans", "cmd_set_plan_status")
 cmd_index_plans = _lazy_command("plans", "cmd_index_plans")
 cmd_write_phase = _lazy_command("plans", "cmd_write_phase")
 cmd_write_task = _lazy_command("plans", "cmd_write_task")
+cmd_amend_task = _lazy_command("plans", "cmd_amend_task")
 cmd_finalize_reviewed_plan = _lazy_command("plans", "cmd_finalize_reviewed_plan")
 cmd_git_status = _lazy_command("documents", "cmd_git_status")
 cmd_next_action_candidates = _lazy_command("documents", "cmd_next_action_candidates")
@@ -58,7 +59,7 @@ RECOGNIZED_COMMANDS = frozenset({
     "repository-preflight", "build-task-brief",
     "related", "write-doc", "write-spec",
     "list-specs", "set-spec-status", "index-specs", "write-plan", "list-plans",
-    "set-plan-status", "index-plans", "write-phase", "write-task",
+    "set-plan-status", "index-plans", "write-phase", "write-task", "amend-task",
     "write-executor-result", "list-executor-results",
     "transition-executor-result", "index-executor-results",
     "build-implementation-review-candidate", "write-implementation-review",
@@ -158,6 +159,14 @@ def build_parser() -> argparse.ArgumentParser:
     write_task.add_argument("--content-file", required=True)
     write_task.add_argument("--status", default="planned")
     write_task.set_defaults(func=cmd_write_task)
+    amend_task = sub.add_parser("amend-task", parents=[parent])
+    amend_task.add_argument("--plan-id", required=True)
+    amend_task.add_argument("--phase-id", required=True)
+    amend_task.add_argument("--task-id", required=True)
+    amend_task.add_argument("--title", required=True)
+    amend_task.add_argument("--content-file", required=True)
+    amend_task.add_argument("--status", default="planned")
+    amend_task.set_defaults(func=cmd_amend_task)
     write_result = sub.add_parser("write-executor-result", parents=[parent])
     for flag in ("id", "plan-id", "task-id", "content-file"):
         write_result.add_argument(f"--{flag}", required=True)

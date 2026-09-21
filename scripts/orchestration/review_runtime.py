@@ -17,12 +17,13 @@ from artifact_store import (
 from core import now_date, resolve_workspace_root
 from review_identity import (
     canonical_plan_tree_identity,
+    canonical_task_authority_identity,
     canonical_task_data,
     load_canonical_plan_tree,
 )
 
 
-CURRENT_CATALOG = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v5.yaml"
+CURRENT_CATALOG = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
 CURRENT_FAMILIES = {"implementation-review", "accepted-task-result", "final-workflow-review"}
 CURRENT_STRUCTURAL_FIELDS = {
     "artifact_type", "schema_version", "id", "plan_id", "task_id",
@@ -71,7 +72,10 @@ def _policy(family: str) -> dict[str, Any]:
 
 def _semantic_input(args: argparse.Namespace, family: str) -> dict[str, Any]:
     data = read_yaml_mapping(Path(str(args.content_file)))
-    overrides = sorted(CURRENT_STRUCTURAL_FIELDS.intersection(data))
+    forbidden = set(CURRENT_STRUCTURAL_FIELDS)
+    if family == "accepted-task-result":
+        forbidden.add("authority_identity")
+    overrides = sorted(forbidden.intersection(data))
     if overrides:
         raise SystemExit(f"{family} semantic input contains structural field override: " + ", ".join(overrides))
     return data
@@ -151,6 +155,35 @@ def _validate_plan_authority(args: argparse.Namespace, data: Mapping[str, Any]) 
     return tree
 
 
+def _validate_review_authority(
+    args: argparse.Namespace, data: Mapping[str, Any]
+) -> dict[str, Any]:
+    plan_id = str(args.plan_id)
+    task_id = getattr(args, "task_id", None)
+    scope = data.get("scope")
+    if scope == "task":
+        if not task_id:
+            raise SystemExit("Task implementation review requires task binding")
+        current = canonical_task_authority_identity(
+            _workspace(args), plan_id, str(task_id)
+        )
+    elif scope == "integrated":
+        if task_id:
+            raise SystemExit("Integrated implementation review cannot use task binding")
+        current = canonical_plan_tree_identity(_workspace(args), plan_id)
+    else:
+        raise SystemExit("Implementation review scope is invalid")
+    supplied = data.get("authority_identity")
+    tree = load_canonical_plan_tree(_workspace(args), plan_id)
+    if (
+        not isinstance(supplied, dict)
+        or supplied != current
+        or data.get("specification_id") != tree["root"].get("source_spec_id")
+    ):
+        raise SystemExit("review authority/specification identity is stale")
+    return tree
+
+
 def _rows(args: argparse.Namespace, family: str) -> list[dict[str, Any]]:
     result = rebuild_index(CURRENT_CATALOG, family, _anchors(args))
     rows = [json.loads(line) for line in Path(str(result["path"])).read_text(encoding="utf-8").splitlines() if line]
@@ -182,7 +215,7 @@ def _candidate_validator():
 
 def write_implementation_review(args: argparse.Namespace) -> dict[str, Any]:
     data = _semantic_input(args, "implementation-review")
-    _validate_plan_authority(args, data)
+    _validate_review_authority(args, data)
     reviewer = data.get("reviewer")
     if not isinstance(reviewer, dict) or set(reviewer) != {"agent_id"}:
         raise SystemExit("Implementation review requires one concrete reviewer identity")
@@ -199,11 +232,6 @@ def write_implementation_review(args: argparse.Namespace) -> dict[str, Any]:
         raise SystemExit(str(error)) from error
     data["target"] = checked["target"]
     data["target_sha256"] = checked["target"]["sha256"]
-    task_id = getattr(args, "task_id", None)
-    if data.get("scope") == "task" and not task_id:
-        raise SystemExit("Task implementation review requires task binding")
-    if data.get("scope") == "integrated" and task_id:
-        raise SystemExit("Integrated implementation review cannot use task binding")
     return _write(args, "implementation-review", data, _bindings("implementation-review", plan_id=str(args.plan_id), task_id=getattr(args, "task_id", None)))
 
 
@@ -232,10 +260,19 @@ def write_accepted_task_result(args: argparse.Namespace) -> dict[str, Any]:
         reviewed = _reference(args, "implementation-review", str(review.get("id")), _bindings("implementation-review", plan_id=str(args.plan_id), task_id=str(args.task_id)))
         if reviewed["digest"] != review.get("sha256"):
             raise SystemExit("Accepted task result requires the exact implementation review advice")
+        if reviewed["data"].get("schema_version") == 3:
+            current_authority = canonical_task_authority_identity(
+                _workspace(args), str(args.plan_id), str(args.task_id)
+            )
+            if reviewed["data"].get("authority_identity") != current_authority:
+                raise SystemExit("Accepted task result implementation review authority is stale")
         if reviewed["data"].get("target_sha256") != product.get("sha256"):
             raise SystemExit("Accepted task result product identity does not match review target")
     data["product_sha256"] = product.get("sha256")
     data["knowledge_action"] = knowledge.get("action")
+    data["authority_identity"] = canonical_task_authority_identity(
+        _workspace(args), str(args.plan_id), str(args.task_id)
+    )
     return _write(args, "accepted-task-result", data, _bindings("accepted-task-result", plan_id=str(args.plan_id), task_id=str(args.task_id)))
 
 
@@ -287,6 +324,12 @@ def validate_final_workflow_chain(
         if accepted["digest"] != reference.get("sha256"):
             raise SystemExit("Final workflow review accepted-result digest mismatch")
         accepted_data = accepted["data"]
+        if accepted_data.get("schema_version") == 2:
+            current_authority = canonical_task_authority_identity(
+                _workspace(args), str(args.plan_id), task_id
+            )
+            if accepted_data.get("authority_identity") != current_authority:
+                raise SystemExit("Accepted task result authority is stale")
 
         executor_ref = accepted_data.get("executor_result")
         if not isinstance(executor_ref, dict):
@@ -312,6 +355,12 @@ def validate_final_workflow_chain(
             )
             if reviewed["digest"] != review_identity[1]:
                 raise SystemExit("Accepted task result implementation review is stale")
+            if reviewed["data"].get("schema_version") == 3:
+                current_authority = canonical_task_authority_identity(
+                    _workspace(args), str(args.plan_id), task_id
+                )
+                if reviewed["data"].get("authority_identity") != current_authority:
+                    raise SystemExit("Accepted task result implementation review authority is stale")
             product = accepted_data.get("product_identity")
             if not isinstance(product, dict) or reviewed["data"].get("target_sha256") != product.get("sha256"):
                 raise SystemExit("Accepted task result product identity does not match review target")

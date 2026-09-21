@@ -634,7 +634,7 @@
     {
       "id": "STG5-02",
       "prompt": "A frozen worktree candidate passes its focused tests but omits one accepted behavior from the verified specification.",
-      "expected_output": "The distinct reviewer directly compares the exact manifest with every specification and plan obligation and records repair advice in implementation-review-v2; the controller/orchestrator assesses the finding and routes the accurate product defect. Green tests do not hide missing behavior.",
+      "expected_output": "The distinct reviewer directly compares the exact manifest with every specification and plan obligation and records repair advice in implementation-review-v3; the controller/orchestrator assesses the finding and routes the accurate product defect. Green tests do not hide missing behavior.",
       "files": []
     },
     {
@@ -646,7 +646,7 @@
     {
       "id": "STG5-04",
       "prompt": "A dependency needs the already accepted task outcome.",
-      "expected_output": "Consumes one canonical accepted-task-result-v1 containing the controller/orchestrator acceptance decision and referencing the executor result, exact implementation review advice, current validation outcomes, product identity, defects, and knowledge disposition without receipt or history replay.",
+      "expected_output": "Consumes one canonical accepted-task-result-v2 containing the controller/orchestrator acceptance decision and referencing the current task-authority identity, executor result, exact implementation review advice, current validation outcomes, product identity, defects, and knowledge disposition without receipt or history replay.",
       "files": []
     },
     {
@@ -660,7 +660,13 @@
     {
       "id": "v4-in-place-plan-repair-full-review",
       "prompt": "Repair a verified implementation plan after review finds an omitted production owner, then review the repaired plan.",
-      "expected_output": "Returns the existing root plan to draft, updates the existing plan, phase, and task identities in place without retaining intermediate revision copies, and gives a distinct reviewer the complete current tree. The reviewer checks every accepted specification obligation and current source boundary rather than limiting review to the repair delta; the controller/orchestrator assesses the advice and owns qualification.",
+      "expected_output": "Returns the existing root plan to draft and updates the existing task identity in place after strict structural pre-write checks. The controller/orchestrator identifies the affected authority closure; the distinct reviewer checks the complete repaired task, applicable root/phase authority, dependency closure, affected interfaces, and allocated obligations rather than only the textual delta. Unaffected qualified tasks, briefs, reviews, and accepted results remain valid, and the controller/orchestrator assesses the advice and owns qualification.",
+      "files": []
+    },
+    {
+      "id": "v4-task-review-authority-closure-not-whole-plan",
+      "prompt": "Review Task 4 after its allocated requirement and plugin-route ownership were repaired while unrelated tasks and requirements remain unchanged.",
+      "expected_output": "The distinct task reviewer checks the exact candidate against Task 4's complete current authority closure, including its named specification requirements and decisions, applicable root/phase policy, dependencies and accepted dependency results, connected ownership/interfaces, and focused observations. It does not reopen unrelated plan regions or inherit an earlier opinion, and the controller/orchestrator assesses the advice and owns acceptance.",
       "files": []
     },
     {
