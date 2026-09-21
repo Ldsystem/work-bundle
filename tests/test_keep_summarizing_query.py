@@ -4,6 +4,7 @@ import argparse
 import importlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -683,15 +684,27 @@ def test_ks_entrypoint_reexecutes_with_uv_when_runtime_dependencies_are_missing(
         invocation.update(executable=executable, argv=argv, environ=environ)
         raise RuntimeError("execve intercepted")
 
+    def capture_run(argv: list[str], *, env: dict[str, str], check: bool) -> subprocess.CompletedProcess[str]:
+        invocation.update(executable=argv[0], argv=argv, environ=env)
+        return subprocess.CompletedProcess(argv, 0)
+
     monkeypatch.setattr(entrypoint, "_missing_runtime_dependencies", lambda: ["sqlite_vec"])
     monkeypatch.setattr(entrypoint.shutil, "which", lambda _command: "/opt/homebrew/bin/uv")
-    monkeypatch.setattr(entrypoint.os, "execve", capture_execve)
-
-    with pytest.raises(RuntimeError, match="execve intercepted"):
-        entrypoint._ensure_managed_runtime(
-            argv=["scripts/ks.py", "index", "--project", "work-bundle"],
-            environ={"PATH": "/opt/homebrew/bin"},
-        )
+    if os.name == "nt":
+        monkeypatch.setattr(entrypoint.subprocess, "run", capture_run)
+        with pytest.raises(SystemExit) as raised:
+            entrypoint._ensure_managed_runtime(
+                argv=["scripts/ks.py", "index", "--project", "work-bundle"],
+                environ={"PATH": "/opt/homebrew/bin"},
+            )
+        assert raised.value.code == 0
+    else:
+        monkeypatch.setattr(entrypoint.os, "execve", capture_execve)
+        with pytest.raises(RuntimeError, match="execve intercepted"):
+            entrypoint._ensure_managed_runtime(
+                argv=["scripts/ks.py", "index", "--project", "work-bundle"],
+                environ={"PATH": "/opt/homebrew/bin"},
+            )
 
     assert invocation["executable"] == "/opt/homebrew/bin/uv"
     assert invocation["argv"] == [
@@ -788,9 +801,23 @@ def test_ks_entrypoint_preserves_uv_native_prelaunch_failure(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    fake_uv = fake_bin / "uv"
-    fake_uv.write_text("#!/bin/sh\necho UV_NATIVE_PRELAUNCH_FAILURE >&2\nexit 73\n", encoding="utf-8")
-    fake_uv.chmod(0o755)
+    if os.name == "nt":
+        fake_uv = fake_bin / "uv.exe"
+        shutil.copy2(sys.executable, fake_uv)
+        for runtime_library in Path(sys.base_prefix).glob("python*.dll"):
+            shutil.copy2(runtime_library, fake_bin / runtime_library.name)
+        (fake_bin / "pyvenv.cfg").write_text(
+            f"home = {Path(sys.base_prefix)}\ninclude-system-site-packages = false\n",
+            encoding="utf-8",
+        )
+        (fake_bin / "run").write_text(
+            "import sys\nprint('UV_NATIVE_PRELAUNCH_FAILURE', file=sys.stderr)\nraise SystemExit(73)\n",
+            encoding="utf-8",
+        )
+    else:
+        fake_uv = fake_bin / "uv"
+        fake_uv.write_text("#!/bin/sh\necho UV_NATIVE_PRELAUNCH_FAILURE >&2\nexit 73\n", encoding="utf-8")
+        fake_uv.chmod(0o755)
     environment = dict(os.environ)
     environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
     environment["PYTHONPATH"] = str(fake_runtime)
@@ -801,6 +828,7 @@ def test_ks_entrypoint_preserves_uv_native_prelaunch_failure(
         capture_output=True,
         text=True,
         env=environment,
+        cwd=fake_bin if os.name == "nt" else None,
     )
 
     assert result.returncode == 73

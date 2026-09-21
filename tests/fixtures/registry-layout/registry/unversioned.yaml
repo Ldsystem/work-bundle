@@ -14,7 +14,7 @@ projects:
         path: __WORKSPACE_ROOT__
         checkout_role: truth
         work_dir: true
-        remote: "__REMOTE__"
+        remote: '__REMOTE__'
         git_repository: true
     status: active
     updated_at: 2026-08-13

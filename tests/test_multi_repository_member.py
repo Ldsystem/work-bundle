@@ -263,6 +263,7 @@ def test_multi_member_add_preserves_mode_and_replays_without_root_git(multi, ado
     assert not (workspace / ".git").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows chmod does not deny directory writes")
 @pytest.mark.parametrize("adopt", [False, True])
 def test_multi_member_failure_preserves_existing_and_removes_only_owned_checkout(multi, adopt):
     config, workspace, remote = multi

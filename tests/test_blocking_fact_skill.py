@@ -1,6 +1,7 @@
 """Packaging/discovery checks only; semantic behavior uses agent-run scenarios."""
 from pathlib import Path
 import json
+import os
 import subprocess
 import sys
 
@@ -36,7 +37,10 @@ def test_builtin_discovery_validation_and_targeted_install(tmp_path):
     assert invoke("validate", "--name", NAME)["ok"]
     invoke("--home", str(tmp_path), "enable", "--name", NAME)
     installed = tmp_path / ".agents/skills" / NAME
-    assert installed.is_symlink()
+    if os.name == "nt":
+        assert installed.is_junction()
+    else:
+        assert installed.is_symlink()
     assert installed.resolve() == ROOT / "skills" / NAME
     assert list(installed.parent.iterdir()) == [installed]
 

@@ -15,7 +15,7 @@ projects:
         path: __ROOT_A__
         checkout_role: truth
         work_dir: true
-        remote: "__REMOTE_A__"
+        remote: '__REMOTE_A__'
         git_repository: true
     status: active
     updated_at: 2026-08-13
@@ -30,7 +30,7 @@ projects:
         path: __ROOT_B__
         checkout_role: truth
         work_dir: true
-        remote: "__REMOTE_B__"
+        remote: '__REMOTE_B__'
         git_repository: true
     status: active
     updated_at: 2026-08-13

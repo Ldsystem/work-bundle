@@ -277,6 +277,30 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _git_blob_oid(root: Path, relative: str, payload: bytes) -> bytes:
+    """Hash bytes using Git's path-aware clean filters, not the smudged worktree."""
+    result = subprocess.run(
+        ["git", "-C", str(root), "hash-object", f"--path={relative}", "--stdin"],
+        input=payload,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode(errors="replace").strip()
+        raise EvaluationIdentityError(f"could not hash validation source: {detail}")
+    try:
+        return bytes.fromhex(result.stdout.decode("ascii").strip())
+    except ValueError as error:
+        raise EvaluationIdentityError("Git returned an invalid validation source object id") from error
+
+
+def _git_mode(root: Path, relative: str, target: Path) -> bytes:
+    records = _git(root, "ls-files", "--stage", "--", relative).splitlines()
+    if records:
+        return records[0].split(maxsplit=1)[0].encode("ascii")
+    return b"100755" if target.stat().st_mode & stat.S_IXUSR else b"100644"
+
+
 def _product_identity(root: Path) -> Mapping[str, Any]:
     resolved = root.expanduser().resolve()
     if not resolved.is_dir():
@@ -406,12 +430,12 @@ def validation_source_identity(
             raise EvaluationIdentityError("protected validation input requires a governed dependency identity")
         if target.is_symlink() or not target.is_file() or not target.resolve().is_relative_to(root):
             raise EvaluationIdentityError("validation source contains an unsupported link or submodule")
-        mode = b"100755" if target.stat().st_mode & stat.S_IXUSR else b"100644"
+        mode = _git_mode(root, relative, target)
         node = tree
         parts = Path(relative).parts
         for part in parts[:-1]:
             node = node.setdefault(part, {})
-        node[parts[-1]] = (mode, object_id(b"blob", target.read_bytes()))
+        node[parts[-1]] = (mode, _git_blob_oid(root, relative, target.read_bytes()))
 
     def tree_id(node: dict[str, Any]) -> bytes:
         payload = b""

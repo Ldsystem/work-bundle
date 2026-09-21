@@ -692,7 +692,7 @@ def test_failed_migration_preserves_symlink_and_nested_credentials(
     assert readme_link.is_symlink()
     assert readme_link.readlink() == Path("README.md")
     assert outside_link.is_symlink()
-    assert outside_link.readlink() == outside
+    assert os.path.samefile(outside_link, outside)
     assert not outside_link.is_dir()
     assert nested.read_bytes() == nested_bytes
     assert not nested.is_symlink()

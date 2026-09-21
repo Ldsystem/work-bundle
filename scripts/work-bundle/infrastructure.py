@@ -249,6 +249,31 @@ def atomic_write_text(path: str | Path, content: str) -> None:
                 pass
 
 
+def atomic_write_bytes(path: str | Path, content: bytes) -> None:
+    target = Path(path).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+        temporary = Path(temporary_name)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        temporary = None
+    except OSError as exc:
+        raise InfrastructureError(
+            "WB_INFRASTRUCTURE_ATOMIC_WRITE_FAILED", f"Unable to atomically write {target}: {exc}"
+        ) from exc
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+
+
 def resolve_config_root(config_root: str | Path | None = None) -> Path:
     return Path(config_root).expanduser().resolve() if config_root else (Path.home() / ".work-bundle").resolve()
 

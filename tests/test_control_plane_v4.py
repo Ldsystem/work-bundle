@@ -61,6 +61,19 @@ def git(path: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def assert_mode_if_supported(path: Path, expected: int) -> None:
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == expected
+
+
+def remove_readonly_tree(path: Path) -> None:
+    def onerror(function, target, _exc_info):
+        os.chmod(target, 0o777)
+        function(target)
+
+    shutil.rmtree(path, onerror=onerror)
+
+
 def config_root(tmp_path: Path) -> Path:
     root = tmp_path / ".work-bundle"
     (root / "registry").mkdir(parents=True)
@@ -335,7 +348,8 @@ def test_v3_to_v4_migration_is_deterministic_and_splits_local_state(tmp_path: Pa
     metadata = (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
     assert "metadata_version: 4" in metadata
     assert "workspace:\n  id: wb-" in metadata
-    assert f"canonical: {remote}" in metadata
+    metadata_document = yaml.safe_load(metadata)
+    assert metadata_document["source_repositories"][0]["remote"]["canonical"] == str(remote)
     assert "custom_portable:" in metadata
     for forbidden in ("workspace_root:", "project_root:", "observed_head:", "observation_time:", "git_control_root:", "prefer_subagent:"):
         assert forbidden not in metadata
@@ -644,7 +658,8 @@ def test_single_repository_migration_keeps_same_root_and_preserves_tracked_agent
     metadata = (workspace / ".work-bundle/project.yaml").read_text(encoding="utf-8")
     assert "mode: single-repository" in metadata
     assert "workspace_binding:\n      type: root" in metadata
-    assert f"canonical: {remote}" in metadata
+    metadata_document = yaml.safe_load(metadata)
+    assert metadata_document["source_repositories"][0]["remote"]["canonical"] == str(remote)
     assert "project_root:" not in metadata
     registry = (config / "registry/projects.yaml").read_text(encoding="utf-8")
     assert f"project_root: {workspace}" in registry
@@ -674,8 +689,8 @@ def test_single_repository_init_creates_workspace_resources(tmp_path: Path) -> N
     assert (workspace / "script/index.yaml").read_text(encoding="utf-8") == SCRIPT_INDEX_TEMPLATE
     credential_file = workspace / "credentials/credentials.yaml"
     assert credential_file.read_text(encoding="utf-8") == CREDENTIAL_TEMPLATE
-    assert credential_file.parent.stat().st_mode & 0o777 == 0o700
-    assert credential_file.stat().st_mode & 0o777 == 0o600
+    assert_mode_if_supported(credential_file.parent, 0o700)
+    assert_mode_if_supported(credential_file, 0o600)
     orchestration = workspace / ".work-bundle/orchestration"
     for retired in ("handoff", "plan/index.jsonl", "handoff/index.jsonl"):
         assert not (orchestration / retired).exists()
@@ -730,8 +745,8 @@ def test_single_repository_init_preserves_workspace_resources(tmp_path: Path) ->
     assert initialized.returncode == 0, initialized.stdout + initialized.stderr
     assert script_index.read_bytes() == script_before
     assert credential_file.read_bytes() == credential_before
-    assert credential_file.parent.stat().st_mode & 0o777 == 0o700
-    assert credential_file.stat().st_mode & 0o777 == 0o600
+    assert_mode_if_supported(credential_file.parent, 0o700)
+    assert_mode_if_supported(credential_file, 0o600)
     exclude_text = exclude.read_text(encoding="utf-8")
     assert "# preserve-existing-exclude" in exclude_text
     assert ".work-bundle/" in exclude_text
@@ -770,8 +785,8 @@ def test_single_repository_attach_creates_resources_without_topology_drift(tmp_p
     assert attached.returncode == 0, attached.stdout + attached.stderr
     assert script_index.read_text(encoding="utf-8") == SCRIPT_INDEX_TEMPLATE
     assert credential_file.read_text(encoding="utf-8") == CREDENTIAL_TEMPLATE
-    assert credential_file.parent.stat().st_mode & 0o777 == 0o700
-    assert credential_file.stat().st_mode & 0o777 == 0o600
+    assert_mode_if_supported(credential_file.parent, 0o700)
+    assert_mode_if_supported(credential_file, 0o600)
     assert "credentials/" in (workspace / ".git/info/exclude").read_text(encoding="utf-8")
     doctor = run_wb(config_b, "doctor-workspace", str(workspace))
     assert doctor.returncode == 0, doctor.stdout + doctor.stderr
@@ -962,7 +977,7 @@ def test_attach_reconstructs_distinct_device_binding_without_portable_diff(tmp_p
     assert (workspace_b / "script/index.yaml").is_file()
     credential = workspace_b / "credentials/credentials.yaml"
     assert credential.is_file()
-    assert credential.stat().st_mode & 0o777 == 0o600
+    assert_mode_if_supported(credential, 0o600)
     agents = (workspace_b / "AGENTS.md").read_text(encoding="utf-8")
     assert agents.count("# Work Bundle RULE START") == 1
 
@@ -1437,7 +1452,7 @@ def test_migration_rejects_metadata_checkout_remote_mismatch(tmp_path: Path) -> 
     subprocess.run(["git", "init", "--bare", "-q", str(wrong_remote)], check=True)
     metadata = workspace / ".work-bundle/project.yaml"
     text = metadata.read_text(encoding="utf-8")
-    text = re.sub(r"(?m)^    remote: .+$", f"    remote: {wrong_remote}", text)
+    text = re.sub(r"(?m)^    remote: .+$", lambda _match: f"    remote: {wrong_remote}", text)
     metadata.write_text(text, encoding="utf-8")
     blocked = run_wb(config, "migrate-control-plane", str(workspace), "--dry-run")
     assert blocked.returncode == 1
@@ -2544,6 +2559,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         self.assertEqual(path_collision.returncode, 1)
         self.assertEqual(json.loads(path_collision.stdout)["failure_code"], "WB_CONTROL_PLANE_MEMBER_COLLISION")
 
+    @unittest.skipIf(os.name == "nt", "Windows chmod does not deny directory writes")
     def test_add_workspace_member_rollback_restores_owned_state_only(self) -> None:
         config, workspace, source_remote, _ = init_single_v4(self.tmp_path)
         member_remote, _, member_head = make_remote(self.tmp_path / "member-fixture", "execution-flow")
@@ -2635,7 +2651,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
         self.assertEqual(git(workspace, "check-ignore", "--no-index", "execution-flow/README.md"), "execution-flow/README.md")
 
-        shutil.rmtree(workspace / "execution-flow" / ".git")
+        remove_readonly_tree(workspace / "execution-flow" / ".git")
         git(workspace, "add", "-f", "execution-flow/README.md")
         git(workspace, "commit", "-q", "-m", "accidentally track member")
         doctor = run_wb(config, "doctor-workspace", str(workspace))
@@ -2671,7 +2687,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
         registry = config / "registry/projects.yaml"
         registry.write_text("projects: []\nbindings: []\n", encoding="utf-8")
-        shutil.rmtree(workspace / ".git")
+        remove_readonly_tree(workspace / ".git")
         metadata = workspace / ".work-bundle/project.yaml"
         metadata_before = metadata.read_bytes()
         registry_before = registry.read_bytes()
@@ -2734,7 +2750,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         )
 
         invalid_config, invalid_workspace, _, _ = init_single_v4(self.tmp_path / "invalid-git", slug="invalid-git")
-        shutil.rmtree(invalid_workspace / ".git")
+        remove_readonly_tree(invalid_workspace / ".git")
         invalid = run_wb(
             invalid_config,
             *add_workspace_member_args(invalid_workspace, member_remote),
@@ -2907,7 +2923,7 @@ class CompositeMemberLifecycleTests(unittest.TestCase):
         config, workspace, _, _ = init_single_v4(self.tmp_path)
         member_remote, _, _ = make_remote(self.tmp_path / "member-fixture", "execution-flow")
         self._apply_first_member(config, workspace, member_remote)
-        shutil.rmtree(workspace / "execution-flow")
+        remove_readonly_tree(workspace / "execution-flow")
         metadata_before = (workspace / ".work-bundle/project.yaml").read_bytes()
         registry_before = (config / "registry/projects.yaml").read_bytes()
         exclude_before = (workspace / ".git/info/exclude").read_bytes()

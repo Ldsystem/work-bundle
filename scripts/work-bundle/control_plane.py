@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
+import stat
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Iterable
 from urllib.parse import parse_qsl, urlsplit
 
@@ -25,6 +26,7 @@ from workspace_resources import (
 )
 from infrastructure import (
     InfrastructureError,
+    atomic_write_bytes,
     atomic_write_text,
     dump_canonical_yaml,
     join_workspace_binding,
@@ -267,8 +269,19 @@ def canonical_remote(value: object) -> str:
         user_host, path = remote.split(":", 1)
         remote = f"ssh://{user_host}/{path}"
     if remote.startswith("file://"):
-        remote = str(Path(remote[7:]).expanduser().resolve())
+        parsed = urlsplit(remote)
+        if parsed.netloc and re.fullmatch(r"[A-Za-z]:", parsed.netloc):
+            candidate = parsed.netloc + parsed.path
+        elif parsed.netloc:
+            candidate = "//" + parsed.netloc + parsed.path
+        else:
+            candidate = parsed.path
+        if re.match(r"^/[A-Za-z]:[\\/]", candidate):
+            candidate = candidate[1:]
+        remote = str(Path(candidate).expanduser().resolve())
     elif remote.startswith(("/", "./", "../", "~")):
+        remote = str(Path(remote).expanduser().resolve())
+    elif re.match(r"^[A-Za-z]:[\\/]", remote) or remote.startswith("\\\\"):
         remote = str(Path(remote).expanduser().resolve())
     remote = remote.rstrip("/")
     return remote[:-4] if remote.endswith(".git") and "://" in remote else remote
@@ -338,12 +351,36 @@ def _git_remote(path: Path) -> str:
 def _local_remote_path(remote: str, repository_path: Path) -> Path | None:
     raw = remote.strip()
     if raw.startswith("file://"):
-        return Path(raw[7:]).expanduser().resolve()
+        parsed = urlsplit(raw)
+        if parsed.netloc and re.fullmatch(r"[A-Za-z]:", parsed.netloc):
+            candidate = parsed.netloc + parsed.path
+        elif parsed.netloc:
+            candidate = "//" + parsed.netloc + parsed.path
+        else:
+            candidate = parsed.path
+        if re.match(r"^/[A-Za-z]:[\\/]", candidate):
+            candidate = candidate[1:]
+        return Path(candidate).expanduser().resolve()
     if raw.startswith(("/", "~")):
         return Path(raw).expanduser().resolve()
     if raw.startswith(("./", "../")):
         return (repository_path / raw).resolve()
+    if re.match(r"^[A-Za-z]:[\\/]", raw) or raw.startswith("\\\\"):
+        return Path(raw).expanduser().resolve()
     return None
+
+
+def _remove_owned_tree(path: Path) -> None:
+    """Remove a transaction-owned tree, including read-only Git object files."""
+    def onerror(function, target, _exc_info):
+        target_path = Path(target)
+        try:
+            target_path.chmod(stat.S_IWRITE | stat.S_IREAD)
+        except OSError:
+            pass
+        function(target)
+
+    shutil.rmtree(path, onerror=onerror)
 
 
 def _resolved_git_remote(path: Path) -> str:
@@ -728,7 +765,7 @@ def _atomic_publish(payloads: dict[Path, str]) -> list[str]:
                     if path.is_file() and path.read_bytes() == value:
                         continue
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    atomic_write_text(path, value.decode("utf-8"))
+                    atomic_write_bytes(path, value)
             except (OSError, InfrastructureError):
                 rollback_failures.append(str(path))
         if rollback_failures:
@@ -1220,6 +1257,7 @@ def cmd_publish_control_plane(args: list[str]) -> int:
         out({"command": "publish-control-plane", "status": "passed", "dry_run": True, "remote": remote, "changed_files": [], "git_actions": ["init", "configure-origin", "commit", "push"]})
         return 0
     metadata_before = text
+    metadata_before_bytes = metadata.read_bytes()
     git_existed = (control / ".git").exists()
     snapshot_failures: list[str] = []
     previous_origin = ""
@@ -1319,8 +1357,9 @@ def cmd_publish_control_plane(args: list[str]) -> int:
     except ControlPlaneError as exc:
         rollback_failures: list[str] = []
         if not git_existed and (control / ".git").is_dir():
-            _atomic_write(metadata, metadata_before)
-            shutil.rmtree(control / ".git")
+            if metadata.read_bytes() != metadata_before_bytes:
+                atomic_write_bytes(metadata, metadata_before_bytes)
+            _remove_owned_tree(control / ".git")
         elif git_existed:
             reset = subprocess.run(
                 ["git", "-C", str(control), "reset", "--hard", previous_head],
@@ -1332,11 +1371,19 @@ def cmd_publish_control_plane(args: list[str]) -> int:
                 rollback_failures.append("head_reset_failed")
             if config_before is not None:
                 config_path.write_bytes(config_before)
-            if metadata.read_text(encoding="utf-8") != metadata_before:
-                _atomic_write(metadata, metadata_before)
+            if metadata.read_bytes() != metadata_before_bytes:
+                atomic_write_bytes(metadata, metadata_before_bytes)
+            refresh = subprocess.run(
+                ["git", "-C", str(control), "add", "--", "project.yaml"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if refresh.returncode != 0:
+                rollback_failures.append("index_refresh_failed")
             if _git(control, "rev-parse", "HEAD") != previous_head:
                 rollback_failures.append("head_mismatch")
-            if metadata.read_text(encoding="utf-8") != metadata_before:
+            if metadata.read_bytes() != metadata_before_bytes:
                 rollback_failures.append("metadata_mismatch")
             if _git(control, "remote", "get-url", "origin") != previous_origin:
                 rollback_failures.append("origin_mismatch")
@@ -1562,7 +1609,7 @@ def _materialize(remote: str, path: Path) -> None:
         if path.is_symlink() or path.is_file():
             path.unlink(missing_ok=True)
         elif path.is_dir():
-            shutil.rmtree(path)
+            _remove_owned_tree(path)
         raise ControlPlaneError("WB_CONTROL_PLANE_MATERIALIZATION_FAILED")
 
 
@@ -2036,7 +2083,7 @@ def _rollback_workspace_root_materialization(workspace_root: Path, before: set[s
             except OSError:
                 pass
     if (workspace_root / ".git").is_dir():
-        shutil.rmtree(workspace_root / ".git")
+        _remove_owned_tree(workspace_root / ".git")
 
 
 def _materialize_workspace_root(remote: str, workspace_root: Path, default_branch: str) -> set[str]:
@@ -2160,7 +2207,7 @@ def _attach(
             if owned_path.is_symlink() or owned_path.is_file():
                 owned_path.unlink(missing_ok=True)
             elif owned_path.is_dir():
-                shutil.rmtree(owned_path)
+                _remove_owned_tree(owned_path)
         if root_materialization_before is not None:
             _rollback_workspace_root_materialization(workspace_root, root_materialization_before)
         if agents_before is None:
@@ -2623,7 +2670,7 @@ def _apply_add_workspace_member(
             if member_path.is_symlink() or member_path.is_file():
                 member_path.unlink(missing_ok=True)
             elif member_path.is_dir():
-                shutil.rmtree(member_path)
+                _remove_owned_tree(member_path)
         if isinstance(exc, ControlPlaneError):
             raise
         raise ControlPlaneError("WB_CONTROL_PLANE_TRANSACTION_FAILED") from exc
@@ -2807,7 +2854,7 @@ def cmd_attach_deferred_remote(args: list[str]) -> int:
         return 0
     except (ControlPlaneError, OSError) as exc:
         if owned_member and member_path is not None and member_path.exists():
-            shutil.rmtree(member_path)
+            _remove_owned_tree(member_path)
         code = exc.code if isinstance(exc, ControlPlaneError) else "WB_CONTROL_PLANE_TRANSACTION_FAILED"
         out({"command": "attach-deferred-remote", "status": "issues-found", "failure_code": code, "changed_files": []})
         return 1
