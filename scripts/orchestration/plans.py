@@ -3,10 +3,13 @@ import subprocess
 
 from core import *
 from execution_context import (
+    _dump_yaml,
     _iter_task_bindings,
     _persist_binding,
+    compile_task_candidate,
 )
 from artifact_store import (
+    atomic_write_bytes,
     canonical_artifact_path,
     family_policy,
     load_catalog,
@@ -24,13 +27,14 @@ from completion_provenance import (
     validate_ownership_shape,
 )
 from review_identity import canonical_plan_tree_identity, source_obligation_records
+from task_ownership import canonical_relative_path
 
 
 
 
 
 
-CATALOG_PATH = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v5.yaml"
+CATALOG_PATH = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
 PLAN_FAMILIES = ("root-plan", "phase", "task")
 PLAN_QUALIFICATION_STATUSES = {"draft", "verified", "superseded"}
 PLAN_QUALIFICATION_TRANSITIONS = {
@@ -219,6 +223,154 @@ def _require_draft_plan(args: argparse.Namespace, plan_id: str) -> dict[str, obj
             f"Plan content can be created or updated only while the plan is draft: {plan_id}"
         )
     return plan
+
+
+def _validate_task_dependencies_before_write(
+    args: argparse.Namespace, candidate: dict[str, object]
+) -> None:
+    """Reject invalid task dependency graphs before authoritative mutation."""
+
+    plan_id = str(candidate["plan_id"])
+    tasks: dict[str, dict[str, object]] = {}
+    for row in _index_rows(args, "task"):
+        if str(row.get("plan_id") or "") != plan_id:
+            continue
+        task_id = str(row["id"])
+        tasks[task_id] = _active_artifact(
+            args, "task", task_id, _family_bindings("task", row)
+        )
+    candidate_id = str(candidate["id"])
+    tasks[candidate_id] = candidate
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(task_id: str) -> None:
+        if task_id in visiting:
+            raise SystemExit(f"Task dependency cycle includes {task_id}")
+        if task_id in visited:
+            return
+        visiting.add(task_id)
+        raw = tasks[task_id].get("depends_on")
+        if not isinstance(raw, list):
+            raise SystemExit(f"Task depends_on is invalid: {task_id}")
+        for dependency_id in map(str, raw):
+            if dependency_id == task_id or dependency_id not in tasks:
+                raise SystemExit(
+                    f"Task dependency is not canonical: {task_id} -> {dependency_id}"
+                )
+            visit(dependency_id)
+        visiting.remove(task_id)
+        visited.add(task_id)
+
+    visit(candidate_id)
+
+
+def _task_write_paths(task: dict[str, object]) -> list[str]:
+    files = task.get("files")
+    raw = files.get("write") if isinstance(files, dict) else None
+    if not isinstance(raw, list):
+        raw = task.get("target_files")
+    return [canonical_relative_path(str(value), allow_tree_pattern=True) for value in (raw or [])]
+
+
+def _paths_overlap(left: str, right: str) -> bool:
+    left = left.removesuffix("/**").rstrip("/")
+    right = right.removesuffix("/**").rstrip("/")
+    return left == right or left.startswith(right + "/") or right.startswith(left + "/")
+
+
+def _current_plan_tasks(
+    args: argparse.Namespace, plan_id: str
+) -> dict[str, dict[str, object]]:
+    tasks: dict[str, dict[str, object]] = {}
+    for row in _index_rows(args, "task"):
+        if str(row.get("plan_id") or "") != plan_id:
+            continue
+        tasks[str(row["id"])] = _active_artifact(
+            args, "task", str(row["id"]), _family_bindings("task", row)
+        )
+    return tasks
+
+
+def _validate_task_shared_authority_before_write(
+    args: argparse.Namespace,
+    candidate: dict[str, object],
+    plan: dict[str, object],
+) -> None:
+    """Check deterministic allocation and ownership invariants for one task amendment."""
+
+    candidate_id = str(candidate["id"])
+    candidate_sources = set(map(str, candidate.get("source_ids", [])))
+    for coverage in plan.get("source_coverage", []):
+        if not isinstance(coverage, dict):
+            continue
+        if candidate_id in set(map(str, coverage.get("task_ids", []))):
+            source_id = str(coverage.get("source_id") or "")
+            if source_id not in candidate_sources:
+                raise SystemExit(
+                    f"Task amendment drops allocated source obligation: {candidate_id} -> {source_id}"
+                )
+
+    candidate_paths = _task_write_paths(candidate)
+    for peer_id, peer in _current_plan_tasks(args, str(candidate["plan_id"])).items():
+        if peer_id == candidate_id:
+            continue
+        collisions = sorted(
+            {left for left in candidate_paths for right in _task_write_paths(peer) if _paths_overlap(left, right)}
+        )
+        if collisions:
+            raise SystemExit(
+                f"Task amendment write ownership collides with {peer_id}: {', '.join(collisions)}"
+            )
+
+
+def _mechanically_affected_tasks(
+    args: argparse.Namespace, candidate: dict[str, object]
+) -> list[str]:
+    """Report candidates for controller semantic impact assessment without qualifying scope."""
+
+    tasks = _current_plan_tasks(args, str(candidate["plan_id"]))
+    candidate_id = str(candidate["id"])
+    tasks[candidate_id] = candidate
+    affected = {candidate_id}
+    dependency_frontier = list(map(str, candidate.get("depends_on", [])))
+    while dependency_frontier:
+        dependency_id = dependency_frontier.pop()
+        if dependency_id in affected:
+            continue
+        affected.add(dependency_id)
+        dependency_frontier.extend(map(str, tasks[dependency_id].get("depends_on", [])))
+    changed = True
+    while changed:
+        changed = False
+        for task_id, task in tasks.items():
+            if task_id in affected:
+                continue
+            dependencies = set(map(str, task.get("depends_on", [])))
+            if dependencies.intersection(affected):
+                affected.add(task_id)
+                changed = True
+    candidate_interfaces = candidate.get("interfaces") if isinstance(candidate.get("interfaces"), dict) else {}
+    candidate_sources = set(map(str, candidate.get("source_ids", [])))
+    tokens = {
+        str(value)
+        for values in candidate_interfaces.values()
+        if isinstance(values, list)
+        for value in values
+    }
+    for task_id, task in tasks.items():
+        interfaces = task.get("interfaces") if isinstance(task.get("interfaces"), dict) else {}
+        peer_tokens = {
+            str(value)
+            for values in interfaces.values()
+            if isinstance(values, list)
+            for value in values
+        }
+        peer_sources = set(map(str, task.get("source_ids", [])))
+        if tokens.intersection(peer_tokens) or candidate_sources.intersection(peer_sources):
+            affected.add(task_id)
+    return sorted(affected)
 
 
 
@@ -452,16 +604,20 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
     print(rel(Path(str(result["path"])), args))
 
 
-def cmd_write_task(args: argparse.Namespace) -> None:
+def _prepare_task_write(
+    args: argparse.Namespace, *, require_existing: bool = False
+) -> tuple[dict[str, object], dict[str, str], dict[str, object] | None]:
     if args.status != PLANNED_STATUS:
         raise SystemExit("Task status must be planned; execution states require Stage 5")
     semantic = _semantic_yaml(
         Path(args.content_file), TASK_STRUCTURAL_INPUT_FIELDS, "Task"
     )
     source_obligation_records(semantic, label="Task")
-    _require_draft_plan(args, str(args.plan_id))
+    plan = _require_draft_plan(args, str(args.plan_id))
     bindings = {"plan": args.plan_id, "phase": args.phase_id}
     existing = _active_artifact_or_none(args, "task", args.task_id, bindings)
+    if require_existing and existing is None:
+        raise SystemExit(f"Task amendment requires an existing active task: {args.task_id}")
     if existing is None and _identity_collision(args, "task", args.task_id, bindings=bindings):
         raise SystemExit(f"Task canonical identity collision: {args.task_id}")
     today = now_date()
@@ -487,11 +643,51 @@ def cmd_write_task(args: argparse.Namespace) -> None:
         raise SystemExit(
             f"Task parent phase is not canonical for plan {args.plan_id}: {args.phase_id}"
         ) from error
+    _validate_task_dependencies_before_write(args, data)
+    _validate_task_shared_authority_before_write(args, data, plan)
+    return data, bindings, existing
+
+
+def cmd_write_task(args: argparse.Namespace) -> None:
+    data, bindings, _existing = _prepare_task_write(args)
     result = write_artifact(
         CATALOG_PATH, "task", _plan_anchors(args), data, state="active",
         bindings=bindings,
     )
     print(rel(Path(str(result["path"])), args))
+
+
+def cmd_amend_task(args: argparse.Namespace) -> None:
+    """Validate, compile, and atomically amend one current task in place."""
+
+    data, bindings, _existing = _prepare_task_write(args, require_existing=True)
+    task_path = canonical_artifact_path(
+        _plan_policy("task"), _plan_anchors(args), identity=str(args.task_id),
+        state="active", bindings=bindings,
+    )
+    brief_path, brief = compile_task_candidate(
+        resolve_workspace_root(args), task_path, data
+    )
+    affected = _mechanically_affected_tasks(args, data)
+    result = write_artifact(
+        CATALOG_PATH, "task", _plan_anchors(args), data, state="active",
+        bindings=bindings,
+    )
+    try:
+        brief_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_bytes(
+            brief_path, ("\n".join(_dump_yaml(brief)) + "\n").encode("utf-8")
+        )
+    except OSError as error:
+        raise SystemExit(
+            f"Task amendment committed but focused brief refresh failed (partial effect): {error}"
+        ) from error
+    print(json.dumps({
+        "path": rel(Path(str(result["path"])), args),
+        "brief": rel(brief_path, args),
+        "mechanically_affected_tasks": affected,
+        "semantic_impact": "controller-assessment-required",
+    }, sort_keys=True))
 
 
 def cmd_finalize_reviewed_plan(args: argparse.Namespace) -> None:

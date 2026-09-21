@@ -15,13 +15,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATION = REPO_ROOT / "scripts" / "orchestration"
 sys.path.insert(0, str(ORCHESTRATION))
 
-from artifact_store import family_policy, load_catalog, read_artifact  # noqa: E402
+from artifact_store import family_policy, load_catalog, read_artifact, write_artifact  # noqa: E402
 import plans  # noqa: E402
 import specs  # noqa: E402
 import bounded_closure  # noqa: E402
 
 
-CATALOG = REPO_ROOT / "references/assets/orchestration/contract/artifact-family-catalog-v5.yaml"
+CATALOG = REPO_ROOT / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
 
 
 def _args(root: Path, **overrides: object) -> argparse.Namespace:
@@ -218,8 +218,8 @@ def _create_tree(workspace: Path, tmp_path: Path) -> tuple[Path, Path, Path]:
     )
 
 
-def test_catalog_v5_registers_distinct_canonical_yaml_planning_families() -> None:
-    assert load_catalog(CATALOG)["catalog_id"] == "artifact-family-catalog-v5"
+def test_catalog_v6_registers_distinct_canonical_yaml_planning_families() -> None:
+    assert load_catalog(CATALOG)["catalog_id"] == "artifact-family-catalog-v6"
     catalog = load_catalog(CATALOG)
     for family, suffix in (
         ("root-plan", ".plan.yaml"),
@@ -249,6 +249,110 @@ def test_write_read_and_index_canonical_plan_tree(workspace: Path, tmp_path: Pat
         state="active", bindings={"plan": "plan-stage4", "phase": "phase-stage4"},
     )["data"]
     assert task["source_ids"] == ["REQ-001A", "AC-001"]
+
+
+def test_task_repair_rejects_invalid_dependency_before_mutation(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
+    before = task_path.read_bytes()
+    repaired = _task_semantics()
+    repaired["depends_on"] = ["task-missing"]
+    content = _write_yaml(tmp_path / "invalid-task-repair.yaml", repaired)
+
+    with pytest.raises(SystemExit, match="dependency is not canonical"):
+        plans.cmd_write_task(
+            _args(
+                workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+                task_id="task-stage4", title="Stage 4 task", content_file=str(content),
+                status="planned",
+            )
+        )
+
+    assert task_path.read_bytes() == before
+
+
+def test_task_repair_ignores_unrelated_invalid_dependency_graph(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
+    unrelated = read_artifact(
+        CATALOG, "task", {"workspace_root": workspace}, identity="task-stage4",
+        state="active", bindings={"plan": "plan-stage4", "phase": "phase-stage4"},
+    )["data"]
+    unrelated.update(
+        id="task-unrelated", name="Unrelated task", order=2,
+        depends_on=["task-missing"], target_files=["scripts/unrelated.py"],
+    )
+    write_artifact(
+        CATALOG, "task", {"workspace_root": workspace}, unrelated, state="active",
+        bindings={"plan": "plan-stage4", "phase": "phase-stage4"},
+    )
+
+    repaired = _task_semantics()
+    repaired["completion_criteria"] = ["The bounded repair remains valid."]
+    content = _write_yaml(tmp_path / "bounded-task-repair.yaml", repaired)
+    plans.cmd_write_task(
+        _args(
+            workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+            task_id="task-stage4", title="Stage 4 task", content_file=str(content),
+            status="planned",
+        )
+    )
+
+    assert yaml.safe_load(task_path.read_text())["completion_criteria"] == [
+        "The bounded repair remains valid."
+    ]
+
+
+def test_amend_task_prevalidates_and_refreshes_only_its_compiled_brief(
+    workspace: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
+    capsys.readouterr()
+    repaired = _task_semantics()
+    repaired["completion_criteria"] = ["The focused amendment is compiled."]
+    content = _write_yaml(tmp_path / "amend-task.yaml", repaired)
+
+    plans.cmd_amend_task(
+        _args(
+            workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+            task_id="task-stage4", title="Stage 4 task", content_file=str(content),
+            status="planned",
+        )
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["mechanically_affected_tasks"] == ["task-stage4"]
+    assert output["semantic_impact"] == "controller-assessment-required"
+    assert yaml.safe_load(task_path.read_text())["completion_criteria"] == [
+        "The focused amendment is compiled."
+    ]
+    brief = workspace / output["brief"]
+    assert yaml.safe_load(brief.read_text())["task_brief"]["task_id"] == "task-stage4"
+
+
+def test_amend_task_rejects_dropped_allocation_before_mutation(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
+    before = task_path.read_bytes()
+    invalid = _task_semantics()
+    invalid["source_ids"] = ["AC-001"]
+    invalid["source_obligations"] = [invalid["source_obligations"][1]]
+    content = _write_yaml(tmp_path / "dropped-allocation.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="drops allocated source obligation"):
+        plans.cmd_amend_task(
+            _args(
+                workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+                task_id="task-stage4", title="Stage 4 task", content_file=str(content),
+                status="planned",
+            )
+        )
+
+    assert task_path.read_bytes() == before
+    assert not (workspace / ".work-bundle/runtime/execution/plan-stage4/task-stage4/task-brief.yaml").exists()
 
 
 def test_structural_override_and_unverified_source_fail_before_mutation(

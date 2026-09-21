@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "accepted-task-result-v2", "type": "object",
+  "required": ["artifact_type", "schema_version", "id", "plan_id", "task_id", "product_identity", "product_sha256", "executor_result", "implementation_review", "validation_outcomes", "unresolved_material_defects", "knowledge_disposition", "knowledge_action", "date_created", "last_updated"],
+  "properties": {
+    "artifact_type": {"const": "accepted-task-result"}, "schema_version": {"enum": [1, 2]}, "id": {"type": "string", "pattern": "^accepted-[a-z0-9][a-z0-9-]*$"},
+    "plan_id": {"type": "string", "pattern": "^plan-[a-z0-9][a-z0-9-]*$"}, "task_id": {"type": "string", "pattern": "^task-[a-z0-9][a-z0-9-]*$"},
+    "authority_identity": {"$ref": "#/$defs/reference"},
+    "product_identity": {"type": "object", "required": ["kind", "sha256"], "properties": {"kind": {"enum": ["commit", "worktree"]}, "sha256": {"$ref": "#/$defs/sha"}}, "additionalProperties": false}, "product_sha256": {"$ref": "#/$defs/sha"},
+    "executor_result": {"$ref": "#/$defs/reference"}, "implementation_review": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/reference"}]},
+    "validation_outcomes": {"type": "array", "items": {"$ref": "#/$defs/observation"}}, "unresolved_material_defects": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "knowledge_disposition": {"$ref": "#/$defs/knowledge"}, "knowledge_action": {"enum": ["none", "update", "supersede", "reclassify"]},
+    "date_created": {"type": "string", "format": "date"}, "last_updated": {"type": "string", "format": "date"}
+  },
+  "oneOf": [
+    {"properties": {"schema_version": {"const": 1}}, "not": {"required": ["authority_identity"]}},
+    {"properties": {"schema_version": {"const": 2}}, "required": ["authority_identity"]}
+  ],
+  "$defs": {"sha": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "reference": {"type": "object", "required": ["id", "sha256"], "properties": {"id": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha"}}, "additionalProperties": false}, "observation": {"type": "object", "required": ["id", "result", "summary"], "properties": {"id": {"type": "string", "minLength": 1}, "result": {"enum": ["passed", "failed", "blocked", "not-run"]}, "summary": {"type": "string", "minLength": 1}}, "additionalProperties": false}, "knowledge": {"type": "object", "required": ["action", "reason"], "properties": {"action": {"enum": ["none", "update", "supersede", "reclassify"]}, "reason": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
+  "additionalProperties": false
+}

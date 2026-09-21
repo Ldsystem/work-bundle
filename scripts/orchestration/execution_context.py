@@ -30,6 +30,7 @@ if _loaded_core is None or Path(str(getattr(_loaded_core, "__file__", ""))).reso
 from core import _member_roots, resolve_workspace_root
 from artifact_inputs import _read_structured, _as_list, _input_path, _resolve_spec_paths
 from artifact_store import (
+    atomic_write_bytes,
     canonical_artifact_path,
     family_policy,
     load_catalog,
@@ -50,7 +51,7 @@ SOURCE_ID_RE = re.compile(rf"^{SOURCE_ID_TOKEN}$")
 AUTH_ALIAS_RE = re.compile(r"^AUTH-\d{3}$")
 EXCELLENCE_PROPOSAL_RE = re.compile(r"^EXC-\d+$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-PLAN_CATALOG = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v5.yaml"
+PLAN_CATALOG = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
 SENSITIVE_KEY_RE = re.compile(
     r"(?:^|[_-])(credential_values?|password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)(?:$|[_-])",
     re.IGNORECASE,
@@ -1222,14 +1223,19 @@ def _compile_task_validation(task: dict[str, Any]) -> list[Any]:
     )
 
 
-def _task_context(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any], dict[str, str], list[Path]]:
-    root = resolve_workspace_root(args)
+def _task_context(
+    args: argparse.Namespace,
+    *,
+    task_override: dict[str, Any] | None = None,
+) -> tuple[Path, Path, dict[str, Any], dict[str, str], list[Path]]:
+    explicit_root = getattr(args, "_resolved_root", None)
+    root = Path(str(explicit_root)).resolve() if explicit_root else resolve_workspace_root(args)
     task_root = root / ".work-bundle/orchestration/plan"
     task_path = _input_path(args.task, root, task_root, "task")
-    task_data, _ = _read_structured(task_path)
-    task_id = _artifact_id(task_data, "id", task_path)
-    plan_id = _artifact_id(task_data, "plan_id", task_path)
-    phase_id = _artifact_id(task_data, "phase_id", task_path)
+    stored_task_data, _ = _read_structured(task_path)
+    task_id = _artifact_id(stored_task_data, "id", task_path)
+    plan_id = _artifact_id(stored_task_data, "plan_id", task_path)
+    phase_id = _artifact_id(stored_task_data, "phase_id", task_path)
     plan_path, plan_data = _find_plan(root, plan_id)
     state = plan_path.relative_to(task_root).parts[0]
     task_result = read_artifact(
@@ -1238,6 +1244,10 @@ def _task_context(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any],
     )
     if Path(str(task_result["path"])).resolve() != task_path.resolve():
         raise SystemExit(f"Task is not at its canonical location: {task_path}")
+    task_data = dict(task_override) if task_override is not None else stored_task_data
+    for field, expected in (("id", task_id), ("plan_id", plan_id), ("phase_id", phase_id)):
+        if str(task_data.get(field) or "") != expected:
+            raise SystemExit(f"Task candidate changes canonical {field}: {task_path}")
     read_artifact(
         PLAN_CATALOG, "phase", {"workspace_root": root}, identity=phase_id,
         state=state, bindings={"plan": plan_id},
@@ -1627,8 +1637,14 @@ def static_plan_task_admission(
     return compiled
 
 
-def _compile_task_brief(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
-    root, task_path, task, records, source_paths = _task_context(args)
+def _compile_task_brief(
+    args: argparse.Namespace,
+    *,
+    task_override: dict[str, Any] | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    root, task_path, task, records, source_paths = _task_context(
+        args, task_override=task_override
+    )
     task_id = _artifact_id(task, "id", task_path)
     plan_id = _artifact_id(task, "plan_id", task_path)
     source_ids = [str(item) for item in _as_list(task.get("source_ids"))]
@@ -1760,8 +1776,20 @@ def build_task_brief(args: argparse.Namespace) -> Path:
     target, brief = _compile_task_brief(args)
     _maybe_bind_execution_from_args(args, brief["task_brief"])
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n".join(_dump_yaml(brief)) + "\n", encoding="utf-8")
+    atomic_write_bytes(target, ("\n".join(_dump_yaml(brief)) + "\n").encode("utf-8"))
     return target
+
+
+def compile_task_candidate(
+    root: Path, task_path: Path, candidate: dict[str, Any]
+) -> tuple[Path, dict[str, Any]]:
+    """Compile a task amendment without mutating canonical or runtime state."""
+
+    args = argparse.Namespace(
+        project_root=str(root), workspace_root=str(root), task=str(task_path),
+        handoff=None, base=None, head=None, _resolved_root=str(root),
+    )
+    return _compile_task_brief(args, task_override=candidate)
 
 
 

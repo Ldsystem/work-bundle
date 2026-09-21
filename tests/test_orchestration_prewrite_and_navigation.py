@@ -217,7 +217,7 @@ def test_initialization_manifest_provisions_current_stores_only() -> None:
 
 def test_doctor_uses_the_same_current_catalog_as_runtime_writers() -> None:
     assert doctor.CATALOG.resolve() == plans.CATALOG_PATH.resolve()
-    assert doctor.CATALOG.name == "artifact-family-catalog-v5.yaml"
+    assert doctor.CATALOG.name == "artifact-family-catalog-v6.yaml"
 
 
 def test_legacy_knowledge_migration_and_handoff_constants_are_not_public() -> None:

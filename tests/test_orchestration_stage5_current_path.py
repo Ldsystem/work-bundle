@@ -21,10 +21,11 @@ import artifact_store  # noqa: E402
 import execution_context  # noqa: E402
 import handoffs  # noqa: E402
 import plans  # noqa: E402
+import review_identity  # noqa: E402
 import review_runtime  # noqa: E402
 
 
-CATALOG = REPO_ROOT / "references/assets/orchestration/contract/artifact-family-catalog-v5.yaml"
+CATALOG = REPO_ROOT / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
 
 
 def _args(root: Path, **overrides: object) -> argparse.Namespace:
@@ -104,13 +105,13 @@ def _candidate(root: Path, *, kind: str = "worktree") -> dict[str, object]:
 def _review_semantics(
     candidate: dict[str, object],
     *,
-    plan_identity: dict[str, str] | None = None,
+    authority_identity: dict[str, str] | None = None,
     verdict: str = "accept",
 ) -> dict[str, object]:
     return {
         "scope": "task",
         "specification_id": "spec-stage5",
-        "plan_identity": plan_identity or {"id": "plan-stage5", "sha256": "1" * 64},
+        "authority_identity": authority_identity or {"id": "task-stage5", "sha256": "1" * 64},
         "target": candidate,
         "implementor_agent_id": "worker-1",
         "reviewer": {"agent_id": "reviewer-1"},
@@ -130,13 +131,41 @@ def _write_stage5_plan_tree(
 ) -> dict[str, str]:
     anchors = {"workspace_root": workspace}
     today = "2026-09-20"
+    specification = {
+        "artifact_type": "specification", "schema_version": 1, "id": "spec-stage5",
+        "title": "Stage 5", "project": "test", "status": "verified",
+        "date_created": today, "last_updated": today,
+        "purpose": "Verify finalization", "component": "orchestration", "version": "1",
+        "source_knowledge": [], "related_handoffs": [], "tags": ["orchestration"],
+        "execution_workspace": {"isolation": "existing", "profile": "test", "cleanup": "manual"},
+    }
+    write_artifact(
+        CATALOG, "specification", anchors, specification, state="active",
+        body=(
+            "# Stage 5\n\n"
+            "- **DEC-001:** Use the direct implementation-review authority model globally.\n"
+            "- **DEC-090:** Use an unrelated optional policy.\n"
+            "- **REQ-009:** Complete Stage 5 finalization.\n"
+            "- **REQ-010:** Implement peer behavior.\n"
+        ),
+    )
     plan = {
         "artifact_type": "root-plan", "schema_version": 1, "id": "plan-stage5",
         "goal": "Finish Stage 5", "purpose": "Verify finalization", "component": "orchestration",
         "version": "1", "source_spec_id": "spec-stage5", "status": "verified",
         "date_created": today, "last_updated": today,
         "source_coverage": [{"source_id": "REQ-009", "obligation_kind": "requirement", "task_ids": ["task-stage5"]}],
-        "authority": {"spec": "spec-stage5"}, "strategy": {"method": "direct"},
+        "authority": {
+            "spec": "spec-stage5", "decision_ids": ["DEC-001"],
+            "aliases": {
+                "DEC-001": "Use the direct implementation-review authority model globally.",
+                "DEC-090": "Use an unrelated optional policy.",
+            },
+        },
+        "strategy": {
+            "method": "direct",
+            "production_owners": {"primary": "task-stage5"},
+        },
         "phase_index": [{"id": "phase-stage5", "order": 1}], "dependency_graph": {},
         "risks": [], "validation_strategy": [{"id": "VAL-001", "kind": "process"}],
         "completion_criteria": ["Archived mechanically"], "knowledge_base_update": {"action": "none"},
@@ -180,9 +209,67 @@ def _write_stage5_plan_tree(
     return review_runtime.plan_review_identity(workspace, plan_path)
 
 
-def test_catalog_v5_registers_exact_stage5_families_and_policies() -> None:
+def _task_authority(workspace: Path, task_id: str = "task-stage5") -> dict[str, str]:
+    return review_identity.canonical_task_authority_identity(
+        workspace, "plan-stage5", task_id
+    )
+
+
+def _write_peer_task(workspace: Path, *, symbol: str = "peer") -> None:
+    anchors = {"workspace_root": workspace}
+    phase_record = read_artifact(
+        CATALOG, "phase", anchors, identity="phase-stage5", state="active",
+        bindings={"plan": "plan-stage5"},
+    )
+    phase = dict(phase_record["data"])
+    if not any(item.get("id") == "task-peer" for item in phase["task_index"]):
+        phase["task_index"].append({"id": "task-peer", "order": 2})
+        write_artifact(
+            CATALOG, "phase", anchors, phase, state="active",
+            bindings={"plan": "plan-stage5"},
+        )
+
+    primary = read_artifact(
+        CATALOG, "task", anchors, identity="task-stage5", state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )["data"]
+    peer = json.loads(json.dumps(primary))
+    peer.update(
+        {
+            "id": "task-peer",
+            "name": "Peer",
+            "order": 2,
+            "source_ids": ["REQ-010"],
+            "source_obligations": [
+                {"source_id": "REQ-010", "semantic": "Implement peer behavior."}
+            ],
+            "depends_on": [],
+            "target_files": ["src/peer.py"],
+            "target_symbols": [symbol],
+        }
+    )
+    write_artifact(
+        CATALOG, "task", anchors, peer, state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )
+
+
+def _set_primary_dependencies(workspace: Path, dependencies: list[str]) -> None:
+    anchors = {"workspace_root": workspace}
+    task = dict(read_artifact(
+        CATALOG, "task", anchors, identity="task-stage5", state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )["data"])
+    task["depends_on"] = dependencies
+    write_artifact(
+        CATALOG, "task", anchors, task, state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )
+
+
+def test_catalog_v6_registers_exact_stage5_families_and_policies() -> None:
     catalog = load_catalog(CATALOG)
-    assert catalog["catalog_id"] == "artifact-family-catalog-v5"
+    assert catalog["catalog_id"] == "artifact-family-catalog-v6"
     for family in (
         "executor-result",
         "implementation-review",
@@ -201,8 +288,12 @@ def test_catalog_v5_registers_exact_stage5_families_and_policies() -> None:
     )
     assert executor["lifecycle"]["transitions"]["active"] == ["reviewed", "superseded", "archived"]
     assert family_policy(catalog, "implementation-review")["schema"] == {
-        "id": "implementation-review-v2",
-        "path": "implementation-review-v2.schema.json",
+        "id": "implementation-review-v3",
+        "path": "implementation-review-v3.schema.json",
+    }
+    assert family_policy(catalog, "accepted-task-result")["schema"] == {
+        "id": "accepted-task-result-v2",
+        "path": "accepted-task-result-v2.schema.json",
     }
 
 
@@ -313,7 +404,7 @@ def test_review_accepted_result_and_final_review_form_compact_current_chain(
     candidate = _candidate(workspace)
     review_input = _write_yaml(
         tmp_path, "review.yaml",
-        _review_semantics(candidate, plan_identity=plan_identity, verdict="repair"),
+        _review_semantics(candidate, authority_identity=_task_authority(workspace), verdict="repair"),
     )
     review_runtime.cmd_write_implementation_review(
         _args(
@@ -351,6 +442,9 @@ def test_review_accepted_result_and_final_review_form_compact_current_chain(
     )
     accepted_path = next(workspace.rglob("*.accepted-task-result.yaml"))
     accepted_digest = hashlib.sha256(accepted_path.read_bytes()).hexdigest()
+    accepted_stored = yaml.safe_load(accepted_path.read_text(encoding="utf-8"))
+    assert accepted_stored["schema_version"] == 2
+    assert accepted_stored["authority_identity"] == _task_authority(workspace)
 
     final_input = _write_yaml(
         tmp_path,
@@ -453,7 +547,7 @@ def test_review_verdict_remains_agent_authored_and_supporting_state_is_not_requi
     review_input = _write_yaml(
         tmp_path, "review.yaml",
         _review_semantics(
-            _candidate(workspace), plan_identity=plan_identity, verdict="repair"
+            _candidate(workspace), authority_identity=_task_authority(workspace), verdict="repair"
         ),
     )
     review_runtime.cmd_write_implementation_review(
@@ -478,7 +572,7 @@ def test_implementation_review_updates_same_active_identity_after_full_rereview(
     candidate = _candidate(workspace)
     repair_input = _write_yaml(
         tmp_path, "repair-review.yaml",
-        _review_semantics(candidate, plan_identity=plan_identity, verdict="repair"),
+        _review_semantics(candidate, authority_identity=_task_authority(workspace), verdict="repair"),
     )
     args = _args(
         workspace,
@@ -493,7 +587,7 @@ def test_implementation_review_updates_same_active_identity_after_full_rereview(
     created = yaml.safe_load(path.read_text(encoding="utf-8"))["date_created"]
     before = path.read_bytes()
 
-    integrated = _review_semantics(candidate, plan_identity=plan_identity, verdict="accept")
+    integrated = _review_semantics(candidate, authority_identity=plan_identity, verdict="accept")
     integrated["scope"] = "integrated"
     integrated_input = _write_yaml(tmp_path, "integrated-review.yaml", integrated)
     with pytest.raises(SystemExit, match="scope or task binding"):
@@ -521,7 +615,7 @@ def test_implementation_review_updates_same_active_identity_after_full_rereview(
         )
     assert not list(workspace.rglob("review-integrated-invalid.implementation-review.yaml"))
 
-    accepted = _review_semantics(candidate, plan_identity=plan_identity, verdict="accept")
+    accepted = _review_semantics(candidate, authority_identity=_task_authority(workspace), verdict="accept")
     accepted["reviewed_obligations"][0]["summary"] = (
         "The complete repaired candidate satisfies the obligation."
     )
@@ -543,7 +637,7 @@ def test_implementation_review_updates_same_active_identity_after_full_rereview(
     assert len(list(workspace.rglob("review-current.implementation-review.yaml"))) == 1
 
 
-def test_review_writer_rejects_stale_plan_tree_identity_before_mutation(
+def test_review_writer_rejects_stale_task_authority_identity_before_mutation(
     workspace: Path, tmp_path: Path,
 ) -> None:
     _write_finalization_case(workspace)
@@ -553,7 +647,7 @@ def test_review_writer_rejects_stale_plan_tree_identity_before_mutation(
         _review_semantics(_candidate(workspace)),
     )
 
-    with pytest.raises(SystemExit, match="plan.*identity.*stale"):
+    with pytest.raises(SystemExit, match="authority.*identity.*stale"):
         review_runtime.cmd_write_implementation_review(
             _args(
                 workspace,
@@ -566,6 +660,265 @@ def test_review_writer_rejects_stale_plan_tree_identity_before_mutation(
         )
 
     assert not list(workspace.rglob("review-stale-plan.implementation-review.yaml"))
+
+
+def test_task_review_authority_ignores_unrelated_task_content(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace, symbol="before")
+    authority = _task_authority(workspace)
+
+    _write_peer_task(workspace, symbol="after")
+
+    content = _write_yaml(
+        tmp_path,
+        "unrelated-repair-review.yaml",
+        _review_semantics(_candidate(workspace), authority_identity=authority),
+    )
+    review_runtime.cmd_write_implementation_review(
+        _args(
+            workspace,
+            id="review-unrelated-repair",
+            plan_id="plan-stage5",
+            task_id="task-stage5",
+            source_root=str(workspace),
+            content_file=str(content),
+        )
+    )
+    assert next(workspace.rglob("review-unrelated-repair.implementation-review.yaml"))
+
+
+def test_task_review_authority_includes_dependency_closure(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace, symbol="before")
+    _set_primary_dependencies(workspace, ["task-peer"])
+    authority = _task_authority(workspace)
+
+    _write_peer_task(workspace, symbol="after")
+
+    content = _write_yaml(
+        tmp_path,
+        "stale-dependency-review.yaml",
+        _review_semantics(_candidate(workspace), authority_identity=authority),
+    )
+    with pytest.raises(SystemExit, match="authority.*identity.*stale"):
+        review_runtime.cmd_write_implementation_review(
+            _args(
+                workspace,
+                id="review-stale-dependency",
+                plan_id="plan-stage5",
+                task_id="task-stage5",
+                source_root=str(workspace),
+                content_file=str(content),
+            )
+        )
+    assert not list(workspace.rglob("review-stale-dependency.implementation-review.yaml"))
+
+
+def test_task_review_authority_includes_dependency_specification_sources(
+    workspace: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    _set_primary_dependencies(workspace, ["task-peer"])
+    authority = _task_authority(workspace)
+    record = read_artifact(
+        CATALOG, "specification", {"workspace_root": workspace},
+        identity="spec-stage5", state="active",
+    )
+    body = str(record["body"]).replace(
+        "Implement peer behavior.", "Implement corrected peer behavior."
+    )
+    write_artifact(
+        CATALOG, "specification", {"workspace_root": workspace},
+        record["data"], state="active", body=body,
+    )
+
+    assert _task_authority(workspace) != authority
+
+
+def test_task_review_authority_ignores_unreferenced_specification_content(
+    workspace: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    authority = _task_authority(workspace)
+    record = read_artifact(
+        CATALOG, "specification", {"workspace_root": workspace},
+        identity="spec-stage5", state="active",
+    )
+    write_artifact(
+        CATALOG, "specification", {"workspace_root": workspace},
+        record["data"], state="active",
+        body=str(record["body"]) + "\n- **REQ-090:** Clarify unrelated behavior.\n",
+    )
+
+    assert _task_authority(workspace) == authority
+
+
+def test_task_review_authority_includes_referenced_specification_content(
+    workspace: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    authority = _task_authority(workspace)
+    record = read_artifact(
+        CATALOG, "specification", {"workspace_root": workspace},
+        identity="spec-stage5", state="active",
+    )
+    body = str(record["body"]).replace(
+        "Complete Stage 5 finalization.",
+        "Complete Stage 5 finalization with corrected semantics.",
+    )
+    write_artifact(
+        CATALOG, "specification", {"workspace_root": workspace},
+        record["data"], state="active", body=body,
+    )
+
+    assert _task_authority(workspace) != authority
+
+
+def test_task_review_authority_includes_global_specification_decision(
+    workspace: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    authority = _task_authority(workspace)
+    record = read_artifact(
+        CATALOG, "specification", {"workspace_root": workspace},
+        identity="spec-stage5", state="active",
+    )
+    body = str(record["body"]).replace(
+        "Use the direct implementation-review authority model globally.",
+        "Use the corrected implementation-review authority model globally.",
+    )
+    write_artifact(
+        CATALOG, "specification", {"workspace_root": workspace},
+        record["data"], state="active", body=body,
+    )
+
+    assert _task_authority(workspace) != authority
+
+
+def test_task_review_authority_ignores_unrelated_phase_membership(
+    workspace: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    authority = _task_authority(workspace)
+
+    _write_peer_task(workspace)
+
+    assert _task_authority(workspace) == authority
+
+
+def test_task_review_authority_ignores_unrelated_root_allocations(
+    workspace: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    authority = _task_authority(workspace)
+    anchors = {"workspace_root": workspace}
+    plan = dict(read_artifact(
+        CATALOG, "root-plan", anchors, identity="plan-stage5", state="active",
+        bindings={"source_spec": "spec-stage5"},
+    )["data"])
+    plan["authority"]["aliases"]["DEC-090"] = "Changed unrelated optional policy."
+    plan["strategy"]["production_owners"]["peer"] = "task-peer"
+    plan["dependency_graph"]["task-peer"] = ["task-stage5"]
+    plan["source_coverage"].append({
+        "source_id": "REQ-010", "obligation_kind": "requirement",
+        "task_ids": ["task-peer"],
+    })
+    write_artifact(
+        CATALOG, "root-plan", anchors, plan, state="active",
+        bindings={"source_spec": "spec-stage5"},
+    )
+
+    assert _task_authority(workspace) == authority
+
+
+def test_task_review_authority_includes_shared_ownership_records(
+    workspace: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    authority = _task_authority(workspace)
+    peer = dict(read_artifact(
+        CATALOG, "task", {"workspace_root": workspace}, identity="task-peer",
+        state="active", bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )["data"])
+    peer["target_files"] = ["src/current.py"]
+    write_artifact(
+        CATALOG, "task", {"workspace_root": workspace}, peer, state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )
+
+    assert _task_authority(workspace) != authority
+
+
+def test_task_review_authority_includes_shared_interface_specification_sources(
+    workspace: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    anchors = {"workspace_root": workspace}
+    primary = dict(read_artifact(
+        CATALOG, "task", anchors, identity="task-stage5", state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )["data"])
+    peer = dict(read_artifact(
+        CATALOG, "task", anchors, identity="task-peer", state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )["data"])
+    primary["interfaces"] = {"produces": ["shared-api"]}
+    peer["interfaces"] = {"consumes": ["shared-api"]}
+    write_artifact(
+        CATALOG, "task", anchors, primary, state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )
+    write_artifact(
+        CATALOG, "task", anchors, peer, state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )
+    authority = _task_authority(workspace)
+    specification = read_artifact(
+        CATALOG, "specification", anchors, identity="spec-stage5", state="active",
+    )
+    body = str(specification["body"]).replace(
+        "Implement peer behavior.", "Implement corrected peer behavior."
+    )
+    write_artifact(
+        CATALOG, "specification", anchors, specification["data"],
+        state="active", body=body,
+    )
+
+    assert _task_authority(workspace) != authority
+
+
+def test_task_review_authority_includes_accepted_dependency_result(
+    workspace: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    _set_primary_dependencies(workspace, ["task-peer"])
+    authority = _task_authority(workspace)
+    accepted = {
+        "artifact_type": "accepted-task-result", "schema_version": 1,
+        "id": "accepted-peer", "plan_id": "plan-stage5", "task_id": "task-peer",
+        "product_identity": {"kind": "worktree", "sha256": "1" * 64},
+        "product_sha256": "1" * 64,
+        "executor_result": {"id": "result-peer", "sha256": "2" * 64},
+        "implementation_review": None, "validation_outcomes": [],
+        "unresolved_material_defects": [],
+        "knowledge_disposition": {"action": "none", "reason": "No durable update."},
+        "knowledge_action": "none", "date_created": "2026-09-20", "last_updated": "2026-09-20",
+    }
+    write_artifact(
+        CATALOG, "accepted-task-result", {"workspace_root": workspace}, accepted,
+        state="active", bindings={"plan": "plan-stage5", "task": "task-peer"},
+    )
+
+    assert _task_authority(workspace) != authority
 
 
 def test_accepted_result_enforces_canonical_task_review_requirement_before_write(
@@ -628,6 +981,91 @@ def test_final_review_writer_rejects_stale_plan_tree_identity_before_write(
     assert not list(workspace.rglob("final-stale-plan.final-workflow-review.yaml"))
 
 
+def test_final_review_rejects_stale_v2_accepted_task_authority(
+    workspace: Path,
+) -> None:
+    _write_finalization_case(
+        workspace, review_required=False, review_reference="none"
+    )
+    anchors = {"workspace_root": workspace}
+    accepted_record = read_artifact(
+        CATALOG, "accepted-task-result", anchors, identity="accepted-stage5",
+        state="active", bindings={"plan": "plan-stage5", "task": "task-stage5"},
+    )
+    accepted = dict(accepted_record["data"])
+    accepted["schema_version"] = 2
+    accepted["authority_identity"] = _task_authority(workspace)
+    accepted_written = write_artifact(
+        CATALOG, "accepted-task-result", anchors, accepted, state="active",
+        bindings={"plan": "plan-stage5", "task": "task-stage5"},
+    )
+
+    task = dict(read_artifact(
+        CATALOG, "task", anchors, identity="task-stage5", state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )["data"])
+    task["steps"] = [*task["steps"], "changed after acceptance"]
+    write_artifact(
+        CATALOG, "task", anchors, task, state="active",
+        bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
+    )
+    final = dict(read_artifact(
+        CATALOG, "final-workflow-review", anchors, identity="final-stage5",
+        state="active", bindings={"plan": "plan-stage5"},
+    )["data"])
+    final["plan_identity"] = review_identity.canonical_plan_tree_identity(
+        workspace, "plan-stage5"
+    )
+    final["accepted_results"] = [{
+        "id": "accepted-stage5", "task_id": "task-stage5",
+        "sha256": accepted_written["digest"],
+    }]
+
+    with pytest.raises(SystemExit, match="Accepted task result authority is stale"):
+        review_runtime.validate_final_workflow_chain(
+            _args(workspace, plan_id="plan-stage5"), final
+        )
+
+
+def test_final_review_preserves_v2_acceptance_after_unrelated_specification_change(
+    workspace: Path,
+) -> None:
+    _write_finalization_case(
+        workspace, review_required=False, review_reference="none"
+    )
+    anchors = {"workspace_root": workspace}
+    accepted_record = read_artifact(
+        CATALOG, "accepted-task-result", anchors, identity="accepted-stage5",
+        state="active", bindings={"plan": "plan-stage5", "task": "task-stage5"},
+    )
+    accepted = dict(accepted_record["data"])
+    accepted["schema_version"] = 2
+    accepted["authority_identity"] = _task_authority(workspace)
+    accepted_written = write_artifact(
+        CATALOG, "accepted-task-result", anchors, accepted, state="active",
+        bindings={"plan": "plan-stage5", "task": "task-stage5"},
+    )
+    specification = read_artifact(
+        CATALOG, "specification", anchors, identity="spec-stage5", state="active",
+    )
+    write_artifact(
+        CATALOG, "specification", anchors, specification["data"], state="active",
+        body=str(specification["body"]) + "\n- **REQ-090:** Unrelated behavior.\n",
+    )
+    final = dict(read_artifact(
+        CATALOG, "final-workflow-review", anchors, identity="final-stage5",
+        state="active", bindings={"plan": "plan-stage5"},
+    )["data"])
+    final["accepted_results"] = [{
+        "id": "accepted-stage5", "task_id": "task-stage5",
+        "sha256": accepted_written["digest"],
+    }]
+
+    review_runtime.validate_final_workflow_chain(
+        _args(workspace, plan_id="plan-stage5"), final
+    )
+
+
 def _write_finalization_case(
     workspace: Path,
     *,
@@ -644,7 +1082,7 @@ def _write_finalization_case(
     review_written = None
     if review_reference == "valid":
         review = {
-            **_review_semantics(candidate, plan_identity=plan_identity), "artifact_type": "implementation-review", "schema_version": 2,
+            **_review_semantics(candidate, authority_identity=_task_authority(workspace)), "artifact_type": "implementation-review", "schema_version": 3,
             "id": "review-stage5", "plan_id": "plan-stage5", "task_id": "task-stage5",
             "target_sha256": candidate["sha256"], "date_created": today, "last_updated": today,
         }
@@ -964,7 +1402,7 @@ def test_worktree_candidate_admits_deleted_base_path_with_explicit_state(
     assert checked["target"] == candidate
 
 
-def test_implementation_review_v2_schema_accepts_only_explicit_deletion_state(
+def test_implementation_review_v3_schema_accepts_only_explicit_deletion_state(
     workspace: Path,
 ) -> None:
     base = subprocess.run(
@@ -983,7 +1421,7 @@ def test_implementation_review_v2_schema_accepts_only_explicit_deletion_state(
     review = {
         **_review_semantics(candidate),
         "artifact_type": "implementation-review",
-        "schema_version": 2,
+        "schema_version": 3,
         "id": "review-deletion",
         "plan_id": "plan-stage5",
         "task_id": "task-stage5",
@@ -1000,7 +1438,7 @@ def test_implementation_review_v2_schema_accepts_only_explicit_deletion_state(
         state="active",
         bindings={"plan": "plan-stage5", "task": "task-stage5"},
     )
-    assert written["schema"] == "implementation-review-v2"
+    assert written["schema"] == "implementation-review-v3"
 
     malformed = json.loads(json.dumps(review))
     malformed["id"] = "review-ambiguous-deletion"
@@ -1014,6 +1452,44 @@ def test_implementation_review_v2_schema_accepts_only_explicit_deletion_state(
             state="active",
             bindings={"plan": "plan-stage5", "task": "task-stage5"},
         )
+
+
+def test_current_catalog_reads_active_v2_review_without_rewriting_it(
+    workspace: Path,
+) -> None:
+    candidate = _candidate(workspace)
+    review = {
+        **_review_semantics(candidate),
+        "artifact_type": "implementation-review",
+        "schema_version": 2,
+        "id": "review-active-v2",
+        "plan_id": "plan-stage5",
+        "task_id": "task-stage5",
+        "plan_identity": {"id": "plan-stage5", "sha256": "2" * 64},
+        "target_sha256": candidate["sha256"],
+        "date_created": "2026-09-20",
+        "last_updated": "2026-09-20",
+    }
+    review.pop("authority_identity")
+
+    write_artifact(
+        CATALOG,
+        "implementation-review",
+        {"workspace_root": workspace},
+        review,
+        state="active",
+        bindings={"plan": "plan-stage5", "task": "task-stage5"},
+    )
+    stored = read_artifact(
+        CATALOG,
+        "implementation-review",
+        {"workspace_root": workspace},
+        identity="review-active-v2",
+        state="active",
+        bindings={"plan": "plan-stage5", "task": "task-stage5"},
+    )
+    assert stored["data"]["schema_version"] == 2
+    assert "authority_identity" not in stored["data"]
 
 
 def test_worktree_candidate_rejects_path_absent_from_worktree_and_base(
@@ -1189,7 +1665,7 @@ def test_commit_candidate_uses_commit_bytes_and_review_recomputes_manifest(
     assert commit_candidate["sha256"] != worktree_candidate["sha256"]
 
     plan_identity = _write_stage5_plan_tree(workspace)
-    tampered = _review_semantics(worktree_candidate, plan_identity=plan_identity)
+    tampered = _review_semantics(worktree_candidate, authority_identity=_task_authority(workspace))
     tampered["target"]["manifest"][0]["sha256"] = "0" * 64
     review_input = _write_yaml(tmp_path, "tampered-review.yaml", tampered)
     with pytest.raises(SystemExit, match="DIGEST_MISMATCH"):
@@ -1207,7 +1683,7 @@ def test_review_writer_derives_independence_from_concrete_identities(
     workspace: Path, tmp_path: Path,
 ) -> None:
     plan_identity = _write_stage5_plan_tree(workspace)
-    semantics = _review_semantics(_candidate(workspace), plan_identity=plan_identity)
+    semantics = _review_semantics(_candidate(workspace), authority_identity=_task_authority(workspace))
     semantics["reviewer"] = {"agent_id": "worker-1"}
     content = _write_yaml(tmp_path, "self-review.yaml", semantics)
     with pytest.raises(SystemExit, match="NOT_INDEPENDENT"):

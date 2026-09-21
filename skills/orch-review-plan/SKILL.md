@@ -9,13 +9,13 @@ Use direct product review for implementation correctness and one compact final w
 
 ## Implementation review
 
-The reviewer must be distinct from the implementor. Compare the exact frozen commit or worktree candidate directly with the verified specification and canonical plan. Inspect every planned feature, acceptance obligation, edge/failure behavior, and claim-relevant focused observation. After a repair, repeat this complete product comparison against the current candidate; prior findings may guide inspection but cannot narrow it to the delta or carry forward acceptance. Passing tests cannot hide omitted behavior.
+The reviewer must be distinct from the implementor. For a task review, compare the exact frozen commit or worktree candidate with the complete current task authority closure: its named specification requirements/decisions, applicable root/phase authority, complete task and dependencies, accepted dependency results, connected ownership/interfaces, edge/failure behavior, and claim-relevant focused observations. For an integrated review, compare the exact candidate with every planned feature and acceptance obligation in the complete plan tree. After a repair, repeat the applicable complete closure or integrated comparison against the current candidate; prior findings may guide inspection but cannot narrow review to the textual delta or carry forward acceptance. Passing tests cannot hide omitted behavior.
 
-Issue an advisory `accept`, `repair`, or `blocked` assessment from product correctness. Missing or defective indexes, historical handoffs, knowledge state, or controller ceremony are separate supporting-state defects unless they make the actual product ambiguous, unsafe, inaccessible, or impossible to review. Store the advice and findings in the current canonical `implementation-review-v2`; its schema field remains named `verdict`, but it is the reviewer's recommendation, not orchestration authority. Re-review after repair updates the same active review identity; it does not preserve intermediate verdict copies.
+Issue an advisory `accept`, `repair`, or `blocked` assessment from product correctness. Missing or defective indexes, historical handoffs, knowledge state, or controller ceremony are separate supporting-state defects unless they make the actual product ambiguous, unsafe, inaccessible, or impossible to review. Store the advice and findings in the current canonical `implementation-review-v3`; its `authority_identity` binds a task review to the complete task authority closure and an integrated review to the complete plan tree. Its schema field remains named `verdict`, but it is the reviewer's recommendation, not orchestration authority. Re-review after repair updates the same active review identity; it does not preserve intermediate verdict copies.
 
 ## Accepted continuation
 
-The controller/orchestrator assesses the exact review advice and findings against user purpose, accepted specification/plan authority, the product, and current observations. It then owns acceptance, repair routing, blocking, and continuation. When it accepts, it creates one `accepted-task-result-v1` that references the exact executor result and implementation review advice when required, plus current validation outcomes, product identity, material defects, and knowledge disposition. Repair the active record at the same identity. Consumers reuse this compact controller decision; they do not reconstruct review history.
+The controller/orchestrator assesses the exact review advice and findings against user purpose, accepted specification/plan authority, the product, and current observations. It then owns acceptance, repair routing, blocking, and continuation. When it accepts, it creates one `accepted-task-result-v2` that references the exact executor result and implementation review advice when required, plus the current task-authority identity, validation outcomes, product identity, material defects, and knowledge disposition. Repair the active record at the same identity. Consumers reuse this compact controller decision; they do not reconstruct review history.
 
 ## Final workflow review
 
@@ -23,8 +23,9 @@ A distinct final auditor advises on plan/task coverage, controller-accepted impl
 
 ## Self-check
 
-- [ ] The implementation verdict covers every specification and plan obligation against the exact candidate.
+- [ ] A task implementation verdict covers every obligation in its complete current authority closure, while an integrated verdict covers every specification and plan obligation against the exact candidate.
 - [ ] A repaired candidate received a complete current-candidate review rather than delta-only inspection or inherited acceptance.
+- [ ] A task review is fresh for its source-addressed authority closure; unrelated specification prose, source records, plan allocation, and phase membership did not manufacture staleness, while referenced requirements/decisions, applicable root/phase policy, task/dependency authority, accepted dependency results, or connected ownership/interfaces did.
 - [ ] Active executor, review, accepted-result, and final-review repairs retained their canonical identities instead of creating revision copies.
 - [ ] The reviewer is distinct, findings identify the affected requirement and product boundary, and the controller/orchestrator explicitly assessed the advice rather than obeying it automatically.
 - [ ] Supporting-state defects were routed separately and did not veto otherwise correct reviewable work.

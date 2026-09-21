@@ -40,7 +40,8 @@ Keep orchestration artifacts human-readable, contract-compliant, and executable 
 - Require leading spec-repair tasks when a phase or task lacks stable IDs, exact paths, validation details, or file-level execution context.
 - Let the shared store rebuild the distinct per-family indexes when registered artifacts change; derived indexes are projections and do not replace canonical artifacts.
 - Update an active orchestration artifact at its existing canonical identity when repairing its content. Allocate a new identity only for a genuinely distinct semantic artifact, not for an intermediate review revision. Transitioned historical records remain immutable.
-- After plan repair, require the distinct reviewer to assess the complete current canonical tree against all accepted specification obligations and bounded source evidence. The controller/orchestrator evaluates that advice and owns qualification; earlier opinions and delta-only checks are supporting context, not semantic qualification of the current tree.
+- Use the focused `amend-task` operation for a bounded task repair so deterministic structure, binding, dependency, allocation, ownership, and candidate compilation are checked before mutation; treat its affected-task report as evidence for controller impact judgment, not as qualification authority.
+- For initial plan qualification and any global root-plan repair, require the distinct reviewer to assess the complete current canonical tree. For a bounded phase or task repair, preserve unaffected qualified authority and require review of the complete affected authority closure: the repaired artifact, its applicable root/phase authority, dependency closure, affected interfaces, and exact specification requirements/decisions named by that closure's source IDs. Unrelated specification prose, source records, plan allocation, or phase membership do not invalidate unaffected authority. The controller/orchestrator decides the semantic impact boundary, evaluates the advice, and owns qualification. A textual-delta-only check does not qualify a repaired artifact.
 - Keep controller/orchestrator authority explicit when an artifact records review or continuation: review remains advisory, accurate findings are assessed and routed by the controller/orchestrator, and a suggestion cannot silently expand scope or authorize delivery.
 
 Contract loading by artifact type:
@@ -80,7 +81,7 @@ Contract loading by artifact type:
 - Confirm artifact sections satisfy the loaded contract or explicitly add missing required sections named by the directive.
 - Confirm registered families use the shared structural owner, unregistered families have not gained placeholder authority, and any search is both declared and followed by canonical structural validation.
 - Confirm plan semantic qualification came from the controller/orchestrator's assessment of distinct-agent advice on specification coverage, ownership, dependencies, validation, authority, scope, and executability; neither the reviewer recommendation nor structural checks and supporting ceremony issued the qualification automatically.
-- Confirm repaired artifacts retained their canonical identities, the complete current plan tree—not merely its delta—received independent review, and the controller/orchestrator assessed that advice before qualification.
+- Confirm repaired artifacts retained their canonical identities, the complete affected authority closure—not merely its textual delta—received independent review, unaffected qualified regions were preserved, and the controller/orchestrator assessed that advice before qualification.
 
 ## On Violation
 

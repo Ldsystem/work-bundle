@@ -66,8 +66,8 @@ def test_review_skill_separates_product_review_from_compact_final_audit() -> Non
     for token in (
         "exact frozen commit or worktree candidate",
         "Passing tests cannot hide omitted behavior",
-        "implementation-review-v2",
-        "accepted-task-result-v1",
+        "implementation-review-v3",
+        "accepted-task-result-v2",
         "final-workflow-review-v1",
         "Do not reread source for code quality or repeat implementation review",
     ):
