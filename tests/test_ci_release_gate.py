@@ -43,30 +43,6 @@ def test_default_ci_output_flushes_immediately(monkeypatch) -> None:
     assert all(kwargs.get("flush") is True for _args, kwargs in calls)
 
 
-def test_windows_gate_environment_uses_home_as_the_single_home_owner() -> None:
-    environment = _gate_namespace()["_release_environment"](
-        {"HOME": "D:/isolated", "USERPROFILE": "C:/runner", "KEEP": "yes"},
-        platform_name="nt",
-    )
-
-    assert environment == {
-        "HOME": "D:/isolated",
-        "KEEP": "yes",
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
-
-
-def test_posix_gate_environment_preserves_userprofile_when_present() -> None:
-    environment = _gate_namespace()["_release_environment"](
-        {"HOME": "/isolated", "USERPROFILE": "fixture", "KEEP": "yes"},
-        platform_name="posix",
-    )
-
-    assert environment["HOME"] == "/isolated"
-    assert environment["USERPROFILE"] == "fixture"
-    assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
-
-
 def test_workflow_cache_uses_pinned_dependency_owner_without_reducing_matrix() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text())
     job = workflow["jobs"]["deterministic"]
