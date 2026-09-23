@@ -1,101 +1,49 @@
-# work-bundle
+# WorkBundle
 
 [![CI](https://github.com/Ldsystem/work-bundle/actions/workflows/ci.yml/badge.svg)](https://github.com/Ldsystem/work-bundle/actions/workflows/ci.yml)
-![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 
-Toolkit source for WorkBundle skills, rules, references, and deterministic helper code.
+WorkBundle helps coding agents understand why a change is needed, work in the right repository, and check the result. It provides skills for project knowledge, focused fixes, specifications, plans, and independent review. Your intent guides the work; agents judge the content, while tools handle repeatable structure and safety checks.
 
-## Ecosystem
+## Install
 
-WorkBundle owns orchestration contracts, workspace authority, durable knowledge,
-and acceptance flow. [Execution Flow](https://github.com/Ldsystem/execution-flow)
-is a separate, optional TypeScript repository that supplies provider-neutral
-executor selection and ACP delegation without taking over WorkBundle
-orchestration.
-
-The recommended local layout for developing both repositories is a
-multi-repository workspace:
-
-```text
-work-bundle-workspace/
-├── .work-bundle/       # portable workspace authority and runtime artifacts
-├── work-bundle-main/   # this toolkit repository
-└── execution-flow/     # the independent Execution Flow repository
-```
-
-WorkBundle distinguishes four roots:
-
-- `work_bundle_root` — this installed toolkit source.
-- `work_bundle_config_root` — user runtime state under `~/.work-bundle/`.
-- `workspace_root` — authority for `.work-bundle/`, root `AGENTS.md`, reusable `script/`, protected `credentials/`, and managed repository members.
-- `project_root` — one concrete repository checkout. It equals `workspace_root` in single-repository mode and is a workspace child in multi-repository mode.
-
-## Structure
-
-- `skills/` - migrated work-bundle skill packages
-- `scripts/` - toolkit helper code; this is never the workspace utility directory
-- `references/` - shared design and runtime references
-- `.work-bundle/` - local agent knowledge and orchestration bundle
-
-A multi-repository workspace uses singular `script/` with `script/index.yaml` for reusable utilities. Discovery does not authorize execution. Its local-only `credentials/credentials.yaml` store is Git-ignored and must never be opened, printed, indexed, or transmitted through agent-visible surfaces; credential-backed work goes through `wb-credential-use` with redacted evidence only. Single-repository workspaces contain neither runtime folder; the mechanism templates remain under `references/assets/template/`.
-
-Both single- and multi-repository workspaces are current. Multi-repository members use workspace-local Git control stores and named worktrees; registered origin paths remain locators rather than normal writable checkouts.
-
-Portable control-plane v4 keeps the single-repository layout flat: the source repository owns `<workspace-root>/.git`, while the independently publishable WorkBundle control plane owns `<workspace-root>/.work-bundle/.git`. Its source entry uses `workspace_binding.type: root`; multi-repository entries use `workspace_binding.type: member` plus a member name. A fresh device clones the control plane into `.work-bundle/`, then `attach-workspace --materialize missing --apply` reconstructs the source checkout directly in the existing workspace root. It never requires converting a single repository into a child of a non-Git container.
-
-To add another source to an initialized v4 multi-repository workspace, use the
-proposal-bound lifecycle (the direct member name and path must agree):
-
-Command examples use the macOS/Linux `python3` launcher. On Windows, use `py -3.13` or a resolved `python` executable instead.
+You need Git and Python 3.13 or newer. Clone this repository to a location you intend to keep, then run the installer from that checkout:
 
 ```bash
-python3 scripts/wb.py add-workspace-member <workspace-root> \
-  --repository-id <id> --remote <remote> --name <member> --path <member> \
-  --default-branch main --dry-run
-# Repeat the same request with --accepted-proposal-id <returned-id> --apply.
-```
-
-This preserves multi-repository mode and registers a verified existing checkout
-or a new clone without creating a root Git repository. The checkout and Git
-common directory stay inside the workspace. Replay verifies the local binding;
-failed publication preserves adopted checkouts and removes only newly created
-ones. Single/composite workspaces retain their root-source and exclusion behavior.
-
-## Skill Links
-
-Install bootstrap/registry and activate all WorkBundle skills from a readable source checkout or source archive. On macOS/Linux use `python3`; on Windows use `py -3.13` or a resolved `python` executable:
-
-```bash
+git clone https://github.com/Ldsystem/work-bundle.git
+cd work-bundle
 python3 bin/install.py
 ```
 
-```powershell
-py -3.13 bin\install.py
-```
+On Windows, use `py -3.13 bin\install.py` instead of the last command. The installer sets up WorkBundle's local configuration and makes its skills available to agents; it does not turn your projects into WorkBundle workspaces. The installed skills point to this checkout, so keep it in place. Rerun the installer when you want to activate newly added skills.
 
-Install or refresh skill links only (directory symlinks on POSIX and directory junctions on Windows):
+If you use Codex or Claude, you can also register a session-start hook in an existing client configuration:
 
 ```bash
-python3 bin/work-bundle-skill enable-all
+python3 bin/install.py --hooks auto
 ```
 
-Useful checks:
+On Windows, use `py -3.13 bin\install.py --hooks auto`. `--hooks auto` targets Codex and Claude configuration directories that already exist; `--hooks select` lets you choose interactively. Codex may ask you to review or trust the hook before it runs.
 
-```bash
-python3 bin/work-bundle-skill list
-python3 bin/work-bundle-skill validate
-python3 bin/work-bundle-skill enable-all --dry-run
-```
+## Use it with an agent
 
-Run the deterministic repository gate with isolated dependencies:
+Open your project in an agentic client that can use the installed skills. You can ask for the outcome in ordinary language, or name a skill when you want a particular workflow:
 
-```bash
-uvx --python 3.13 --from pytest==9.1.1 --with pyyaml==6.0.3 --with sqlite-vec==0.1.9 --with fastembed==0.8.0 pytest -q
-python3 bin/work-bundle-skill validate
-```
+> “Set up this repository as a WorkBundle workspace. Use `wb-initialize-project` and show me what will change before applying it.”
 
-Run the keep-summarizing CLI through its pinned uv-managed environment:
+> “Investigate this bug using the project’s accepted decisions and current code. Make a small fix with `dev-create-task-plan`, then check the affected behavior.”
 
-```bash
-uv run scripts/ks.py --help
-```
+> “This feature needs a specification and a staged implementation plan. Use `orch-create-specification` and `orch-create-implementation-plan`; have a different agent review the actual result.”
+
+WorkBundle does not require a full orchestration plan for every change. A bounded repair can stay lightweight; larger work can use specification, planning, execution, and review stages. In either path, the agent remains responsible for meaning, scope, and acceptance.
+
+## What it provides
+
+- **Workspace awareness:** Supports a single repository or a workspace with multiple source repositories, so an agent can work in the right checkout without confusing project files with toolkit files.
+- **Durable knowledge:** `ks-*` skills help retrieve and maintain project decisions worth carrying across tasks, without treating current code as proof that it is correct.
+- **Right-sized workflows:** `dev-*` skills support focused changes; `orch-*` skills support specifications, dependent tasks, handoffs, and independent reviews for larger efforts.
+- **Agent-owned judgment:** Tools check necessary structure before writing and report mechanical facts. A reviewer advises; the agent leading the task decides what to repair and whether to accept it.
+
+[Execution Flow](https://github.com/Ldsystem/execution-flow) is an optional, separate companion for executor selection and delegation. WorkBundle works without it.
+
+> [!NOTE]
+> WorkBundle's workspace files can include project knowledge and orchestration history. Keep credentials out of agent-visible files and use the dedicated credential workflow when a task requires them.

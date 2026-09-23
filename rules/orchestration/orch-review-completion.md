@@ -23,6 +23,7 @@ Keep independent product review advisory, keep controller/orchestrator acceptanc
 - Keep missing historical records, indexes, knowledge state, and controller ceremony outside the controller/orchestrator product decision unless the product is ambiguous, unsafe, inaccessible, or impossible to review.
 - Carry controller/orchestrator accepted task decisions through canonical `accepted-task-result-v2` records, preserving the exact current task-authority identity and review advice considered; admit already-active v1 records only for non-mutating continuity.
 - Use one compact final audit for coverage, review advice, current tests, material defects, knowledge disposition/return, repository facts, and archive readiness; the controller/orchestrator assesses that advice and owns the final workflow decision.
+- At the heavy workflow's completion boundary, have final orchestration review own the approved durable-knowledge persistence follow-up; task executors return task-local evidence only.
 - Keep finalization mechanical and controller-directed: canonical references, lifecycle, clean baselines, destinations, indexes, and binding release only. Commit, push, merge, release, install, or other delivery occurs only under explicit user authority.
 
 ## Must Not

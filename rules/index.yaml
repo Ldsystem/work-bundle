@@ -44,7 +44,7 @@ rules:
   - id: ks-note-state-authority
     path: keep-summarizing/ks-note-state-authority.md
     applies_when:
-      - knowledge note state affects retrieval or persistence authority
+      - an agent retrieves or persists a knowledge note whose lifecycle state controls its authority
     enforcement: must
     load: conditional
     requires: []
@@ -66,7 +66,7 @@ rules:
   - id: ks-persistence-gate
     path: keep-summarizing/ks-persistence-gate.md
     applies_when:
-      - knowledge write may occur
+      - an agent prepares a durable knowledge note, context pack, or open-question write
     enforcement: must
     load: conditional
     requires: []
@@ -80,7 +80,7 @@ rules:
   - id: ks-sensitivity-filter
     path: keep-summarizing/ks-sensitivity-filter.md
     applies_when:
-      - source content is inspected or written
+      - source content is inspected for or written to durable knowledge
     enforcement: must
     load: conditional
     requires: []
@@ -153,21 +153,16 @@ rules:
   - id: rule-work-bundle-lifecycle-authority
     path: lifecycle-authority.md
     applies_when:
-      - v4 work-bundle operation requires lifecycle-authority
+      - an orchestration task result is accepted, released as a dependency, resumed, finalized, or archived
+      - accepted execution authority or its freshness binding is validated for lifecycle progression
     enforcement: must
     load: conditional
     requires: []
   - id: rule-work-bundle-repository-boundary
     path: repository-boundary.md
     applies_when:
-      - v4 work-bundle operation requires repository-boundary
-    enforcement: must
-    load: conditional
-    requires: []
-  - id: rule-work-bundle-runtime-artifact-format
-    path: runtime-artifact-format.md
-    applies_when:
-      - v4 work-bundle operation requires runtime-artifact-format
+      - an orchestration task stores execution evidence or source changes in a repository or workspace control plane
+      - historical source validation is bound to repository commits or trees
     enforcement: must
     load: conditional
     requires: []
@@ -180,19 +175,12 @@ rules:
     enforcement: must
     load: conditional
     requires: []
-  - id: rule-work-bundle-skill-registry
-    path: skill-registry.md
-    applies_when:
-      - v4 work-bundle operation requires skill-registry
-    enforcement: must
-    load: conditional
-    requires: []
   - id: verification-evidence-before-claim
     path: verification-evidence-before-claim.md
     applies_when:
       - an agent is about to state that code, a task, a workflow, a review, an archive, or a knowledge update is complete, fixed, passing, clean, validated, or resolved
     enforcement: must
-    load: always
+    load: conditional
     requires: []
   - id: wb-create-rule
     path: work-bundle/wb-create-rule.md
@@ -226,10 +214,10 @@ rules:
   - id: wb-defect-evidence
     path: work-bundle/wb-defect-evidence.md
     applies_when:
-      - the Work Bundle rule is visible in AGENTS.md and any conflict, confliction, violation, contradiction, or user correction occurs
-      - the Work Bundle rule is visible in AGENTS.md and the session needs a visible entry point for defect evaluation and first-observed evidence routing
+      - a conflict, violation, contradiction, or user correction occurs during WorkBundle-guided work
+      - a WorkBundle-guided task considers recording first-observed defect evidence
     enforcement: must
-    load: always
+    load: conditional
     requires: []
   - id: wb-migrate-to-multi-repository
     path: work-bundle/wb-migrate-to-multi-repository.md
@@ -268,10 +256,16 @@ rules:
   - id: wb-skill-registry
     path: work-bundle/wb-skill-registry.md
     applies_when:
-      - task.registers_external_skill
-      - task.resolves_available_skills
-      - task.resolves_role_skills
-      - task.resolves_stage_skills
+      - a user or workflow registers an external skill in the WorkBundle skill registry
+      - an agent resolves available, role, or stage skills through the external skill registry
+    enforcement: must
+    load: conditional
+    requires: []
+  - id: wb-truth-basis-evidence
+    path: work-bundle/wb-truth-basis-evidence.md
+    applies_when:
+      - an agent begins source, repository, knowledge, or workflow investigation for WorkBundle-guided work
+      - an agent plans, debugs, reviews, repairs, refactors, or implements a WorkBundle-guided change
     enforcement: must
     load: conditional
     requires: []

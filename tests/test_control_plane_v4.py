@@ -24,6 +24,19 @@ if loaded_core_path is not None and WORK_BUNDLE_SCRIPTS not in loaded_core_path.
 sys.path.insert(0, str(WORK_BUNDLE_SCRIPTS))
 from workspace_resources import CREDENTIAL_TEMPLATE, SCRIPT_INDEX_TEMPLATE, _load_yaml
 from control_plane import ControlPlaneError
+from project import project_failures
+
+
+def test_strict_project_diagnostics_do_not_require_role_profiles() -> None:
+    required = (
+        "project_gitignore", "project_ignores_work_bundle", "project_ignores_agents",
+        "agents_md", "work_bundle", "work_bundle_gitignore", "knowledge_root",
+        "orchestration_root", "rules_root", "project_metadata_exists",
+        "work_bundle_gitignore_required_entries", "orchestration_tree", "rule_index",
+    )
+    data = {key: True for key in required}
+
+    assert project_failures(data, strict=True) == []
 
 
 def run_wb(config_root: Path, *args: str) -> subprocess.CompletedProcess[str]:

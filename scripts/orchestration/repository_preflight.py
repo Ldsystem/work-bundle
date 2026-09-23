@@ -64,6 +64,25 @@ def _front_matter_lists(path: Path) -> dict[str, list[str]]:
     return result
 
 
+def _task_scope_lists(path: Path) -> dict[str, list[str]]:
+    if path.suffix not in {".yaml", ".yml"}:
+        return _front_matter_lists(path)
+    try:
+        task = _infrastructure.parse_yaml_mapping(path.read_text(encoding="utf-8"), source=str(path))
+    except _infrastructure.InfrastructureError as exc:
+        raise SystemExit(exc.code) from exc
+    files = task.get("files") if isinstance(task.get("files"), Mapping) else {}
+    result = {
+        key: [str(value) for value in task.get(key, [])]
+        for key in TASK_SCOPE_KEYS
+        if isinstance(task.get(key), list)
+    }
+    for field, key in (("write", "target_files"), ("read", "source_files")):
+        if isinstance(files.get(field), list) and files[field]:
+            result[key] = [str(value) for value in files[field]]
+    return result
+
+
 def _v4_metadata_repository_entries(root: Path, text: str) -> list[dict[str, object]]:
     try:
         document = _infrastructure.load_workspace_metadata(root)
@@ -193,10 +212,11 @@ def resolve_target_repositories(
     referenced_files: Iterable[Path] = (),
     repositories: Iterable[Path] = (),
 ) -> list[dict[str, object]]:
-    """Resolve exact repository targets without changing filesystem or Git state."""
+    """Resolve exact repository targets; task scope takes precedence over explicit selectors."""
     root = root.resolve()
+    task_files = tuple(task_files)
     explicit = [(path, "explicit-repository") for path in repositories]
-    if explicit:
+    if explicit and not task_files:
         return _enrich_with_metadata(root, _resolve_candidates(root, explicit))
 
     write_scopes: list[tuple[Path, str]] = []
@@ -206,7 +226,7 @@ def resolve_target_repositories(
         if not _is_orchestration_artifact(root, path)
     ]
     for task_file in task_files:
-        scopes = _front_matter_lists(task_file)
+        scopes = _task_scope_lists(task_file)
         write_scopes.extend(
             (candidate, "task-write-scope")
             for path in scopes.get("target_files", [])
@@ -219,12 +239,6 @@ def resolve_target_repositories(
                 if not _is_orchestration_artifact(root, candidate := Path(path))
             )
 
-    resolved = _resolve_candidates(root, write_scopes)
-    if resolved:
-        return _enrich_with_metadata(root, resolved)
-    resolved = _resolve_candidates(root, references)
-    if resolved:
-        return _enrich_with_metadata(root, resolved)
     metadata_path = root / ".work-bundle" / "project.yaml"
     if metadata_path.is_file():
         try:
@@ -234,7 +248,31 @@ def resolve_target_repositories(
         except _infrastructure.InfrastructureError as exc:
             raise SystemExit(exc.code) from exc
         if document.get("metadata_version") == 4:
-            return _v4_metadata_targets(root)
+            targets = _v4_metadata_targets(root)
+            entries = [row["metadata"] for row in targets]
+            selected: dict[str, dict[str, object]] = {}
+            for candidate, source in [*write_scopes, *references]:
+                absolute = (candidate if candidate.is_absolute() else root / candidate).resolve()
+                matches = [
+                    entry for entry in entries
+                    if entry.get("project_root")
+                    and absolute.is_relative_to(Path(str(entry["project_root"])).resolve())
+                ]
+                if not matches:
+                    raise SystemExit(f"WB_REPOSITORY_TASK_TARGET_UNBOUND: {candidate}")
+                entry = max(matches, key=lambda item: len(Path(str(item["project_root"])).parts))
+                path = str(Path(str(entry["project_root"])).resolve())
+                selected.setdefault(path, {"path": path, "source": source, "metadata": entry})
+            if selected:
+                return [selected[key] for key in sorted(selected)]
+            return targets
+
+    resolved = _resolve_candidates(root, write_scopes)
+    if resolved:
+        return _enrich_with_metadata(root, resolved)
+    resolved = _resolve_candidates(root, references)
+    if resolved:
+        return _enrich_with_metadata(root, resolved)
     return _enrich_with_metadata(
         root,
         _resolve_candidates(root, ((path, "project-metadata") for path in _metadata_repositories(root))),

@@ -19,7 +19,6 @@ from infrastructure import (
 
 
 CUSTOMIZED_SKILL_ROOT = Path(__file__).resolve().parents[2] / 'skills'
-GLOBAL_SKILL_REGISTRY = '~/.work-bundle/skills/skill-registry.yaml'
 WORK_BUNDLE_CONFIG_ROOT_ENV = 'WB_CONFIG_ROOT'
 WORK_BUNDLE_ROOT_ENV = 'WB_WORK_BUNDLE_ROOT'
 GLOBAL_BOOTSTRAP_FILE_NAME = 'bootstrap.yaml'
@@ -39,7 +38,6 @@ LEGACY_COMMAND_MIGRATIONS = {
 }
 ROLE_NAMES = ['project-manager', 'solution-architect', 'domain-analyst', 'ui-designer', 'frontend-developer', 'backend-developer', 'database-engineer', 'qa-reviewer', 'devops-engineer']
 # Retired v4 root stubs merged into rules/orchestration/: orchestration-boundary -> orch-orchestration-boundary; knowledge-boundary, retrieval-gateway -> orch-knowledge-gateway; execution-boundary -> orch-execute-plan skill-owned constraints; handoff-boundary -> orch-handoff-required; review-archive-boundary -> orch-review-completion
-RULES = ['repository-boundary', 'lifecycle-authority', 'skill-registry', 'domain-profile', 'doctor-readonly', 'runtime-artifact-format', 'security-exclusion']
 
 CLI_HELP_EPILOG = '''Canonical consolidated command surface:
   init-workspace <workspace-root> --slug <slug> --repository <id=remote> --mode <single-repository|multi-repository> (--dry-run|--apply)

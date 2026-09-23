@@ -1,7 +1,7 @@
 ---
 id: ks-note-state-authority
 applies_when:
-  - knowledge note state affects retrieval or persistence authority
+  - an agent retrieves or persists a knowledge note whose lifecycle state controls its authority
 enforcement: must
 load: conditional
 requires: []

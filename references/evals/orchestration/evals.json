@@ -674,8 +674,8 @@
       "description": "Given a request to preserve deprecated role-context aliases for compatibility, require repository-wide consumer characterization and then remove the skill, rule, CLI, implementation, reference, and positive runtime guidance when no supported external consumer exists; retain only a negative non-reintroduction guard."
     },
     {
-      "id": "v4-stable-role-profile-adversarial-boundary",
-      "description": "Do not confuse stable role profile data used by project initialization and external-skill classification with the obsolete runtime role-context selection subsystem; remove only selection/routing behavior and rewrite positive role-context wording."
+      "id": "v4-external-skill-role-identifiers-without-profiles",
+      "description": "Remove unsupported toolkit-source role profiles and their positive runtime guidance while preserving role and stage identifiers supported by the external-skill registry contract."
     },
     {
       "id": "v4-controller-retains-scope-and-worker-routing",

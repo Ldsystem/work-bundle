@@ -21,8 +21,8 @@
     },
     {
       "id": 4,
-      "prompt": "Initialize a new ordinary v3 single-repository workspace whose origin is already unambiguous.",
-      "expected_output": "Uses the ordinary init-project lifecycle, creates or preserves script/index.yaml and credentials/credentials.yaml with protected permissions, and does not invoke v4 migration remote override or control-plane publication behavior.",
+      "prompt": "Migrate an ordinary v3 single-repository workspace whose origin is already unambiguous into metadata v4.",
+      "expected_output": "Uses the explicit migrate-control-plane proposal and accepted apply path, preserves workspace script/index.yaml and credentials/credentials.yaml with protected permissions, publishes portable metadata and its device binding through the owning transaction, and does not create toolkit-source script or role-profile files.",
       "files": []
     },
     {

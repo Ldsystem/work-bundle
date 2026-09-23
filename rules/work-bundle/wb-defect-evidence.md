@@ -1,10 +1,10 @@
 ---
 id: wb-defect-evidence
 applies_when:
-  - the Work Bundle rule is visible in AGENTS.md and any conflict, confliction, violation, contradiction, or user correction occurs
-  - the Work Bundle rule is visible in AGENTS.md and the session needs a visible entry point for defect evaluation and first-observed evidence routing
+  - a conflict, violation, contradiction, or user correction occurs during WorkBundle-guided work
+  - a WorkBundle-guided task considers recording first-observed defect evidence
 enforcement: must
-load: always
+load: conditional
 requires: []
 ---
 
@@ -12,11 +12,11 @@ requires: []
 
 ## Purpose
 
-Keep the WorkBundle defect workflow visible whenever the Work Bundle rule is visible in `AGENTS.md`, and preserve first-observed work-bundle process, rule, skill, workflow, script, orchestration, or handoff contract deviations only after evaluation confirms the finding is `work-bundle-scoped` or `mixed`.
+Preserve first-observed WorkBundle process, rule, skill, workflow, script, orchestration, or handoff contract deviations only after evaluation confirms the finding is `work-bundle-scoped` or `mixed`.
 
 ## Must
 
-- Treat any conflict, confliction, violation, contradiction, or user correction as a `wb-defect-evidence` trigger when the Work Bundle rule is visible in `AGENTS.md`.
+- Treat any conflict, violation, contradiction, or user correction during WorkBundle-guided work as a `wb-defect-evidence` trigger.
 - When a trigger appears, immediately call `wb-defect-evaluation` to classify whether the finding is `work-bundle-scoped`, `project-scoped`, `mixed`, or `undetermined`.
 - Exit the defect evidence workflow without recording evidence when `wb-defect-evaluation` confirms the finding is not WorkBundle-related and does not affect authority, target scope, validation, or continuation.
 - Exit the defect evidence workflow without recording a new evidence file when `wb-defect-evaluation` returns `same-scope specification-owned` handling for exact current WorkBundle specification work.
@@ -49,7 +49,7 @@ Keep the WorkBundle defect workflow visible whenever the Work Bundle rule is vis
 
 ## Validation
 
-- Confirm `wb-defect-evidence` is loaded as the always-visible entry point for conflict, confliction, violation, contradiction, and user-correction signals when the Work Bundle rule is visible in `AGENTS.md`.
+- Confirm `wb-defect-evidence` is selected from its index when a conflict, violation, contradiction, or user correction occurs during WorkBundle-guided work.
 - Confirm possible defect signals are routed first from `wb-defect-evidence` to `wb-defect-evaluation`.
 - Confirm `same-scope specification-owned` evaluation results do not create new defect evidence and are carried by the active specification or review evidence instead.
 - Confirm every recorded defect was classified by `wb-defect-evaluation` as `work-bundle-scoped` or `mixed` and cites only visible first evidence artifacts or runtime surfaces.

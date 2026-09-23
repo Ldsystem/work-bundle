@@ -976,9 +976,30 @@ def create_or_load_task_execution_binding(
         ]
     except OwnershipBlocker as error:
         raise SystemExit(f"Task execution binding scope is unsafe: {error.reason}") from error
-    plan = read_structured_artifact(_find_plan(control_root, plan_id)[0])
+    plan_path, _ = _find_plan(control_root, plan_id)
+    plan = read_structured_artifact(plan_path)
     if str(plan.get("status") or "").lower() != "verified":
         raise SystemExit("Task execution binding requires a verified canonical plan")
+    if (control_root / ".work-bundle/project.yaml").is_file():
+        from repository_preflight import resolve_target_repositories
+
+        task_paths = list((plan_path.parent / plan_id).glob(f"*/{task_id}.task.yaml"))
+        if len(task_paths) != 1:
+            raise SystemExit("Task execution binding requires one canonical task")
+        task = read_yaml_mapping(task_paths[0])
+        if task.get("id") != task_id or task.get("plan_id") != plan_id or task.get("phase_id") != task_paths[0].parent.name:
+            raise SystemExit("Task execution binding canonical task identity mismatch")
+        files = task.get("files") if isinstance(task.get("files"), dict) else {}
+        if not (_as_list(files.get("write")) or _as_list(task.get("target_files"))):
+            raise SystemExit("Task execution binding requires a canonical write target")
+        targets = resolve_target_repositories(control_root, task_files=[task_paths[0]])
+        write_members = {
+            str(row["metadata"]["id"])
+            for row in targets
+            if row["source"] == "task-write-scope" and isinstance(row.get("metadata"), dict)
+        }
+        if write_members != {repository_id}:
+            raise SystemExit("Task execution binding repository mismatch with canonical write target")
     path = _binding_path(control_root, plan_id, task_id)
     if path.exists():
         binding = load_task_execution_binding(control_root, plan_id, task_id)
@@ -1421,7 +1442,6 @@ def compile_task_authority(root: Path, task_path: Path) -> dict[str, Any]:
     """Compile current task authority without materializing runtime artifacts."""
 
     compile_args = argparse.Namespace(
-        project_root=str(root),
         workspace_root=str(root),
         task=str(task_path),
         handoff=None,
@@ -1786,7 +1806,7 @@ def compile_task_candidate(
     """Compile a task amendment without mutating canonical or runtime state."""
 
     args = argparse.Namespace(
-        project_root=str(root), workspace_root=str(root), task=str(task_path),
+        workspace_root=str(root), task=str(task_path),
         handoff=None, base=None, head=None, _resolved_root=str(root),
     )
     return _compile_task_brief(args, task_override=candidate)

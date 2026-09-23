@@ -3,7 +3,7 @@ id: verification-evidence-before-claim
 applies_when:
   - an agent is about to state that code, a task, a workflow, a review, an archive, or a knowledge update is complete, fixed, passing, clean, validated, or resolved
 enforcement: must
-load: always
+load: conditional
 requires: []
 ---
 
@@ -19,6 +19,7 @@ Keep completion claims evidence-bound without turning mechanical closure checks 
 - Obtain fresh, claim-relevant evidence after the latest material change, using the lightest capable evidence that can disprove the claim.
 - Product claims require agent assessment against user purpose and accepted obligations; tests, schemas, scripts, indexes, and receipts are supporting observations.
 - Mechanical claims verify closure facts only. Resolve `Knowledge Base Update` for terminal claims; its disposition does not create or reverse a product decision.
+- At a lightweight workflow's completion boundary, record one knowledge disposition of `none`, `update`, `supersede`, or `reclassify` and resolve an approved `ks-*` follow-up through its owner.
 - State only the status that evidence supports and name its supporting observation.
 
 ## Must Not

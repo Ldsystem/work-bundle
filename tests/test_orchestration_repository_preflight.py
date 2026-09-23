@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -194,6 +195,79 @@ def test_v4_preflight_detects_stale_device_head_without_refreshing_registry(
     assert row["failure_code"] == "WB_REPOSITORY_OBSERVATION_STALE"
     assert row["metadata"]["observation_head_status"] == "stale"
     assert registry.read_text(encoding="utf-8") == before
+
+
+def test_v4_yaml_task_preflight_selects_exact_write_and_cross_member_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    members = [repository(workspace, name) for name in ("repo-main", "repo-other", "repo-idle")]
+    metadata = workspace / ".work-bundle/project.yaml"
+    write_workspace_metadata_v4(workspace)
+    document = yaml.safe_load(metadata.read_text())
+    for name in ("repo-other", "repo-idle"):
+        item = dict(document["source_repositories"][0])
+        item.update(id=name, workspace_binding={"type": "member", "name": name})
+        document["source_repositories"].append(item)
+    metadata.write_text(yaml.safe_dump(document), encoding="utf-8")
+    registry = tmp_path / "projects.yaml"
+    write_v4_registry(registry, workspace, members[0], observed_head=git(members[0], "rev-parse", "HEAD"))
+    registry_doc = yaml.safe_load(registry.read_text())
+    for repo in members[1:]:
+        local = dict(registry_doc["device_bindings"]["wb-test"]["repositories"]["repo-main"])
+        local.update(project_root=str(repo), git_common_dir=str(repo / ".git"),
+                     observed_head=git(repo, "rev-parse", "HEAD"))
+        registry_doc["device_bindings"]["wb-test"]["repositories"][repo.name] = local
+    registry.write_text(yaml.safe_dump(registry_doc), encoding="utf-8")
+    use_registry(monkeypatch, registry)
+    task = workspace / "task.task.yaml"
+    task.write_text(yaml.safe_dump({
+        "source_files": ["repo-other/src/read.py"],
+        "target_files": ["repo-main/src/write.py"],
+    }), encoding="utf-8")
+
+    targets = resolve_target_repositories(workspace, [task])
+    assert {row["metadata"]["id"]: row["source"] for row in targets} == {
+        "repo-main": "task-write-scope", "repo-other": "referenced-file",
+    }
+    assert {row["path"] for row in targets} == {str(members[0]), str(members[1])}
+    assert resolve_target_repositories(workspace, (path for path in [task]), repositories=[members[2]]) == targets
+    assert [(row["path"], row["source"]) for row in resolve_target_repositories(
+        workspace, repositories=[members[2]]
+    )] == [(str(members[2]), "explicit-repository")]
+
+    other_task = workspace / "other.task.yaml"
+    other_task.write_text(yaml.safe_dump({"target_files": ["repo-other/src/write.py"]}), encoding="utf-8")
+    assert [(row["metadata"]["id"], row["source"]) for row in resolve_target_repositories(workspace, [other_task])] == [
+        ("repo-other", "task-write-scope"),
+    ]
+
+    task.write_text(yaml.safe_dump({"target_files": ["unbound/src/write.py"]}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="UNBOUND"):
+        resolve_target_repositories(workspace, [task])
+    with pytest.raises(SystemExit, match="UNBOUND"):
+        resolve_target_repositories(workspace, [task], repositories=[members[2]])
+
+
+def test_v4_yaml_task_files_mapping_selects_bound_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repo = repository(workspace, "repo-main")
+    write_workspace_metadata_v4(workspace)
+    registry = tmp_path / "projects.yaml"
+    write_v4_registry(registry, workspace, repo, observed_head=git(repo, "rev-parse", "HEAD"))
+    use_registry(monkeypatch, registry)
+    task = workspace / "task.task.yaml"
+    task.write_text(yaml.safe_dump({"files": {
+        "read": ["repo-main/src/read.py"], "write": ["repo-main/src/write.py"],
+    }}), encoding="utf-8")
+
+    assert [(row["metadata"]["id"], row["source"]) for row in resolve_target_repositories(workspace, [task])] == [
+        ("repo-main", "task-write-scope"),
+    ]
 
 
 def test_clean_repository_passes(tmp_path: Path) -> None:

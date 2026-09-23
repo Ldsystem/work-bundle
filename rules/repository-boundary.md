@@ -1,7 +1,8 @@
 ---
 id: rule-work-bundle-repository-boundary
 applies_when:
-  - v4 work-bundle operation requires repository-boundary
+  - an orchestration task stores execution evidence or source changes in a repository or workspace control plane
+  - historical source validation is bound to repository commits or trees
 enforcement: must
 load: conditional
 requires: []

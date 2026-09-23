@@ -28,7 +28,7 @@ stage_specific_authority:
   go-live-delivery: delivery and acceptance authority
   operation: production/runtime authority
 role_positioning:
-  default: selected role profiles must apply this domain profile before producing domain-sensitive output
+  default: apply this domain profile when producing domain-sensitive output
 source_knowledge:
   - path: explicit-source
     role: authority

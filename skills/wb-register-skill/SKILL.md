@@ -5,7 +5,7 @@ description: 'Inspect an external skill, propose role/stage/output mappings, and
 
 # wb-register-skill
 
-Never blindly register skills. This workflow is only for external skills. Built-in skills under `$work_bundle_root/skills/` are toolkit-owned and must never be copied into the runtime registry. Inspect external instructions, propose a compact `type: external` registry entry, validate stable roles/stages, then merge only with confirmation.
+Never blindly register skills. This workflow is only for external skills. Built-in skills under `$work_bundle_root/skills/` are toolkit-owned and must never be copied into the runtime registry. Inspect external instructions, propose a compact `type: external` registry entry, validate role and stage identifiers from the registry contract, then merge only with confirmation. These identifiers do not require toolkit-source `roles/*.yaml` profiles.
 
 ## Scripts
 
