@@ -190,7 +190,7 @@
     {
       "id": 32,
       "prompt": "Create an implementation plan where backend and frontend work can run in parallel after an API boundary is stable.",
-      "expected_output": "Selects create-implementation-plan, creates or confirms a boundary artifact first, uses api-contract-first or another suitable decoupling strategy, assigns parallel tasks only with disjoint write scopes and explicit dependencies, rejects unsafe overlap, and adds a convergence validation task for the branch group.",
+      "expected_output": "Selects create-implementation-plan, confirms that the existing or task-produced API boundary is sufficiently stable, assigns contract-decoupled parallel packets only when local oracles and total cost support them, uses disjoint concurrent write scopes and explicit dependencies, rejects unsafe overlap, and adds joint validation at the real convergence seam. No new boundary artifact or contract-first pattern is compulsory.",
       "files": []
     },
     {
@@ -526,7 +526,7 @@
     {
       "id": "PD-01",
       "prompt": "Plan a change whose production seams support six tasks, while a reviewer proposes a three-task target to make the plan shorter.",
-      "expected_output": "Rejects the task-count target and does not optimize task or phase cardinality; it uses the six evidenced ownership, dependency, validation, review, and repair seams when they bound expected total orchestration cost.",
+      "expected_output": "Rejects the task-count target and does not optimize task or phase cardinality; it uses the six evidenced dependency, validation, review, and repair seams when they yield coherent bounded packets at acceptable total orchestration cost, whether or not some share a production owner.",
       "files": []
     },
     {
@@ -537,8 +537,8 @@
     },
     {
       "id": "PD-03",
-      "prompt": "A planner groups two changes that have different owners, validation oracles, and independently routable repair outcomes.",
-      "expected_output": "Splits at the evidenced ownership, oracle, and repair frontier so a failure returns to the smallest affected plan region without widening unrelated accepted work.",
+      "prompt": "A planner groups two changes under one responsibility even though they have distinct source neighborhoods, capable local oracles, usable intermediate output, and independently routable repair outcomes.",
+      "expected_output": "Splits the same-owner responsibility into ordered bounded execution packets at the evidenced oracle and repair frontier; a failure returns to the smallest affected plan region without widening unrelated accepted work.",
       "files": []
     },
     {
@@ -561,8 +561,8 @@
     },
     {
       "id": "PD-07",
-      "prompt": "Execution proves one task materially under-decomposed after its repair frontier separates into two independently owned regions.",
-      "expected_output": "Stops repeatedly enlarging the task, requires a return to the plan, and reslices only the affected region while preserving the original binding, baseline, accepted unaffected regions, and typed repair route.",
+      "prompt": "Execution proves one task materially under-decomposed after its repair frontier separates into two bounded regions under the same production owner.",
+      "expected_output": "Stops repeatedly enlarging the task, requires a return to the plan, and reslices only the affected unaccepted authority region while preserving the original binding, baseline, accepted unaffected regions, and typed repair route.",
       "files": []
     },
     {
@@ -574,7 +574,43 @@
     {
       "id": "PD-10",
       "prompt": "One module exposes two entry points, but current repository evidence shows they share one production owner, oracle, and repair path.",
-      "expected_output": "Does not split by symbol count; independently owned entry points become separate tasks only when current repository evidence proves distinct production or repair seams.",
+      "expected_output": "Does not split by symbol count; the shared owner neither forces a split nor forbids one, and the common oracle and repair path support one coherent task here.",
+      "files": []
+    },
+    {
+      "id": "PD-11",
+      "prompt": "One packaging responsibility has profile construction and then platform packaging. Each has a capable local oracle and the accepted profile is a usable intermediate result, but both tasks edit the same manifest.",
+      "expected_output": "Creates two dependency-ordered same-owner packets when their independent validation and repair frontiers make the split worthwhile. Strict order permits same-file reuse only after the predecessor's canonical accepted result; it does not invent a second owner or an extra review round.",
+      "files": []
+    },
+    {
+      "id": "PD-12",
+      "prompt": "A planner proposes a separate contract task for a tiny coupled edit, but its intermediate output is unstable and cannot be validated or reviewed without the implementation task.",
+      "expected_output": "Keeps one coherent task because the split increases coordination and review cost and has no usable intermediate result. A contract artifact and walking slice are not compulsory.",
+      "files": []
+    },
+    {
+      "id": "PD-13",
+      "prompt": "Two platform adapters use an existing stable plugin interface, write disjoint paths, and have capable local contract tests; joint packaging behavior needs a smoke check after both finish.",
+      "expected_output": "May use contract-decoupled parallel packets against the existing stable boundary, each with a local oracle, and place joint validation after convergence. It weighs coordination and repair cost, so a stable interface does not mandate parallelism or a new contract artifact.",
+      "files": []
+    },
+    {
+      "id": "PD-14",
+      "prompt": "Two adapters would write the same manifest concurrently. A shared owner and a nominal common contract group are proposed as sufficient safety.",
+      "expected_output": "Rejects concurrent same-file writers regardless of common owner or nominal contract group; isolate or strictly serialize writes with an actual dependency and accepted predecessor result.",
+      "files": []
+    },
+    {
+      "id": "PD-15",
+      "prompt": "A future interface is consequentially uncertain, and a cheap end-to-end path could produce an observable result with a capable local test; a reviewer proposes a mandatory vertical-slice phase for every project.",
+      "expected_output": "Considers one small walking vertical slice if its local oracle resolves this uncertainty at reasonable cost, then plans the next packet from evidence. Rejects a universal slice step or phase; feasibility and stability are judgments, not a checklist or score.",
+      "files": []
+    },
+    {
+      "id": "PD-16",
+      "prompt": "Policy and adapters currently change together and have one repair frontier, but a planner proposes separate policy tasks because a textbook pattern recommends change-axis separation.",
+      "expected_output": "Keeps the coherent work together because no independently changing axis or useful local oracle is evidenced. Demonstrated reuse, feasibility, stability, and total execution, context, coordination, review, and repair cost govern the decision, not pattern resemblance.",
       "files": []
     },
     {
