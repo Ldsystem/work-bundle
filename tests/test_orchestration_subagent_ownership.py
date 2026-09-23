@@ -156,12 +156,13 @@ def test_sg05_independent_disjoint_tasks_dispatch_before_wait_and_convergence() 
         "task-c", ("task-a", "task-b"), ("tests/integration.py",), "workspace-c",
         common_contract="CG-001", barrier="BAR-001", barrier_participants=("task-a", "task-b"),
     )
+    full_graph = [*tasks, convergence]
     closed = TaskOwnershipScheduler(RecordingAdapter()).run_wave(
-        [convergence], completed={"task-a", "task-b"}, accepted_handoffs={"task-a"}
+        full_graph, completed={"task-a", "task-b"}, accepted_handoffs={"task-a"}
     )
     assert closed.dispatched == ()
     released = TaskOwnershipScheduler(RecordingAdapter()).run_wave(
-        [convergence],
+        full_graph,
         completed={"task-a", "task-b"},
         accepted_handoffs={"task-a", "task-b"},
     )
@@ -273,6 +274,27 @@ def test_each_overlapping_ancestor_needs_acceptance() -> None:
     assert scheduler.run_wave(
         tasks, completed=completed, accepted_handoffs={"task-a", "task-b"},
     ).dispatched == ("task-c",)
+
+
+@pytest.mark.parametrize("transitive", [False, True])
+def test_incomplete_dependency_graph_blocks_dispatch_before_mutation(
+    transitive: bool,
+) -> None:
+    successor = TaskCandidate(
+        "task-c", ("task-b",) if transitive else ("task-a",),
+        ("src/shared.py",), "workspace-c",
+    )
+    tasks = [
+        TaskCandidate("task-b", ("task-a",), ("tests/middle.py",), "workspace-b"),
+        successor,
+    ] if transitive else [successor]
+    completed = {"task-a", "task-b"} if transitive else {"task-a"}
+    adapter = RecordingAdapter()
+
+    with pytest.raises(OwnershipBlocker, match="missing canonical dependency") as error:
+        TaskOwnershipScheduler(adapter).run_wave(tasks, completed=completed)
+    assert error.value.code == "workspace-blocked"
+    assert adapter.events == []
 
 
 def test_sg07_repair_retains_owner_binding_baseline_evidence_and_frontier() -> None:

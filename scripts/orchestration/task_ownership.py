@@ -225,6 +225,13 @@ def _ready_wave(
     for task in tasks:
         _validate_topology(task)
     by_id = {task.task_id: task for task in tasks}
+    for task in tasks:
+        missing = sorted(set(task.dependencies) - by_id.keys())
+        if missing:
+            raise OwnershipBlocker(
+                "workspace-blocked",
+                f"{task.task_id} missing canonical dependency: {', '.join(missing)}",
+            )
 
     def overlapping_ancestors_accepted(task: TaskCandidate) -> bool:
         pending = list(task.dependencies)
@@ -234,9 +241,7 @@ def _ready_wave(
             if ancestor_id in visited:
                 continue
             visited.add(ancestor_id)
-            ancestor = by_id.get(ancestor_id)
-            if ancestor is None:
-                continue
+            ancestor = by_id[ancestor_id]
             if (
                 _scopes_overlap(task.write_scope, ancestor.write_scope)
                 and ancestor_id not in accepted_handoffs
@@ -279,7 +284,7 @@ class TaskOwnershipScheduler:
         repair_continuity: Mapping[str, RepairContinuity] | None = None,
         authorized_replacements: set[str] | None = None,
     ) -> DispatchWaveResult:
-        """Dispatch ready tasks; callers supply accepted_handoffs from canonical results."""
+        """Dispatch from the full task graph with canonical accepted-result IDs."""
         if operation not in {"implementation", "repair"}:
             raise ValueError("operation must be implementation or repair")
         if not self._adapter.available():
