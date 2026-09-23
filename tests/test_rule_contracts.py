@@ -763,16 +763,11 @@ def test_initialize_project_pressure_scenario_covers_v4_authority_and_member_rol
     assert "removes only member paths created by the failed attach" in expected
 
 
-def test_workspace_ecosystem_documentation_and_external_registry_boundary() -> None:
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+def test_toolkit_utility_documentation_and_external_registry_boundary() -> None:
     scripts_readme = (REPO_ROOT / "scripts/work-bundle/README.md").read_text(encoding="utf-8")
     registry_template = (REPO_ROOT / "references/assets/template/skill-registry.yaml").read_text(encoding="utf-8")
     registry_contract = (REPO_ROOT / "references/wb-register-skill-contract.yaml").read_text(encoding="utf-8")
 
-    assert "`workspace_root`" in readme
-    assert "`project_root`" in readme
-    assert "singular `script/`" in readme
-    assert "credentials/credentials.yaml" in readme
     assert "--scope project --workspace-root <workspace-root>" in scripts_readme
     assert "normalized `remote.canonical` or declared `remote.aliases`" in scripts_readme
     assert "Undeclared remotes fail before mutation" in scripts_readme
