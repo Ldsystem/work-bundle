@@ -1187,6 +1187,104 @@ def test_finalize_reviewed_plan_allows_null_review_when_task_does_not_require_it
     )
 
 
+def _plan_integrated_review_reference(
+    workspace: Path, *, scope: str = "integrated", stale: str | None = None,
+) -> dict[str, str]:
+    anchors = {"workspace_root": workspace}
+    candidate = _candidate(workspace)
+    review = {
+        **_review_semantics(
+            candidate,
+            authority_identity=review_identity.canonical_plan_tree_identity(
+                workspace, "plan-stage5"
+            ),
+            verdict="repair",
+        ),
+        "artifact_type": "implementation-review", "schema_version": 3,
+        "id": "review-integrated", "plan_id": "plan-stage5", "task_id": None,
+        "scope": scope, "target_sha256": candidate["sha256"],
+        "date_created": "2026-09-20", "last_updated": "2026-09-20",
+    }
+    if stale == "authority":
+        review["authority_identity"] = {"id": "plan-stage5", "sha256": "0" * 64}
+    elif stale == "candidate":
+        review["target_sha256"] = "0" * 64
+    stored = write_artifact(
+        CATALOG, "implementation-review", anchors, review, state="active",
+        bindings={"plan": "plan-stage5"},
+    )
+    return {"id": "review-integrated", "sha256": stored["digest"]}
+
+
+def _final_input_with_integrated_review(
+    workspace: Path, reference: dict[str, str] | None,
+) -> Path:
+    final = dict(read_artifact(
+        CATALOG, "final-workflow-review", {"workspace_root": workspace},
+        identity="final-stage5", state="active", bindings={"plan": "plan-stage5"},
+    )["data"])
+    for field in review_runtime.CURRENT_STRUCTURAL_FIELDS:
+        final.pop(field, None)
+    if reference is not None:
+        final["accepted_reviews"] = [*final["accepted_reviews"], reference]
+    return _write_yaml(workspace / ".work-bundle", "integrated-final.yaml", final)
+
+
+@pytest.mark.parametrize("task_review_required", [False, True])
+def test_plan_bound_integrated_review_is_archived_with_task_review_optional(
+    workspace: Path, task_review_required: bool,
+) -> None:
+    _write_finalization_case(
+        workspace, review_required=task_review_required,
+        review_reference="valid" if task_review_required else "none",
+    )
+    plan_identity = review_identity.canonical_plan_tree_identity(workspace, "plan-stage5")
+    reference = _plan_integrated_review_reference(workspace)
+    review_runtime.cmd_write_final_workflow_review(_args(
+        workspace, id="final-stage5", plan_id="plan-stage5",
+        content_file=str(_final_input_with_integrated_review(workspace, None)),
+    ))
+    final = read_artifact(
+        CATALOG, "final-workflow-review", {"workspace_root": workspace},
+        identity="final-stage5", state="active", bindings={"plan": "plan-stage5"},
+    )["data"]
+    assert reference in final["accepted_reviews"]
+    assert review_identity.canonical_plan_tree_identity(workspace, "plan-stage5") == plan_identity
+
+    plans.cmd_finalize_reviewed_plan(
+        _args(workspace, plan_id="plan-stage5", final_review_id="final-stage5")
+    )
+
+    assert list((workspace / ".work-bundle/orchestration/review/implementation/archived"
+                 / "plan-stage5").glob("review-integrated.implementation-review.yaml"))
+    assert not list((workspace / ".work-bundle/orchestration/review/implementation/active"
+                     / "plan-stage5").glob("review-integrated.implementation-review.yaml"))
+    if task_review_required:
+        assert list((workspace / ".work-bundle/orchestration/review/implementation/archived"
+                     / "plan-stage5").glob("review-stage5.implementation-review.yaml"))
+
+
+@pytest.mark.parametrize("scope,stale,error", [
+    ("integrated", "authority", "integrated.*authority"),
+    ("integrated", "candidate", "integrated.*candidate"),
+    ("task", None, "integrated.*scope"),
+])
+def test_final_review_rejects_invalid_plan_integrated_reference_before_write(
+    workspace: Path, scope: str, stale: str | None, error: str,
+) -> None:
+    _write_finalization_case(workspace, review_required=False, review_reference="none")
+    final_path = next(workspace.rglob("final-stage5.final-workflow-review.yaml"))
+    before = final_path.read_bytes()
+    reference = _plan_integrated_review_reference(workspace, scope=scope, stale=stale)
+
+    with pytest.raises(SystemExit, match=error):
+        review_runtime.cmd_write_final_workflow_review(_args(
+            workspace, id="final-stage5", plan_id="plan-stage5",
+            content_file=str(_final_input_with_integrated_review(workspace, reference)),
+        ))
+    assert final_path.read_bytes() == before
+
+
 @pytest.mark.parametrize("review_reference", ["none", "invalid"])
 def test_finalize_reviewed_plan_rejects_missing_or_invalid_required_review(
     workspace: Path,

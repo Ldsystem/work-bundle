@@ -369,11 +369,28 @@ def validate_final_workflow_chain(
             raise SystemExit("Accepted task result implementation review reference is invalid")
         accepted_records.append((accepted, bindings))
 
-    if declared_review_refs != expected_review_refs:
-        raise SystemExit("Final workflow review implementation-review coverage is not exact")
+    if not expected_review_refs.issubset(declared_review_refs):
+        raise SystemExit("Final workflow review task implementation-review coverage is not exact")
+    for identity, digest in sorted(declared_review_refs - expected_review_refs):
+        reviewed = _reference(
+            args, "implementation-review", identity, {"plan": str(args.plan_id)}
+        )
+        if reviewed["digest"] != digest or reviewed["state"] != "active":
+            raise SystemExit("Final workflow review integrated review reference is not current")
+        integrated = reviewed["data"]
+        if integrated.get("scope") != "integrated" or integrated.get("task_id") is not None:
+            raise SystemExit("Final workflow review integrated review scope is invalid")
+        if (
+            integrated.get("authority_identity") != data.get("plan_identity")
+            or integrated.get("specification_id") != tree["root"].get("source_spec_id")
+        ):
+            raise SystemExit("Final workflow review integrated review authority is stale")
+        candidate = data.get("candidate_identity")
+        if not isinstance(candidate, dict) or integrated.get("target_sha256") != candidate.get("sha256"):
+            raise SystemExit("Final workflow review integrated review candidate is stale")
     review_records = [
         _reference(args, "implementation-review", identity, {"plan": str(args.plan_id)})
-        for identity, _digest in sorted(expected_review_refs)
+        for identity, _digest in sorted(declared_review_refs)
     ]
     return {
         "tree": tree,
@@ -383,11 +400,72 @@ def validate_final_workflow_chain(
     }
 
 
+def _current_plan_integrated_review_refs(
+    args: argparse.Namespace, data: Mapping[str, Any]
+) -> list[dict[str, str]]:
+    """Find current plan-wide advice as canonical candidates, not verdicts."""
+
+    policy = _policy("implementation-review")
+    anchors = _anchors(args)
+    bindings = {"plan": str(args.plan_id)}
+    directory = canonical_artifact_path(
+        policy, anchors, identity="review-probe", state="active",
+        bindings=bindings,
+    ).parent
+    if not directory.is_dir():
+        return []
+    candidate = data.get("candidate_identity")
+    if not isinstance(candidate, dict):
+        return []
+    refs: list[dict[str, str]] = []
+    for path in sorted(directory.glob("*.implementation-review.yaml")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            identity = str(read_yaml_mapping(path).get("id") or "")
+            expected = canonical_artifact_path(
+                policy, anchors, identity=identity, state="active",
+                bindings=bindings,
+            )
+            if path.resolve() != expected.resolve():
+                continue
+            reviewed = read_artifact(
+                CURRENT_CATALOG, "implementation-review", anchors,
+                identity=identity, state="active", bindings=bindings,
+            )
+        except (OSError, SystemExit, ValueError):
+            continue
+        content = reviewed["data"]
+        if (
+            content.get("scope") == "integrated"
+            and content.get("task_id") is None
+            and content.get("authority_identity") == data.get("plan_identity")
+            and content.get("specification_id") == data.get("specification_id")
+            and content.get("target_sha256") == candidate.get("sha256")
+        ):
+            refs.append({"id": identity, "sha256": reviewed["digest"]})
+    return refs
+
+
 def write_final_workflow_review(args: argparse.Namespace) -> dict[str, Any]:
     data = _semantic_input(args, "final-workflow-review")
     candidate = data.get("candidate_identity")
     if not isinstance(candidate, dict) or not isinstance(candidate.get("sha256"), str):
         raise SystemExit("Final workflow review requires exact candidate identity")
+    declared_reviews = data.get("accepted_reviews")
+    if not isinstance(declared_reviews, list):
+        raise SystemExit("Final workflow review requires review references")
+    declared_ids = {
+        str(reference.get("id")) for reference in declared_reviews
+        if isinstance(reference, dict)
+    }
+    data["accepted_reviews"] = [
+        *declared_reviews,
+        *(
+            reference for reference in _current_plan_integrated_review_refs(args, data)
+            if reference["id"] not in declared_ids
+        ),
+    ]
     validate_final_workflow_chain(args, data)
     data["target_sha256"] = candidate["sha256"]
     return _write(args, "final-workflow-review", data, _bindings("final-workflow-review", plan_id=str(args.plan_id)))
