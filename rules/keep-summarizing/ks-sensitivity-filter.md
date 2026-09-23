@@ -1,7 +1,7 @@
 ---
 id: ks-sensitivity-filter
 applies_when:
-  - source content is inspected or written
+  - source content is inspected for or written to durable knowledge
 enforcement: must
 load: conditional
 requires: []

@@ -1,10 +1,8 @@
 ---
 id: wb-skill-registry
 applies_when:
-  - task.registers_external_skill
-  - task.resolves_available_skills
-  - task.resolves_role_skills
-  - task.resolves_stage_skills
+  - a user or workflow registers an external skill in the WorkBundle skill registry
+  - an agent resolves available, role, or stage skills through the external skill registry
 enforcement: must
 load: conditional
 requires: []

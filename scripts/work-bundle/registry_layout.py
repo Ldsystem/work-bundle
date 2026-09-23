@@ -520,7 +520,7 @@ def validate_layout_version(workspace_root: Path, expected_version: str) -> list
         return [f'WB_REGISTRY_LAYOUT_VERSION_MISMATCH:{actual}']
     if actual == '3':
         from project import inspect_project, project_failures
-        return project_failures(inspect_project(workspace_root), strict=False, include_roles=False)
+        return project_failures(inspect_project(workspace_root), strict=False)
     if actual == '4':
         from control_plane import _portable_failures
         return _portable_failures(metadata_text)

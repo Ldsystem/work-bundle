@@ -70,14 +70,13 @@ def test_validate_current_rules_passes() -> None:
             sys.path.pop(0)
 
 
-def test_verification_evidence_before_claim_rule_is_always_loaded_and_indexed() -> None:
+def test_verification_evidence_before_claim_rule_is_conditionally_reachable() -> None:
     rule = (REPO_ROOT / "rules/verification-evidence-before-claim.md").read_text(encoding="utf-8")
     index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
-    body = rule.split("---", 2)[2]
-
     assert "id: verification-evidence-before-claim" in rule
     assert "path: verification-evidence-before-claim.md" in index
-    assert "load: always" in rule
+    assert "load: conditional" in rule
+    assert "about to state that code, a task, a workflow" in index
     assert "exact claim" in rule
     assert "capable evidence" in rule
     assert "fresh, claim-relevant evidence" in rule
@@ -86,7 +85,39 @@ def test_verification_evidence_before_claim_rule_is_always_loaded_and_indexed() 
     assert "stale evidence" in rule
     assert "partial evidence" in rule
     assert "durable knowledge remains unresolved" in rule
-    assert 150 <= len(body.split()) <= 250
+
+
+def test_truth_basis_rule_is_indexed_for_pre_probe_and_carried_task_work() -> None:
+    rule = (REPO_ROOT / "rules/work-bundle/wb-truth-basis-evidence.md").read_text(encoding="utf-8")
+    index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
+
+    assert "id: wb-truth-basis-evidence" in rule
+    assert "path: work-bundle/wb-truth-basis-evidence.md" in index
+    assert "enforcement: must" in rule
+    assert "begins source, repository, knowledge, or workflow investigation" in index
+    assert "before the first substantive" in rule
+    assert "Minimal bootstrap" in rule
+    assert "provisional as-is evidence" in rule
+    assert "before mutation" in rule
+    assert "accepted task carries a compiled Truth Basis" in rule
+    assert "not correctness authority" in rule
+    assert "first owning layer" in rule
+    assert "Stop exploration when more evidence cannot change" in rule
+
+
+def test_generic_v4_stubs_are_absent_and_distinct_rules_are_reachable() -> None:
+    index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
+    for stub in ("runtime-artifact-format", "skill-registry"):
+        assert not (REPO_ROOT / "rules" / f"{stub}.md").exists()
+        assert f"path: {stub}.md" not in index
+    for rule_id, path, trigger in (
+        ("rule-work-bundle-lifecycle-authority", "lifecycle-authority.md", "task result is accepted"),
+        ("rule-work-bundle-repository-boundary", "repository-boundary.md", "stores execution evidence"),
+        ("wb-skill-registry", "work-bundle/wb-skill-registry.md", "registers an external skill"),
+    ):
+        assert f"id: {rule_id}" in index
+        assert f"path: {path}" in index
+        assert trigger in index
 
 
 def test_codegraph_rule_stays_index_gated_and_preserves_fallback() -> None:
@@ -256,6 +287,25 @@ def test_effective_rule_registry_reports_optional_missing_and_duplicate_ids(tmp_
         assert registry["status"] == "issues-found"
         assert "global" in registry["missing_optional"]
         assert any(str(failure).startswith("duplicate_rule_id:wb-duplicate:") for failure in registry["failures"])
+
+        (toolkit_root / "index.yaml").unlink()
+        missing_toolkit = rules_module.build_effective_rule_registry(project)
+        assert any(str(failure).startswith("toolkit:index_missing:") for failure in missing_toolkit["failures"])
+
+        rules_module.sync_index(toolkit_root)
+        (project_rules / "work-bundle" / "wb-duplicate.md").unlink()
+        first = project_rules / "work-bundle" / "wb-first.md"
+        second = project_rules / "work-bundle" / "wb-second.md"
+        first.write_text(valid_rule_md("wb-first").replace("requires: []", "requires:\n  - wb-unlisted"), encoding="utf-8")
+        rules_module.sync_index(project_rules)
+        missing_dependency = rules_module.build_effective_rule_registry(project)
+        assert "missing_required_rule:wb-first:wb-unlisted" in missing_dependency["failures"]
+
+        first.write_text(valid_rule_md("wb-first").replace("requires: []", "requires:\n  - wb-second"), encoding="utf-8")
+        second.write_text(valid_rule_md("wb-second").replace("requires: []", "requires:\n  - wb-first"), encoding="utf-8")
+        rules_module.sync_index(project_rules)
+        dependency_cycle = rules_module.build_effective_rule_registry(project)
+        assert any(str(failure).startswith("dependency_cycle:") for failure in dependency_cycle["failures"])
     finally:
         if old_root is None:
             os.environ.pop("WB_WORK_BUNDLE_ROOT", None)
@@ -273,46 +323,19 @@ def test_effective_rule_registry_reports_optional_missing_and_duplicate_ids(tmp_
             sys.path.pop(0)
 
 
-def test_agents_template_load_always_is_unconditional_and_three_scopes_are_named() -> None:
-    text = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
-    assert "$work_bundle_root/rules/index.yaml" in text
-    assert "$work_bundle_config_root/rules/index.yaml" in text
-    assert "$project_root/.work-bundle/rules/index.yaml" in text
-    assert "load `load: always` rule bodies immediately and unconditionally" in text
-    assert "decompose it into rule-matching signals, then check discovered rule metadata" in text
-    assert "decompose the current user request into task signals, then check all discovered rule metadata" in text
-    assert "load `load: always` rules only when their scope is relevant" not in text
-    assert "decompose the current user request before rule selection" not in text
+def test_rule_owners_cover_evidence_controller_and_repository_boundaries() -> None:
+    basis = (REPO_ROOT / "rules/work-bundle/wb-truth-basis-evidence.md").read_text(encoding="utf-8")
+    controller = (REPO_ROOT / "rules/orchestration/orch-orchestration-boundary.md").read_text(encoding="utf-8")
+    preflight = (REPO_ROOT / "rules/work-bundle/wb-project-context-preflight.md").read_text(encoding="utf-8")
+    review = (REPO_ROOT / "rules/orchestration/orch-review-completion.md").read_text(encoding="utf-8")
 
-
-def test_agents_authority_and_evidence_contract_is_bounded_and_synchronized() -> None:
-    template = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
-    source = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-
-    for text in (template, source):
-        for phrase in (
-            "Agents own semantic correctness, relevance, qualification, and acceptance",
-            "Scripts and schemas own deterministic structure",
-            "current implementation and workspace state as evidence",
-            "controller/orchestrator owns scope, delegation, repair routing, continuation, acceptance, re-entry",
-            "Reviewers provide independent advice",
-            "Enforce necessary constraints before an authoritative write",
-            "prefer lightweight integrity checks",
-            "Escalate to targeted durable knowledge, orchestration lineage, or Git history only when",
-            "at the owning workflow's completion boundary, record one knowledge disposition",
-        ):
-            assert phrase in text
-        assert "Find its corresponding design purpose and decisions in the knowledge base" not in text
-        assert "Find its corresponding orchestration evidence" not in text
-        assert "after each meaningful validated move, record a knowledge disposition" not in text
-
-    template_body = template.strip()
-    source_body = source.strip().removeprefix(
-        "# ========================\n# Work Bundle RULE START\n# ========================\n"
-    ).removesuffix(
-        "\n# ========================\n# Work Bundle RULE END\n# ========================"
-    ).strip()
-    assert source_body == template_body
+    assert "accepted decision authority" in basis
+    assert "current implementation" in basis and "not correctness authority" in basis
+    assert "controller/orchestrator authoritative for scope" in controller
+    assert "task-bound worker packets" in controller
+    assert "reviewer findings" in controller
+    assert "metadata v4" in preflight and "device_bindings" in preflight
+    assert "knowledge disposition/return" in review
 
 
 def test_validate_rules_rejects_nested_scope_index(tmp_path: Path) -> None:
@@ -544,7 +567,7 @@ def test_defect_evidence_calls_evaluation_and_keeps_storage_boundary() -> None:
     evidence = (REPO_ROOT / "rules/work-bundle/wb-defect-evidence.md").read_text(encoding="utf-8")
     index = (REPO_ROOT / "rules/index.yaml").read_text(encoding="utf-8")
 
-    trigger = "the Work Bundle rule is visible in AGENTS.md and any conflict, confliction, violation, contradiction, or user correction occurs"
+    trigger = "a conflict, violation, contradiction, or user correction occurs during WorkBundle-guided work"
     assert trigger in evidence
     assert trigger in index
     assert "requires: []" in evidence
@@ -644,7 +667,7 @@ def test_initialize_project_guidance_matches_create_rule_project_scope() -> None
     initialize = (REPO_ROOT / "skills/wb-initialize-project/SKILL.md").read_text(encoding="utf-8")
     create_rule = (REPO_ROOT / "skills/wb-create-rule/SKILL.md").read_text(encoding="utf-8")
 
-    assert "$project_root/.work-bundle/rules/" in create_rule
+    assert "$workspace_root/.work-bundle/rules/" in create_rule
     assert ".work-bundle/rules/index.yaml" in initialize
     assert "root `rules/index.yaml` is legacy-only" in initialize
     assert "preserve it as a legacy artifact only" in initialize
@@ -710,8 +733,6 @@ def test_single_repository_workspace_resource_contracts_converge() -> None:
 
 
 def test_v4_portable_and_device_local_authority_contracts_converge() -> None:
-    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    agents_template = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
     workflow = (REPO_ROOT / "references/assets/keep-summarizing/workflow.md").read_text(encoding="utf-8")
     v4_contract = (REPO_ROOT / "references/wb-workspace-metadata-v4-contract.yaml").read_text(encoding="utf-8")
     preflight_rule = (REPO_ROOT / "rules/work-bundle/wb-project-context-preflight.md").read_text(encoding="utf-8")
@@ -720,11 +741,10 @@ def test_v4_portable_and_device_local_authority_contracts_converge() -> None:
     control_plane = (REPO_ROOT / "scripts/work-bundle/control_plane.py").read_text(encoding="utf-8")
     repository_preflight = (REPO_ROOT / "scripts/orchestration/repository_preflight.py").read_text(encoding="utf-8")
 
-    for artifact in (agents, agents_template, workflow, preflight_rule, registry_rule, initialize):
+    for artifact in (workflow, preflight_rule, registry_rule, initialize):
         assert "portable project/topology authority" in artifact
         assert "device" in artifact and "binding" in artifact
-    for artifact in (agents, agents_template, workflow):
-        assert "Truth Basis" in artifact
+    assert "Truth Basis" in (REPO_ROOT / "rules/work-bundle/wb-truth-basis-evidence.md").read_text(encoding="utf-8")
     assert "bootstrap.project_registry#device_bindings" in v4_contract
     assert "explicit-read-or-migration-only" in v4_contract
     assert 'registry/projects.yaml' not in control_plane
@@ -809,8 +829,7 @@ def test_work_bundle_skill_registry_rule_excludes_builtin_skills() -> None:
     assert "external skill registry" in rule
     assert "built-in WorkBundle skills" in rule
     assert "Reject any attempt to register a built-in WorkBundle skill" in rule
-    assert "task.registers_external_skill" in rule_index
-    assert "task.registers_skill" not in rule_index
+    assert "registers an external skill" in rule_index
     assert "only for external skills" in skill
     assert "~/.work-bundle/registry/skill-registry.yaml" in skill
 

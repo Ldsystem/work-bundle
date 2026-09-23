@@ -222,6 +222,34 @@ def test_session_start_appends_missing_wrapper_and_preserves_user_content(tmp_pa
     assert data["project_agents_checksum"].startswith("sha256:")
 
 
+def test_session_start_replaces_only_managed_section_and_uses_installed_template(tmp_path: Path) -> None:
+    config_root, project = _init_project(tmp_path)
+    agents_path = project / "AGENTS.md"
+    before = "# User instructions\n\nKeep these exact spaces:  \n\n"
+    after = "\n## More user instructions\nPreserve this text.\n\n"
+    agents_path.write_text(
+        before
+        + "# ========================\n# Work Bundle RULE START\n# ========================\n"
+        + "old managed content\n"
+        + "# ========================\n# Work Bundle RULE END\n# ========================\n"
+        + after,
+        encoding="utf-8",
+    )
+
+    result = run_wb(config_root, "session-start", "--project-root", str(project), "--json")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rendered = agents_path.read_text(encoding="utf-8")
+    template = (REPO_ROOT / "references/assets/template/AGENTS.md").read_text(encoding="utf-8")
+    contributor = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert rendered.startswith(before)
+    assert rendered.endswith(after)
+    assert rendered.count("# Work Bundle RULE START") == 1
+    assert template in rendered
+    assert contributor not in rendered
+    assert "old managed content" not in rendered
+
+
 def test_session_start_repairs_stale_metadata_without_rewriting_agents(tmp_path: Path) -> None:
     config_root, project = _init_project(tmp_path)
     agents_path = project / "AGENTS.md"

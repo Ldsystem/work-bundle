@@ -243,6 +243,63 @@ def test_kernel_execution_context_creates_typed_binding_ownership(tmp_path, monk
     assert binding["ownership"]["history"]
 
 
+def test_execution_binding_rejects_wrong_canonical_write_member_before_mutation(tmp_path, monkeypatch):
+    import repository_preflight
+
+    plan = tmp_path / ".work-bundle/orchestration/plan/active/plan-001.plan.yaml"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("status: verified\n", encoding="utf-8")
+    task = plan.parent / "plan-001/phase-001/task-001.task.yaml"
+    task.parent.mkdir(parents=True)
+    task.write_text(
+        "id: task-001\nplan_id: plan-001\nphase_id: phase-001\n"
+        "source_files: [repo-other/src/read.py]\ntarget_files: [repo-main/src/write.py]\n",
+        encoding="utf-8",
+    )
+    metadata = tmp_path / ".work-bundle/project.yaml"
+    metadata.write_text("metadata_version: 4\n", encoding="utf-8")
+    for name in ("repo-main", "repo-other"):
+        (tmp_path / name).mkdir()
+    monkeypatch.setattr(execution_context, "_find_plan", lambda *_: (plan, {}))
+    monkeypatch.setattr(repository_preflight, "_metadata_repository_entries", lambda _root: [
+        {"id": name, "project_root": str(tmp_path / name)}
+        for name in ("repo-main", "repo-other")
+    ])
+
+    class NoWorkspaceMutation:
+        @staticmethod
+        def load_state(*_args):
+            raise AssertionError("execution workspace was loaded before repository agreement")
+
+    monkeypatch.setattr(execution_context, "_execution_workspace_module", lambda: NoWorkspaceMutation)
+    with pytest.raises(SystemExit, match="repository.*mismatch"):
+        execution_context.create_or_load_task_execution_binding(
+            control_root=tmp_path, plan_id="plan-001", task_id="task-001",
+            workspace_id="ws-001", execution_id="exec-001",
+            repository_id="repo-other", runtime_root=tmp_path / "runtime",
+        )
+    assert not (tmp_path / ".work-bundle/runtime").exists()
+
+    execution_root = tmp_path / "execution"
+    execution_root.mkdir()
+
+    class MatchingWorkspace:
+        @staticmethod
+        def load_state(*_args):
+            return {
+                "execution_workspace_state": {"path": str(execution_root), "kind": "worktree"},
+                "git_identity": {}, "state_path": str(tmp_path / "runtime/state.json"),
+            }
+
+    monkeypatch.setattr(execution_context, "_execution_workspace_module", lambda: MatchingWorkspace)
+    binding = execution_context.create_or_load_task_execution_binding(
+        control_root=tmp_path, plan_id="plan-001", task_id="task-001",
+        workspace_id="ws-001", execution_id="exec-001",
+        repository_id="repo-main", runtime_root=tmp_path / "runtime",
+    )
+    assert binding["repository_id"] == "repo-main"
+
+
 def test_kernel_execution_context_rejects_missing_malformed_or_store_mismatched_ownership(tmp_path, monkeypatch):
     monkeypatch.setattr(execution_context, "_find_plan", lambda *_: (tmp_path / "plan.md", {}))
     (tmp_path / "plan.md").write_text("status: verified\n", encoding="utf-8")

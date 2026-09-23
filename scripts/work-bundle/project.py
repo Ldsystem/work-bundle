@@ -265,7 +265,7 @@ def _replace_managed_agents_sections(text: str, block: str) -> str:
             rendered.append(block)
         previous = end
     rendered.append(text[previous:])
-    return ''.join(rendered).rstrip('\n') + '\n'
+    return ''.join(rendered)
 
 
 def _append_managed_agents_section(text: str, block: str) -> str:
@@ -640,7 +640,6 @@ def inspect_project(project_root: Path) -> dict:
     wb = project_root / '.work-bundle'
     rules = _project_rule_store_root(project_root)
     legacy_rules = project_root / 'rules'
-    roles = project_root / 'roles'
     pgi = read(project_root / '.gitignore').splitlines()
     wbi = read(wb / '.gitignore').splitlines()
     pm = read(project_root / '.work-bundle/project.yaml')
@@ -686,9 +685,6 @@ def inspect_project(project_root: Path) -> dict:
         'legacy_rule_files': len(list(legacy_rules.glob('*.yaml'))) if legacy_rules.exists() else 0,
         'legacy_rule_index': (legacy_rules / 'index.yaml').exists(),
         'legacy_rules_authority': 'legacy-artifact',
-        'roles_root': roles.exists(),
-        'role_files': len(list(roles.glob('*.yaml'))) if roles.exists() else 0,
-        'role_profiles': all((roles / f'{r}.yaml').exists() for r in ROLE_NAMES),
         'mdc_rules': [str(p) for p in rules.glob('**/*.mdc')] if rules.exists() else [],
         'global_registry_copied': (wb / 'skills/skill-registry.yaml').exists(),
         'project_skill_override': (wb / 'orchestration/skill-registry.override.yaml').exists(),
@@ -703,10 +699,10 @@ def inspect_project(project_root: Path) -> dict:
     }
 
 
-def project_failures(data: dict, strict: bool = True, include_roles: bool = False) -> list[str]:
+def project_failures(data: dict, strict: bool = True) -> list[str]:
     required = ['project_gitignore', 'project_ignores_work_bundle', 'project_ignores_agents', 'agents_md', 'work_bundle', 'work_bundle_gitignore', 'knowledge_root', 'orchestration_root', 'rules_root', 'project_metadata_exists']
     if strict:
-        required.extend(['work_bundle_gitignore_required_entries', 'orchestration_tree', 'rule_index', 'roles_root', 'role_profiles'])
+        required.extend(['work_bundle_gitignore_required_entries', 'orchestration_tree', 'rule_index'])
     failures = [k for k in required if not data.get(k)]
     if not data.get('project_metadata_exists'):
         failures.append(DIAG_PROJECT_METADATA_MISSING)

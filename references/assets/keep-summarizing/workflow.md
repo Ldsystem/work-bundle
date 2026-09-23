@@ -77,7 +77,7 @@ All implementation methods consume the same Truth Basis: purpose, as-is evidence
 
 ## Project Registry
 
-For metadata v4, use `<workspace-root>/.work-bundle/project.yaml` as portable project/topology authority and use `device_bindings` in the bootstrap-resolved `project_registry` as device-local materialization and observation authority. Preserve project-metadata ownership of local checkout paths and observations only for explicit metadata-v3 reads and migrations. Use workspace-root `AGENTS.md`, initialized from `references/assets/template/AGENTS.md`, for WorkBundle runtime entry rules. Stable role profiles remain project data for explicit consumers; they do not select or alter runtime authority.
+For metadata v4, use `<workspace-root>/.work-bundle/project.yaml` as portable project/topology authority and use `device_bindings` in the bootstrap-resolved `project_registry` as device-local materialization and observation authority. Preserve project-metadata ownership of local checkout paths and observations only for explicit metadata-v3 reads and migrations. Use workspace-root `AGENTS.md`, initialized from `references/assets/template/AGENTS.md`, for WorkBundle runtime entry rules.
 
 In both workspace modes, reusable workspace utilities live under singular `<workspace-root>/script/` and are reusable only through `script/index.yaml`; toolkit plural `scripts/` remains separate. The protected credential store lives at `<workspace-root>/credentials/credentials.yaml` in both modes and remains local-only. Never read, index, embed, summarize, copy, or expose it. Credential-backed operations belong to `wb-credential-use`, and only credential IDs plus redacted metadata may cross agent-visible surfaces.
 
@@ -465,4 +465,4 @@ Completion is not valid after a note or open-question write until the relevant i
 
 ## V4 Boundary Validation
 
-V4 work-bundle validation may inspect project metadata, agent entry, role profiles, runtime rules, and skill registry references. These checks do not expand durable knowledge ownership: notes remain under `.work-bundle/knowledge/`, and orchestration/runtime artifacts remain under `.work-bundle/orchestration/`.
+V4 work-bundle validation may inspect project metadata, agent entry, runtime rules, and external skill registry references. These checks do not expand durable knowledge ownership: notes remain under `.work-bundle/knowledge/`, and orchestration/runtime artifacts remain under `.work-bundle/orchestration/`.

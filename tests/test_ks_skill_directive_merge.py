@@ -129,3 +129,4 @@ def test_workflow_carries_truth_basis_and_review_owned_disposition() -> None:
         "device_bindings",
     ]:
         assert token in workflow
+    assert "role profiles" not in workflow.lower()

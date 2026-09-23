@@ -7,7 +7,7 @@ def cmd_doctor(args: list[str], report: bool = False) -> int:
     parsed = parser.parse_args(args)
     project_root = Path(parsed.project_root).resolve()
     data = inspect_project(project_root)
-    failures = project_failures(data, strict=False, include_roles=True)
+    failures = project_failures(data, strict=False)
     if report:
         print('# Doctor Report\n')
         print('## Status\n')

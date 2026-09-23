@@ -1,7 +1,8 @@
 ---
 id: rule-work-bundle-lifecycle-authority
 applies_when:
-  - v4 work-bundle operation requires lifecycle-authority
+  - an orchestration task result is accepted, released as a dependency, resumed, finalized, or archived
+  - accepted execution authority or its freshness binding is validated for lifecycle progression
 enforcement: must
 load: conditional
 requires: []

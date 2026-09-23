@@ -1,7 +1,6 @@
 id: default-work-bundle-tree
 status: current
 roots:
-  - roles
   - rules
   - .work-bundle/git
   - .work-bundle/knowledge/notes

@@ -1,7 +1,7 @@
 ---
 id: ks-persistence-gate
 applies_when:
-  - knowledge write may occur
+  - an agent prepares a durable knowledge note, context pack, or open-question write
 enforcement: must
 load: conditional
 requires: []

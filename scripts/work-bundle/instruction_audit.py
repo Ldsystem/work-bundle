@@ -17,7 +17,7 @@ from workspace_resources import _load_yaml
 
 
 WORD = re.compile(r"\b[\w]+(?:[-'][\w]+)*\b", re.UNICODE)
-RULE_LOADING_HEADING = re.compile(r"^## Rule Loading \(mandatory\)\s*$", re.MULTILINE)
+RULE_LOADING_HEADING = re.compile(r"^## Rule Loading(?: \(mandatory\))?\s*$", re.MULTILINE)
 
 
 def word_count(text: str) -> int:

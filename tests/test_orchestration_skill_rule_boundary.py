@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import re
+import subprocess
 
 import yaml
 
@@ -44,6 +45,9 @@ def test_execute_skill_separates_executor_facts_from_reviewer_verdict() -> None:
     ):
         assert token in text
     assert "does not accept the product" in text
+    worker_section, controller_section = text.split("## Controller continuation", 1)
+    assert "The controller/orchestrator assesses" not in worker_section
+    assert "the controller sends" in controller_section
 
 
 def test_handoff_skill_owns_only_canonical_factual_continuation() -> None:
@@ -168,3 +172,32 @@ def test_orchestration_pressure_cases_cover_authority_accuracy_and_write_discipl
         output = scenarios[scenario_id]["expected_output"]
         for phrase in phrases:
             assert phrase in output
+
+
+def test_instruction_audit_reports_current_rule_loading_heading(tmp_path: Path) -> None:
+    for name in ("one", "two"):
+        skill = tmp_path / "skills" / name / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text(
+            f"---\nname: {name}\ndescription: Test skill.\n---\n\n"
+            "## Rule Loading\n\nRead indexed rules.\n",
+            encoding="utf-8",
+        )
+    result = subprocess.run(
+        ["python3", "scripts/wb.py", "instruction-audit", "--root", str(tmp_path)],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    report = json.loads(result.stdout)
+    assert report["repeated_rule_loading_blocks"][0]["occurrences"] == 2
+
+
+def test_current_references_do_not_assert_toolkit_role_profiles() -> None:
+    workflow = read("references/assets/keep-summarizing/workflow.md")
+    scenarios = json.loads(read("references/evals/orchestration/evals.json"))
+    assert "role profiles" not in workflow.lower()
+    scenario_ids = {item["id"] for item in scenarios["v4_evals"]}
+    assert "v4-stable-role-profile-adversarial-boundary" not in scenario_ids
+    assert "v4-external-skill-role-identifiers-without-profiles" in scenario_ids

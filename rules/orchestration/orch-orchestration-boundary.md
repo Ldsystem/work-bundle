@@ -21,6 +21,8 @@ Keep every current orchestration artifact in its canonical role and keep structu
 - Treat each canonical artifact as authority only for its declared role and indexes as disposable projections.
 - Use executor results for facts, implementation reviews for independent advisory findings, accepted task results for controller/orchestrator acceptance and dependency continuation, and final workflow reviews for the controller/orchestrator's compact closure decision after considering final-audit advice.
 - Keep the controller/orchestrator authoritative for scope, delegation, repair routing, continuation, acceptance, re-entry, and any explicitly user-authorized delivery action. A reviewer reports advice to that owner and does not direct workers, expand scope, deliver changes, or issue the controlling decision.
+- Have the controller carry accepted task obligations, repository ownership, safety constraints, and validation into task-bound worker packets. Workers execute that scope and return task-local evidence; a worker packet does not confer controller authority or require historical authority reconstruction.
+- The controller assesses reviewer findings against the accepted product obligations and records its own qualification, repair, or continuation decision.
 - Validate structural mechanics before mutation and keep post-write checks lightweight.
 
 ## Must Not
