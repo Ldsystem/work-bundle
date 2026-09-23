@@ -223,6 +223,58 @@ def test_sg06_serialized_tasks_progress_across_successive_waves() -> None:
     assert second.dispatched == ("task-b",)
 
 
+@pytest.mark.parametrize("transitive", [False, True])
+def test_ordered_overlapping_successor_waits_for_accepted_predecessor(
+    transitive: bool,
+) -> None:
+    first = TaskCandidate("task-a", (), ("src/shared.py",), "workspace-a")
+    middle = TaskCandidate("task-middle", ("task-a",), ("tests/middle.py",), "workspace-middle")
+    successor = TaskCandidate(
+        "task-b", ("task-middle",) if transitive else ("task-a",),
+        ("src/shared.py",), "workspace-b",
+    )
+    tasks = [first, middle, successor] if transitive else [first, successor]
+    completed = {"task-a", "task-middle"} if transitive else {"task-a"}
+    adapter = RecordingAdapter()
+    scheduler = TaskOwnershipScheduler(adapter)
+
+    blocked = scheduler.run_wave(tasks, completed=completed)
+    assert blocked.dispatched == ()
+    assert adapter.events == []
+
+    released = scheduler.run_wave(
+        tasks, completed=completed, accepted_handoffs={"task-a"},
+    )
+    assert released.dispatched == ("task-b",)
+
+
+def test_disjoint_ordinary_dependency_still_releases_on_completion() -> None:
+    tasks = [
+        TaskCandidate("task-a", (), ("src/a.py",), "workspace-a"),
+        TaskCandidate("task-b", ("task-a",), ("src/b.py",), "workspace-b"),
+    ]
+    result = TaskOwnershipScheduler(RecordingAdapter()).run_wave(
+        tasks, completed={"task-a"},
+    )
+    assert result.dispatched == ("task-b",)
+
+
+def test_each_overlapping_ancestor_needs_acceptance() -> None:
+    tasks = [
+        TaskCandidate("task-a", (), ("src/shared.py",), "workspace-a"),
+        TaskCandidate("task-b", ("task-a",), ("src/shared.py",), "workspace-b"),
+        TaskCandidate("task-c", ("task-b",), ("src/shared.py",), "workspace-c"),
+    ]
+    scheduler = TaskOwnershipScheduler(RecordingAdapter())
+    completed = {"task-a", "task-b"}
+    assert scheduler.run_wave(
+        tasks, completed=completed, accepted_handoffs={"task-b"},
+    ).dispatched == ()
+    assert scheduler.run_wave(
+        tasks, completed=completed, accepted_handoffs={"task-a", "task-b"},
+    ).dispatched == ("task-c",)
+
+
 def test_sg07_repair_retains_owner_binding_baseline_evidence_and_frontier() -> None:
     adapter = RecordingAdapter()
     continuity = RepairContinuity(

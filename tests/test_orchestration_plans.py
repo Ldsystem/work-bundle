@@ -218,6 +218,123 @@ def _create_tree(workspace: Path, tmp_path: Path) -> tuple[Path, Path, Path]:
     )
 
 
+def _store_peer(
+    workspace: Path, task_id: str, *, depends_on: list[str], target_files: list[str],
+) -> Path:
+    peer = read_artifact(
+        CATALOG, "task", {"workspace_root": workspace}, identity="task-stage4",
+        state="active", bindings={"plan": "plan-stage4", "phase": "phase-stage4"},
+    )["data"]
+    peer.update(id=task_id, name=task_id, depends_on=depends_on, target_files=target_files)
+    result = write_artifact(
+        CATALOG, "task", {"workspace_root": workspace}, peer, state="active",
+        bindings={"plan": "plan-stage4", "phase": "phase-stage4"},
+    )
+    return Path(str(result["path"]))
+
+
+def _write_or_amend_task(
+    workspace: Path, tmp_path: Path, *, command: str, task_id: str,
+    depends_on: list[str], target_files: list[str],
+) -> Path:
+    semantic = _task_semantics()
+    semantic["depends_on"] = depends_on
+    semantic["target_files"] = target_files
+    content = _write_yaml(tmp_path / f"{command}-{task_id}.yaml", semantic)
+    args = _args(
+        workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+        task_id=task_id, title=task_id, content_file=str(content), status="planned",
+    )
+    getattr(plans, f"cmd_{command}_task")(args)
+    return (workspace / ".work-bundle/orchestration/plan/active/plan-stage4/phase-stage4"
+            / f"{task_id}.task.yaml")
+
+
+@pytest.mark.parametrize("command", ["write", "amend"])
+@pytest.mark.parametrize("ordering", ["direct", "transitive", "reverse"])
+def test_ordered_overlapping_task_write_is_admitted(
+    workspace: Path, tmp_path: Path, command: str, ordering: str,
+) -> None:
+    _create_tree(workspace, tmp_path)
+    if command == "amend":
+        candidate_id = "task-stage4"
+        peer_id = "task-peer"
+        if ordering == "reverse":
+            _store_peer(workspace, peer_id, depends_on=[candidate_id], target_files=["scripts/**"])
+            dependencies: list[str] = []
+        else:
+            _store_peer(workspace, peer_id, depends_on=[], target_files=["scripts/**"])
+            dependencies = [peer_id]
+    else:
+        candidate_id = "task-new"
+        peer_id = "task-stage4"
+        if ordering == "reverse":
+            _store_peer(workspace, peer_id, depends_on=[], target_files=["tests/base.py"])
+            _store_peer(workspace, "task-after", depends_on=[candidate_id], target_files=["scripts/**"])
+            dependencies = []
+        else:
+            dependencies = [peer_id]
+    if ordering == "transitive":
+        _store_peer(workspace, "task-middle", depends_on=[peer_id], target_files=["tests/middle.py"])
+        dependencies = ["task-middle"]
+
+    result = _write_or_amend_task(
+        workspace, tmp_path, command=command, task_id=candidate_id,
+        depends_on=dependencies, target_files=["scripts/orchestration/execution_context.py"],
+    )
+    assert yaml.safe_load(result.read_text())["depends_on"] == dependencies
+
+
+@pytest.mark.parametrize("command", ["write", "amend"])
+@pytest.mark.parametrize("peer_scope", [["scripts/orchestration/execution_context.py"], ["scripts/**"]])
+def test_unordered_overlapping_task_write_rejected_without_mutation(
+    workspace: Path, tmp_path: Path, command: str, peer_scope: list[str],
+) -> None:
+    _create_tree(workspace, tmp_path)
+    candidate_id = "task-new" if command == "write" else "task-stage4"
+    if command == "write":
+        _store_peer(workspace, "task-unordered", depends_on=[], target_files=peer_scope)
+    else:
+        _store_peer(workspace, "task-unordered", depends_on=[], target_files=peer_scope)
+    candidate_path = (workspace / ".work-bundle/orchestration/plan/active/plan-stage4/phase-stage4"
+                      / f"{candidate_id}.task.yaml")
+    before = candidate_path.read_bytes() if candidate_path.exists() else None
+
+    with pytest.raises(SystemExit, match="write ownership collides"):
+        _write_or_amend_task(
+            workspace, tmp_path, command=command, task_id=candidate_id,
+            depends_on=[], target_files=["scripts/orchestration/execution_context.py"],
+        )
+    assert (candidate_path.read_bytes() if candidate_path.exists() else None) == before
+
+
+@pytest.mark.parametrize("invalid", ["missing", "cycle"])
+def test_reverse_overlap_rejects_invalid_peer_ancestry_before_mutation(
+    workspace: Path, tmp_path: Path, invalid: str,
+) -> None:
+    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
+    if invalid == "missing":
+        peer_dependencies = ["task-stage4", "task-missing"]
+    else:
+        _store_peer(
+            workspace, "task-cycle", depends_on=["task-peer"],
+            target_files=["tests/cycle.py"],
+        )
+        peer_dependencies = ["task-stage4", "task-cycle"]
+    _store_peer(
+        workspace, "task-peer", depends_on=peer_dependencies,
+        target_files=["scripts/orchestration/execution_context.py"],
+    )
+    before = task_path.read_bytes()
+
+    with pytest.raises(SystemExit, match="dependency is not canonical|dependency cycle"):
+        _write_or_amend_task(
+            workspace, tmp_path, command="amend", task_id="task-stage4",
+            depends_on=[], target_files=["scripts/orchestration/execution_context.py"],
+        )
+    assert task_path.read_bytes() == before
+
+
 def test_catalog_v6_registers_distinct_canonical_yaml_planning_families() -> None:
     assert load_catalog(CATALOG)["catalog_id"] == "artifact-family-catalog-v6"
     catalog = load_catalog(CATALOG)

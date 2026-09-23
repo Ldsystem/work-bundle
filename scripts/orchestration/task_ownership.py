@@ -221,13 +221,36 @@ def _ready_wave(
     completed: set[str],
     accepted_handoffs: set[str],
 ) -> list[TaskCandidate]:
+    """Choose a wave from the plan's task set and canonical accepted-result IDs."""
     for task in tasks:
         _validate_topology(task)
+    by_id = {task.task_id: task for task in tasks}
+
+    def overlapping_ancestors_accepted(task: TaskCandidate) -> bool:
+        pending = list(task.dependencies)
+        visited: set[str] = set()
+        while pending:
+            ancestor_id = pending.pop()
+            if ancestor_id in visited:
+                continue
+            visited.add(ancestor_id)
+            ancestor = by_id.get(ancestor_id)
+            if ancestor is None:
+                continue
+            if (
+                _scopes_overlap(task.write_scope, ancestor.write_scope)
+                and ancestor_id not in accepted_handoffs
+            ):
+                return False
+            pending.extend(ancestor.dependencies)
+        return True
+
     ready = [
         task
         for task in tasks
         if task.task_id not in completed and set(task.dependencies).issubset(completed)
         and set(task.barrier_participants).issubset(accepted_handoffs)
+        and overlapping_ancestors_accepted(task)
     ]
     wave: list[TaskCandidate] = []
     for task in ready:
@@ -256,6 +279,7 @@ class TaskOwnershipScheduler:
         repair_continuity: Mapping[str, RepairContinuity] | None = None,
         authorized_replacements: set[str] | None = None,
     ) -> DispatchWaveResult:
+        """Dispatch ready tasks; callers supply accepted_handoffs from canonical results."""
         if operation not in {"implementation", "repair"}:
             raise ValueError("operation must be implementation or repair")
         if not self._adapter.available():

@@ -227,43 +227,46 @@ def _require_draft_plan(args: argparse.Namespace, plan_id: str) -> dict[str, obj
 
 def _validate_task_dependencies_before_write(
     args: argparse.Namespace, candidate: dict[str, object]
-) -> None:
+) -> dict[str, dict[str, object]]:
     """Reject invalid task dependency graphs before authoritative mutation."""
 
-    plan_id = str(candidate["plan_id"])
-    tasks: dict[str, dict[str, object]] = {}
-    for row in _index_rows(args, "task"):
-        if str(row.get("plan_id") or "") != plan_id:
-            continue
-        task_id = str(row["id"])
-        tasks[task_id] = _active_artifact(
-            args, "task", task_id, _family_bindings("task", row)
-        )
+    tasks = _current_plan_tasks(args, str(candidate["plan_id"]))
     candidate_id = str(candidate["id"])
     tasks[candidate_id] = candidate
+    _task_dependency_ancestors(tasks, candidate_id)
+    return tasks
+
+
+def _task_dependency_ancestors(
+    tasks: dict[str, dict[str, object]], task_id: str,
+) -> set[str]:
+    """Validate one task's ancestor closure and return strict predecessors."""
 
     visiting: set[str] = set()
     visited: set[str] = set()
+    ancestors: set[str] = set()
 
-    def visit(task_id: str) -> None:
-        if task_id in visiting:
-            raise SystemExit(f"Task dependency cycle includes {task_id}")
-        if task_id in visited:
+    def visit(current_id: str) -> None:
+        if current_id in visiting:
+            raise SystemExit(f"Task dependency cycle includes {current_id}")
+        if current_id in visited:
             return
-        visiting.add(task_id)
-        raw = tasks[task_id].get("depends_on")
+        visiting.add(current_id)
+        raw = tasks[current_id].get("depends_on")
         if not isinstance(raw, list):
-            raise SystemExit(f"Task depends_on is invalid: {task_id}")
+            raise SystemExit(f"Task depends_on is invalid: {current_id}")
         for dependency_id in map(str, raw):
-            if dependency_id == task_id or dependency_id not in tasks:
+            if dependency_id == current_id or dependency_id not in tasks:
                 raise SystemExit(
-                    f"Task dependency is not canonical: {task_id} -> {dependency_id}"
+                    f"Task dependency is not canonical: {current_id} -> {dependency_id}"
                 )
+            ancestors.add(dependency_id)
             visit(dependency_id)
-        visiting.remove(task_id)
-        visited.add(task_id)
+        visiting.remove(current_id)
+        visited.add(current_id)
 
-    visit(candidate_id)
+    visit(task_id)
+    return ancestors
 
 
 def _task_write_paths(task: dict[str, object]) -> list[str]:
@@ -294,9 +297,9 @@ def _current_plan_tasks(
 
 
 def _validate_task_shared_authority_before_write(
-    args: argparse.Namespace,
     candidate: dict[str, object],
     plan: dict[str, object],
+    tasks: dict[str, dict[str, object]],
 ) -> None:
     """Check deterministic allocation and ownership invariants for one task amendment."""
 
@@ -313,13 +316,18 @@ def _validate_task_shared_authority_before_write(
                 )
 
     candidate_paths = _task_write_paths(candidate)
-    for peer_id, peer in _current_plan_tasks(args, str(candidate["plan_id"])).items():
+    candidate_ancestors = _task_dependency_ancestors(tasks, candidate_id)
+    for peer_id, peer in tasks.items():
         if peer_id == candidate_id:
             continue
         collisions = sorted(
             {left for left in candidate_paths for right in _task_write_paths(peer) if _paths_overlap(left, right)}
         )
-        if collisions:
+        if (
+            collisions
+            and peer_id not in candidate_ancestors
+            and candidate_id not in _task_dependency_ancestors(tasks, peer_id)
+        ):
             raise SystemExit(
                 f"Task amendment write ownership collides with {peer_id}: {', '.join(collisions)}"
             )
@@ -643,8 +651,8 @@ def _prepare_task_write(
         raise SystemExit(
             f"Task parent phase is not canonical for plan {args.plan_id}: {args.phase_id}"
         ) from error
-    _validate_task_dependencies_before_write(args, data)
-    _validate_task_shared_authority_before_write(args, data, plan)
+    tasks = _validate_task_dependencies_before_write(args, data)
+    _validate_task_shared_authority_before_write(data, plan, tasks)
     return data, bindings, existing
 
 
