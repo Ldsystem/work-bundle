@@ -48,6 +48,8 @@ A distinct final auditor performs one compact advisory pass over plan/task cover
 
 Store or repair the controller/orchestrator closure decision at one active canonical `final-workflow-review-v1` identity. Deterministic finalization carries that supplied decision and validates only canonical references, lifecycle state, clean baselines, archive destinations, index rebuilds, and binding release. Mechanical failure cannot manufacture or reinterpret a semantic decision.
 
+The plan-bound final workflow record's `accepted_reviews` references exact task reviews carried by accepted task results. Its writer also attaches current integrated implementation reviews matching the same plan and final candidate, validating those references before storage. An integrated review remains plan-scoped, never masquerades as a task review, and does not change the plan's semantic identity or create an acceptance gate. Finalization archives each referenced current review with the plan.
+
 ## Knowledge disposition
 
 Each meaningful validated move records `none`, `update`, `supersede`, or `reclassify`. Approved persistence is delegated to the appropriate `ks-*` owner. Orchestration never writes durable knowledge directly, and supporting knowledge state does not determine product qualification.
