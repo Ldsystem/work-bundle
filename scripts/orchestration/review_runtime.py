@@ -23,7 +23,7 @@ from review_identity import (
 )
 
 
-CURRENT_CATALOG = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
+CURRENT_CATALOG = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v7.yaml"
 CURRENT_FAMILIES = {"implementation-review", "accepted-task-result", "final-workflow-review"}
 CURRENT_STRUCTURAL_FIELDS = {
     "artifact_type", "schema_version", "id", "plan_id", "task_id",

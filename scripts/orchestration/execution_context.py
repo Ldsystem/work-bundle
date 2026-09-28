@@ -51,7 +51,7 @@ SOURCE_ID_RE = re.compile(rf"^{SOURCE_ID_TOKEN}$")
 AUTH_ALIAS_RE = re.compile(r"^AUTH-\d{3}$")
 EXCELLENCE_PROPOSAL_RE = re.compile(r"^EXC-\d+$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-PLAN_CATALOG = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
+PLAN_CATALOG = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v7.yaml"
 SENSITIVE_KEY_RE = re.compile(
     r"(?:^|[_-])(credential_values?|password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)(?:$|[_-])",
     re.IGNORECASE,
@@ -385,7 +385,12 @@ def task_evidence_applicability(task: dict[str, Any]) -> dict[str, dict[str, Any
     validation = [item for item in _as_list(task.get("validation")) if isinstance(item, dict)]
     if any(
         _source_paths(item.get("command"))
-        or re.search(r"(?:^|\s)(?:pytest|unittest|cargo test|go test|pnpm test|npm test)(?:\s|$)", str(item.get("command") or ""))
+        or re.search(
+            r"(?:^|\s)(?:pytest|unittest|cargo test|go test|pnpm test|npm test)(?:\s|$)",
+            " ".join(map(str, item.get("process", {}).get("argv", [])))
+            if isinstance(item.get("process"), dict)
+            else str(item.get("command") or ""),
+        )
         for item in validation
     ):
         source_reasons.append("source-validation")
@@ -1214,10 +1219,15 @@ def _compile_structured_validation_item(item: Any) -> dict[str, Any]:
             compiled["evidence_reuse"] = _completion_provenance_module().validation_reuse_policy(item)
         except ValueError as error:
             raise SystemExit(str(error)) from error
-    for key in ("id", "invariant_ids", "capability_reason", "command", "proves", "expected", "acceptable_results", "digest"):
+    for key in ("id", "invariant_ids", "capability_reason", "proves", "expected", "acceptable_results", "digest"):
         if key in item:
             compiled[key] = item[key]
-    if kind == "inspection":
+    if kind == "process":
+        process = item.get("process")
+        if not isinstance(process, dict):
+            raise SystemExit("Process validation requires a closed process descriptor")
+        compiled["process"] = dict(process)
+    else:
         mechanism = str(item.get("mechanism") or "").strip()
         if not mechanism:
             raise SystemExit("Inspection validation requires a named harness-owned mechanism")
@@ -1767,7 +1777,7 @@ def _compile_task_brief(
             },
             "validation": validation,
             "evidence_capability": evidence_capability,
-            "handoff_contract": "executor-result-v1",
+            "handoff_contract": "executor-result-v2",
             "review_required": review_required,
     }
     omitted = 0

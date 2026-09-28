@@ -25,7 +25,7 @@ from artifact_store import (
 
 CATALOG_PATH = (
     Path(__file__).resolve().parents[2]
-    / "references/assets/orchestration/contract/artifact-family-catalog-v4.yaml"
+    / "references/assets/orchestration/contract/artifact-family-catalog-v7.yaml"
 )
 FAMILY = "executor-result"
 STRUCTURAL_FIELDS = {
@@ -104,15 +104,24 @@ def _active_result_or_none(args: argparse.Namespace) -> dict[str, Any] | None:
 
 def write_executor_result(args: argparse.Namespace) -> dict[str, Any]:
     semantic = _semantic_input(Path(str(args.content_file)))
+    phase_handoff = semantic.get("phase_handoff")
+    if not isinstance(phase_handoff, dict):
+        raise SystemExit("Executor-result v2 requires a factual phase_handoff")
+    phase_id = str(phase_handoff.get("phase_id") or "")
+    if str(phase_handoff.get("delivery_task_id") or "") != str(args.task_id):
+        raise SystemExit("Executor-result task binding does not match phase_handoff")
+    supplied_phase_id = getattr(args, "phase_id", None)
+    if supplied_phase_id is not None and str(supplied_phase_id) != phase_id:
+        raise SystemExit("Executor-result phase binding does not match phase_handoff")
     existing = _active_result_or_none(args)
     today = now_date()
     data = {
         **semantic,
         "artifact_type": FAMILY,
-        "schema_version": 1,
+        "schema_version": 2,
         "id": str(args.id),
         "plan_id": str(args.plan_id),
-        "phase_id": getattr(args, "phase_id", None),
+        "phase_id": phase_id,
         "task_id": str(args.task_id),
         "date_created": str(existing["data"]["date_created"]) if existing else today,
         "last_updated": today,

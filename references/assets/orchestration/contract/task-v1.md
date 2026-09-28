@@ -1,6 +1,6 @@
-# Task v1 semantic contract
+# Task v3 semantic contract
 
-The current `task` family is schema-owned YAML. Supply semantic YAML to `write-task`; the store injects `artifact_type`, `schema_version`, `id`, `plan_id`, `phase_id`, `name`, `status: planned`, `date_created`, and `last_updated` and writes the canonical `.task.yaml` path.
+The current `task` family is schema-owned YAML selected by `artifact-family-catalog-v7.yaml`. Supply semantic YAML to `write-task`; the store injects `artifact_type`, `schema_version`, `id`, `plan_id`, `phase_id`, `name`, `status: planned`, `date_created`, and `last_updated` and writes the canonical `.task.yaml` path. The v3 schema keeps exact v2 records readable while current writes emit only schema version 3.
 
 Semantic input requires:
 
@@ -18,12 +18,17 @@ depends_on: []
 source_files: [path/to/source.py]
 target_files: [path/to/source.py]
 target_symbols: [module.symbol]
-interfaces: {consumes: [API-001], produces: []}
+interfaces: {consumes: [API-001], produces: [], external_targets: []}
 steps: [<concrete action>]
 validation:
   - id: VAL-001
     kind: process
-    command: pytest -q path/to/test.py
+    process:
+      bridge_test_id: bridge-test-task-001
+      argv: [python3, -m, pytest, -q, path/to/test.py]
+      repository_id: work-bundle-main
+      working_directory: .
+      timeout_seconds: 300
     proves: [AC-001]
     expected: passed
     invariant_ids: [INV-001]
@@ -48,8 +53,12 @@ executor_profile: {capability: judgment, context_mode: compiled-brief, review_ca
 acceptance_review: {required: false, reviewer_independent: false, verdict: pending, reviewed_head: '', findings: []}
 allocated_rules: []
 allocated_skills: []
-handoff_contract: executor-result-v1
+handoff_contract: executor-result-v2
 ```
+
+Every current `kind: process` validation has one closed `process` descriptor. `bridge_test_id` is the stable identity joined to the phase test catalog; `argv` is an argument vector, not shell text; `repository_id`, `working_directory`, and `timeout_seconds` close the execution target and bound. Inspection validation remains non-executable and uses its named `mechanism` instead of a process descriptor.
+
+`interfaces.external_targets` is the only current task authority for effects outside the declared repository. Each closed row carries exactly `target_id`, `permitted_actions`, and `purpose`. Delivery tasks declare every such target explicitly; an empty array declares none.
 
 `decision_authority` is semantically distinct from generic `source_ids`. Use `none-relevant` only when the verified specification carries no accepted authority, otherwise use its ordered `AUTH-NNN` aliases; the compiler resolves `AUTH-NNN: <carried constraint>`. A conflict status of `escalate` routes `decision-blocked`. `EXC-*`, rejected, deferred, candidate, background, blocked, or superseded authority never enters executor briefs.
 

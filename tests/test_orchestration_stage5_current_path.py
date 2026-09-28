@@ -25,7 +25,7 @@ import review_identity  # noqa: E402
 import review_runtime  # noqa: E402
 
 
-CATALOG = REPO_ROOT / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
+CATALOG = REPO_ROOT / "references/assets/orchestration/contract/artifact-family-catalog-v7.yaml"
 
 
 def _args(root: Path, **overrides: object) -> argparse.Namespace:
@@ -89,6 +89,56 @@ def _executor_semantics() -> dict[str, object]:
         "codegraph_observations": {"status": "no-index", "summary": "Repository is not indexed."},
         "delegation": {"agent_id": "worker-1", "role": "implementor"},
         "knowledge_disposition": {"action": "update", "reason": "Stable boundary changed."},
+        "phase_handoff": {
+            "phase_id": "phase-stage5",
+            "delivery_task_id": "task-stage5",
+            "runtime_bundle": {
+                "relative_path": ".work-bundle/orchestration/runtime/plan-stage5/phase-stage5",
+                "payload_relative_path": "payload",
+                "state_relative_path": "state",
+                "payload_sha256": "1" * 64,
+                "snapshot_manifest_sha256": "2" * 64,
+                "snapshot_content_sha256": "3" * 64,
+                "retained_until": "finalization_or_explicit_release",
+            },
+            "bridges": {
+                "config_env": {
+                    "protocol": "phase-bridge-v1",
+                    "descriptor_sha256": "4" * 64,
+                },
+                "start_snapshot": {
+                    "protocol": "phase-bridge-v1",
+                    "descriptor_sha256": "5" * 64,
+                },
+                "test_runner": {
+                    "protocol": "phase-bridge-v1",
+                    "descriptor_sha256": "6" * 64,
+                },
+            },
+            "entrypoint": {
+                "command": ["python3", "runner.py"],
+                "manifest_sha256": "7" * 64,
+                "instructions": "Invoke the built-in handoff runner with this manifest.",
+            },
+            "bridge_observations": {
+                "config_env": "passed",
+                "start": "passed",
+                "readiness": "passed",
+                "stop": "passed",
+            },
+            "test_report": {
+                "selection": "all",
+                "rows": [
+                    {
+                        "task": "task-stage5",
+                        "test": "bridge-test-stage5",
+                        "passes": True,
+                        "message": "Focused validation passed.",
+                    }
+                ],
+            },
+            "limitations": [],
+        },
     }
 
 
@@ -177,29 +227,36 @@ def _write_stage5_plan_tree(
         bindings={"source_spec": "spec-stage5"},
     )
     phase = {
-        "artifact_type": "phase", "schema_version": 1, "id": "phase-stage5", "plan_id": "plan-stage5",
+        "artifact_type": "phase", "schema_version": 2, "id": "phase-stage5", "plan_id": "plan-stage5",
         "name": "Stage 5", "status": "planned", "order": 1, "date_created": today, "last_updated": today,
         "source_ids": ["REQ-009"], "depends_on": [], "task_index": [{"id": "task-stage5", "order": 1}],
         "barriers": [], "validation": [{}], "completion_criteria": ["Done"], "allocated_rules": [], "allocated_skills": [],
+        "delivery": {
+            "mode": "final", "task_id": "task-stage5",
+            "snapshot": {"start_required": False, "retention": "until_finalization_or_explicit_release"},
+            "bridges": {"config_env": "required", "start_snapshot": "optional", "test_runner": "required"},
+            "test_catalog": [{"task_id": "task-stage5", "disposition": "executable", "test_id": "bridge-test-stage5", "purpose": "Run final validation."}],
+        },
     }
     write_artifact(
         CATALOG, "phase", anchors, phase, state="active",
         bindings={"plan": "plan-stage5"},
     )
     task = {
-        "artifact_type": "task", "schema_version": 2, "id": "task-stage5", "plan_id": "plan-stage5",
+        "artifact_type": "task", "schema_version": 3, "id": "task-stage5", "plan_id": "plan-stage5",
         "phase_id": "phase-stage5", "name": "Finalize", "status": "planned", "order": 1,
         "task_type": "implementation", "date_created": today, "last_updated": today,
         "source_ids": ["REQ-009"],
         "source_obligations": [{"source_id": "REQ-009", "semantic": "Complete Stage 5 finalization."}],
         "truth_basis": {"purpose": "finalize", "as_is_evidence": ["current"], "decision_authority": ["spec"], "expected_delta": ["archive"], "conflict_status": "clear"},
         "depends_on": [], "source_files": [], "target_files": ["src/current.py"], "target_symbols": ["main"],
-        "interfaces": {}, "steps": ["finalize"], "validation": [{"id": "VAL-001", "kind": "process"}],
+        "interfaces": {"consumes": [], "produces": [], "external_targets": []}, "steps": ["finalize"],
+        "validation": [{"id": "VAL-001", "kind": "process", "process": {"bridge_test_id": "bridge-test-stage5", "argv": ["python3", "-m", "pytest", "-q"], "repository_id": "work-bundle-main", "working_directory": ".", "timeout_seconds": 300}}],
         "evidence_capability": {"result": "mapped", "reason": "test", "invariants": []},
         "completion_criteria": ["Done"], "methodology": {"name": "tdd"},
         "executor_profile": {"capability": "implementation", "context_mode": "bounded", "review_capability": "none"},
         "acceptance_review": {"required": review_required}, "allocated_rules": [], "allocated_skills": [],
-        "handoff_contract": "executor-result-v1",
+        "handoff_contract": "executor-result-v2",
     }
     write_artifact(
         CATALOG, "task", anchors, task, state="active",
@@ -267,9 +324,9 @@ def _set_primary_dependencies(workspace: Path, dependencies: list[str]) -> None:
     )
 
 
-def test_catalog_v6_registers_exact_stage5_families_and_policies() -> None:
+def test_catalog_v7_registers_exact_stage5_families_and_policies() -> None:
     catalog = load_catalog(CATALOG)
-    assert catalog["catalog_id"] == "artifact-family-catalog-v6"
+    assert catalog["catalog_id"] == "artifact-family-catalog-v7"
     for family in (
         "executor-result",
         "implementation-review",
@@ -337,6 +394,33 @@ def test_executor_result_round_trip_inline_block_index_and_transition(
     assert stored["data"]["result_state"] == "implemented"
 
 
+def test_catalog_v7_reads_legacy_executor_result_without_rewriting(
+    workspace: Path,
+) -> None:
+    legacy = _executor_semantics()
+    legacy.pop("phase_handoff")
+    legacy.update(
+        artifact_type="executor-result", schema_version=1,
+        id="result-legacy", plan_id="plan-stage5", phase_id="phase-stage5",
+        task_id="task-stage5", date_created="2026-09-20", last_updated="2026-09-20",
+    )
+    written = write_artifact(
+        CATALOG, "executor-result", {"workspace_root": workspace}, legacy,
+        state="active", bindings={"plan": "plan-stage5", "task": "task-stage5"},
+    )
+    path = Path(str(written["path"]))
+    before = path.read_bytes()
+
+    stored = read_artifact(
+        CATALOG, "executor-result", {"workspace_root": workspace},
+        identity="result-legacy", state="active",
+        bindings={"plan": "plan-stage5", "task": "task-stage5"},
+    )
+
+    assert stored["data"]["schema_version"] == 1
+    assert path.read_bytes() == before
+
+
 def test_executor_result_rejects_overrides_and_updates_active_identity_in_place(
     workspace: Path, tmp_path: Path,
 ) -> None:
@@ -382,6 +466,24 @@ def test_executor_result_rejects_overrides_and_updates_active_identity_in_place(
     assert stored["date_created"] == created
     assert stored["summary"] == "Implemented the corrected bounded task."
     assert len(list(workspace.rglob("*.executor-result.yaml"))) == 1
+
+
+def test_executor_result_rejects_mismatched_delivery_task_before_mutation(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    invalid = _executor_semantics()
+    invalid["phase_handoff"]["delivery_task_id"] = "task-other"
+    content = _write_yaml(tmp_path, "mismatched-task.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="task binding"):
+        handoffs.cmd_write_executor_result(
+            _args(
+                workspace, id="result-mismatch", plan_id="plan-stage5",
+                task_id="task-stage5", content_file=str(content),
+            )
+        )
+
+    assert not list(workspace.rglob("result-mismatch.executor-result.yaml"))
 
 
 def test_review_accepted_result_and_final_review_form_compact_current_chain(
@@ -870,8 +972,12 @@ def test_task_review_authority_includes_shared_interface_specification_sources(
         CATALOG, "task", anchors, identity="task-peer", state="active",
         bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
     )["data"])
-    primary["interfaces"] = {"produces": ["shared-api"]}
-    peer["interfaces"] = {"consumes": ["shared-api"]}
+    primary["interfaces"] = {
+        "consumes": [], "produces": ["shared-api"], "external_targets": [],
+    }
+    peer["interfaces"] = {
+        "consumes": ["shared-api"], "produces": [], "external_targets": [],
+    }
     write_artifact(
         CATALOG, "task", anchors, primary, state="active",
         bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
@@ -1088,7 +1194,7 @@ def _write_finalization_case(
         }
         review_written = write_artifact(CATALOG, "implementation-review", anchors, review, state="active", bindings={"plan": "plan-stage5", "task": "task-stage5"})
     executor = {
-        **_executor_semantics(), "artifact_type": "executor-result", "schema_version": 1,
+        **_executor_semantics(), "artifact_type": "executor-result", "schema_version": 2,
         "id": "result-stage5", "plan_id": "plan-stage5", "phase_id": "phase-stage5",
         "task_id": "task-stage5", "date_created": today, "last_updated": today,
     }

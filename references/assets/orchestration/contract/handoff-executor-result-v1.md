@@ -1,8 +1,10 @@
-# Executor Result v1
+# Executor Result v2
 
-`executor-result-v1` is the canonical factual continuation record created after executing one plan task. Its machine structure, identity, bindings, location, lifecycle, and index projection are owned by `artifact-family-catalog-v4.yaml` and `executor-result-v1.schema.json`.
+`executor-result-v2` is the canonical factual continuation record created after executing one plan task. Its machine structure, identity, bindings, location, lifecycle, and index projection are owned by `artifact-family-catalog-v7.yaml` and `executor-result-v2.schema.json`. The v2 schema keeps exact v1 records readable while current writes emit only schema version 2.
 
-The agent-authored semantic content records implemented scope, changed paths, focused validation observations, unresolved product blockers, task fit, repository and CodeGraph observations, delegation provenance, and task-local knowledge disposition.
+The agent-authored semantic content records implemented scope, changed paths, focused validation observations, unresolved product blockers, task fit, repository and CodeGraph observations, delegation provenance, task-local knowledge disposition, and one factual `phase_handoff`.
+
+`phase_handoff` binds `phase_id` and `delivery_task_id` to the canonical runtime bundle. The bundle carries only its relative locations, payload and snapshot digests, and `retained_until: finalization_or_explicit_release`. Its payload supplies the language-neutral phase-bridge-v1 descriptors for `call_handoff_config_env`, `call_handoff_start_snapshot`, and `call_handoff_test_runner`; optional `bridges` entries summarize the supplied descriptors by digest. `entrypoint` records the WorkBundle built-in runner command, manifest digest, and instructions. `bridge_observations`, the all-tests `test_report`, and `limitations` are observations only; they do not issue a verdict.
 
 An executor result never issues a product verdict. It contains no implementation-review decision, accepted-result decision, final-audit conclusion, repair recommendation, or knowledge-write authorization. A distinct reviewer compares the exact frozen implementation directly with the verified specification and plan.
 

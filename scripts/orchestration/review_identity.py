@@ -35,7 +35,7 @@ SOURCE_TABLE_RE = re.compile(
 )
 CURRENT_PLAN_CATALOG = (
     Path(__file__).resolve().parents[2]
-    / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
+    / "references/assets/orchestration/contract/artifact-family-catalog-v7.yaml"
 )
 CANONICAL_YAML_CONTROL_FIELDS = frozenset(
     {

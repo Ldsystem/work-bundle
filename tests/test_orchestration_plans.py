@@ -21,7 +21,7 @@ import specs  # noqa: E402
 import bounded_closure  # noqa: E402
 
 
-CATALOG = REPO_ROOT / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
+CATALOG = REPO_ROOT / "references/assets/orchestration/contract/artifact-family-catalog-v7.yaml"
 
 
 def _args(root: Path, **overrides: object) -> argparse.Namespace:
@@ -130,6 +130,27 @@ def _phase_semantics() -> dict[str, object]:
         "completion_criteria": ["The task compiles."],
         "allocated_rules": [],
         "allocated_skills": ["dev-test-driven-development"],
+        "delivery": {
+            "mode": "executable_snapshot",
+            "task_id": "task-stage4",
+            "snapshot": {
+                "start_required": True,
+                "retention": "until_finalization_or_explicit_release",
+            },
+            "bridges": {
+                "config_env": "required",
+                "start_snapshot": "required",
+                "test_runner": "required",
+            },
+            "test_catalog": [
+                {
+                    "task_id": "task-stage4",
+                    "disposition": "executable",
+                    "test_id": "bridge-test-stage4",
+                    "purpose": "Run the phase validation through the declared bridge.",
+                }
+            ],
+        },
     }
 
 
@@ -159,11 +180,22 @@ def _task_semantics() -> dict[str, object]:
         "source_files": ["scripts/orchestration/execution_context.py"],
         "target_files": ["scripts/orchestration/execution_context.py"],
         "target_symbols": ["_task_context"],
-        "interfaces": {"consumes": ["REQ-001A"], "produces": []},
+        "interfaces": {
+            "consumes": ["REQ-001A"],
+            "produces": [],
+            "external_targets": [],
+        },
         "steps": ["Adapt the canonical reader."],
         "validation": [
             {
-                "id": "VAL-001", "kind": "process", "command": "pytest -q",
+                "id": "VAL-001", "kind": "process",
+                "process": {
+                    "bridge_test_id": "bridge-test-stage4",
+                    "argv": ["python3", "-m", "pytest", "-q"],
+                    "repository_id": "work-bundle-main",
+                    "working_directory": ".",
+                    "timeout_seconds": 300,
+                },
                 "proves": ["AC-001"], "expected": "passed",
                 "invariant_ids": ["INV-001"],
                 "capability_reason": "The focused process check exercises compilation.",
@@ -188,7 +220,7 @@ def _task_semantics() -> dict[str, object]:
         "acceptance_review": {"required": False, "reviewer_independent": False, "verdict": "pending", "reviewed_head": "", "findings": []},
         "allocated_rules": [],
         "allocated_skills": ["dev-test-driven-development"],
-        "handoff_contract": "executor-result-v1",
+        "handoff_contract": "executor-result-v2",
     }
 
 
@@ -335,8 +367,8 @@ def test_reverse_overlap_rejects_invalid_peer_ancestry_before_mutation(
     assert task_path.read_bytes() == before
 
 
-def test_catalog_v6_registers_distinct_canonical_yaml_planning_families() -> None:
-    assert load_catalog(CATALOG)["catalog_id"] == "artifact-family-catalog-v6"
+def test_catalog_v7_registers_immutable_delivery_contracts() -> None:
+    assert load_catalog(CATALOG)["catalog_id"] == "artifact-family-catalog-v7"
     catalog = load_catalog(CATALOG)
     for family, suffix in (
         ("root-plan", ".plan.yaml"),
@@ -347,6 +379,132 @@ def test_catalog_v6_registers_distinct_canonical_yaml_planning_families() -> Non
         assert policy["representation"] == "yaml"
         assert policy["locator"]["template"].endswith(suffix)
         assert policy["index"]["path"].endswith(f"{family}-index.jsonl")
+    assert family_policy(catalog, "phase")["schema"]["id"] == "phase-v2"
+    assert family_policy(catalog, "task")["schema"]["id"] == "task-v3"
+    assert family_policy(catalog, "executor-result")["schema"]["id"] == "executor-result-v2"
+
+
+def test_current_phase_and_task_writers_emit_delivery_and_process_contracts(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _root_path, phase_path, task_path = _create_tree(workspace, tmp_path)
+
+    phase = yaml.safe_load(phase_path.read_text(encoding="utf-8"))
+    task = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+
+    assert phase["schema_version"] == 2
+    assert phase["delivery"]["snapshot"] == {
+        "start_required": True,
+        "retention": "until_finalization_or_explicit_release",
+    }
+    assert task["schema_version"] == 3
+    assert task["validation"][0]["process"]["bridge_test_id"] == "bridge-test-stage4"
+    assert "command" not in task["validation"][0]
+
+
+@pytest.mark.parametrize("invalid_kind", ["incomplete", "legacy-command"])
+def test_invalid_process_descriptor_is_rejected_before_mutation(
+    workspace: Path, tmp_path: Path, invalid_kind: str,
+) -> None:
+    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
+    before = task_path.read_bytes()
+    invalid = _task_semantics()
+    if invalid_kind == "incomplete":
+        del invalid["validation"][0]["process"]["timeout_seconds"]
+    else:
+        invalid["validation"][0].pop("process")
+        invalid["validation"][0]["command"] = "pytest -q"
+    content = _write_yaml(tmp_path / "invalid-process.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="schema validation failed"):
+        plans.cmd_write_task(
+            _args(
+                workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+                task_id="task-stage4", title="Stage 4 task", content_file=str(content),
+                status="planned",
+            )
+        )
+
+    assert task_path.read_bytes() == before
+
+
+def test_catalog_v7_reads_legacy_phase_and_task_without_rewriting(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _root_path, phase_path, task_path = _create_tree(workspace, tmp_path)
+    anchors = {"workspace_root": workspace}
+    phase = yaml.safe_load(phase_path.read_text(encoding="utf-8"))
+    phase["schema_version"] = 1
+    phase.pop("delivery")
+    write_artifact(
+        CATALOG, "phase", anchors, phase, state="active",
+        bindings={"plan": "plan-stage4"},
+    )
+    task = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    task["schema_version"] = 2
+    task["handoff_contract"] = "executor-result-v1"
+    task["validation"][0]["command"] = "pytest -q"
+    task["validation"][0].pop("process")
+    write_artifact(
+        CATALOG, "task", anchors, task, state="active",
+        bindings={"plan": "plan-stage4", "phase": "phase-stage4"},
+    )
+    phase_before, task_before = phase_path.read_bytes(), task_path.read_bytes()
+
+    assert read_artifact(
+        CATALOG, "phase", anchors, identity="phase-stage4", state="active",
+        bindings={"plan": "plan-stage4"},
+    )["data"]["schema_version"] == 1
+    assert read_artifact(
+        CATALOG, "task", anchors, identity="task-stage4", state="active",
+        bindings={"plan": "plan-stage4", "phase": "phase-stage4"},
+    )["data"]["schema_version"] == 2
+    assert phase_path.read_bytes() == phase_before
+    assert task_path.read_bytes() == task_before
+
+
+def test_task_process_id_must_match_phase_test_catalog_before_mutation(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
+    before = task_path.read_bytes()
+    invalid = _task_semantics()
+    invalid["validation"][0]["process"]["bridge_test_id"] = "bridge-test-other"
+    content = _write_yaml(tmp_path / "catalog-mismatch.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="test_catalog"):
+        plans.cmd_write_task(
+            _args(
+                workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+                task_id="task-stage4", title="Stage 4 task", content_file=str(content),
+                status="planned",
+            )
+        )
+
+    assert task_path.read_bytes() == before
+
+
+def test_incomplete_external_target_authority_is_rejected_before_mutation(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
+    before = task_path.read_bytes()
+    invalid = _task_semantics()
+    invalid["interfaces"]["external_targets"] = [
+        {"target_id": "release-api", "permitted_actions": ["publish"]}
+    ]
+    content = _write_yaml(tmp_path / "invalid-external-target.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="schema validation failed"):
+        plans.cmd_write_task(
+            _args(
+                workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+                task_id="task-stage4", title="Stage 4 task", content_file=str(content),
+                status="planned",
+            )
+        )
+
+    assert task_path.read_bytes() == before
 
 
 def test_write_read_and_index_canonical_plan_tree(workspace: Path, tmp_path: Path) -> None:
@@ -446,7 +604,16 @@ def test_amend_task_prevalidates_and_refreshes_only_its_compiled_brief(
         "The focused amendment is compiled."
     ]
     brief = workspace / output["brief"]
-    assert yaml.safe_load(brief.read_text())["task_brief"]["task_id"] == "task-stage4"
+    compiled = yaml.safe_load(brief.read_text())["task_brief"]
+    assert compiled["task_id"] == "task-stage4"
+    assert compiled["validation"][0]["process"] == {
+        "bridge_test_id": "bridge-test-stage4",
+        "argv": ["python3", "-m", "pytest", "-q"],
+        "repository_id": "work-bundle-main",
+        "working_directory": ".",
+        "timeout_seconds": 300,
+    }
+    assert "command" not in compiled["validation"][0]
 
 
 def test_amend_task_rejects_dropped_allocation_before_mutation(

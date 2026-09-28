@@ -1,8 +1,12 @@
-# Phase v1 semantic contract
+# Phase v2 semantic contract
 
-The current `phase` family is schema-owned YAML. Supply semantic YAML to `write-phase`; the store injects `artifact_type`, `schema_version`, `id`, `plan_id`, `name`, `status: planned`, `date_created`, and `last_updated` and writes the canonical `.phase.yaml` path.
+The current `phase` family is schema-owned YAML selected by `artifact-family-catalog-v7.yaml`. Supply semantic YAML to `write-phase`; the store injects `artifact_type`, `schema_version`, `id`, `plan_id`, `name`, `status: planned`, `date_created`, and `last_updated` and writes the canonical `.phase.yaml` path. The v2 schema keeps exact v1 records readable while current writes emit only schema version 2.
 
-Semantic input requires `order`, `source_ids`, `depends_on`, `task_index`, `barriers`, `validation`, `completion_criteria`, `allocated_rules`, and `allocated_skills`.
+Semantic input requires `order`, `source_ids`, `depends_on`, `task_index`, `barriers`, `validation`, `completion_criteria`, `allocated_rules`, `allocated_skills`, and `delivery`.
+
+`delivery.mode` is `executable_snapshot` for every non-final phase and `final` for the final phase. It names exactly one covering `task_id`. Its `snapshot` declares `start_required` and the fixed retention policy `until_finalization_or_explicit_release`; executable snapshots require `start_required: true`, while final delivery requires `false`. WorkBundle scripts own the snapshot lifecycle and remove retained runtime material during finalization or an explicit release.
+
+`delivery.bridges` closes the three phase-bridge-v1 roles—`config_env`, `start_snapshot`, and `test_runner`—as `optional` or `required`. `delivery.test_catalog` is a closed union. An executable row carries `{task_id, disposition: executable, test_id, purpose}`; a non-applicable row carries `{task_id, disposition: not_applicable, reason}`. No legacy string or open-ended catalog row is current authority.
 
 Create a phase only for an actual barrier or convergence boundary. An empty `barriers` array states that no real barrier exists and supports the explicit default phase. Do not optimize task or phase cardinality or introduce speculative splits. Preserve expected total orchestration cost, one production owner per authoritative path, coherent bounded execution packets, and a bounded repair frontier. Several ordered tasks may realize one responsibility under the same owner; a phase boundary is unnecessary merely because that owner has multiple packets. If execution proves work materially under-decomposed, reslice only the affected unaccepted authority region rather than repeatedly enlarge a task.
 

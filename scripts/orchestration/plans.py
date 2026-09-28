@@ -34,7 +34,7 @@ from task_ownership import canonical_relative_path
 
 
 
-CATALOG_PATH = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
+CATALOG_PATH = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v7.yaml"
 PLAN_FAMILIES = ("root-plan", "phase", "task")
 PLAN_QUALIFICATION_STATUSES = {"draft", "verified", "superseded"}
 PLAN_QUALIFICATION_TRANSITIONS = {
@@ -598,13 +598,30 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
     today = now_date()
     data = {
         **semantic,
-        "artifact_type": "phase", "schema_version": 1,
+        "artifact_type": "phase", "schema_version": 2,
         "id": args.phase_id, "plan_id": args.plan_id, "name": args.title,
         "status": PLANNED_STATUS,
         "date_created": str(existing["date_created"]) if existing else today,
         "last_updated": today,
     }
     _validate_candidate("phase", data, bindings)
+    delivery = data.get("delivery")
+    if isinstance(delivery, dict):
+        declared_tasks = {
+            str(item.get("id") or "")
+            for item in data.get("task_index", [])
+            if isinstance(item, dict)
+        }
+        delivery_task_id = str(delivery.get("task_id") or "")
+        if delivery_task_id not in declared_tasks:
+            raise SystemExit("Phase delivery task must be declared in task_index")
+        catalog_tasks = {
+            str(item.get("task_id") or "")
+            for item in delivery.get("test_catalog", [])
+            if isinstance(item, dict)
+        }
+        if catalog_tasks != declared_tasks:
+            raise SystemExit("Phase delivery test_catalog must account for every task")
     result = write_artifact(
         CATALOG_PATH, "phase", _plan_anchors(args), data, state="active",
         bindings=bindings,
@@ -631,7 +648,7 @@ def _prepare_task_write(
     today = now_date()
     data = {
         **semantic,
-        "artifact_type": "task", "schema_version": 2,
+        "artifact_type": "task", "schema_version": 3,
         "id": args.task_id, "plan_id": args.plan_id, "phase_id": args.phase_id,
         "name": args.title, "status": PLANNED_STATUS,
         "date_created": str(existing["date_created"]) if existing else today,
@@ -639,18 +656,49 @@ def _prepare_task_write(
     }
     _validate_candidate("task", data, bindings)
     try:
-        read_artifact(
+        phase = read_artifact(
             CATALOG_PATH,
             "phase",
             _plan_anchors(args),
             identity=str(args.phase_id),
             state="active",
             bindings={"plan": str(args.plan_id)},
-        )
+        )["data"]
     except (FileNotFoundError, SystemExit) as error:
         raise SystemExit(
             f"Task parent phase is not canonical for plan {args.plan_id}: {args.phase_id}"
         ) from error
+    delivery = phase.get("delivery") if isinstance(phase, dict) else None
+    if isinstance(delivery, dict) and any(
+        isinstance(item, dict)
+        and str(item.get("task_id") or "") == str(args.task_id)
+        for item in delivery.get("test_catalog", [])
+    ):
+        catalog_rows = [
+            item for item in delivery.get("test_catalog", [])
+            if isinstance(item, dict) and str(item.get("task_id") or "") == str(args.task_id)
+        ]
+        process_ids = {
+            str(process.get("bridge_test_id") or "")
+            for item in data.get("validation", [])
+            if isinstance(item, dict) and isinstance(item.get("process"), dict)
+            for process in [item["process"]]
+        }
+        executable_ids = {
+            str(item.get("test_id") or "")
+            for item in catalog_rows
+            if item.get("disposition") == "executable"
+        }
+        not_applicable = [
+            item for item in catalog_rows if item.get("disposition") == "not_applicable"
+        ]
+        if (
+            (process_ids and (executable_ids != process_ids or not_applicable))
+            or (not process_ids and (executable_ids or len(not_applicable) != 1))
+        ):
+            raise SystemExit(
+                "Task process declarations do not match the phase delivery test_catalog"
+            )
     tasks = _validate_task_dependencies_before_write(args, data)
     _validate_task_shared_authority_before_write(data, plan, tasks)
     return data, bindings, existing
