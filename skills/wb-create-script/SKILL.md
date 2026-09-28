@@ -11,6 +11,8 @@ A script implements a defined operation; it does not decide what the user's work
 
 Before coding, identify the intended result, existing owning component, inputs, observable outputs, permitted effects, and source of policy. Resolve only ambiguities that would change behavior or authority. A small change can carry this contract in its existing task context; do not create a separate approval artifact by default.
 
+Establish stage-relative determinacy before delegating a conclusion or transition to code. Name the current lifecycle stage, current named obligations, available facts, supplied policy, and exact conclusion requested from the script. When those inputs determine the conclusion at this stage, automate it. When they do not, return bounded observations and leave the conclusion with the responsible agent or controller; do not import anticipated release or later-stage burdens to make the answer appear determinate.
+
 Distinguish three responsibilities:
 
 - **Facts and mechanics:** compute, parse, transform, compare identities, check explicit constraints, and report what happened. These belong in code when reproducible automation helps.
@@ -40,6 +42,10 @@ Inspect the decision boundary as an agent: what does each check actually establi
 If the boundary is crossed, repair the first owning interface or implementation and recheck the affected behavior. Do not add a second checker to legitimize the first one's unsupported decision. Retain useful checks and accurate facts.
 
 Return the implemented contract, changed files, actual validation results, and any remaining limitation. Do not add acceptance gates, external actions, or workflow stages beyond the user's task.
+
+## Runtime Rules
+
+- `script-stage-determinacy`: `rules/script-stage-determinacy.md` when script design or refactoring delegates a stage conclusion, gate, or transition to automation.
 
 ## Self-check
 

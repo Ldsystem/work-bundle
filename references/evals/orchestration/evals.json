@@ -690,6 +690,24 @@
       "prompt": "Run final workflow closure after every planned task has a compact accepted result.",
       "expected_output": "A distinct final auditor advises on plan/task coverage, controller-accepted decisions, current tests, material defects, knowledge return, repository facts, and archive readiness without repeating code review or reconstructing history. The controller/orchestrator assesses that advice and writes one final-workflow-review-v1 closure decision.",
       "files": []
+    },
+    {
+      "id": "PDR-01",
+      "prompt": "Plan a development change whose accepted current obligations require source behavior and focused tests, while release packaging, installation, and publication will happen later.",
+      "expected_output": "Forms the smallest sufficient development runtime from the current named obligations, includes implementation and its capable local oracle, and omits or defers release-only work because no current obligation requires it.",
+      "files": []
+    },
+    {
+      "id": "PDR-02",
+      "prompt": "A proposed first phase only prepares configuration and fixtures; users cannot evaluate any capability until the next phase consumes them.",
+      "expected_output": "Rejects the preparation-only non-final phase and reshapes or merges it into the coherent user-evaluable capability boundary it enables, without adding a phase score or new gate.",
+      "files": []
+    },
+    {
+      "id": "PDR-03",
+      "prompt": "A plan template normally includes release signing, but this development task has no release obligation and a local substitute proves the same current behavior more cheaply.",
+      "expected_output": "Uses the substitute in the smallest sufficient development runtime and defers the release-only burden; template habit does not create a current obligation.",
+      "files": []
     }
   ],
   "v4_evals": [

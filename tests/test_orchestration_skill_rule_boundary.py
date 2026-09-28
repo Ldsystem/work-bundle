@@ -201,3 +201,45 @@ def test_current_references_do_not_assert_toolkit_role_profiles() -> None:
     scenario_ids = {item["id"] for item in scenarios["v4_evals"]}
     assert "v4-stable-role-profile-adversarial-boundary" not in scenario_ids
     assert "v4-external-skill-role-identifiers-without-profiles" in scenario_ids
+
+
+def test_script_stage_determinacy_rule_is_registered_and_agent_owned() -> None:
+    rule = read("rules/script-stage-determinacy.md")
+    metadata = yaml.safe_load(rule.split("---", 2)[1])
+    index = yaml.safe_load(read("rules/index.yaml"))
+    entries = {item["id"]: item for item in index["rules"]}
+
+    assert metadata["id"] == "script-stage-determinacy"
+    assert metadata["load"] == "conditional"
+    assert entries[metadata["id"]] == {
+        "id": metadata["id"],
+        "path": "script-stage-determinacy.md",
+        "applies_when": metadata["applies_when"],
+        "enforcement": metadata["enforcement"],
+        "load": metadata["load"],
+        "requires": metadata["requires"],
+    }
+    for token in (
+        "current lifecycle stage",
+        "current facts",
+        "supplied policy",
+        "bounded observations",
+        "responsible agent or controller",
+        "structural facts and reviewer advice",
+    ):
+        assert token in rule
+    for prohibited in ("mandatory score", "new schema field", "new review lifecycle"):
+        assert prohibited in rule
+
+
+def test_script_authoring_skill_exposes_stage_relative_determinacy() -> None:
+    skill = read("skills/wb-create-script/SKILL.md")
+
+    for token in (
+        "stage-relative determinacy",
+        "current lifecycle stage",
+        "current named obligations",
+        "bounded observations",
+        "script-stage-determinacy",
+    ):
+        assert token in skill

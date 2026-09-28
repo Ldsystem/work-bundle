@@ -27,6 +27,37 @@ def git(root: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(root), *args], text=True, capture_output=True, check=True).stdout.strip()
 
 
+def test_runtime_and_stage_determinacy_pressure_cases_are_present() -> None:
+    orchestration = json.loads(
+        (REPO_ROOT / "references/evals/orchestration/evals.json").read_text(encoding="utf-8")
+    )
+    script_authoring = json.loads(
+        (REPO_ROOT / "references/evals/script-authoring/evals.json").read_text(encoding="utf-8")
+    )
+    planning_cases = {str(item["id"]): item for item in orchestration["evals"]}
+    script_cases = {str(item["id"]): item for item in script_authoring["evals"]}
+
+    assert {"PDR-01", "PDR-02", "PDR-03"} <= planning_cases.keys()
+    planning_output = " ".join(
+        planning_cases[item_id]["expected_output"] for item_id in ("PDR-01", "PDR-02", "PDR-03")
+    )
+    for token in (
+        "smallest sufficient development runtime",
+        "user-evaluable capability boundary",
+        "preparation-only",
+        "release-only",
+    ):
+        assert token in planning_output
+
+    assert {"stage-determined", "stage-indeterminate", "review-advice-input"} <= script_cases.keys()
+    script_output = " ".join(
+        script_cases[item_id]["expected_output"]
+        for item_id in ("stage-determined", "stage-indeterminate", "review-advice-input")
+    )
+    for token in ("supplied policy", "bounded observations", "responsible agent or controller"):
+        assert token in script_output
+
+
 def test_validation_source_identity_excludes_observation_artifacts(evaluator):
     root = evaluator["root"]
     before = evaluation_identity.validation_source_identity(root)
