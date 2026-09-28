@@ -24,7 +24,6 @@ validation:
   - id: VAL-001
     kind: process
     process:
-      bridge_test_id: bridge-test-task-001
       argv: [python3, -m, pytest, -q, path/to/test.py]
       repository_id: work-bundle-main
       working_directory: .
@@ -56,7 +55,7 @@ allocated_skills: []
 handoff_contract: executor-result-v2
 ```
 
-Every current `kind: process` validation has one closed `process` descriptor. `bridge_test_id` is the stable identity joined to the phase test catalog; `argv` is an argument vector, not shell text; `repository_id`, `working_directory`, and `timeout_seconds` close the execution target and bound. Inspection validation remains non-executable and uses its named `mechanism` instead of a process descriptor.
+Every current `kind: process` validation requires its canonical `id` and one closed `process` descriptor. That validation `id`—including named forms such as `VAL-FEATURE-UNIT`—is joined directly to the phase test catalog; there is no second bridge-test identity. `argv` is an argument vector, not shell text; `repository_id`, `working_directory`, and `timeout_seconds` close the execution target and bound. Inspection validation remains non-executable and uses its named `mechanism` instead of a process descriptor.
 
 `interfaces.external_targets` is the only current task authority for effects outside the declared repository. Each closed row carries exactly `target_id`, `permitted_actions`, and `purpose`. Delivery tasks declare every such target explicitly; an empty array declares none.
 

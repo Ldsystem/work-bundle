@@ -134,19 +134,18 @@ def _phase_semantics() -> dict[str, object]:
             "mode": "executable_snapshot",
             "task_id": "task-stage4",
             "snapshot": {
-                "start_required": True,
+                "start_required": False,
                 "retention": "until_finalization_or_explicit_release",
             },
             "bridges": {
                 "config_env": "required",
-                "start_snapshot": "required",
                 "test_runner": "required",
             },
             "test_catalog": [
                 {
                     "task_id": "task-stage4",
                     "disposition": "executable",
-                    "test_id": "bridge-test-stage4",
+                    "test_id": "VAL-001",
                     "purpose": "Run the phase validation through the declared bridge.",
                 }
             ],
@@ -190,7 +189,6 @@ def _task_semantics() -> dict[str, object]:
             {
                 "id": "VAL-001", "kind": "process",
                 "process": {
-                    "bridge_test_id": "bridge-test-stage4",
                     "argv": ["python3", "-m", "pytest", "-q"],
                     "repository_id": "work-bundle-main",
                     "working_directory": ".",
@@ -394,15 +392,16 @@ def test_current_phase_and_task_writers_emit_delivery_and_process_contracts(
 
     assert phase["schema_version"] == 2
     assert phase["delivery"]["snapshot"] == {
-        "start_required": True,
+        "start_required": False,
         "retention": "until_finalization_or_explicit_release",
     }
     assert task["schema_version"] == 3
-    assert task["validation"][0]["process"]["bridge_test_id"] == "bridge-test-stage4"
+    assert task["validation"][0]["id"] == "VAL-001"
+    assert "bridge_test_id" not in task["validation"][0]["process"]
     assert "command" not in task["validation"][0]
 
 
-@pytest.mark.parametrize("invalid_kind", ["incomplete", "legacy-command"])
+@pytest.mark.parametrize("invalid_kind", ["incomplete", "legacy-command", "missing-id"])
 def test_invalid_process_descriptor_is_rejected_before_mutation(
     workspace: Path, tmp_path: Path, invalid_kind: str,
 ) -> None:
@@ -411,9 +410,11 @@ def test_invalid_process_descriptor_is_rejected_before_mutation(
     invalid = _task_semantics()
     if invalid_kind == "incomplete":
         del invalid["validation"][0]["process"]["timeout_seconds"]
-    else:
+    elif invalid_kind == "legacy-command":
         invalid["validation"][0].pop("process")
         invalid["validation"][0]["command"] = "pytest -q"
+    else:
+        invalid["validation"][0].pop("id")
     content = _write_yaml(tmp_path / "invalid-process.yaml", invalid)
 
     with pytest.raises(SystemExit, match="schema validation failed"):
@@ -463,13 +464,13 @@ def test_catalog_v7_reads_legacy_phase_and_task_without_rewriting(
     assert task_path.read_bytes() == task_before
 
 
-def test_task_process_id_must_match_phase_test_catalog_before_mutation(
+def test_task_validation_id_must_match_phase_test_catalog_before_mutation(
     workspace: Path, tmp_path: Path,
 ) -> None:
     _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
     before = task_path.read_bytes()
     invalid = _task_semantics()
-    invalid["validation"][0]["process"]["bridge_test_id"] = "bridge-test-other"
+    invalid["validation"][0]["id"] = "VAL-OTHER"
     content = _write_yaml(tmp_path / "catalog-mismatch.yaml", invalid)
 
     with pytest.raises(SystemExit, match="test_catalog"):
@@ -482,6 +483,84 @@ def test_task_process_id_must_match_phase_test_catalog_before_mutation(
         )
 
     assert task_path.read_bytes() == before
+
+
+def test_executable_snapshot_union_enforces_start_and_test_bridges(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    plan_input = _write_yaml(tmp_path / "plan-union.yaml", _plan_semantics())
+    plans.cmd_write_plan(_args(workspace, content_file=str(plan_input)))
+    for case in ("start", "test"):
+        invalid = _phase_semantics()
+        if case == "start":
+            invalid["delivery"]["snapshot"]["start_required"] = True
+        else:
+            invalid["delivery"]["bridges"].pop("test_runner")
+        content = _write_yaml(tmp_path / f"invalid-{case}-bridge.yaml", invalid)
+        with pytest.raises(SystemExit, match="schema validation failed"):
+            plans.cmd_write_phase(
+                _args(
+                    workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+                    task_id=None, title="Stage 4 phase", content_file=str(content),
+                    status="planned",
+                )
+            )
+    assert not (workspace / ".work-bundle/orchestration/plan/active/plan-stage4/phase-stage4.phase.yaml").exists()
+
+
+def test_final_delivery_allows_null_and_empty_delivery_fields(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    plan_input = _write_yaml(tmp_path / "plan-final.yaml", _plan_semantics())
+    plans.cmd_write_plan(_args(workspace, content_file=str(plan_input)))
+    semantic = _phase_semantics()
+    semantic["delivery"] = {
+        "mode": "final",
+        "task_id": None,
+        "snapshot": None,
+        "bridges": {},
+        "test_catalog": [],
+    }
+    content = _write_yaml(tmp_path / "final-phase.yaml", semantic)
+
+    plans.cmd_write_phase(
+        _args(
+            workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+            task_id=None, title="Stage 4 phase", content_file=str(content), status="planned",
+        )
+    )
+
+    stored = yaml.safe_load(
+        (workspace / ".work-bundle/orchestration/plan/active/plan-stage4/phase-stage4.phase.yaml").read_text()
+    )
+    assert stored["delivery"] == semantic["delivery"]
+
+
+def test_validation_id_accepts_named_val_shape(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    plan_input = _write_yaml(tmp_path / "plan-named-validation.yaml", _plan_semantics())
+    plans.cmd_write_plan(_args(workspace, content_file=str(plan_input)))
+    phase = _phase_semantics()
+    phase["delivery"]["test_catalog"][0]["test_id"] = "VAL-FEATURE-UNIT"
+    phase_input = _write_yaml(tmp_path / "phase-named-validation.yaml", phase)
+    plans.cmd_write_phase(
+        _args(
+            workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+            task_id=None, title="Stage 4 phase", content_file=str(phase_input), status="planned",
+        )
+    )
+    task = _task_semantics()
+    task["validation"][0]["id"] = "VAL-FEATURE-UNIT"
+    task_input = _write_yaml(tmp_path / "task-named-validation.yaml", task)
+
+    plans.cmd_write_task(
+        _args(
+            workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+            task_id="task-stage4", title="Stage 4 task", content_file=str(task_input),
+            status="planned",
+        )
+    )
 
 
 def test_incomplete_external_target_authority_is_rejected_before_mutation(
@@ -607,7 +686,6 @@ def test_amend_task_prevalidates_and_refreshes_only_its_compiled_brief(
     compiled = yaml.safe_load(brief.read_text())["task_brief"]
     assert compiled["task_id"] == "task-stage4"
     assert compiled["validation"][0]["process"] == {
-        "bridge_test_id": "bridge-test-stage4",
         "argv": ["python3", "-m", "pytest", "-q"],
         "repository_id": "work-bundle-main",
         "working_directory": ".",

@@ -30,7 +30,7 @@
           "properties": {
             "task_id": {"$ref": "#/$defs/taskId"},
             "disposition": {"const": "executable"},
-            "test_id": {"type": "string", "pattern": "^bridge-test-[a-z0-9][a-z0-9-]*$"},
+            "test_id": {"type": "string", "pattern": "^VAL-[A-Z0-9][A-Z0-9-]*$"},
             "purpose": {"type": "string", "minLength": 1}
           },
           "additionalProperties": false
@@ -47,49 +47,69 @@
         }
       ]
     },
-    "deliveryBase": {
+    "snapshot": {
       "type": "object",
-      "required": ["mode", "task_id", "snapshot", "bridges", "test_catalog"],
+      "required": ["start_required", "retention"],
       "properties": {
-        "mode": {"enum": ["executable_snapshot", "final"]},
-        "task_id": {"$ref": "#/$defs/taskId"},
-        "snapshot": {
-          "type": "object",
-          "required": ["start_required", "retention"],
-          "properties": {
-            "start_required": {"type": "boolean"},
-            "retention": {"const": "until_finalization_or_explicit_release"}
-          },
-          "additionalProperties": false
-        },
-        "bridges": {
-          "type": "object",
-          "required": ["config_env", "start_snapshot", "test_runner"],
-          "properties": {
-            "config_env": {"enum": ["optional", "required"]},
-            "start_snapshot": {"enum": ["optional", "required"]},
-            "test_runner": {"enum": ["optional", "required"]}
-          },
-          "additionalProperties": false
-        },
-        "test_catalog": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"$ref": "#/$defs/testCatalogRow"}
-        }
+        "start_required": {"type": "boolean"},
+        "retention": {"const": "until_finalization_or_explicit_release"}
       },
       "additionalProperties": false
     },
-    "delivery": {
+    "bridges": {
+      "type": "object",
+      "properties": {
+        "config_env": {"enum": ["optional", "required"]},
+        "start_snapshot": {"enum": ["optional", "required"]},
+        "test_runner": {"enum": ["optional", "required"]}
+      },
+      "additionalProperties": false
+    },
+    "executableDelivery": {
       "allOf": [
-        {"$ref": "#/$defs/deliveryBase"},
         {
-          "if": {"properties": {"mode": {"const": "executable_snapshot"}}},
-          "then": {"properties": {"snapshot": {"properties": {"start_required": {"const": true}}}}},
-          "else": {"properties": {"snapshot": {"properties": {"start_required": {"const": false}}}}}
+          "type": "object",
+          "required": ["mode", "task_id", "snapshot", "bridges", "test_catalog"],
+          "properties": {
+            "mode": {"const": "executable_snapshot"},
+            "task_id": {"$ref": "#/$defs/taskId"},
+            "snapshot": {"$ref": "#/$defs/snapshot"},
+            "bridges": {"$ref": "#/$defs/bridges"},
+            "test_catalog": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/testCatalogRow"}}
+          },
+          "additionalProperties": false
+        },
+        {
+          "if": {"properties": {"snapshot": {"properties": {"start_required": {"const": true}}, "required": ["start_required"]}}},
+          "then": {"properties": {"bridges": {"required": ["start_snapshot"], "properties": {"start_snapshot": {"const": "required"}}}}}
+        },
+        {
+          "if": {"properties": {"test_catalog": {"contains": {"type": "object", "required": ["disposition"], "properties": {"disposition": {"const": "executable"}}}}}},
+          "then": {"properties": {"bridges": {"required": ["test_runner"], "properties": {"test_runner": {"const": "required"}}}}}
         }
       ]
     },
+    "finalDelivery": {
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["mode", "task_id", "snapshot", "bridges", "test_catalog"],
+          "properties": {
+            "mode": {"const": "final"},
+            "task_id": {"oneOf": [{"$ref": "#/$defs/taskId"}, {"type": "null"}]},
+            "snapshot": {"oneOf": [{"type": "null"}, {"allOf": [{"$ref": "#/$defs/snapshot"}, {"properties": {"start_required": {"const": false}}}]}]},
+            "bridges": {"$ref": "#/$defs/bridges"},
+            "test_catalog": {"type": "array", "items": {"$ref": "#/$defs/testCatalogRow"}}
+          },
+          "additionalProperties": false
+        },
+        {
+          "if": {"properties": {"test_catalog": {"contains": {"type": "object", "required": ["disposition"], "properties": {"disposition": {"const": "executable"}}}}}},
+          "then": {"properties": {"bridges": {"required": ["test_runner"], "properties": {"test_runner": {"const": "required"}}}}}
+        }
+      ]
+    },
+    "delivery": {"oneOf": [{"$ref": "#/$defs/executableDelivery"}, {"$ref": "#/$defs/finalDelivery"}]},
     "legacy": {
       "type": "object",
       "required": ["artifact_type", "schema_version", "id", "plan_id", "name", "status", "order", "date_created", "last_updated", "source_ids", "depends_on", "task_index", "barriers", "validation", "completion_criteria", "allocated_rules", "allocated_skills"],

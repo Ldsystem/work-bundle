@@ -1224,6 +1224,9 @@ def _compile_structured_validation_item(item: Any) -> dict[str, Any]:
             compiled[key] = item[key]
     if kind == "process":
         process = item.get("process")
+        validation_id = str(item.get("id") or "").strip()
+        if not validation_id:
+            raise SystemExit("Process validation requires its canonical validation id")
         if not isinstance(process, dict):
             raise SystemExit("Process validation requires a closed process descriptor")
         compiled["process"] = dict(process)

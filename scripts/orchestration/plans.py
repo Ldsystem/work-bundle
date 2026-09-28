@@ -613,15 +613,17 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
             if isinstance(item, dict)
         }
         delivery_task_id = str(delivery.get("task_id") or "")
-        if delivery_task_id not in declared_tasks:
+        if delivery_task_id and delivery_task_id not in declared_tasks:
             raise SystemExit("Phase delivery task must be declared in task_index")
         catalog_tasks = {
             str(item.get("task_id") or "")
             for item in delivery.get("test_catalog", [])
             if isinstance(item, dict)
         }
-        if catalog_tasks != declared_tasks:
+        if delivery.get("mode") == "executable_snapshot" and catalog_tasks != declared_tasks:
             raise SystemExit("Phase delivery test_catalog must account for every task")
+        if delivery.get("mode") == "final" and not catalog_tasks.issubset(declared_tasks):
+            raise SystemExit("Final phase delivery test_catalog references an unknown task")
     result = write_artifact(
         CATALOG_PATH, "phase", _plan_anchors(args), data, state="active",
         bindings=bindings,
@@ -679,10 +681,9 @@ def _prepare_task_write(
             if isinstance(item, dict) and str(item.get("task_id") or "") == str(args.task_id)
         ]
         process_ids = {
-            str(process.get("bridge_test_id") or "")
+            str(item.get("id") or "")
             for item in data.get("validation", [])
             if isinstance(item, dict) and isinstance(item.get("process"), dict)
-            for process in [item["process"]]
         }
         executable_ids = {
             str(item.get("test_id") or "")

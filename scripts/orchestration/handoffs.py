@@ -73,6 +73,28 @@ def _bindings(args: argparse.Namespace) -> dict[str, str]:
     return {"plan": str(args.plan_id), "task": str(args.task_id)}
 
 
+def _canonical_task_delivery(args: argparse.Namespace) -> tuple[str, str | None]:
+    from review_identity import load_canonical_plan_tree
+
+    root = resolve_workspace_root(args)
+    plan_id, task_id = str(args.plan_id), str(args.task_id)
+    tree = load_canonical_plan_tree(root, plan_id, state="active")
+    task = tree["tasks"].get(task_id)
+    if not isinstance(task, dict):
+        raise SystemExit("Executor-result task is not canonical in the active plan")
+    phase_id = str(task.get("phase_id") or "")
+    phase = tree["phases"].get(phase_id)
+    if not isinstance(phase, dict):
+        raise SystemExit("Executor-result task phase is not canonical in the active plan")
+    delivery = phase.get("delivery")
+    delivery_task_id = (
+        str(delivery.get("task_id"))
+        if isinstance(delivery, dict) and delivery.get("task_id")
+        else None
+    )
+    return phase_id, delivery_task_id
+
+
 def _active_result_or_none(args: argparse.Namespace) -> dict[str, Any] | None:
     policy = _policy()
     active = canonical_artifact_path(
@@ -105,14 +127,34 @@ def _active_result_or_none(args: argparse.Namespace) -> dict[str, Any] | None:
 def write_executor_result(args: argparse.Namespace) -> dict[str, Any]:
     semantic = _semantic_input(Path(str(args.content_file)))
     phase_handoff = semantic.get("phase_handoff")
-    if not isinstance(phase_handoff, dict):
-        raise SystemExit("Executor-result v2 requires a factual phase_handoff")
-    phase_id = str(phase_handoff.get("phase_id") or "")
-    if str(phase_handoff.get("delivery_task_id") or "") != str(args.task_id):
-        raise SystemExit("Executor-result task binding does not match phase_handoff")
+    phase_id, delivery_task_id = _canonical_task_delivery(args)
+    is_delivery_task = delivery_task_id == str(args.task_id)
+    if is_delivery_task and not isinstance(phase_handoff, dict):
+        raise SystemExit("Canonical phase delivery task requires a factual phase_handoff")
+    if not is_delivery_task and phase_handoff is not None:
+        raise SystemExit("phase_handoff is permitted only for the canonical phase delivery task")
+    if isinstance(phase_handoff, dict):
+        if str(phase_handoff.get("phase_id") or "") != phase_id:
+            raise SystemExit("Executor-result phase binding does not match phase_handoff")
+        if str(phase_handoff.get("delivery_task_id") or "") != delivery_task_id:
+            raise SystemExit("Executor-result task binding does not match phase_handoff")
+        bundle = phase_handoff.get("runtime_bundle")
+        if not isinstance(bundle, dict):
+            raise SystemExit("Executor-result phase_handoff runtime bundle is invalid")
+        expected_root = (
+            ".work-bundle/orchestration/runtime/phase-delivery/"
+            f"{args.plan_id}/{phase_id}/"
+        )
+        expected_paths = {
+            "relative_path": expected_root,
+            "payload_relative_path": expected_root + "payload/",
+            "state_relative_path": expected_root + "state/",
+        }
+        if any(bundle.get(field) != value for field, value in expected_paths.items()):
+            raise SystemExit("Executor-result phase_handoff must use canonical runtime bundle paths")
     supplied_phase_id = getattr(args, "phase_id", None)
     if supplied_phase_id is not None and str(supplied_phase_id) != phase_id:
-        raise SystemExit("Executor-result phase binding does not match phase_handoff")
+        raise SystemExit("Executor-result phase binding does not match canonical task phase")
     existing = _active_result_or_none(args)
     today = now_date()
     data = {

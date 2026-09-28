@@ -93,9 +93,9 @@ def _executor_semantics() -> dict[str, object]:
             "phase_id": "phase-stage5",
             "delivery_task_id": "task-stage5",
             "runtime_bundle": {
-                "relative_path": ".work-bundle/orchestration/runtime/plan-stage5/phase-stage5",
-                "payload_relative_path": "payload",
-                "state_relative_path": "state",
+                "relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5/",
+                "payload_relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5/payload/",
+                "state_relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5/state/",
                 "payload_sha256": "1" * 64,
                 "snapshot_manifest_sha256": "2" * 64,
                 "snapshot_content_sha256": "3" * 64,
@@ -131,15 +131,21 @@ def _executor_semantics() -> dict[str, object]:
                 "rows": [
                     {
                         "task": "task-stage5",
-                        "test": "bridge-test-stage5",
+                        "test": "VAL-001",
                         "passes": True,
-                        "message": "Focused validation passed.",
+                        "message": None,
                     }
                 ],
             },
             "limitations": [],
         },
     }
+
+
+def _ordinary_executor_semantics() -> dict[str, object]:
+    data = _executor_semantics()
+    data.pop("phase_handoff")
+    return data
 
 
 def _candidate(root: Path, *, kind: str = "worktree") -> dict[str, object]:
@@ -235,7 +241,7 @@ def _write_stage5_plan_tree(
             "mode": "final", "task_id": "task-stage5",
             "snapshot": {"start_required": False, "retention": "until_finalization_or_explicit_release"},
             "bridges": {"config_env": "required", "start_snapshot": "optional", "test_runner": "required"},
-            "test_catalog": [{"task_id": "task-stage5", "disposition": "executable", "test_id": "bridge-test-stage5", "purpose": "Run final validation."}],
+            "test_catalog": [{"task_id": "task-stage5", "disposition": "executable", "test_id": "VAL-001", "purpose": "Run final validation."}],
         },
     }
     write_artifact(
@@ -251,7 +257,7 @@ def _write_stage5_plan_tree(
         "truth_basis": {"purpose": "finalize", "as_is_evidence": ["current"], "decision_authority": ["spec"], "expected_delta": ["archive"], "conflict_status": "clear"},
         "depends_on": [], "source_files": [], "target_files": ["src/current.py"], "target_symbols": ["main"],
         "interfaces": {"consumes": [], "produces": [], "external_targets": []}, "steps": ["finalize"],
-        "validation": [{"id": "VAL-001", "kind": "process", "process": {"bridge_test_id": "bridge-test-stage5", "argv": ["python3", "-m", "pytest", "-q"], "repository_id": "work-bundle-main", "working_directory": ".", "timeout_seconds": 300}}],
+        "validation": [{"id": "VAL-001", "kind": "process", "process": {"argv": ["python3", "-m", "pytest", "-q"], "repository_id": "work-bundle-main", "working_directory": ".", "timeout_seconds": 300}}],
         "evidence_capability": {"result": "mapped", "reason": "test", "invariants": []},
         "completion_criteria": ["Done"], "methodology": {"name": "tdd"},
         "executor_profile": {"capability": "implementation", "context_mode": "bounded", "review_capability": "none"},
@@ -357,6 +363,7 @@ def test_catalog_v7_registers_exact_stage5_families_and_policies() -> None:
 def test_executor_result_round_trip_inline_block_index_and_transition(
     workspace: Path, tmp_path: Path,
 ) -> None:
+    _write_stage5_plan_tree(workspace)
     first = _write_yaml(tmp_path, "first.yaml", _executor_semantics())
     second = _write_yaml(tmp_path, "second.yaml", _executor_semantics(), flow=True)
     for identity, content in (("result-stage5-a", first), ("result-stage5-b", second)):
@@ -424,6 +431,7 @@ def test_catalog_v7_reads_legacy_executor_result_without_rewriting(
 def test_executor_result_rejects_overrides_and_updates_active_identity_in_place(
     workspace: Path, tmp_path: Path,
 ) -> None:
+    _write_stage5_plan_tree(workspace)
     bad = _executor_semantics()
     bad["verdict"] = "accept"
     content = _write_yaml(tmp_path, "bad.yaml", bad)
@@ -471,6 +479,7 @@ def test_executor_result_rejects_overrides_and_updates_active_identity_in_place(
 def test_executor_result_rejects_mismatched_delivery_task_before_mutation(
     workspace: Path, tmp_path: Path,
 ) -> None:
+    _write_stage5_plan_tree(workspace)
     invalid = _executor_semantics()
     invalid["phase_handoff"]["delivery_task_id"] = "task-other"
     content = _write_yaml(tmp_path, "mismatched-task.yaml", invalid)
@@ -484,6 +493,65 @@ def test_executor_result_rejects_mismatched_delivery_task_before_mutation(
         )
 
     assert not list(workspace.rglob("result-mismatch.executor-result.yaml"))
+
+
+def test_ordinary_task_executor_result_omits_phase_handoff(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    content = _write_yaml(tmp_path, "ordinary.yaml", _ordinary_executor_semantics())
+
+    handoffs.cmd_write_executor_result(
+        _args(
+            workspace, id="result-ordinary", plan_id="plan-stage5",
+            task_id="task-peer", content_file=str(content),
+        )
+    )
+
+    path = next(workspace.rglob("result-ordinary.executor-result.yaml"))
+    stored = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert stored["phase_id"] == "phase-stage5"
+    assert "phase_handoff" not in stored
+
+
+def test_ordinary_task_executor_result_rejects_phase_handoff(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    invalid = _executor_semantics()
+    invalid["phase_handoff"]["delivery_task_id"] = "task-peer"
+    content = _write_yaml(tmp_path, "ordinary-with-handoff.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="canonical phase delivery task"):
+        handoffs.cmd_write_executor_result(
+            _args(
+                workspace, id="result-ordinary", plan_id="plan-stage5",
+                task_id="task-peer", content_file=str(content),
+            )
+        )
+
+    assert not list(workspace.rglob("result-ordinary.executor-result.yaml"))
+
+
+def test_phase_handoff_rejects_noncanonical_runtime_bundle_paths(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    invalid = _executor_semantics()
+    invalid["phase_handoff"]["runtime_bundle"]["payload_relative_path"] = "payload/"
+    content = _write_yaml(tmp_path, "invalid-runtime-path.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="canonical runtime bundle paths|schema validation"):
+        handoffs.cmd_write_executor_result(
+            _args(
+                workspace, id="result-runtime-path", plan_id="plan-stage5",
+                task_id="task-stage5", content_file=str(content),
+            )
+        )
+
+    assert not list(workspace.rglob("result-runtime-path.executor-result.yaml"))
 
 
 def test_review_accepted_result_and_final_review_form_compact_current_chain(
