@@ -165,3 +165,31 @@ def test_planning_forms_smallest_sufficient_development_runtime() -> None:
     combined = "\n".join(texts.values()).lower()
     assert "script score" not in combined
     assert "task-size metrics" in texts["references/assets/orchestration/workflow.md"].lower()
+
+
+def test_runtime_method_compares_current_obligation_value_to_coordination_cost() -> None:
+    paths = (
+        "skills/orch-create-implementation-plan/SKILL.md",
+        "rules/orchestration/orch-artifact-authoring.md",
+        "references/assets/orchestration/contract/plan-v1.md",
+        "references/assets/orchestration/workflow.md",
+    )
+    for path in paths:
+        text = read(path).lower()
+        for token in (
+            "obligation-versus-cost comparison",
+            "retain every necessary",
+            "stable optional boundary",
+            "coordination cost exceeds its current benefit",
+            "cheapest capable early probe",
+            "costly compile, startup, or integration",
+        ):
+            assert token in text, f"{path}: {token}"
+
+
+def test_planner_has_actionable_runtime_checklist() -> None:
+    planner = read("skills/orch-create-implementation-plan/SKILL.md")
+    self_check = planner.rsplit("## Self-check", 1)[-1]
+    assert self_check.count("- [ ]") >= 4
+    assert "current named obligation" in self_check
+    assert "cheapest capable early probe" in self_check

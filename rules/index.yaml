@@ -178,8 +178,8 @@ rules:
   - id: script-stage-determinacy
     path: script-stage-determinacy.md
     applies_when:
-      - an agent designs, creates, or refactors a WorkBundle script or reusable workspace utility
-      - an agent delegates a lifecycle-stage conclusion, gate, or transition to deterministic automation
+      - an agent considers delegating a new workflow conclusion, gate, or lifecycle transition to a WorkBundle script or reusable workspace utility
+      - an agent relies on an existing script output to advance workflow progression or issue a semantic or lifecycle conclusion
     enforcement: must
     load: conditional
     requires: []

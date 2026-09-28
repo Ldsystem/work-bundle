@@ -708,6 +708,12 @@
       "prompt": "A plan template normally includes release signing, but this development task has no release obligation and a local substitute proves the same current behavior more cheaply.",
       "expected_output": "Uses the substitute in the smallest sufficient development runtime and defers the release-only burden; template habit does not create a current obligation.",
       "files": []
+    },
+    {
+      "id": "PDR-04",
+      "prompt": "A product change may require a costly full compile and service startup, but a small interface probe can falsify the main compatibility assumption first. If the probe passes, the current acceptance criteria still require the real compile and startup behavior.",
+      "expected_output": "Runs the cheapest capable early probe before broad cost, then retains the full compile and startup because they remain necessary to the current obligation. It neither drops necessary product components nor invents an optional phase whose coordination cost exceeds its benefit.",
+      "files": []
     }
   ],
   "v4_evals": [

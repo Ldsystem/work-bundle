@@ -58,6 +58,33 @@ def test_runtime_and_stage_determinacy_pressure_cases_are_present() -> None:
         assert token in script_output
 
 
+def test_costly_runtime_and_determinate_script_pressure_cases_are_behavioral() -> None:
+    orchestration = json.loads(
+        (REPO_ROOT / "references/evals/orchestration/evals.json").read_text(encoding="utf-8")
+    )
+    script_authoring = json.loads(
+        (REPO_ROOT / "references/evals/script-authoring/evals.json").read_text(encoding="utf-8")
+    )
+    planning_cases = {str(item["id"]): item for item in orchestration["evals"]}
+    script_cases = {str(item["id"]): item for item in script_authoring["evals"]}
+
+    costly = planning_cases["PDR-04"]
+    assert "compile" in costly["prompt"] and "startup" in costly["prompt"]
+    assert "cheapest capable early probe" in costly["expected_output"]
+    assert "retains" in costly["expected_output"] and "necessary" in costly["expected_output"]
+
+    expected = {
+        "quantitative-supplied-threshold": ("threshold", "deterministically"),
+        "qualitative-determinate-operation": ("canonical", "deterministically"),
+        "unsupported-proxy-missing-policy": ("bounded observations", "does not advance"),
+    }
+    for case_id, assertions in expected.items():
+        case = script_cases[case_id]
+        combined = f"{case['prompt']} {case['expected_output']}"
+        for assertion in assertions:
+            assert assertion in combined, f"{case_id}: {assertion}"
+
+
 def test_validation_source_identity_excludes_observation_artifacts(evaluator):
     root = evaluator["root"]
     before = evaluation_identity.validation_source_identity(root)

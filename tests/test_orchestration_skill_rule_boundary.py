@@ -211,6 +211,10 @@ def test_script_stage_determinacy_rule_is_registered_and_agent_owned() -> None:
 
     assert metadata["id"] == "script-stage-determinacy"
     assert metadata["load"] == "conditional"
+    assert metadata["applies_when"] == [
+        "an agent considers delegating a new workflow conclusion, gate, or lifecycle transition to a WorkBundle script or reusable workspace utility",
+        "an agent relies on an existing script output to advance workflow progression or issue a semantic or lifecycle conclusion",
+    ]
     assert entries[metadata["id"]] == {
         "id": metadata["id"],
         "path": "script-stage-determinacy.md",
@@ -243,3 +247,8 @@ def test_script_authoring_skill_exposes_stage_relative_determinacy() -> None:
         "script-stage-determinacy",
     ):
         assert token in skill
+
+    self_check = skill.rsplit("## Self-check", 1)[-1]
+    assert self_check.count("- [ ]") >= 4
+    assert "new automated conclusion" in self_check
+    assert "existing script output" in self_check

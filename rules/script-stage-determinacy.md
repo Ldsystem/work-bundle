@@ -1,8 +1,8 @@
 ---
 id: script-stage-determinacy
 applies_when:
-  - an agent designs, creates, or refactors a WorkBundle script or reusable workspace utility
-  - an agent delegates a lifecycle-stage conclusion, gate, or transition to deterministic automation
+  - an agent considers delegating a new workflow conclusion, gate, or lifecycle transition to a WorkBundle script or reusable workspace utility
+  - an agent relies on an existing script output to advance workflow progression or issue a semantic or lifecycle conclusion
 enforcement: must
 load: conditional
 requires: []
@@ -17,6 +17,7 @@ Keep scripts authoritative for determinate mechanics without turning incomplete 
 ## Must
 
 - Before automation selection, name the current lifecycle stage, current named obligations, available current facts, supplied policy, and exact conclusion, gate, or transition proposed for automation.
+- Before relying on an existing script output for workflow progression, verify that the output plus current supplied policy determines the proposed progression; otherwise keep it as an observation.
 - Automate that conclusion only when the current facts and supplied policy determine it at the current stage.
 - When the conclusion is not determined, return bounded observations and leave interpretation, sufficiency, remediation, qualification, and acceptance with the responsible agent or controller.
 - Treat structural facts and reviewer advice as inputs to the responsible semantic decision, never as substitutes for that decision.
