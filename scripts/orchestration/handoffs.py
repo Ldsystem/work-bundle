@@ -129,8 +129,9 @@ def write_executor_result(args: argparse.Namespace) -> dict[str, Any]:
     phase_handoff = semantic.get("phase_handoff")
     phase_id, delivery_task_id = _canonical_task_delivery(args)
     is_delivery_task = delivery_task_id == str(args.task_id)
-    if is_delivery_task and not isinstance(phase_handoff, dict):
-        raise SystemExit("Canonical phase delivery task requires a factual phase_handoff")
+    result_state = semantic.get("result_state")
+    if is_delivery_task and result_state == "implemented" and not isinstance(phase_handoff, dict):
+        raise SystemExit("implemented canonical phase delivery task requires a factual phase_handoff")
     if not is_delivery_task and phase_handoff is not None:
         raise SystemExit("phase_handoff is permitted only for the canonical phase delivery task")
     if isinstance(phase_handoff, dict):
@@ -143,12 +144,12 @@ def write_executor_result(args: argparse.Namespace) -> dict[str, Any]:
             raise SystemExit("Executor-result phase_handoff runtime bundle is invalid")
         expected_root = (
             ".work-bundle/orchestration/runtime/phase-delivery/"
-            f"{args.plan_id}/{phase_id}/"
+            f"{args.plan_id}/{phase_id}"
         )
         expected_paths = {
             "relative_path": expected_root,
-            "payload_relative_path": expected_root + "payload/",
-            "state_relative_path": expected_root + "state/",
+            "payload_relative_path": expected_root + "/payload",
+            "state_relative_path": expected_root + ".state.json",
         }
         if any(bundle.get(field) != value for field, value in expected_paths.items()):
             raise SystemExit("Executor-result phase_handoff must use canonical runtime bundle paths")

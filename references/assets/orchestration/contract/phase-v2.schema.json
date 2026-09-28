@@ -58,6 +58,7 @@
     },
     "bridges": {
       "type": "object",
+      "required": ["config_env", "start_snapshot", "test_runner"],
       "properties": {
         "config_env": {"enum": ["optional", "required"]},
         "start_snapshot": {"enum": ["optional", "required"]},
@@ -81,11 +82,22 @@
         },
         {
           "if": {"properties": {"snapshot": {"properties": {"start_required": {"const": true}}, "required": ["start_required"]}}},
-          "then": {"properties": {"bridges": {"required": ["start_snapshot"], "properties": {"start_snapshot": {"const": "required"}}}}}
+          "then": {"properties": {"bridges": {"properties": {"start_snapshot": {"const": "required"}}}}},
+          "else": {"properties": {"bridges": {"properties": {"start_snapshot": {"const": "optional"}}}}}
         },
         {
           "if": {"properties": {"test_catalog": {"contains": {"type": "object", "required": ["disposition"], "properties": {"disposition": {"const": "executable"}}}}}},
-          "then": {"properties": {"bridges": {"required": ["test_runner"], "properties": {"test_runner": {"const": "required"}}}}}
+          "then": {"properties": {"bridges": {"properties": {"test_runner": {"const": "required"}}}}},
+          "else": {"properties": {"bridges": {"properties": {"test_runner": {"const": "optional"}}}}}
+        },
+        {
+          "if": {
+            "allOf": [
+              {"properties": {"snapshot": {"properties": {"start_required": {"const": false}}}}},
+              {"properties": {"test_catalog": {"not": {"contains": {"type": "object", "required": ["disposition"], "properties": {"disposition": {"const": "executable"}}}}}}}
+            ]
+          },
+          "then": {"properties": {"bridges": {"properties": {"config_env": {"const": "required"}}}}}
         }
       ]
     },
@@ -98,7 +110,15 @@
             "mode": {"const": "final"},
             "task_id": {"oneOf": [{"$ref": "#/$defs/taskId"}, {"type": "null"}]},
             "snapshot": {"oneOf": [{"type": "null"}, {"allOf": [{"$ref": "#/$defs/snapshot"}, {"properties": {"start_required": {"const": false}}}]}]},
-            "bridges": {"$ref": "#/$defs/bridges"},
+            "bridges": {
+              "type": "object",
+              "properties": {
+                "config_env": {"enum": ["optional", "required"]},
+                "start_snapshot": {"enum": ["optional", "required"]},
+                "test_runner": {"enum": ["optional", "required"]}
+              },
+              "additionalProperties": false
+            },
             "test_catalog": {"type": "array", "items": {"$ref": "#/$defs/testCatalogRow"}}
           },
           "additionalProperties": false

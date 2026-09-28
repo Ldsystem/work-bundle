@@ -64,9 +64,9 @@
           "type": "object",
           "required": ["relative_path", "payload_relative_path", "state_relative_path", "payload_sha256", "snapshot_manifest_sha256", "snapshot_content_sha256", "retained_until"],
           "properties": {
-            "relative_path": {"type": "string", "pattern": "^\\.work-bundle/orchestration/runtime/phase-delivery/plan-[a-z0-9][a-z0-9-]*/phase-[a-z0-9][a-z0-9-]*/$"},
-            "payload_relative_path": {"type": "string", "pattern": "^\\.work-bundle/orchestration/runtime/phase-delivery/plan-[a-z0-9][a-z0-9-]*/phase-[a-z0-9][a-z0-9-]*/payload/$"},
-            "state_relative_path": {"type": "string", "pattern": "^\\.work-bundle/orchestration/runtime/phase-delivery/plan-[a-z0-9][a-z0-9-]*/phase-[a-z0-9][a-z0-9-]*/state/$"},
+            "relative_path": {"type": "string", "pattern": "^\\.work-bundle/orchestration/runtime/phase-delivery/plan-[a-z0-9][a-z0-9-]*/phase-[a-z0-9][a-z0-9-]*$"},
+            "payload_relative_path": {"type": "string", "pattern": "^\\.work-bundle/orchestration/runtime/phase-delivery/plan-[a-z0-9][a-z0-9-]*/phase-[a-z0-9][a-z0-9-]*/payload$"},
+            "state_relative_path": {"type": "string", "pattern": "^\\.work-bundle/orchestration/runtime/phase-delivery/plan-[a-z0-9][a-z0-9-]*/phase-[a-z0-9][a-z0-9-]*\\.state\\.json$"},
             "payload_sha256": {"$ref": "#/$defs/digest"},
             "snapshot_manifest_sha256": {"$ref": "#/$defs/digest"},
             "snapshot_content_sha256": {"$ref": "#/$defs/digest"},

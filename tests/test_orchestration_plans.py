@@ -139,6 +139,7 @@ def _phase_semantics() -> dict[str, object]:
             },
             "bridges": {
                 "config_env": "required",
+                "start_snapshot": "optional",
                 "test_runner": "required",
             },
             "test_catalog": [
@@ -495,7 +496,7 @@ def test_executable_snapshot_union_enforces_start_and_test_bridges(
         if case == "start":
             invalid["delivery"]["snapshot"]["start_required"] = True
         else:
-            invalid["delivery"]["bridges"].pop("test_runner")
+            invalid["delivery"]["bridges"]["test_runner"] = "optional"
         content = _write_yaml(tmp_path / f"invalid-{case}-bridge.yaml", invalid)
         with pytest.raises(SystemExit, match="schema validation failed"):
             plans.cmd_write_phase(
@@ -506,6 +507,57 @@ def test_executable_snapshot_union_enforces_start_and_test_bridges(
                 )
             )
     assert not (workspace / ".work-bundle/orchestration/plan/active/plan-stage4/phase-stage4.phase.yaml").exists()
+
+
+def test_executable_snapshot_requires_all_bridge_roles_and_a_required_runner(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    plan_input = _write_yaml(tmp_path / "plan-bridge-closure.yaml", _plan_semantics())
+    plans.cmd_write_plan(_args(workspace, content_file=str(plan_input)))
+    cases = []
+    missing_role = _phase_semantics()
+    missing_role["delivery"]["bridges"].pop("config_env")
+    cases.append(missing_role)
+    no_required_role = _phase_semantics()
+    no_required_role["delivery"]["test_catalog"] = [
+        {"task_id": "task-stage4", "disposition": "not_applicable", "reason": "No automated test."}
+    ]
+    no_required_role["delivery"]["bridges"] = {
+        "config_env": "optional", "start_snapshot": "optional", "test_runner": "optional"
+    }
+    cases.append(no_required_role)
+
+    for index, invalid in enumerate(cases):
+        content = _write_yaml(tmp_path / f"invalid-bridge-closure-{index}.yaml", invalid)
+        with pytest.raises(SystemExit, match="schema validation failed"):
+            plans.cmd_write_phase(
+                _args(
+                    workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+                    task_id=None, title="Stage 4 phase", content_file=str(content), status="planned",
+                )
+            )
+
+
+def test_executable_snapshot_without_start_or_tests_uses_required_config_bridge(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    plan_input = _write_yaml(tmp_path / "plan-config-runner.yaml", _plan_semantics())
+    plans.cmd_write_plan(_args(workspace, content_file=str(plan_input)))
+    semantic = _phase_semantics()
+    semantic["delivery"]["test_catalog"] = [
+        {"task_id": "task-stage4", "disposition": "not_applicable", "reason": "No automated test."}
+    ]
+    semantic["delivery"]["bridges"] = {
+        "config_env": "required", "start_snapshot": "optional", "test_runner": "optional"
+    }
+    content = _write_yaml(tmp_path / "config-runner-phase.yaml", semantic)
+
+    plans.cmd_write_phase(
+        _args(
+            workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+            task_id=None, title="Stage 4 phase", content_file=str(content), status="planned",
+        )
+    )
 
 
 def test_final_delivery_allows_null_and_empty_delivery_fields(
@@ -570,7 +622,11 @@ def test_incomplete_external_target_authority_is_rejected_before_mutation(
     before = task_path.read_bytes()
     invalid = _task_semantics()
     invalid["interfaces"]["external_targets"] = [
-        {"target_id": "release-api", "permitted_actions": ["publish"]}
+        {
+            "target_id": "release-api",
+            "permitted_actions": ["publish"],
+            "purpose": "Attempt an action outside the closed bridge vocabulary.",
+        }
     ]
     content = _write_yaml(tmp_path / "invalid-external-target.yaml", invalid)
 

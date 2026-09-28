@@ -93,9 +93,9 @@ def _executor_semantics() -> dict[str, object]:
             "phase_id": "phase-stage5",
             "delivery_task_id": "task-stage5",
             "runtime_bundle": {
-                "relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5/",
-                "payload_relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5/payload/",
-                "state_relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5/state/",
+                "relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5",
+                "payload_relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5/payload",
+                "state_relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5.state.json",
                 "payload_sha256": "1" * 64,
                 "snapshot_manifest_sha256": "2" * 64,
                 "snapshot_content_sha256": "3" * 64,
@@ -535,6 +535,43 @@ def test_ordinary_task_executor_result_rejects_phase_handoff(
     assert not list(workspace.rglob("result-ordinary.executor-result.yaml"))
 
 
+@pytest.mark.parametrize("result_state", ["blocked", "partial"])
+def test_designated_delivery_task_may_omit_prepublication_phase_handoff(
+    workspace: Path, tmp_path: Path, result_state: str,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    semantic = _ordinary_executor_semantics()
+    semantic["result_state"] = result_state
+    semantic["task_fit"] = {"status": "blocked", "summary": "Delivery is not publishable yet."}
+    content = _write_yaml(tmp_path, f"{result_state}.yaml", semantic)
+
+    handoffs.cmd_write_executor_result(
+        _args(
+            workspace, id=f"result-{result_state}", plan_id="plan-stage5",
+            task_id="task-stage5", content_file=str(content),
+        )
+    )
+
+    stored = yaml.safe_load(next(workspace.rglob(f"result-{result_state}.executor-result.yaml")).read_text())
+    assert stored["result_state"] == result_state
+    assert "phase_handoff" not in stored
+
+
+def test_designated_implemented_delivery_task_requires_phase_handoff(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    content = _write_yaml(tmp_path, "implemented-no-handoff.yaml", _ordinary_executor_semantics())
+
+    with pytest.raises(SystemExit, match="implemented canonical phase delivery task"):
+        handoffs.cmd_write_executor_result(
+            _args(
+                workspace, id="result-missing-handoff", plan_id="plan-stage5",
+                task_id="task-stage5", content_file=str(content),
+            )
+        )
+
+
 def test_phase_handoff_rejects_noncanonical_runtime_bundle_paths(
     workspace: Path, tmp_path: Path,
 ) -> None:
@@ -552,6 +589,40 @@ def test_phase_handoff_rejects_noncanonical_runtime_bundle_paths(
         )
 
     assert not list(workspace.rglob("result-runtime-path.executor-result.yaml"))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (
+            "relative_path",
+            ".work-bundle/orchestration/runtime/phase-delivery/plan-other/phase-stage5",
+        ),
+        (
+            "payload_relative_path",
+            ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-other/payload",
+        ),
+        (
+            "state_relative_path",
+            ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-other.state.json",
+        ),
+    ],
+)
+def test_phase_handoff_paths_bind_exact_canonical_plan_and_phase(
+    workspace: Path, tmp_path: Path, field: str, value: str,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    invalid = _executor_semantics()
+    invalid["phase_handoff"]["runtime_bundle"][field] = value
+    content = _write_yaml(tmp_path, f"wrong-{field}.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="canonical runtime bundle paths"):
+        handoffs.cmd_write_executor_result(
+            _args(
+                workspace, id=f"result-wrong-{field}", plan_id="plan-stage5",
+                task_id="task-stage5", content_file=str(content),
+            )
+        )
 
 
 def test_review_accepted_result_and_final_review_form_compact_current_chain(

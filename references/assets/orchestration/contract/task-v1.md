@@ -57,7 +57,7 @@ handoff_contract: executor-result-v2
 
 Every current `kind: process` validation requires its canonical `id` and one closed `process` descriptor. That validation `id`—including named forms such as `VAL-FEATURE-UNIT`—is joined directly to the phase test catalog; there is no second bridge-test identity. `argv` is an argument vector, not shell text; `repository_id`, `working_directory`, and `timeout_seconds` close the execution target and bound. Inspection validation remains non-executable and uses its named `mechanism` instead of a process descriptor.
 
-`interfaces.external_targets` is the only current task authority for effects outside the declared repository. Each closed row carries exactly `target_id`, `permitted_actions`, and `purpose`. Delivery tasks declare every such target explicitly; an empty array declares none.
+`interfaces.external_targets` is the only current task authority for effects outside the declared repository. Each closed row carries exactly `target_id`, `permitted_actions`, and `purpose`; permitted actions are closed to `configure`, `start`, `readiness`, `stop`, and `run`. Delivery tasks declare every such target explicitly; an empty array declares none.
 
 `decision_authority` is semantically distinct from generic `source_ids`. Use `none-relevant` only when the verified specification carries no accepted authority, otherwise use its ordered `AUTH-NNN` aliases; the compiler resolves `AUTH-NNN: <carried constraint>`. A conflict status of `escalate` routes `decision-blocked`. `EXC-*`, rejected, deferred, candidate, background, blocked, or superseded authority never enters executor briefs.
 

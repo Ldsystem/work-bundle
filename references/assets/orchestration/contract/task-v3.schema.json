@@ -101,7 +101,7 @@
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"}
+          "items": {"enum": ["configure", "start", "readiness", "stop", "run"]}
         },
         "purpose": {"type": "string", "minLength": 1}
       },
