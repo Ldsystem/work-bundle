@@ -315,7 +315,7 @@ def supervisor_delivery(delivery, scenario="normal", *, ownership="child_process
     (candidate / "bridge.py").write_text(SUPERVISOR)
     manifest = json.loads((candidate / "bridges.json").read_text())
     start = json.loads(json.dumps(manifest["bridges"]["config_env"]))
-    start.update(role="start_snapshot", ownership=ownership, capabilities=["start", "readiness", "stop"], timeouts={"invoke_seconds": 2, "session_seconds": .15 if scenario == "serve" else 2})
+    start.update(role="start_snapshot", ownership=ownership, capabilities=["start", "readiness", "stop"], timeouts={"invoke_seconds": 2, "session_seconds": 2})
     manifest["bridges"]["start_snapshot"] = start
     for descriptor in manifest["bridges"].values():
         descriptor["argv"] += ["--scenario", scenario]
@@ -349,17 +349,33 @@ def test_run_phase_bridge_session_cleanup_owns_and_reaps_cooperative_supervisor(
     assert not list((Path(facts["bundle_root"]) / "sessions").iterdir())
 
 
-def test_run_phase_serve_timeout_and_interruption_use_bounded_stop(delivery, monkeypatch):
+@pytest.mark.parametrize("readiness_delay", [0, .2])
+def test_run_phase_serve_timeout_and_interruption_use_bounded_stop(delivery, monkeypatch, readiness_delay):
+    monkeypatch.setitem(globals(), "SUPERVISOR", SUPERVISOR.replace(
+        "if action=='readiness' and", f"if action=='readiness':time.sleep({readiness_delay})\nif action=='readiness' and"))
     facts = supervisor_delivery(delivery, "serve")
-    outcome = runtime.run_phase(delivery[0], "plan-test", "phase-test", selection="serve")
-    assert outcome["exit_code"] == 1 and outcome["message"] == "foreground session timeout"
     invoke = runtime._BridgeSession.invoke
+    def expire_after_readiness(self, role, action, selected=None):
+        response = invoke(self, role, action, selected)
+        if action == "readiness":
+            # Isolate foreground expiry after real startup/readiness. A separate
+            # test exercises the real session lifetime cap during test execution.
+            self.deadline = runtime.time.monotonic()
+        return response
+    with monkeypatch.context() as patch:
+        patch.setattr(runtime._BridgeSession, "invoke", expire_after_readiness)
+        outcome = runtime.run_phase(delivery[0], "plan-test", "phase-test", selection="serve")
+    assert outcome["exit_code"] == 1 and outcome["message"] == "foreground session timeout", outcome
+    assert outcome["bridge_observations"]["readiness"] == "passed" and outcome["bridge_observations"]["stop"] == "passed", outcome
     def interrupt(self, role, action, selected=None):
-        if action == "run": raise KeyboardInterrupt()
+        if action == "run":
+            assert self.deadline > runtime.time.monotonic()
+            raise KeyboardInterrupt()
         return invoke(self, role, action, selected)
     monkeypatch.setattr(runtime._BridgeSession, "invoke", interrupt)
     outcome = runtime.run_phase(delivery[0], "plan-test", "phase-test", selection="all")
-    assert outcome["exit_code"] == 130 and outcome["bridge_observations"]["stop"] == "passed"
+    assert outcome["exit_code"] == 130 and outcome["message"] == "interrupted", outcome
+    assert outcome["bridge_observations"]["readiness"] == "passed" and outcome["bridge_observations"]["stop"] == "passed", outcome
     assert not list((Path(facts["bundle_root"]) / "sessions").iterdir())
 
 
