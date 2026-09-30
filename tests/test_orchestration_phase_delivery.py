@@ -549,12 +549,17 @@ def test_bridge_protocol_is_language_agnostic_process_boundary(delivery):
         pytest.skip("Node runtime unavailable for foreign-language bridge fixture")
     (delivery[1] / "bridge.cjs").write_text('''const fs=require('node:fs');
 const args=process.argv.slice(2), request=args[args.indexOf('--request')+1], response=args[args.indexOf('--response')+1];
+const trace=[];
+function observe(stage,facts={}){trace.push({stage,...facts});fs.writeFileSync(response+'.trace.json',JSON.stringify(trace));}
+observe('entry',{version:process.version,executable:process.execPath,pid:process.pid});
 const r=JSON.parse(fs.readFileSync(request,'utf8')), out={};
+observe('request-read');
 for(const k of ['protocol','role','action','session_id','plan_id','phase_id','payload_sha256','snapshot_manifest_sha256','snapshot_content_sha256'])out[k]=r[k];
 Object.assign(out,{success:true,message:null,configuration:r.configuration,process_token:r.process_token,endpoints:r.endpoints});
-if(r.action==='configure'){fs.writeFileSync(r.session_root+'/env.json','{}');out.configuration={produced_paths:['env.json'],external_references:[]};}
+if(r.action==='configure'){fs.writeFileSync(r.session_root+'/env.json','{}');out.configuration={produced_paths:['env.json'],external_references:[]};observe('configuration-written');}
 if(r.action==='run')out.rows=r.selected.map(x=>({task:x.task,test:x.test,passes:true,message:'node process'}));
 fs.writeFileSync(response,JSON.stringify(out));
+observe('response-published');
 ''')
     manifest = json.loads((delivery[1] / "bridges.json").read_text())
     for descriptor in manifest["bridges"].values():
@@ -563,9 +568,13 @@ fs.writeFileSync(response,JSON.stringify(out));
         # invocation and session deadlines are exercised by separate fixtures.
         descriptor["timeouts"]["invoke_seconds"] = 10
     (delivery[1] / "bridges.json").write_text(json.dumps(manifest))
-    materialize(delivery)
+    facts = materialize(delivery)
     outcome = runtime.run_phase(delivery[0], "plan-test", "phase-test", selection="all")
-    assert outcome["exit_code"] == 0 and outcome["rows"][0]["message"] == "node process", outcome
+    if outcome["exit_code"] != 0:
+        traces = {path.relative_to(Path(facts["bundle_root"])).as_posix(): path.read_text()
+            for path in Path(facts["bundle_root"]).glob("sessions/*/response-*.trace.json")}
+        pytest.fail(f"{outcome}; selected executable={node}; bridge traces={traces}")
+    assert outcome["rows"][0]["message"] == "node process", outcome
 
 
 def test_materialize_authority_reads_canonical_catalog_and_exact_accepted_predecessor(workspace, tmp_path, monkeypatch):
