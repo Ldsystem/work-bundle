@@ -310,6 +310,9 @@ def _phase_authority_projection(
         )
         if key in value
     }
+    delivery = value.get("delivery")
+    if isinstance(delivery, Mapping) and str(delivery.get("task_id") or "") in task_ids:
+        projected["delivery"] = delivery
     raw_sources = value.get("source_ids")
     if isinstance(raw_sources, list):
         projected["source_ids"] = [
@@ -341,6 +344,7 @@ def load_canonical_plan_tree(
     plan_id: str,
     *,
     state: str | None = None,
+    finalization: bool = False,
 ) -> dict[str, Any]:
     """Load one schema-valid plan tree through its declared canonical relationships."""
 
@@ -386,15 +390,22 @@ def load_canonical_plan_tree(
 
     phases: dict[str, dict[str, Any]] = {}
     tasks: dict[str, dict[str, Any]] = {}
+    def current_member(family: str, identity: str, bindings: dict[str, str]) -> dict[str, Any]:
+        if not finalization:
+            return read_artifact(CURRENT_PLAN_CATALOG, family, anchors, identity=identity,
+                                 state=lifecycle_state, bindings=bindings)
+        matches = []
+        for location in ("active", "archived"):
+            path = canonical_artifact_path(family_policy(catalog, family), anchors,
+                                           identity=identity, state=location, bindings=bindings)
+            if path.exists():
+                matches.append(read_artifact(CURRENT_PLAN_CATALOG, family, anchors,
+                                             identity=identity, state=location, bindings=bindings))
+        if len(matches) != 1:
+            raise SystemExit(f"Finalization requires one current canonical {family}: {identity}")
+        return matches[0]
     for phase_id in phase_ids:
-        phase_record = read_artifact(
-            CURRENT_PLAN_CATALOG,
-            "phase",
-            anchors,
-            identity=phase_id,
-            state=lifecycle_state,
-            bindings={"plan": plan_id},
-        )
+        phase_record = current_member("phase", phase_id, {"plan": plan_id})
         phase_data = dict(phase_record["data"])
         phases[phase_id] = phase_data
         task_ids = [
@@ -409,14 +420,7 @@ def load_canonical_plan_tree(
         for task_id in task_ids:
             if task_id in tasks:
                 raise SystemExit(f"Plan identity contains duplicate task: {task_id}")
-            task_record = read_artifact(
-                CURRENT_PLAN_CATALOG,
-                "task",
-                anchors,
-                identity=task_id,
-                state=lifecycle_state,
-                bindings={"plan": plan_id, "phase": phase_id},
-            )
+            task_record = current_member("task", task_id, {"plan": plan_id, "phase": phase_id})
             tasks[task_id] = dict(task_record["data"])
     return {
         "state": lifecycle_state,
@@ -431,10 +435,11 @@ def canonical_plan_tree_identity(
     plan_id: str,
     *,
     state: str | None = None,
+    finalization: bool = False,
 ) -> dict[str, str]:
     """Digest schema-valid canonical content, independent of filenames and indexes."""
 
-    tree = load_canonical_plan_tree(root, plan_id, state=state)
+    tree = load_canonical_plan_tree(root, plan_id, state=state, finalization=finalization)
     members: list[dict[str, object]] = [
         {
             "family": "root-plan",
@@ -472,10 +477,11 @@ def canonical_task_authority_identity(
     task_id: str,
     *,
     state: str | None = None,
+    finalization: bool = False,
 ) -> dict[str, str]:
     """Digest the complete authority closure that can affect one task."""
 
-    tree = load_canonical_plan_tree(root, plan_id, state=state)
+    tree = load_canonical_plan_tree(root, plan_id, state=state, finalization=finalization)
     tasks = tree["tasks"]
     try:
         task = tasks[task_id]
@@ -597,13 +603,11 @@ def canonical_task_authority_identity(
     accepted_policy = family_policy(catalog, "accepted-task-result")
     accepted_dependencies: list[dict[str, object]] = []
     for dependency_id in sorted(dependencies):
-        probe = canonical_artifact_path(
-            accepted_policy, anchors, identity="accepted-probe", state="active",
-            bindings={"plan": plan_id, "task": dependency_id},
-        )
         records: list[dict[str, Any]] = []
-        if probe.parent.is_dir():
-            for candidate in sorted(probe.parent.iterdir()):
+        for dependency_state in (("active", "archived") if finalization else ("active",)):
+            directory = canonical_artifact_path(accepted_policy, anchors, identity="accepted-probe",
+                state=dependency_state, bindings={"plan": plan_id, "task": dependency_id}).parent
+            for candidate in sorted(directory.glob("*.accepted-task-result.yaml")):
                 if not candidate.is_file() or not candidate.name.endswith(
                     ".accepted-task-result.yaml"
                 ):
@@ -613,7 +617,7 @@ def canonical_task_authority_identity(
                 if not candidate_id:
                     continue
                 canonical = canonical_artifact_path(
-                    accepted_policy, anchors, identity=candidate_id, state="active",
+                    accepted_policy, anchors, identity=candidate_id, state=dependency_state,
                     bindings={"plan": plan_id, "task": dependency_id},
                 )
                 if canonical.resolve() != candidate.resolve():
@@ -621,7 +625,7 @@ def canonical_task_authority_identity(
                 records.append(
                     read_artifact(
                         CURRENT_PLAN_CATALOG, "accepted-task-result", anchors,
-                        identity=candidate_id, state="active",
+                        identity=candidate_id, state=dependency_state,
                         bindings={"plan": plan_id, "task": dependency_id},
                     )
                 )

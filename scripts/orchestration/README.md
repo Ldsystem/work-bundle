@@ -2,7 +2,7 @@
 
 Implementation modules in this directory are the manual maintenance surface for orchestration helpers.
 
-The top-level `../orch.py` entrypoint is the public command surface. Implementation is split by current artifact area (`specs.py`, `plans.py`, `handoffs.py`, `review_runtime.py`, `documents.py`, `doctor.py`), with `dispatcher.py` only wiring commands. Despite its historical module name, `handoffs.py` owns canonical `executor-result-v1` records; it does not create or read legacy handoff artifacts.
+The top-level `../orch.py` entrypoint is the public command surface. Implementation is split by current artifact area (`specs.py`, `plans.py`, `handoffs.py`, `review_runtime.py`, `documents.py`, `doctor.py`), with `dispatcher.py` only wiring commands. Despite its historical module name, `handoffs.py` owns canonical `executor-result-v2` records; it does not create or read legacy handoff artifacts.
 
 Command examples:
 

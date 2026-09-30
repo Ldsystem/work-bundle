@@ -25,6 +25,8 @@ Keep independent product review advisory, keep controller/orchestrator acceptanc
 - Use one compact final audit for coverage, review advice, current tests, material defects, knowledge disposition/return, repository facts, and archive readiness; the controller/orchestrator assesses that advice and owns the final workflow decision.
 - At the heavy workflow's completion boundary, have final orchestration review own the approved durable-knowledge persistence follow-up; task executors return task-local evidence only.
 - Keep finalization mechanical and controller-directed: canonical references, lifecycle, clean baselines, destinations, indexes, and binding release only. Commit, push, merge, release, install, or other delivery occurs only under explicit user authority.
+- Delivery acceptance consumes factual exact-identity handoff/run evidence and current accepted predecessors; reviewer advice remains advisory and the controller judges phase completion. Surface accepted snapshots without waiting for user evaluation.
+- Finalization preflights every accepted bundle before any deletion and refuses missing/mismatched state or live/uncertain sessions. Use the same identity-bound cleanup owner, preserve retry state on failure, validate exact current active/archived references during partial archive retry, and remove temporary state only after archive succeeds.
 
 ## Must Not
 

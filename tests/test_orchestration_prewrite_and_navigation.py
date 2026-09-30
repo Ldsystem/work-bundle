@@ -331,7 +331,7 @@ def test_current_orchestration_guidance_names_executor_results_and_direct_review
 
     rule_path = REPO_ROOT / "rules/orchestration/orch-knowledge-gateway.md"
     rule_text = rule_path.read_text(encoding="utf-8")
-    assert "canonical `executor-result-v1`" in rule_text
+    assert "canonical `executor-result-v2`" in rule_text
     assert "orchestration handoff" not in rule_text
     assert "executor-result handoff" not in rule_text
     assert "execution-completion handoffs" not in rule_text

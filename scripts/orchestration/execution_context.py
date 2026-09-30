@@ -1282,10 +1282,20 @@ def _task_context(
     for field, expected in (("id", task_id), ("plan_id", plan_id), ("phase_id", phase_id)):
         if str(task_data.get(field) or "") != expected:
             raise SystemExit(f"Task candidate changes canonical {field}: {task_path}")
-    read_artifact(
+    phase_record = read_artifact(
         PLAN_CATALOG, "phase", {"workspace_root": root}, identity=phase_id,
         state=state, bindings={"plan": plan_id},
     )
+    accepted_dependencies = []
+    for dependency_phase in phase_record["data"].get("depends_on", []):
+        upstream = read_artifact(
+            PLAN_CATALOG, "phase", {"workspace_root": root}, identity=str(dependency_phase),
+            state=state, bindings={"plan": plan_id},
+        )["data"]
+        delivery_task = upstream.get("delivery", {}).get("task_id")
+        if delivery_task and delivery_task in task_data.get("depends_on", []):
+            accepted_dependencies.append(delivery_task)
+    args._accepted_dependencies = sorted(set(accepted_dependencies))
     source_paths = _resolve_spec_paths(root, task_data, plan_data)
     records = source_obligation_records(task_data, label="Canonical task")
     for source_path in source_paths:
@@ -1882,6 +1892,7 @@ def _compile_task_brief(
             "task_id": task_id,
             "plan_id": plan_id,
             "depends_on": [str(value) for value in _as_list(task.get("depends_on"))],
+            "accepted_dependencies": list(getattr(args, "_accepted_dependencies", [])),
             "source_ids": source_ids,
             "goal": resolved_goal,
             "truth_basis": truth_basis,

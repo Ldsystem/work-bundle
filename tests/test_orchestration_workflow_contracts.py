@@ -65,7 +65,7 @@ def test_current_dispatcher_exposes_stage5_cutover_without_legacy_aliases() -> N
 def test_current_workflow_defines_direct_review_and_compact_final_audit() -> None:
     workflow = read("references/assets/orchestration/workflow.md").lower()
     for family in (
-        "executor-result-v1",
+        "executor-result-v2",
         "implementation-review-v3",
         "accepted-task-result-v2",
         "final-workflow-review-v1",
@@ -86,7 +86,7 @@ def test_current_workflow_defines_direct_review_and_compact_final_audit() -> Non
 
 def test_executor_result_contract_is_schema_owned_and_non_accepting() -> None:
     contract = read("references/assets/orchestration/contract/handoff-executor-result-v1.md").lower()
-    assert "executor-result-v1" in contract
+    assert "executor-result-v2" in contract
     assert "canonical" in contract
     assert "product verdict" in contract
     assert "filename inference" in contract and "unsupported" in contract
@@ -99,7 +99,7 @@ def test_current_orchestration_evals_cover_stage5_boundary() -> None:
         f"{case.get('prompt', '')}\n{case.get('expected_output', '')}" for case in cases
     ).lower()
     for term in (
-        "executor-result-v1",
+        "executor-result-v2",
         "implementation-review-v3",
         "accepted-task-result-v2",
         "final-workflow-review-v1",

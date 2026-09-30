@@ -141,11 +141,11 @@ def _write(args: argparse.Namespace, family: str, data: Mapping[str, Any], bindi
     return write_artifact(CURRENT_CATALOG, family, _anchors(args), document, state="active", bindings=bindings)
 
 
-def _validate_plan_authority(args: argparse.Namespace, data: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_plan_authority(args: argparse.Namespace, data: Mapping[str, Any], *, finalization: bool = False) -> dict[str, Any]:
     plan_id = str(args.plan_id)
-    current = canonical_plan_tree_identity(_workspace(args), plan_id)
+    current = canonical_plan_tree_identity(_workspace(args), plan_id, finalization=finalization)
     supplied = data.get("plan_identity")
-    tree = load_canonical_plan_tree(_workspace(args), plan_id)
+    tree = load_canonical_plan_tree(_workspace(args), plan_id, finalization=finalization)
     if (
         not isinstance(supplied, dict)
         or supplied != current
@@ -254,6 +254,20 @@ def write_accepted_task_result(args: argparse.Namespace) -> dict[str, Any]:
     executor_record = _reference(args, "executor-result", str(executor.get("id")), {"plan": str(args.plan_id), "task": str(args.task_id)})
     if executor_record["digest"] != executor.get("sha256"):
         raise SystemExit("Accepted task result executor digest mismatch")
+    from handoffs import validate_phase_handoff
+    tree = load_canonical_plan_tree(_workspace(args), str(args.plan_id), state="active")
+    phase = tree["phases"][task["phase_id"]]
+    if phase.get("delivery", {}).get("task_id") == str(args.task_id):
+        factual = executor_record["data"]
+        handoff = factual.get("phase_handoff")
+        if (executor_record["state"] != "active" or factual.get("result_state") != "implemented"
+                or factual.get("phase_id") != task["phase_id"]
+                or not isinstance(handoff, dict)):
+            raise SystemExit("Accepted delivery requires a current implemented executor phase_handoff")
+        # read_bundle verifies the exact current task/candidate and every accepted
+        # predecessor. No semantic decision is supplied by the runtime.
+        validate_phase_handoff(_workspace(args), str(args.plan_id), task["phase_id"],
+                               str(args.task_id), handoff, product=product, require_pass=True)
     if review is not None:
         if not isinstance(review, dict):
             raise SystemExit("Accepted task result implementation review reference is invalid")
@@ -281,11 +295,11 @@ def list_accepted_task_results(args: argparse.Namespace) -> list[dict[str, Any]]
 
 
 def validate_final_workflow_chain(
-    args: argparse.Namespace, data: Mapping[str, Any]
+    args: argparse.Namespace, data: Mapping[str, Any], *, finalization: bool = False,
 ) -> dict[str, Any]:
     """Validate current mechanical references before storing or finalizing a decision."""
 
-    tree = _validate_plan_authority(args, data)
+    tree = _validate_plan_authority(args, data, finalization=finalization)
     task_ids = set(tree["tasks"])
     accepted_refs = data.get("accepted_results")
     if not isinstance(accepted_refs, list):
@@ -326,7 +340,7 @@ def validate_final_workflow_chain(
         accepted_data = accepted["data"]
         if accepted_data.get("schema_version") == 2:
             current_authority = canonical_task_authority_identity(
-                _workspace(args), str(args.plan_id), task_id
+                _workspace(args), str(args.plan_id), task_id, finalization=finalization,
             )
             if accepted_data.get("authority_identity") != current_authority:
                 raise SystemExit("Accepted task result authority is stale")
@@ -357,7 +371,7 @@ def validate_final_workflow_chain(
                 raise SystemExit("Accepted task result implementation review is stale")
             if reviewed["data"].get("schema_version") == 3:
                 current_authority = canonical_task_authority_identity(
-                    _workspace(args), str(args.plan_id), task_id
+                    _workspace(args), str(args.plan_id), task_id, finalization=finalization,
                 )
                 if reviewed["data"].get("authority_identity") != current_authority:
                     raise SystemExit("Accepted task result implementation review authority is stale")
@@ -375,7 +389,7 @@ def validate_final_workflow_chain(
         reviewed = _reference(
             args, "implementation-review", identity, {"plan": str(args.plan_id)}
         )
-        if reviewed["digest"] != digest or reviewed["state"] != "active":
+        if reviewed["digest"] != digest or (not finalization and reviewed["state"] != "active"):
             raise SystemExit("Final workflow review integrated review reference is not current")
         integrated = reviewed["data"]
         if integrated.get("scope") != "integrated" or integrated.get("task_id") is not None:

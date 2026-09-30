@@ -57,6 +57,7 @@ class TaskCandidate:
     convergence_owner: str | None = None
     barrier_participants: tuple[str, ...] = ()
     binding_id: str | None = None
+    accepted_dependencies: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.task_id.strip():
@@ -226,6 +227,8 @@ def _ready_wave(
         _validate_topology(task)
     by_id = {task.task_id: task for task in tasks}
     for task in tasks:
+        if not set(task.accepted_dependencies).issubset(task.dependencies):
+            raise OwnershipBlocker("workspace-blocked", "accepted dependency must be an ordinary task dependency")
         missing = sorted(set(task.dependencies) - by_id.keys())
         if missing:
             raise OwnershipBlocker(
@@ -254,6 +257,7 @@ def _ready_wave(
         task
         for task in tasks
         if task.task_id not in completed and set(task.dependencies).issubset(completed)
+        and set(task.accepted_dependencies).issubset(accepted_handoffs)
         and set(task.barrier_participants).issubset(accepted_handoffs)
         and overlapping_ancestors_accepted(task)
     ]

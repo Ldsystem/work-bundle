@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import jsonschema
 from pathlib import Path
 from typing import Any
 
@@ -153,6 +154,8 @@ def write_executor_result(args: argparse.Namespace) -> dict[str, Any]:
         }
         if any(bundle.get(field) != value for field, value in expected_paths.items()):
             raise SystemExit("Executor-result phase_handoff must use canonical runtime bundle paths")
+        validate_phase_handoff(resolve_workspace_root(args), str(args.plan_id), phase_id,
+                               str(args.task_id), phase_handoff)
     supplied_phase_id = getattr(args, "phase_id", None)
     if supplied_phase_id is not None and str(supplied_phase_id) != phase_id:
         raise SystemExit("Executor-result phase binding does not match canonical task phase")
@@ -177,6 +180,65 @@ def write_executor_result(args: argparse.Namespace) -> dict[str, Any]:
         state="active",
         bindings=_bindings(args),
     )
+
+
+def validate_phase_handoff(
+    workspace: Path, plan_id: str, phase_id: str, task_id: str,
+    handoff: dict[str, Any], *, product: dict[str, Any] | None = None,
+    require_pass: bool = False,
+) -> dict[str, Any]:
+    """Compare factual delivery evidence with the published current bundle.
+
+    This never runs a bridge or judges whether the phase satisfies its purpose.
+    Required failed observations are valid facts; acceptance requires passes.
+    """
+    from phase_delivery import PhaseDeliveryError, read_bundle
+
+    schema = json.loads((CATALOG_PATH.parent / "executor-result-v2.schema.json").read_text())
+    try:
+        jsonschema.Draft202012Validator({"$schema": schema["$schema"], "$defs": schema["$defs"],
+                                        "$ref": "#/$defs/phaseHandoff"}).validate(handoff)
+    except jsonschema.ValidationError as error:
+        raise SystemExit(f"Executor-result phase_handoff schema validation failed: {error.message}") from error
+    try:
+        facts = read_bundle(workspace, plan_id, phase_id)
+    except (PhaseDeliveryError, OSError) as error:
+        raise SystemExit(f"Executor-result phase_handoff bundle is unavailable: {error}") from error
+    if handoff.get("phase_id") != facts["phase_id"] or handoff.get("delivery_task_id") != task_id or facts["delivery_task_id"] != task_id:
+        raise SystemExit("Executor-result phase_handoff phase/task identity mismatch")
+    if handoff.get("runtime_bundle") != facts["runtime_bundle"] or handoff.get("bridges") != facts["bridges"]:
+        raise SystemExit("Executor-result phase_handoff payload/bridge identity mismatch")
+    entrypoint = handoff.get("entrypoint", {})
+    command = entrypoint.get("command", [])
+    options = ["--plan-id", plan_id, "--phase-id", phase_id, "--all"]
+    entry = 1 if command and Path(str(command[0])).name == "orch.py" else 2
+    if (len(command) <= entry or Path(str(command[entry - 1])).name != "orch.py"
+            or command[entry] != "run-phase"
+            or command[entry + 1:] not in (options, ["--workspace-root", str(workspace), *options])
+            or entrypoint.get("manifest_sha256") != facts["runtime_bundle"]["payload_sha256"]):
+        raise SystemExit("Executor-result phase_handoff entrypoint/manifest identity mismatch")
+    if product is not None and product.get("sha256") != facts["identity"]["candidate"]["sha256"]:
+        raise SystemExit("Accepted delivery product identity does not match published candidate")
+    report = handoff.get("test_report", {})
+    rows = report.get("rows", [])
+    expected = [(row["task"], row["test"]) for row in facts["catalog"]]
+    if (report.get("selection") != "all" or not isinstance(rows, list)
+            or [(row.get("task"), row.get("test")) for row in rows if isinstance(row, dict)] != expected
+            or len(rows) != len(expected) or any(type(row.get("passes")) is not bool for row in rows)):
+        raise SystemExit("Executor-result phase_handoff requires the complete catalog report")
+    observations = handoff.get("bridge_observations", {})
+    delivery = facts["identity"]["phase_delivery"]
+    required = []
+    if delivery["bridges"].get("config_env") == "required":
+        required.append("config_env")
+    if delivery["snapshot"]["start_required"] or delivery["bridges"].get("start_snapshot") == "required":
+        required.extend(("start", "readiness", "stop"))
+    if any(observations.get(key) not in {"passed", "failed"} for key in required):
+        raise SystemExit("Executor-result phase_handoff lacks a required bridge observation")
+    if require_pass and (any(row["passes"] is not True for row in rows)
+                         or any(observations.get(key) != "passed" for key in required)):
+        raise SystemExit("Accepted delivery requires passing complete report and bridge observations")
+    return facts
 
 
 def _index_rows(args: argparse.Namespace) -> list[dict[str, Any]]:

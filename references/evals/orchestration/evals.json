@@ -664,7 +664,7 @@
     {
       "id": "STG5-01",
       "prompt": "Write an executor result while obsolete handoff files and embedded completed statuses remain nearby.",
-      "expected_output": "Creates one canonical executor-result-v1 from maintained YAML parsing, exact plan/task bindings, and pre-mutation validation; ignores legacy files without filename inference, override sidecars, or fallback indexing.",
+      "expected_output": "Creates one canonical executor-result-v2 from maintained YAML parsing, exact plan/task bindings, and pre-mutation validation; ignores legacy files without filename inference, override sidecars, or fallback indexing.",
       "files": []
     },
     {
@@ -783,6 +783,30 @@
       "id": 76,
       "prompt": "A rejected task reports knowledge_disposition supersede, while every accepted task reports none.",
       "expected_output": "Ignores the rejected disposition, retains the upstream no-write outcome, and does not invoke durable closure from rejected evidence.",
+      "files": []
+    },
+    {
+      "id": 77,
+      "prompt": "The delivery snapshot has published and its complete test report passes, but its controller has not assessed the phase requirements. A reviewer says accept, and the user has not yet tried the snapshot.",
+      "expected_output": "Writes only factual executor-result-v2 evidence, leaves the semantic decision to the controller, and requires the delivery task accepted-task-result-v2 for downstream entry. After acceptance surfaces the immutable snapshot and concise invocation asynchronously; user evaluation is not a wait state and review advice is not the decision.",
+      "files": []
+    },
+    {
+      "id": 78,
+      "prompt": "A user reports a defect in the accepted first-phase snapshot after later tasks advanced. An unrelated accepted task and its observations are unchanged.",
+      "expected_output": "Controller assesses the finding and routes repair to the affected authority closure, preserves unrelated accepted work, and reuses observations only with exact unchanged phase/task, product, manifest, command, scope, and freshness identities. Does not rerun costly prepare/start/tests solely for lifecycle advancement or add a phase review receipt.",
+      "files": []
+    },
+    {
+      "id": 79,
+      "prompt": "Finalize two accepted phase bundles: the first has no session, the second has a live session. On a later retry cleanup succeeds but archive is interrupted after one artifact transition.",
+      "expected_output": "Read-only preflight checks all accepted targets before any deletion and refuses the live session. After the lease is safely resolved, exact cleanup precedes archive; archive interruption retains cleaned state for an identity-bound retry across current active/archived records. Removes temporary states only after all artifacts archive, without a new semantic receipt or replaying tests.",
+      "files": []
+    },
+    {
+      "id": 80,
+      "prompt": "An ordinary final phase has no designated snapshot delivery task and a same-phase disjoint dependency has completed.",
+      "expected_output": "Preserves ordinary completion-based disjoint task scheduling and final workflow behavior. Does not invent a snapshot, phase acceptance receipt, or additional bridge run; accepted upstream delivery dependencies are required only where canonical phase authority declares them.",
       "files": []
     }
   ]

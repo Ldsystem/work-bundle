@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+import errno
 import hashlib
 import json
 import os
@@ -904,21 +905,53 @@ def release_phase_snapshot(workspace: Path, plan_id: str, phase_id: str) -> dict
     return release_bundle(workspace, plan_id, phase_id, reason="explicit_release")
 
 
+def read_cleaned_state(workspace: Path, plan_id: str, phase_id: str, *, expected: dict[str, Any]) -> dict[str, Any]:
+    """Pure exact-state check; caller verifies its accepted/archive chain."""
+    state, paths = _state(workspace.resolve(), plan_id, phase_id)
+    if (state["state"] != "cleaned" or state["reason"] not in {"explicit_release", "finalization"}
+            or state["runtime_bundle"] != expected or (workspace / paths["relative_path"]).exists()):
+        _fail("runtime state is not exactly cleaned")
+    return {"state": "cleaned", "runtime_bundle": state["runtime_bundle"]}
+
+
 def remove_cleaned_state(workspace: Path, plan_id: str, phase_id: str, *, expected: dict[str, Any]) -> None:
     """Post-archive caller owns archive authority; remove only matching cleaned facts."""
-    state, paths = _state(workspace.resolve(), plan_id, phase_id)
-    if state["state"] != "cleaned" or state["runtime_bundle"] != expected or (workspace / paths["relative_path"]).exists():
-        _fail("runtime state is not exactly cleaned")
-    (workspace / paths["state_relative_path"]).unlink()
+    read_cleaned_state(workspace, plan_id, phase_id, expected=expected)
+    paths = runtime_paths(workspace.resolve(), plan_id, phase_id)
     parent = (workspace / paths["relative_path"]).parent
     lock = parent / f".{phase_id}.lock"
     # Lifecycle caller has completed all cleanup; lock files are not removed mid-run.
+    _inside(workspace, lock.relative_to(workspace).as_posix())
     lock.unlink(missing_ok=True)
+    (workspace / paths["state_relative_path"]).unlink()
+    prune_removed_runtime(workspace, plan_id, phase_id, expected=expected)
+
+
+def read_removed_runtime(workspace: Path, plan_id: str, phase_id: str, *, expected: dict[str, Any]) -> dict[str, Any]:
+    """Pure post-archive absence facts; caller validates the exact archive chain."""
+    workspace = workspace.resolve()
+    paths = runtime_paths(workspace, plan_id, phase_id)
+    if any(expected.get(key) != value for key, value in paths.items()):
+        _fail("removed runtime path mismatch")
+    parent = (workspace / paths["relative_path"]).parent
+    for relative in (paths["relative_path"], paths["state_relative_path"],
+                     (parent / f".{phase_id}.lock").relative_to(workspace).as_posix()):
+        if _inside(workspace, relative).exists():
+            _fail("removed runtime retains payload, state or unexplained lock")
+    return {"state": "removed", "runtime_bundle": expected}
+
+
+def prune_removed_runtime(workspace: Path, plan_id: str, phase_id: str, *, expected: dict[str, Any]) -> None:
+    """Finish only empty canonical parent removal after exact archive validation."""
+    workspace = workspace.resolve()
+    read_removed_runtime(workspace, plan_id, phase_id, expected=expected)
+    parent = (workspace / runtime_paths(workspace, plan_id, phase_id)["relative_path"]).parent
     for directory in (parent, parent.parent):
         try:
             directory.rmdir()
-        except OSError:
-            pass
+        except OSError as error:
+            if error.errno not in {errno.ENOENT, errno.ENOTEMPTY, errno.EEXIST}:
+                raise
 
 
 def _print_rows(rows: list[dict[str, Any]]) -> None:
