@@ -31,10 +31,18 @@ def test_public_wrapper_declares_same_pinned_runtime(name: str) -> None:
     assert '"pyyaml==6.0.3"' in text
     assert '"jsonschema==4.25.1"' in text
     wrapper = load_wrapper(name)
-    assert wrapper.RUNTIME_DEPENDENCIES == (
+    expected = (
         ("yaml", "pyyaml"),
         ("jsonschema", "jsonschema"),
     )
+    if name == "orch":
+        assert '"psutil==7.2.2"' in text
+        expected += (("psutil", "psutil"),)
+    assert wrapper.RUNTIME_DEPENDENCIES == expected
+
+
+def test_orch_and_ci_pin_portable_phase_process_runtime() -> None:
+    assert '"psutil==7.2.2"' in (REPO_ROOT / "bin/work-bundle-ci").read_text()
 
 
 def test_keep_summarizing_wrapper_declares_shared_infrastructure_dependencies() -> None:

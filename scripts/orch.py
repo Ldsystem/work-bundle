@@ -4,6 +4,7 @@
 # dependencies = [
 #   "pyyaml==6.0.3",
 #   "jsonschema==4.25.1",
+#   "psutil==7.2.2",
 # ]
 # ///
 """Compatibility entrypoint for orchestration helpers."""
@@ -17,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import Mapping, Sequence
 
-RUNTIME_DEPENDENCIES = (("yaml", "pyyaml"), ("jsonschema", "jsonschema"))
+RUNTIME_DEPENDENCIES = (("yaml", "pyyaml"), ("jsonschema", "jsonschema"), ("psutil", "psutil"))
 UV_REEXEC_ENV = "WORK_BUNDLE_PUBLIC_UV_REEXEC"
 
 SCRIPT_ROOT = Path(__file__).resolve().parent

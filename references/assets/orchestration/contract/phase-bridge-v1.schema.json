@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "phase-bridge-v1",
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "text": {"type": "string", "minLength": 1},
+    "relative": {"type": "string", "minLength": 1, "pattern": "^(?![/\\\\])(?![A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"},
+    "processIdentity": {
+      "type": "object", "required": ["pid", "birth_time"],
+      "properties": {"pid": {"type": "integer", "minimum": 1}, "birth_time": {"type": "number", "exclusiveMinimum": 0}},
+      "additionalProperties": false
+    },
+    "configuration": {
+      "type": "object", "required": ["produced_paths", "external_references"],
+      "properties": {
+        "produced_paths": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/relative"}},
+        "external_references": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/text"}}
+      }, "additionalProperties": false
+    },
+    "target": {
+      "type": "object", "required": ["target_id", "authority_ref", "permitted_actions"],
+      "properties": {
+        "target_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "authority_ref": {"$ref": "#/$defs/text"},
+        "permitted_actions": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["configure", "start", "readiness", "stop", "run"]}}
+      }, "additionalProperties": false
+    },
+    "descriptor": {
+      "type": "object",
+      "required": ["protocol", "role", "argv", "working_directory", "timeouts", "ownership", "capabilities", "credential_ids", "external_targets"],
+      "properties": {
+        "protocol": {"const": "phase-bridge-v1"},
+        "role": {"enum": ["config_env", "start_snapshot", "test_runner"]},
+        "argv": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text"}},
+        "working_directory": {"$ref": "#/$defs/relative"},
+        "timeouts": {"type": "object", "required": ["invoke_seconds", "session_seconds"], "properties": {
+          "invoke_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 86400},
+          "session_seconds": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 86400}
+        }, "additionalProperties": false},
+        "ownership": {"enum": ["child_process", "external", null]},
+        "capabilities": {"type": "array", "minItems": 1, "uniqueItems": true},
+        "credential_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "external_targets": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/target"}}
+      }, "additionalProperties": false,
+      "oneOf": [
+        {"properties": {"role": {"const": "config_env"}, "ownership": {"type": "null"}, "timeouts": {"properties": {"session_seconds": {"type": "null"}}}, "capabilities": {"const": ["configure"]}}},
+        {"properties": {"role": {"const": "test_runner"}, "ownership": {"type": "null"}, "timeouts": {"properties": {"session_seconds": {"type": "null"}}}, "capabilities": {"const": ["run"]}}},
+        {"properties": {"role": {"const": "start_snapshot"}, "ownership": {"enum": ["child_process", "external"]}, "timeouts": {"properties": {"session_seconds": {"type": "number"}}}, "capabilities": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"enum": ["start", "readiness", "stop"]}}}}
+      ]
+    },
+    "bridgeManifest": {
+      "type": "object", "required": ["protocol", "bridges"],
+      "properties": {"protocol": {"const": "phase-bridge-v1"}, "bridges": {
+        "type": "object", "properties": {"config_env": {"$ref": "#/$defs/descriptor"}, "start_snapshot": {"$ref": "#/$defs/descriptor"}, "test_runner": {"$ref": "#/$defs/descriptor"}}, "additionalProperties": false
+      }}, "additionalProperties": false
+    },
+    "binding": {
+      "type": "object", "required": ["protocol", "role", "action", "session_id", "plan_id", "phase_id", "payload_sha256", "snapshot_manifest_sha256", "snapshot_content_sha256", "configuration", "process_token", "endpoints"],
+      "properties": {
+        "protocol": {"const": "phase-bridge-v1"}, "role": {"enum": ["config_env", "start_snapshot", "test_runner"]},
+        "action": {"enum": ["configure", "start", "readiness", "stop", "run"]},
+        "session_id": {"type": "string", "pattern": "^session-[a-f0-9]{32}$"},
+        "plan_id": {"type": "string", "pattern": "^plan-[a-z0-9][a-z0-9-]*$"}, "phase_id": {"type": "string", "pattern": "^phase-[a-z0-9][a-z0-9-]*$"},
+        "payload_sha256": {"$ref": "#/$defs/sha"}, "snapshot_manifest_sha256": {"$ref": "#/$defs/sha"}, "snapshot_content_sha256": {"$ref": "#/$defs/sha"},
+        "configuration": {"$ref": "#/$defs/configuration"}, "process_token": {"type": ["string", "null"], "minLength": 1},
+        "endpoints": {"type": "array", "items": {"$ref": "#/$defs/text"}}
+      }
+    },
+    "request": {
+      "allOf": [{"$ref": "#/$defs/binding"}],
+      "type": "object", "required": ["snapshot_root", "session_root", "external_targets"],
+      "properties": {
+        "snapshot_root": {"$ref": "#/$defs/text"}, "session_root": {"$ref": "#/$defs/text"},
+        "external_targets": {"type": "array", "items": {"$ref": "#/$defs/target"}},
+        "selected": {"type": "array", "items": {"type": "object", "required": ["task", "test", "process"], "properties": {"task": {"$ref": "#/$defs/text"}, "test": {"$ref": "#/$defs/text"}, "process": {"$ref": "task-v3#/$defs/processDescriptor"}}, "additionalProperties": false}}
+      },
+      "oneOf": [
+        {"properties": {"role": {"const": "config_env"}, "action": {"const": "configure"}}, "not": {"required": ["selected"]}},
+        {"properties": {"role": {"const": "start_snapshot"}, "action": {"enum": ["start", "readiness", "stop"]}}, "not": {"required": ["selected"]}},
+        {"properties": {"role": {"const": "test_runner"}, "action": {"const": "run"}}, "required": ["selected"]}
+      ], "unevaluatedProperties": false
+    },
+    "row": {
+      "type": "object", "required": ["task", "test", "passes", "message"],
+      "properties": {"task": {"$ref": "#/$defs/text"}, "test": {"$ref": "#/$defs/text"}, "passes": {"type": "boolean"}, "message": {"type": ["string", "null"]}}, "additionalProperties": false
+    },
+    "response": {
+      "allOf": [{"$ref": "#/$defs/binding"}],
+      "type": "object", "required": ["success", "message"],
+      "properties": {
+        "success": {"type": "boolean"}, "message": {"type": ["string", "null"]},
+        "ownership": {"enum": ["child_process", "external"]}, "pid": {"type": "integer", "minimum": 1},
+        "stopped": {"type": "boolean"}, "rows": {"type": "array", "items": {"$ref": "#/$defs/row"}}
+      },
+      "oneOf": [
+        {"properties": {"role": {"const": "config_env"}, "action": {"const": "configure"}, "process_token": {"type": "null"}, "endpoints": {"maxItems": 0}}, "not": {"anyOf": [{"required": ["pid"]}, {"required": ["ownership"]}, {"required": ["rows"]}, {"required": ["stopped"]}]}},
+        {"properties": {"role": {"const": "start_snapshot"}, "action": {"const": "start"}, "process_token": {"$ref": "#/$defs/text"}}, "required": ["ownership"], "oneOf": [{"properties": {"ownership": {"const": "child_process"}}, "required": ["pid"]}, {"properties": {"ownership": {"const": "external"}}, "not": {"required": ["pid"]}}], "not": {"anyOf": [{"required": ["rows"]}, {"required": ["stopped"]}]}},
+        {"properties": {"role": {"const": "start_snapshot"}, "action": {"const": "readiness"}, "process_token": {"$ref": "#/$defs/text"}}, "not": {"anyOf": [{"required": ["pid"]}, {"required": ["ownership"]}, {"required": ["rows"]}, {"required": ["stopped"]}]}},
+        {"properties": {"role": {"const": "start_snapshot"}, "action": {"const": "stop"}, "process_token": {"$ref": "#/$defs/text"}}, "required": ["stopped"], "not": {"anyOf": [{"required": ["pid"]}, {"required": ["ownership"]}, {"required": ["rows"]}]}},
+        {"properties": {"role": {"const": "test_runner"}, "action": {"const": "run"}}, "required": ["rows"], "not": {"anyOf": [{"required": ["pid"]}, {"required": ["ownership"]}, {"required": ["stopped"]}]}}
+      ], "unevaluatedProperties": false
+    },
+    "manifestEntry": {
+      "type": "object", "required": ["path", "kind", "executable"],
+      "properties": {"path": {"$ref": "#/$defs/relative"}, "kind": {"enum": ["directory", "file"]}, "executable": {"type": "boolean"}, "sha256": {"$ref": "#/$defs/sha"}},
+      "oneOf": [{"properties": {"kind": {"const": "directory"}}, "not": {"required": ["sha256"]}}, {"properties": {"kind": {"const": "file"}}, "required": ["sha256"]}], "additionalProperties": false
+    },
+    "payloadManifest": {
+      "type": "object", "required": ["protocol", "entries"],
+      "properties": {"protocol": {"const": "phase-payload-manifest-v1"}, "entries": {"type": "array", "items": {"$ref": "#/$defs/manifestEntry"}}}, "additionalProperties": false
+    },
+    "snapshotManifest": {
+      "type": "object", "required": ["protocol", "entries"],
+      "properties": {"protocol": {"const": "phase-snapshot-manifest-v1"}, "entries": {"type": "array", "items": {"$ref": "#/$defs/manifestEntry"}}}, "additionalProperties": false
+    },
+    "reference": {"type": "object", "required": ["id", "sha256"], "properties": {"id": {"$ref": "#/$defs/text"}, "sha256": {"$ref": "#/$defs/sha"}}, "additionalProperties": false},
+    "runtimeIdentity": {
+      "type": "object", "required": ["task_id", "authority_identity", "predecessors", "binding", "candidate", "catalog", "phase_delivery", "external_targets", "bridge_manifest"],
+      "properties": {
+        "task_id": {"$ref": "#/$defs/text"}, "authority_identity": {"$ref": "#/$defs/reference"},
+        "predecessors": {"type": "array", "items": {"type": "object", "required": ["task_id", "id", "sha256"], "properties": {"task_id": {"$ref": "#/$defs/text"}, "id": {"$ref": "#/$defs/text"}, "sha256": {"$ref": "#/$defs/sha"}}, "additionalProperties": false}},
+        "binding": {"type": "object", "required": ["execution_path", "repository_id", "execution_id"], "properties": {"execution_path": {"$ref": "#/$defs/text"}, "repository_id": {"$ref": "#/$defs/text"}, "execution_id": {"$ref": "#/$defs/text"}}, "additionalProperties": false},
+        "candidate": {"$ref": "implementation-review-v3#/properties/target"},
+        "catalog": {"type": "array", "items": {"type": "object", "required": ["task", "test", "process"], "properties": {"task": {"$ref": "#/$defs/text"}, "test": {"$ref": "#/$defs/text"}, "process": {"$ref": "task-v3#/$defs/processDescriptor"}}, "additionalProperties": false}},
+        "phase_delivery": {"$ref": "phase-v2#/$defs/delivery"},
+        "external_targets": {"type": "array", "items": {"$ref": "task-v3#/$defs/externalTarget"}},
+        "bridge_manifest": {"$ref": "#/$defs/relative"}
+      }, "additionalProperties": false
+    },
+    "runtimeState": {
+      "type": "object", "required": ["protocol", "plan_id", "phase_id", "state", "reason", "transaction_id", "staging_name", "paths", "identity", "runtime_bundle", "payload_manifest"],
+      "properties": {
+        "protocol": {"const": "phase-runtime-v1"}, "plan_id": {"$ref": "#/$defs/text"}, "phase_id": {"$ref": "#/$defs/text"},
+        "state": {"enum": ["materializing", "active", "cleaning", "cleaned"]}, "reason": {"enum": [null, "explicit_release", "finalization"]},
+        "transaction_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"}, "staging_name": {"$ref": "#/$defs/text"},
+        "paths": {"type": "object", "required": ["relative_path", "payload_relative_path", "state_relative_path"], "properties": {"relative_path": {"$ref": "#/$defs/relative"}, "payload_relative_path": {"$ref": "#/$defs/relative"}, "state_relative_path": {"$ref": "#/$defs/relative"}}, "additionalProperties": false},
+        "identity": {"$ref": "#/$defs/runtimeIdentity"}, "runtime_bundle": {"$ref": "executor-result-v2#/$defs/phaseHandoff/properties/runtime_bundle"}, "payload_manifest": {"$ref": "#/$defs/payloadManifest"}
+      }, "additionalProperties": false
+    },
+    "lease": {
+      "type": "object", "required": ["protocol", "state", "session_id", "plan_id", "phase_id", "payload_sha256", "runner_identity", "configuration", "process_token", "endpoints", "child_identity", "external_targets", "last_completed_action", "pending_action", "stop_verified"],
+      "properties": {
+        "protocol": {"const": "phase-session-lease-v1"}, "state": {"enum": ["active", "closed"]},
+        "session_id": {"type": "string", "pattern": "^session-[a-f0-9]{32}$"}, "plan_id": {"$ref": "#/$defs/text"}, "phase_id": {"$ref": "#/$defs/text"}, "payload_sha256": {"$ref": "#/$defs/sha"},
+        "runner_identity": {"$ref": "#/$defs/processIdentity"}, "configuration": {"$ref": "#/$defs/configuration"}, "process_token": {"type": ["string", "null"], "minLength": 1},
+        "endpoints": {"type": "array", "items": {"$ref": "#/$defs/text"}}, "child_identity": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/processIdentity"}]},
+        "external_targets": {"type": "array", "items": {"$ref": "#/$defs/target"}}, "last_completed_action": {"enum": [null, "configure", "start", "readiness", "run", "stop"]}, "stop_verified": {"type": "boolean"},
+        "pending_action": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["role", "action", "process"], "properties": {"role": {"enum": ["config_env", "start_snapshot", "test_runner"]}, "action": {"enum": ["configure", "start", "readiness", "stop", "run"]}, "process": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/processIdentity"}]}}, "additionalProperties": false}]}
+      }, "additionalProperties": false
+    }
+  }
+}
