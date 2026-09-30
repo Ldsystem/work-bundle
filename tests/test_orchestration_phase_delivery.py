@@ -16,6 +16,20 @@ import phase_delivery as runtime
 from test_orchestration_plans import workspace
 
 
+def bridge_python():
+    # Windows venv executables launch another PID; this stdlib bridge must run
+    # directly so its reported foreground supervisor PID is the owned process.
+    return sys._base_executable if sys.platform == "win32" else sys.executable
+
+
+@pytest.mark.parametrize("platform,expected", [("win32", "base-python"), ("darwin", "venv-python"), ("linux", "venv-python")])
+def test_bridge_fixture_uses_direct_interpreter_on_windows(monkeypatch, platform, expected):
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(sys, "executable", "venv-python")
+    monkeypatch.setattr(sys, "_base_executable", "base-python")
+    assert bridge_python() == expected
+
+
 @pytest.fixture
 def delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     candidate = tmp_path / "candidate"
@@ -36,12 +50,12 @@ pathlib.Path(a.response).write_text(json.dumps(out))
     for role, action in [("config_env", "configure"), ("test_runner", "run")]:
         descriptors[role] = {
             "protocol": "phase-bridge-v1", "role": role,
-            "argv": [sys.executable, "bridge.py"], "working_directory": ".",
+            "argv": [bridge_python(), "bridge.py"], "working_directory": ".",
             "timeouts": {"invoke_seconds": 2, "session_seconds": None},
             "ownership": None, "capabilities": [action], "credential_ids": [], "external_targets": [],
         }
     (candidate / "bridges.json").write_text(json.dumps({"protocol": "phase-bridge-v1", "bridges": descriptors}))
-    for argv in (["git", "init", "-q"], ["git", "config", "core.autocrlf", "false"], ["git", "add", "."],
+    for argv in (["git", "init", "-q"], ["git", "-c", "core.autocrlf=false", "add", "."],
                  ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"]):
         subprocess.run(argv, cwd=candidate, check=True, capture_output=True)
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=candidate, check=True, capture_output=True, text=True).stdout.strip()
@@ -529,6 +543,9 @@ fs.writeFileSync(response,JSON.stringify(out));
     manifest = json.loads((delivery[1] / "bridges.json").read_text())
     for descriptor in manifest["bridges"].values():
         descriptor["argv"] = [node, "bridge.cjs"]
+        # Allow bounded interpreter startup for this protocol test; short
+        # invocation and session deadlines are exercised by separate fixtures.
+        descriptor["timeouts"]["invoke_seconds"] = 10
     (delivery[1] / "bridges.json").write_text(json.dumps(manifest))
     materialize(delivery)
     outcome = runtime.run_phase(delivery[0], "plan-test", "phase-test", selection="all")
