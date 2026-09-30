@@ -20,7 +20,8 @@ from test_orchestration_plans import workspace
 def delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     candidate = tmp_path / "candidate"
     candidate.mkdir()
-    (candidate / "product.txt").write_text("original\n")
+    # Candidate identity compares bytes, so the worktree and Git object use LF.
+    (candidate / "product.txt").write_bytes(b"original\n")
     bridge = candidate / "bridge.py"
     bridge.write_text('''import argparse,json,pathlib,sys
 p=argparse.ArgumentParser();p.add_argument('--request');p.add_argument('--response');a=p.parse_args()
@@ -40,7 +41,7 @@ pathlib.Path(a.response).write_text(json.dumps(out))
             "ownership": None, "capabilities": [action], "credential_ids": [], "external_targets": [],
         }
     (candidate / "bridges.json").write_text(json.dumps({"protocol": "phase-bridge-v1", "bridges": descriptors}))
-    for argv in (["git", "init", "-q"], ["git", "add", "."],
+    for argv in (["git", "init", "-q"], ["git", "config", "core.autocrlf", "false"], ["git", "add", "."],
                  ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"]):
         subprocess.run(argv, cwd=candidate, check=True, capture_output=True)
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=candidate, check=True, capture_output=True, text=True).stdout.strip()
@@ -97,6 +98,34 @@ def test_release_payload_leaves_cleaned_identity_and_refuses_later_run(delivery)
 def materialize(delivery):
     workspace, _candidate, _policy = delivery
     return runtime.materialize_phase_handoff(workspace, "plan-test", "phase-test", "task-delivery", "bridges.json", workspace / "candidate.json")
+
+
+def test_start_rejection_reports_observed_process_identity(delivery, monkeypatch):
+    facts = supervisor_delivery(delivery)
+    directory = Path(facts["bundle_root"]) / "sessions" / ("session-" + "8" * 32)
+    directory.mkdir()
+    lease = {"session_id": directory.name, "configuration": {"produced_paths": [], "external_references": []},
+        "process_token": None, "endpoints": [], "pending_action": None}
+
+    class Process:
+        pid = 12345
+        def poll(self): return None
+
+    def launch(argv, **kwargs):
+        request = json.loads(Path(argv[-3]).read_text())
+        response = {**request, "success": True, "message": None, "ownership": "child_process", "pid": 54321}
+        for key in ("snapshot_root", "session_root", "external_targets"):
+            response.pop(key)
+        response["process_token"] = "fixture-token"
+        runtime._write(Path(argv[-1]), response)
+        return Process()
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", launch)
+    monkeypatch.setattr(runtime, "process_identity", lambda pid: {"pid": pid, "birth_time": 100.0})
+    monkeypatch.setattr(runtime, "process_status", lambda identity: "alive")
+    monkeypatch.setattr(runtime, "_terminate_bridge", lambda *_args: True)
+    with pytest.raises(runtime.PhaseDeliveryError, match="expected PID 12345, reported PID 54321, status alive, exit code None"):
+        runtime._BridgeSession(facts, directory, lease).invoke("start_snapshot", "start")
 
 
 @pytest.mark.parametrize("selection,selector", [("task", "task-delivery"), ("test", "VAL-ONE"), ("all", None)])
@@ -298,8 +327,8 @@ def test_run_phase_bridge_session_cleanup_owns_and_reaps_cooperative_supervisor(
         remove(directory)
     monkeypatch.setattr(runtime, "_remove_tree", observe)
     outcome = runtime.run_phase(delivery[0], "plan-test", "phase-test", selection="all")
-    assert outcome["exit_code"] == (0 if scenario in {"normal", "bounded"} else 1)
-    assert outcome["bridge_observations"]["stop"] == "passed"
+    assert outcome["exit_code"] == (0 if scenario in {"normal", "bounded"} else 1), outcome
+    assert outcome["bridge_observations"]["stop"] == "passed", outcome
     if scenario == "test-failure": assert outcome["rows"][0]["message"] == "raw failure"
     if scenario == "bounded": assert len(outcome["rows"][0]["message"]) == runtime.MESSAGE_LIMIT
     assert identities and all(not runtime.psutil.pid_exists(pid) for pid in identities)
@@ -503,7 +532,7 @@ fs.writeFileSync(response,JSON.stringify(out));
     (delivery[1] / "bridges.json").write_text(json.dumps(manifest))
     materialize(delivery)
     outcome = runtime.run_phase(delivery[0], "plan-test", "phase-test", selection="all")
-    assert outcome["exit_code"] == 0 and outcome["rows"][0]["message"] == "node process"
+    assert outcome["exit_code"] == 0 and outcome["rows"][0]["message"] == "node process", outcome
 
 
 def test_materialize_authority_reads_canonical_catalog_and_exact_accepted_predecessor(workspace, tmp_path, monkeypatch):

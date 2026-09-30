@@ -651,8 +651,10 @@ class _BridgeSession:
                 if response["configuration"] != request["configuration"] or response["ownership"] != descriptor["ownership"]:
                     _fail("start context/ownership mismatch")
                 if supervisor:
-                    if response["pid"] != process.pid or child is None or process.poll() is not None or process_status(child) != "alive":
-                        _fail("start response is not the owned supervisor")
+                    exit_code = process.poll()
+                    status = process_status(child) if child is not None else "unavailable"
+                    if response["pid"] != process.pid or child is None or exit_code is not None or status != "alive":
+                        _fail(f"start response is not the owned supervisor (expected PID {process.pid}, reported PID {response['pid']}, status {status}, exit code {exit_code})")
                     self.supervisor = process
                     self.lease["child_identity"] = child
                 self.lease["process_token"] = response["process_token"]

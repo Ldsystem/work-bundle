@@ -38,7 +38,7 @@ def test_execute_skill_separates_executor_facts_from_reviewer_verdict() -> None:
     for token in (
         "compiled Truth Basis",
         "path-sorted changed-path manifest",
-        "executor-result-v1",
+        "executor-result-v2",
         "distinct reviewer",
         "green tests do not substitute",
         "No receipt, history replay",
@@ -53,7 +53,7 @@ def test_execute_skill_separates_executor_facts_from_reviewer_verdict() -> None:
 def test_handoff_skill_owns_only_canonical_factual_continuation() -> None:
     text = read("skills/orch-create-handoff/SKILL.md")
     for token in (
-        "executor-result-v1",
+        "executor-result-v2",
         "exact plan/task bindings",
         "Validate the full semantic input",
         "repair the active YAML artifact atomically at the same canonical identity",
