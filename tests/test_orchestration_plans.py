@@ -57,6 +57,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     ]:
         (tmp_path / relative).mkdir(parents=True)
     monkeypatch.setattr(bounded_closure, "resolve_working_workspace", lambda _root: None)
+    monkeypatch.setattr("execution_context.resolve_workspace_root", lambda _args: tmp_path)
     for module in (plans, specs):
         monkeypatch.setattr(module, "resolve_workspace_root", lambda _args: tmp_path)
         if hasattr(module, "resolve_working_workspace"):
@@ -223,10 +224,16 @@ def _task_semantics() -> dict[str, object]:
     }
 
 
-def _create_tree(workspace: Path, tmp_path: Path) -> tuple[Path, Path, Path]:
+def _create_tree(workspace: Path, tmp_path: Path, *, final: bool = False) -> tuple[Path, Path, Path]:
     plan_input = _write_yaml(tmp_path / "plan.yaml", _plan_semantics())
     plans.cmd_write_plan(_args(workspace, content_file=str(plan_input)))
-    phase_input = _write_yaml(tmp_path / "phase.yaml", _phase_semantics())
+    phase = _phase_semantics()
+    if final:
+        phase["delivery"] = {
+            "mode": "final", "task_id": None, "snapshot": None,
+            "bridges": {}, "test_catalog": [],
+        }
+    phase_input = _write_yaml(tmp_path / "phase.yaml", phase)
     plans.cmd_write_phase(
         _args(
             workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
@@ -484,6 +491,97 @@ def test_task_validation_id_must_match_phase_test_catalog_before_mutation(
         )
 
     assert task_path.read_bytes() == before
+
+
+def test_duplicate_executable_catalog_test_id_is_rejected_before_phase_mutation(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    plan_input = _write_yaml(tmp_path / "plan-duplicate-test.yaml", _plan_semantics())
+    plans.cmd_write_plan(_args(workspace, content_file=str(plan_input)))
+    invalid = _phase_semantics()
+    invalid["task_index"].append({"id": "task-other", "order": 2})
+    invalid["delivery"]["test_catalog"].append(
+        {
+            "task_id": "task-other", "disposition": "executable",
+            "test_id": "VAL-001", "purpose": "Duplicate selection.",
+        }
+    )
+    content = _write_yaml(tmp_path / "duplicate-test-phase.yaml", invalid)
+    phase_path = (
+        workspace / ".work-bundle/orchestration/plan/active/plan-stage4/phase-stage4.phase.yaml"
+    )
+
+    with pytest.raises(SystemExit, match="duplicate executable test ID"):
+        plans.cmd_write_phase(
+            _args(
+                workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+                task_id=None, title="Stage 4 phase", content_file=str(content),
+                status="planned",
+            )
+        )
+
+    assert not phase_path.exists()
+
+
+def test_reasoned_not_applicable_catalog_does_not_infer_test_necessity(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    plan_input = _write_yaml(tmp_path / "plan-not-applicable.yaml", _plan_semantics())
+    plans.cmd_write_plan(_args(workspace, content_file=str(plan_input)))
+    phase = _phase_semantics()
+    phase["delivery"]["test_catalog"] = [
+        {
+            "task_id": "task-stage4", "disposition": "not_applicable",
+            "reason": "No executable validation declared.",
+        }
+    ]
+    phase["delivery"]["bridges"]["test_runner"] = "optional"
+    phase_input = _write_yaml(tmp_path / "not-applicable-phase.yaml", phase)
+    plans.cmd_write_phase(
+        _args(
+            workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+            task_id=None, title="Stage 4 phase", content_file=str(phase_input),
+            status="planned",
+        )
+    )
+    task = _task_semantics()
+    task["validation"] = [{"kind": "inspection", "mechanism": "Inspect source."}]
+    task_input = _write_yaml(tmp_path / "behavior-not-applicable-task.yaml", task)
+    task_path = (
+        workspace / ".work-bundle/orchestration/plan/active/plan-stage4/phase-stage4"
+        / "task-stage4.task.yaml"
+    )
+
+    plans.cmd_write_task(
+        _args(
+            workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+            task_id="task-stage4", title="Stage 4 task", content_file=str(task_input),
+            status="planned",
+        )
+    )
+
+    assert yaml.safe_load(task_path.read_text())["task_type"] == "implementation"
+
+
+def test_catalog_references_allow_additional_uncataloged_process_validations(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _plan, _phase, task_path = _create_tree(workspace, tmp_path)
+    task = _task_semantics()
+    extra = yaml.safe_load(yaml.safe_dump(task["validation"][0]))
+    extra["id"] = "VAL-EXTRA"
+    task["validation"].append(extra)
+    content = _write_yaml(tmp_path / "extra-process-task.yaml", task)
+
+    plans.cmd_write_task(
+        _args(
+            workspace, id=None, plan_id="plan-stage4", phase_id="phase-stage4",
+            task_id="task-stage4", title="Stage 4 task", content_file=str(content),
+            status="planned",
+        )
+    )
+
+    assert len(yaml.safe_load(task_path.read_text())["validation"]) == 2
 
 
 def test_executable_snapshot_union_enforces_start_and_test_bridges(
@@ -795,7 +893,7 @@ def test_structural_override_and_unverified_source_fail_before_mutation(
 def test_existing_plan_tree_is_updated_in_place_without_revision_copies(
     workspace: Path, tmp_path: Path,
 ) -> None:
-    root_path, phase_path, task_path = _create_tree(workspace, tmp_path)
+    root_path, phase_path, task_path = _create_tree(workspace, tmp_path, final=True)
     plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="verified"))
     plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="draft"))
 
@@ -839,7 +937,7 @@ def test_existing_plan_tree_is_updated_in_place_without_revision_copies(
 def test_verified_plan_rejects_child_updates_until_returned_to_draft(
     workspace: Path, tmp_path: Path,
 ) -> None:
-    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path)
+    _root_path, _phase_path, task_path = _create_tree(workspace, tmp_path, final=True)
     plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="verified"))
     before = task_path.read_bytes()
     task_semantic = _task_semantics()
@@ -917,7 +1015,7 @@ def test_task_source_obligations_must_exactly_bind_source_ids_before_write(
 def test_status_is_planning_only_and_phase_task_execution_state_is_deferred(
     workspace: Path, tmp_path: Path,
 ) -> None:
-    root_path, _phase_path, _task_path = _create_tree(workspace, tmp_path)
+    root_path, _phase_path, _task_path = _create_tree(workspace, tmp_path, final=True)
     plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="verified"))
     assert yaml.safe_load(root_path.read_text())["status"] == "verified"
     with pytest.raises(SystemExit, match="stage5-required"):
@@ -929,7 +1027,7 @@ def test_status_is_planning_only_and_phase_task_execution_state_is_deferred(
 def test_plan_qualification_transitions_are_monotonic(
     workspace: Path, tmp_path: Path,
 ) -> None:
-    root_path, _phase_path, _task_path = _create_tree(workspace, tmp_path)
+    root_path, _phase_path, _task_path = _create_tree(workspace, tmp_path, final=True)
     plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="verified"))
     plans.cmd_set_plan_status(_args(workspace, id="plan-stage4", status="draft"))
     assert yaml.safe_load(root_path.read_text())["status"] == "draft"
@@ -1092,7 +1190,9 @@ def test_public_entrypoint_writes_and_lists_canonical_plan_tree(tmp_path: Path) 
         cwd=REPO_ROOT, env=env, text=True, capture_output=True, check=False,
     )
     assert create_phase.returncode == 0, create_phase.stderr
-    task_input = _write_yaml(tmp_path / "task.yaml", _task_semantics())
+    task_semantic = _task_semantics()
+    task_semantic["validation"][0]["process"]["repository_id"] = "source"
+    task_input = _write_yaml(tmp_path / "task.yaml", task_semantic)
     create_task = subprocess.run(
         [
             sys.executable, entry, "write-task", "--workspace-root", str(tmp_path),

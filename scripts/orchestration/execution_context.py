@@ -1497,6 +1497,147 @@ def static_task_brief(root: Path, task_path: Path) -> dict[str, Any]:
     return compile_task_authority(root, task_path)
 
 
+def _validate_phase_catalog(phase: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Check declared catalog accounting without deciding test applicability."""
+
+    delivery = phase.get("delivery")
+    if not isinstance(delivery, dict):
+        return {}
+    declared = {str(row["id"]) for row in phase["task_index"]}
+    catalog = delivery["test_catalog"]
+    if delivery["mode"] == "final" and not catalog:
+        return {}
+    by_task: dict[str, list[dict[str, Any]]] = {}
+    test_ids: set[str] = set()
+    for row in catalog:
+        task_id = str(row["task_id"])
+        if task_id not in declared:
+            raise SystemExit(f"Phase delivery test_catalog references an unknown task: {task_id}")
+        by_task.setdefault(task_id, []).append(row)
+        if row["disposition"] == "executable":
+            test_id = str(row["test_id"])
+            if test_id in test_ids:
+                raise SystemExit(f"Phase delivery test_catalog has duplicate executable test ID: {test_id}")
+            test_ids.add(test_id)
+        elif not str(row["reason"]).strip():
+            raise SystemExit(f"Phase delivery test_catalog not_applicable reason is empty: {task_id}")
+    if set(by_task) != declared:
+        raise SystemExit("Phase delivery test_catalog must account for every task")
+    for task_id, rows in by_task.items():
+        excluded = [row for row in rows if row["disposition"] == "not_applicable"]
+        if excluded and len(excluded) != len(rows):
+            raise SystemExit(f"Phase delivery test_catalog mixes executable and not_applicable: {task_id}")
+        if len(excluded) > 1:
+            raise SystemExit(f"Phase delivery test_catalog has multiple not_applicable rows: {task_id}")
+    return by_task
+
+
+def _catalog_repository_ids(root: Path) -> set[str] | None:
+    if not (root / ".work-bundle/project.yaml").is_file():
+        return None
+    try:
+        metadata = _loaded_core._infrastructure.load_workspace_metadata(root)
+    except _loaded_core._infrastructure.InfrastructureError as error:
+        raise SystemExit(error.code) from error
+    return {str(item["id"]) for item in metadata["source_repositories"]}
+
+
+def _validate_task_catalog(
+    task: dict[str, Any], rows: list[dict[str, Any]], *, repository_ids: set[str] | None = None,
+) -> None:
+    """Resolve catalog IDs to exact current process declarations in canonical tasks."""
+
+    for row in rows:
+        if row["disposition"] != "executable":
+            continue
+        test_id = str(row["test_id"])
+        matches = [item for item in task["validation"] if str(item.get("id") or "") == test_id]
+        if not matches:
+            raise SystemExit(f"Phase delivery test_catalog references unknown process validation: {test_id}")
+        if len(matches) != 1:
+            raise SystemExit(f"Phase delivery test_catalog references ambiguous validation ID: {test_id}")
+        if matches[0].get("kind") != "process":
+            raise SystemExit(f"Phase delivery test_catalog must reference a process validation: {test_id}")
+        # Only the current schema closes argv, repository/cwd and timeout authority.
+        if task.get("schema_version") != 3 or not isinstance(matches[0].get("process"), dict):
+            raise SystemExit(f"Phase delivery test_catalog requires a current safe process validation: {test_id}")
+        repository_id = str(matches[0]["process"]["repository_id"])
+        if repository_ids is not None and repository_id not in repository_ids:
+            raise SystemExit(f"Phase delivery test_catalog process references an unknown repository: {test_id} -> {repository_id}")
+
+
+def _validate_delivery_graph(
+    plan: dict[str, Any], phases: dict[str, dict[str, Any]],
+    tasks: dict[str, dict[str, Any]], dependencies: dict[str, list[str]],
+    *, validate_modes: bool = True, repository_ids: set[str] | None = None,
+) -> None:
+    """Apply declared delivery coverage and progression policy to a validated DAG."""
+
+    ancestors: dict[str, set[str]] = {}
+
+    def predecessors(task_id: str) -> set[str]:
+        if task_id not in ancestors:
+            ancestors[task_id] = set(dependencies[task_id])
+            for dependency in dependencies[task_id]:
+                ancestors[task_id].update(predecessors(dependency))
+        return ancestors[task_id]
+
+    final_order = max(int(row["order"]) for row in plan["phase_index"])
+    final_ids = {str(row["id"]) for row in plan["phase_index"] if int(row["order"]) == final_order}
+    has_delivery = any(isinstance(phase.get("delivery"), dict) for phase in phases.values())
+    for phase_id, phase in phases.items():
+        delivery = phase.get("delivery")
+        if has_delivery and validate_modes:
+            expected = "final" if phase_id in final_ids else "executable_snapshot"
+            label = "final phase" if expected == "final" else "non-final phase"
+            if not isinstance(delivery, dict) or delivery.get("mode") != expected:
+                raise SystemExit(f"{label} delivery mode must be {expected}: {phase_id}")
+        if not isinstance(delivery, dict):
+            continue
+        members = {task_id for task_id, task in tasks.items() if task["phase_id"] == phase_id}
+        delivery_id = delivery.get("task_id")
+        if delivery_id is not None and delivery_id not in members:
+            raise SystemExit(f"Phase delivery task must be a member of its phase: {phase_id}")
+        if delivery["mode"] == "executable_snapshot" and members - {str(delivery_id)} - predecessors(str(delivery_id)):
+            raise SystemExit(f"Phase delivery task must transitively cover every phase task: {phase_id}")
+        catalog = _validate_phase_catalog(phase)
+        for task_id, rows in catalog.items():
+            _validate_task_catalog(tasks[task_id], rows, repository_ids=repository_ids)
+    for phase_id, phase in phases.items():
+        members = {task_id for task_id, task in tasks.items() if task["phase_id"] == phase_id}
+        for upstream in phase["depends_on"]:
+            upstream_delivery = phases[upstream].get("delivery")
+            if not isinstance(upstream_delivery, dict):
+                continue
+            upstream_task = upstream_delivery.get("task_id")
+            if upstream_delivery.get("mode") != "executable_snapshot" or upstream_task is None:
+                raise SystemExit(f"Phase dependency has no upstream delivery task: {phase_id} -> {upstream}")
+            for task_id in members:
+                if not members.intersection(dependencies[task_id]) and upstream_task not in dependencies[task_id]:
+                    raise SystemExit(f"Phase entry task must depend on upstream delivery task: {task_id} -> {upstream_task}")
+
+
+def _validate_phase_dependencies(phases: dict[str, dict[str, Any]]) -> None:
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(phase_id: str) -> None:
+        if phase_id in visiting:
+            raise SystemExit(f"phase dependency cycle includes {phase_id}")
+        if phase_id in visited:
+            return
+        visiting.add(phase_id)
+        for dependency in map(str, phases[phase_id]["depends_on"]):
+            if dependency == phase_id or dependency not in phases:
+                raise SystemExit(f"{phase_id} has impossible dependency {dependency}")
+            visit(dependency)
+        visiting.remove(phase_id)
+        visited.add(phase_id)
+
+    for phase_id in phases:
+        visit(phase_id)
+
+
 def static_plan_task_admission(
     root: Path, plan_path: Path, *, content: str | None = None
 ) -> list[dict[str, Any]]:
@@ -1592,34 +1733,10 @@ def static_plan_task_admission(
             raise SystemExit(
                 "plan review static-admission-blocked: source_coverage references unknown plan members or validation IDs"
             )
-    phase_dependencies = {
-        phase_id: [str(value) for value in _as_list(data.get("depends_on"))]
-        for phase_id, data in phase_data.items()
-    }
-    for phase_id, required in phase_dependencies.items():
-        invalid = [value for value in required if value == phase_id or value not in phase_data]
-        if invalid:
-            raise SystemExit(
-                f"plan review static-admission-blocked: {phase_id} has impossible dependency {', '.join(invalid)}"
-            )
-    phase_visiting: set[str] = set()
-    phase_visited: set[str] = set()
-
-    def visit_phase(phase_id: str) -> None:
-        if phase_id in phase_visiting:
-            raise SystemExit(
-                f"plan review static-admission-blocked: phase dependency cycle includes {phase_id}"
-            )
-        if phase_id in phase_visited:
-            return
-        phase_visiting.add(phase_id)
-        for dependency in phase_dependencies[phase_id]:
-            visit_phase(dependency)
-        phase_visiting.remove(phase_id)
-        phase_visited.add(phase_id)
-
-    for phase_id in phase_dependencies:
-        visit_phase(phase_id)
+    try:
+        _validate_phase_dependencies(phase_data)
+    except SystemExit as error:
+        raise SystemExit(f"plan review static-admission-blocked: {error}") from error
     compiled: list[dict[str, Any]] = []
     by_id: dict[str, Path] = {}
     for task_path in task_paths:
@@ -1667,6 +1784,15 @@ def static_plan_task_admission(
 
     for task_id in dependencies:
         visit(task_id)
+    try:
+        _validate_delivery_graph(
+            plan, phase_data,
+            {task_id: _read_structured(path)[0] for task_id, path in by_id.items()},
+            dependencies,
+            repository_ids=_catalog_repository_ids(root),
+        )
+    except SystemExit as error:
+        raise SystemExit(f"plan review static-admission-blocked: {error}") from error
     return compiled
 
 

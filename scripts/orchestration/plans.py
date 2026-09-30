@@ -6,7 +6,13 @@ from execution_context import (
     _dump_yaml,
     _iter_task_bindings,
     _persist_binding,
+    _validate_phase_catalog,
+    _validate_task_catalog,
+    _validate_delivery_graph,
+    _validate_phase_dependencies,
+    _catalog_repository_ids,
     compile_task_candidate,
+    static_plan_task_admission,
 )
 from artifact_store import (
     atomic_write_bytes,
@@ -296,6 +302,35 @@ def _current_plan_tasks(
     return tasks
 
 
+def _validate_complete_delivery_candidate(
+    args: argparse.Namespace, plan: dict[str, object],
+    tasks: dict[str, dict[str, object]], *, phase_candidate: dict[str, object] | None = None,
+) -> None:
+    """Check available complete graphs before writes; draft mode assembly stays open."""
+
+    phases = {
+        str(row["id"]): _active_artifact(args, "phase", str(row["id"]), _family_bindings("phase", row))
+        for row in _index_rows(args, "phase") if row.get("plan_id") == plan["id"]
+    }
+    if phase_candidate is not None:
+        phases[str(phase_candidate["id"])] = phase_candidate
+    if set(phases) != {str(row["id"]) for row in plan["phase_index"]}:
+        return
+    for phase_id, phase in phases.items():
+        if {str(row["id"]) for row in phase["task_index"]} != {
+            task_id for task_id, task in tasks.items() if task["phase_id"] == phase_id
+        }:
+            return
+    for task_id in tasks:
+        _task_dependency_ancestors(tasks, task_id)
+    _validate_phase_dependencies(phases)
+    dependencies = {task_id: list(map(str, task["depends_on"])) for task_id, task in tasks.items()}
+    # Authors may declare an intermediate snapshot before adding the final phase.
+    # Qualification performs the final-mode check on the completed canonical tree.
+    _validate_delivery_graph(plan, phases, tasks, dependencies, validate_modes=False,
+                             repository_ids=_catalog_repository_ids(resolve_workspace_root(args)))
+
+
 def _validate_task_shared_authority_before_write(
     candidate: dict[str, object],
     plan: dict[str, object],
@@ -406,6 +441,8 @@ def cmd_write_plan(args: argparse.Namespace) -> None:
         raise SystemExit("Plan filename override is not supported by the canonical family")
     if args.status not in PLAN_QUALIFICATION_STATUSES:
         raise SystemExit(f"Invalid plan qualification status: {args.status}")
+    if args.status == "verified":
+        raise SystemExit("Create the root plan as draft, then qualify its complete canonical tree with set-plan-status")
     semantic = _semantic_yaml(
         Path(args.content_file), PLAN_STRUCTURAL_INPUT_FIELDS, "Root plan"
     )
@@ -501,6 +538,12 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
         raise SystemExit(
             f"Invalid plan qualification transition: {data['status']} -> {args.status}"
         )
+    if args.status == "verified":
+        path = canonical_artifact_path(
+            _plan_policy("root-plan"), _plan_anchors(args), identity=args.id,
+            state="active", bindings=bindings,
+        )
+        static_plan_task_admission(resolve_workspace_root(args), path)
     data["status"] = args.status
     data["last_updated"] = now_date()
     write_artifact(
@@ -590,7 +633,7 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
     semantic = _semantic_yaml(
         Path(args.content_file), PHASE_STRUCTURAL_INPUT_FIELDS, "Phase"
     )
-    _require_draft_plan(args, str(args.plan_id))
+    plan = _require_draft_plan(args, str(args.plan_id))
     bindings = {"plan": args.plan_id}
     existing = _active_artifact_or_none(args, "phase", args.phase_id, bindings)
     if existing is None and _identity_collision(args, "phase", args.phase_id, bindings=bindings):
@@ -615,15 +658,13 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
         delivery_task_id = str(delivery.get("task_id") or "")
         if delivery_task_id and delivery_task_id not in declared_tasks:
             raise SystemExit("Phase delivery task must be declared in task_index")
-        catalog_tasks = {
-            str(item.get("task_id") or "")
-            for item in delivery.get("test_catalog", [])
-            if isinstance(item, dict)
-        }
-        if delivery.get("mode") == "executable_snapshot" and catalog_tasks != declared_tasks:
-            raise SystemExit("Phase delivery test_catalog must account for every task")
-        if delivery.get("mode") == "final" and not catalog_tasks.issubset(declared_tasks):
-            raise SystemExit("Final phase delivery test_catalog references an unknown task")
+        catalog = _validate_phase_catalog(data)
+        tasks = _current_plan_tasks(args, str(args.plan_id))
+        repository_ids = _catalog_repository_ids(resolve_workspace_root(args))
+        for task_id, task in tasks.items():
+            if task_id in catalog:
+                _validate_task_catalog(task, catalog[task_id], repository_ids=repository_ids)
+        _validate_complete_delivery_candidate(args, plan, tasks, phase_candidate=data)
     result = write_artifact(
         CATALOG_PATH, "phase", _plan_anchors(args), data, state="active",
         bindings=bindings,
@@ -670,38 +711,12 @@ def _prepare_task_write(
         raise SystemExit(
             f"Task parent phase is not canonical for plan {args.plan_id}: {args.phase_id}"
         ) from error
-    delivery = phase.get("delivery") if isinstance(phase, dict) else None
-    if isinstance(delivery, dict) and any(
-        isinstance(item, dict)
-        and str(item.get("task_id") or "") == str(args.task_id)
-        for item in delivery.get("test_catalog", [])
-    ):
-        catalog_rows = [
-            item for item in delivery.get("test_catalog", [])
-            if isinstance(item, dict) and str(item.get("task_id") or "") == str(args.task_id)
-        ]
-        process_ids = {
-            str(item.get("id") or "")
-            for item in data.get("validation", [])
-            if isinstance(item, dict) and isinstance(item.get("process"), dict)
-        }
-        executable_ids = {
-            str(item.get("test_id") or "")
-            for item in catalog_rows
-            if item.get("disposition") == "executable"
-        }
-        not_applicable = [
-            item for item in catalog_rows if item.get("disposition") == "not_applicable"
-        ]
-        if (
-            (process_ids and (executable_ids != process_ids or not_applicable))
-            or (not process_ids and (executable_ids or len(not_applicable) != 1))
-        ):
-            raise SystemExit(
-                "Task process declarations do not match the phase delivery test_catalog"
-            )
+    catalog = _validate_phase_catalog(phase)
+    _validate_task_catalog(data, catalog.get(str(args.task_id), []),
+                           repository_ids=_catalog_repository_ids(resolve_workspace_root(args)))
     tasks = _validate_task_dependencies_before_write(args, data)
     _validate_task_shared_authority_before_write(data, plan, tasks)
+    _validate_complete_delivery_candidate(args, plan, tasks)
     return data, bindings, existing
 
 
