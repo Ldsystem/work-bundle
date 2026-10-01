@@ -451,11 +451,29 @@ def test_public_route_reports_post_replacement_failure_without_rollback(modules,
     assert modules["core"].read_front_matter(tmp_path / request["path"]) == (request["record"], request["body"])
 
 
+def test_real_projection_case_checks_runtime_before_mutation(modules, tmp_path, monkeypatch):
+    monkeypatch.setattr(modules["indexes"], "sqlite_vec_availability_probe", lambda: {
+        "status": "unavailable", "reason": "fixture SQLite extension unavailable",
+    })
+    monkeypatch.setattr(modules["transactions"], "mutate_record", lambda *_args: pytest.fail(
+        "unavailable integration runtime must be detected before mutation"
+    ))
+    with pytest.raises(pytest.skip.Exception, match="fixture SQLite extension unavailable"):
+        test_normal_transaction_uses_real_managed_projection_runtime(modules, tmp_path)
+    assert not (tmp_path / "notes").exists()
+
+
 def test_normal_transaction_uses_real_managed_projection_runtime(modules, tmp_path):
+    # Probe the interpreter's extension capability independently, as the query
+    # integration tests do. Never turn a production rebuild failure into a skip.
+    probe = modules["indexes"].sqlite_vec_availability_probe()
+    if probe["status"] == "unavailable":
+        pytest.skip(str(probe["reason"]))
+    assert probe == {"status": "available", "reason": None}
     request = note_request()
     result = modules["transactions"].mutate_record(tmp_path, "fixture", request)
     assert result["canonical_status"] == "replaced"
-    assert result["projection_status"] == "rebuilt"
+    assert result["projection_status"] == "rebuilt", result
     assert result["projections"]["vector_status"]["chunks_indexed"] == 1
     assert (tmp_path / "indexes" / "vector-index.jsonl").read_text()
 
