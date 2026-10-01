@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts/work-bundle"))
 
 
-@pytest.fixture
-def stores(tmp_path, monkeypatch):
+@pytest.fixture(params=["\n", "\r\n"])
+def stores(tmp_path, monkeypatch, request):
     import rules
 
     workspace = tmp_path / "workspace"
@@ -25,7 +25,7 @@ def stores(tmp_path, monkeypatch):
         root.mkdir(parents=True)
         entry = {"id": scope, "path": f"{scope}.md", "applies_when": ["agent supplied signal"],
                  "enforcement": "must", "load": "conditional", "requires": []}
-        (root / entry["path"]).write_text("---\n" + yaml.safe_dump({k: v for k, v in entry.items() if k != "path"}) + "---\nBody.\n")
+        (root / entry["path"]).write_text("---\n" + yaml.safe_dump({k: v for k, v in entry.items() if k != "path"}) + "---\nBody.\n", encoding="utf-8", newline=request.param)
         (root / "index.yaml").write_text(yaml.safe_dump({"rules": [entry]}))
     monkeypatch.setattr(rules, "rule_store_sources", lambda _: [
         {"scope": scope, "rules_root": root, "index_path": root / "index.yaml", "required": scope == "toolkit"}
@@ -73,7 +73,7 @@ def test_capture_hit_delete_and_regenerate(stores):
     assert packet["selected_rules"] == [{"id": "toolkit", "scope": "toolkit", "path": "toolkit.md",
         "index_entry_digest": packet["comparison"]["selected_bodies"]["toolkit"]["index_entry_digest"],
         "body_digest": loaded(stores[1], "toolkit")["toolkit"], "dependency_ids": []}]
-    assert packet["comparison"]["selected_bodies"]["toolkit"]["body"] == "---\napplies_when:\n- agent supplied signal\nenforcement: must\nid: toolkit\nload: conditional\nrequires: []\n---\nBody.\n"
+    assert packet["comparison"]["selected_bodies"]["toolkit"]["body"] == (stores[1]["toolkit"] / "toolkit.md").read_bytes().decode("utf-8")
     hit = inspect(stores)
     assert hit["status"] == "hit"
     assert hit["reusable_selected_ids"] == ["toolkit"]
@@ -286,14 +286,15 @@ def test_duplicate_and_cycle_indexes_block_before_packet_write(stores):
     assert not (workspace / ".work-bundle/runtime").exists()
 
 
-def test_cli_public_route_uses_explicit_loaded_ids(tmp_path):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_cli_public_route_uses_explicit_loaded_ids(tmp_path, newline):
     toolkit = tmp_path / "toolkit"
     root = toolkit / "rules"
     root.mkdir(parents=True)
     entry = {"id": "selected", "path": "selected.md", "applies_when": ["source edit"], "load": "conditional",
              "enforcement": "must", "requires": []}
     body = "---\n" + yaml.safe_dump({key: value for key, value in entry.items() if key != "path"}) + "---\nBody.\n"
-    (root / "selected.md").write_text(body)
+    (root / "selected.md").write_text(body, encoding="utf-8", newline=newline)
     (root / "index.yaml").write_text(yaml.safe_dump({"rules": [entry]}))
     workspace = tmp_path / "workspace"
     (workspace / ".work-bundle").mkdir(parents=True)
@@ -305,7 +306,7 @@ def test_cli_public_route_uses_explicit_loaded_ids(tmp_path):
     env = dict(os.environ, WB_WORK_BUNDLE_ROOT=str(toolkit), HOME=str(config.parent), USERPROFILE=str(config.parent))
     args = [sys.executable, str(ROOT / "scripts/wb.py"), "rule-packet", "capture", "--workspace-root", str(workspace),
             "--packet-id", "task", "--stage", "implementation", "--signals", '{"operation":["edit"]}',
-            "--loaded", "selected=" + hashlib.sha256(body.encode()).hexdigest()]
+            "--loaded", "selected=" + hashlib.sha256((root / "selected.md").read_bytes()).hexdigest()]
     result = subprocess.run(args, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)["status"] == "captured"

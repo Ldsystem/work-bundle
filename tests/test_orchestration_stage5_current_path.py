@@ -2057,7 +2057,10 @@ def test_commit_candidate_argument_identifies_commit_bytes_despite_worktree_chan
         check=True, capture_output=True, text=True,
     ).stdout.strip()
     path = workspace / "src/current.py"
-    committed_bytes = path.read_bytes()
+    committed_bytes = subprocess.run(
+        ["git", "-C", str(workspace), "show", f"{commit}:src/current.py"],
+        check=True, capture_output=True,
+    ).stdout
     path.write_text("different worktree bytes\n")
     commit_target = execution_context.build_implementation_review_candidate(
         source_root=workspace, kind="commit", candidate_commit=commit,

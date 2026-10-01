@@ -87,10 +87,10 @@ def note_request(title="Example", status="draft"):
     }
 
 
-def write_existing(root, request):
+def write_existing(root, request, *, newline=None):
     path = root / request["path"]
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("---\n" + yaml.safe_dump(request["record"], sort_keys=False) + "---\n\n" + request["body"])
+    path.write_text("---\n" + yaml.safe_dump(request["record"], sort_keys=False) + "---\n\n" + request["body"], newline=newline)
     return path
 
 
@@ -478,10 +478,13 @@ def test_normal_transaction_uses_real_managed_projection_runtime(modules, tmp_pa
     assert (tmp_path / "indexes" / "vector-index.jsonl").read_text()
 
 
-def test_existing_crlf_canonical_is_digest_bound_and_replaced_losslessly(modules, local_projections, tmp_path):
+@pytest.mark.parametrize("initial_newline", ["\n", "\r\n"])
+def test_existing_crlf_canonical_is_digest_bound_and_replaced_losslessly(modules, local_projections, tmp_path, initial_newline):
     request = note_request()
-    path = write_existing(tmp_path, request)
-    path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    path = write_existing(tmp_path, request, newline=initial_newline)
+    path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    assert b"\r\r\n" not in path.read_bytes()
+    assert b"\r\n" in path.read_bytes()
     request.update(effect="update", expected_digest=digest(path), body="The supplied body.\n")
     result = local_projections.mutate_record(tmp_path, "fixture", request)
     assert result["digest"] == digest(path)
