@@ -1,6 +1,6 @@
 ---
 name: ks-guard-scope
-description: 'Enforce knowledge write scope, sensitivity, and safety boundaries.'
+description: 'Check managed knowledge write, index-export, or knowledge-repository Git scope and sensitivity before the declared operation. Excludes source-repository Git work.'
 ---
 
 # ks-guard-scope
@@ -54,16 +54,7 @@ Reader-facing documents: redirect to `orch-create-document` and inherit source s
 - `ks-off-switches`: `rules/keep-summarizing/ks-off-switches.md`
 - `ks-git-authority`: `rules/keep-summarizing/ks-git-authority.md`
 
-## Rule Loading (mandatory)
-
-Before substantive keep-summarizing work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive knowledge work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or summarized rule text as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns indexed rule discovery and exact-context body reuse. Consume carried task-local obligations in an accepted worker packet; these Runtime Rules are procedural pointers, not a separate loading algorithm.
 
 ## Preflight Constraints (skill-owned)
 
@@ -71,7 +62,7 @@ If a cited rule path is missing or unreadable, stop and report a rule-load block
 
 When registry data is used:
 
-- Resolve project data from `~/.work-bundle/registry/projects.yaml`, `KS_PROJECT_REGISTRY`, or `--registry-file`.
+- Read `~/.work-bundle/bootstrap.yaml` and resolve project data through its `project_registry` path. Do not advertise `KS_PROJECT_REGISTRY` or `--registry-file` as overrides; current registry resolution uses bootstrap authority.
 - Treat registry data as local runtime state, not durable knowledge.
 
 ### Embedding-export exclusions

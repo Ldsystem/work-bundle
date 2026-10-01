@@ -51,6 +51,61 @@ def valid_rule_md(
     )
 
 
+def test_exact_index_mirror_and_dependencies(tmp_path: Path) -> None:
+    sys.path.insert(0, str(REPO_ROOT / "scripts/work-bundle"))
+    import rules
+    import yaml
+
+    root = tmp_path / "rules"
+    root.mkdir()
+    (root / "first.md").write_text(valid_rule_md("first"))
+    (root / "second.md").write_text(valid_rule_md("second"))
+    rules.sync_index(root)
+    assert rules.validate_index(root) == []
+    data = yaml.safe_load((root / "index.yaml").read_text())
+    for field, value in (("path", "second.md"), ("load", "manual"), ("enforcement", "should"),
+                         ("applies_when", ["different"]), ("requires", ["missing"])):
+        changed = {"rules": [dict(entry) for entry in data["rules"]]}
+        changed["rules"][0][field] = value
+        (root / "index.yaml").write_text(yaml.safe_dump(changed))
+        failures = rules.validate_index(root)
+        assert any(f":mirror_mismatch:first:{field}" in failure for failure in failures), failures
+    data["rules"][0]["requires"] = ["second"]
+    data["rules"][1]["requires"] = ["first"]
+    (root / "index.yaml").write_text(yaml.safe_dump(data))
+    assert any("dependency_cycle:" in failure for failure in rules.validate_index(root))
+    data["rules"].append(data["rules"][0])
+    (root / "index.yaml").write_text(yaml.safe_dump(data))
+    assert any("duplicate_rule_id:first" in failure for failure in rules.validate_index(root))
+
+
+def test_index_rejects_malformed_yaml_shapes(tmp_path: Path) -> None:
+    sys.path.insert(0, str(REPO_ROOT / "scripts/work-bundle"))
+    import rules
+    root = tmp_path / "rules"
+    root.mkdir()
+    for text in ("rules: wrong\n", "rules: [wrong]\n", "rules: [{id: x}]\n", "rules: [\n",
+                 "rules: []\nrules: []\n", "? [a, b]\n: value\n"):
+        (root / "index.yaml").write_text(text)
+        assert rules.validate_index(root)
+
+
+def test_scoped_validator_resolves_cross_scope_dependency_graph(tmp_path: Path) -> None:
+    toolkit = tmp_path / "toolkit"
+    config = tmp_path / "home/.work-bundle"
+    project = tmp_path / "workspace"
+    toolkit_rules = toolkit / "rules"
+    global_rules = config / "rules"
+    for root, rule_id, required in ((toolkit_rules, "toolkit-base", []), (global_rules, "global-rule", ["toolkit-base"])):
+        root.mkdir(parents=True)
+        body = valid_rule_md(rule_id).replace("requires: []", "requires: [" + ", ".join(required) + "]")
+        (root / f"{rule_id}.md").write_text(body)
+        assert run_wb("create-rules", str(root)).returncode == 0
+    env = {"WB_WORK_BUNDLE_ROOT": str(toolkit), "HOME": str(config.parent), "USERPROFILE": str(config.parent)}
+    result = run_wb("validate-rules", "--scope", "global", "--project-root", str(project), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_validate_current_rules_passes() -> None:
     sys.path.insert(0, str(REPO_ROOT / "scripts" / "work-bundle"))
     try:
@@ -205,6 +260,10 @@ def test_scoped_validate_rules_resolves_toolkit_root(tmp_path: Path) -> None:
 
 
 def test_scoped_validate_rules_resolves_global_and_project_roots(tmp_path: Path) -> None:
+    toolkit = tmp_path / "toolkit"
+    (toolkit / "rules").mkdir(parents=True)
+    (toolkit / "rules/index.yaml").write_text("rules: []\n")
+    env = {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path), "WB_WORK_BUNDLE_ROOT": str(toolkit)}
     config = tmp_path / ".work-bundle"
     global_root = config / "rules"
     project = tmp_path / "project"
@@ -215,14 +274,14 @@ def test_scoped_validate_rules_resolves_global_and_project_roots(tmp_path: Path)
         assert run_wb(
             "create-rules",
             str(root),
-            env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
+            env=env,
         ).returncode == 0
 
     global_result = run_wb(
         "validate-rules",
         "--scope",
         "global",
-        env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
+        env=env,
     )
     global_payload = json.loads(global_result.stdout)
     assert global_result.returncode == 0, global_result.stdout + global_result.stderr
@@ -235,7 +294,7 @@ def test_scoped_validate_rules_resolves_global_and_project_roots(tmp_path: Path)
         "project",
         "--project-root",
         str(project),
-        env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
+        env=env,
     )
     project_payload = json.loads(project_result.stdout)
     assert project_result.returncode == 0, project_result.stdout + project_result.stderr
@@ -704,7 +763,9 @@ def test_initialize_project_v4_migration_guardrails_and_pressure_scenarios() -> 
     assert "migrate-control-plane" in initialize
     assert "migrate-registered-projects" in initialize
     assert "--repository <id=remote>" in initialize
-    assert "load every applicable rule body in full" in initialize
+    assert "central `AGENTS.md`" in initialize
+    assert "exact-context selected-body reuse" in initialize
+    assert "carried task-local obligations" in initialize
     assert "do not edit the project registry directly" in initialize
     assert "do not change an external repository's Git config" in initialize
     prompts = "\n".join(item["prompt"] for item in evals["evals"])
@@ -768,7 +829,7 @@ def test_toolkit_utility_documentation_and_external_registry_boundary() -> None:
     registry_template = (REPO_ROOT / "references/assets/template/skill-registry.yaml").read_text(encoding="utf-8")
     registry_contract = (REPO_ROOT / "references/wb-register-skill-contract.yaml").read_text(encoding="utf-8")
 
-    assert "--scope project --workspace-root <workspace-root>" in scripts_readme
+    assert "--scope project --project-root <workspace-root>" in scripts_readme
     assert "normalized `remote.canonical` or declared `remote.aliases`" in scripts_readme
     assert "Undeclared remotes fail before mutation" in scripts_readme
     assert "never promoted into or rewritten as canonical metadata" in scripts_readme

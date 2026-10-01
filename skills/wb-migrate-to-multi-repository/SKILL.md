@@ -1,6 +1,6 @@
 ---
 name: wb-migrate-to-multi-repository
-description: Route a requested legacy topology migration to the current metadata-v4 workspace creation or explicit historical metadata migration path. The former v3-producing public command is retired.
+description: Route new multi-repository workspace creation, explicit historical metadata migration, or repository addition to an existing v4 workspace through the current transaction. The former v3 producer is retired.
 ---
 
 # Route Multi-Repository Migration

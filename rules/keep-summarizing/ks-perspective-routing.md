@@ -1,7 +1,7 @@
 ---
 id: ks-perspective-routing
 applies_when:
-  - note path or perspective is selected
+  - a durable knowledge note or accepted open question needs canonical path, leaf perspective, or ownership selection
 enforcement: must
 load: conditional
 requires: []

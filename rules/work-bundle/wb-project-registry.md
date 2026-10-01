@@ -43,7 +43,7 @@ Ensure project registration and lookup preserve the versioned authority split be
 
 - Inspect the command or workflow and verify registry paths are resolved through bootstrap.
 - Verify all locator and device-binding IO uses only the bootstrap-resolved `project_registry`.
-- Verify initialized projects have both a registry entry and a matching `$project_root/.work-bundle/project.yaml`.
+- Verify initialized workspaces have both a registry entry and a matching `$workspace_root/.work-bundle/project.yaml`; `project_root` is that metadata anchor only when it equals `workspace_root` in single-repository mode.
 - Verify metadata-v4 portable repositories remain path-free while matching device bindings contain local materialization and observation fields.
 - Verify metadata-v2/v3 local fields are admitted only by explicit migration commands and are never ordinary current reads.
 

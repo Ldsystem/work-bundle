@@ -1,8 +1,10 @@
 ---
 id: wb-migrate-to-multi-repository
 applies_when:
-  - a user asks to migrate a current single-repository WorkBundle project into a multi-repository workspace
-  - an approved migration workflow inspects, dry-runs, applies, retries, or rolls back single-to-multi topology migration
+  - a user requests creation of a metadata-v4 multi-repository workspace
+  - explicit historical metadata-v2 or metadata-v3 migration needs the current proposal-bound transaction
+  - a repository is added to an existing metadata-v4 workspace
+  - a request names the retired single-to-multi topology producer and needs routing to its current v4 owner
 enforcement: must
 load: conditional
 requires:

@@ -1,6 +1,6 @@
 ---
 name: orch-create-document
-description: 'Create reader-facing orchestration documents from accepted context.'
+description: 'Create reader-facing project overviews, briefings, explanations, or reports from accepted context. Excludes implementation specifications, executable plans, and executor results.'
 ---
 
 # orch-create-document

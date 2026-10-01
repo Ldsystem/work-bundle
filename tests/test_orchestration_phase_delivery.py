@@ -521,7 +521,7 @@ def test_test_bridge_false_envelope_preserves_bound_raw_rows(delivery):
 def test_same_candidate_content_commit_container_reuses_published_payload(delivery):
     facts = materialize(delivery)
     original = json.loads((delivery[0] / "candidate.json").read_text())
-    committed = runtime.build_implementation_review_candidate(source_root=delivery[1], kind="commit", base_commit=original["base_commit"], changed_paths=["product.txt"])
+    committed = runtime.build_implementation_review_candidate(source_root=delivery[1], kind="commit", candidate_commit=original["base_commit"], changed_paths=["product.txt"])
     assert committed["sha256"] == original["sha256"]
     (delivery[0] / "candidate.json").write_text(json.dumps(committed))
     assert materialize(delivery)["runtime_bundle"] == facts["runtime_bundle"]

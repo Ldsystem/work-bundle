@@ -1,7 +1,7 @@
 ---
 id: ks-knowledge-boundary
 applies_when:
-  - knowledge access or write is requested
+  - managed durable project knowledge is retrieved, persisted, or selected for migration or read-only intake
 enforcement: must
 load: conditional
 requires: []

@@ -1,13 +1,17 @@
 ---
 name: orch-review-plan
-description: Perform direct implementation review and compact final WorkBundle workflow review against exact verified authority and frozen candidates.
+description: Review a frozen task or integrated implementation, record controller acceptance after advisory review, or perform final workflow closure against verified authority. Reviewers advise; controllers own acceptance.
 ---
 
 # Review WorkBundle Implementation and Closure
 
 Use direct product review for implementation correctness and one compact final workflow review for closure. These are separate judgments.
 
+Apply `orch-artifact-authoring` to every current review/acceptance/closure record: supply semantic input to `scripts/orch.py write-implementation-review`, `scripts/orch.py write-accepted-task-result`, or `scripts/orch.py write-final-workflow-review` in the responsible role. Do not directly create or edit canonical YAML/Markdown under `.work-bundle/orchestration/`, including bootstrap repair. Malformed-active repair uses the same family writer; target-affecting conflicts remain prewrite refusals. Report applied-target and `index_effect: stale` sibling diagnostics separately; each sibling is repaired through its own family writer before the existing family index rebuild. No command success or stale projection issues the semantic decision.
+
 ## Implementation review
+
+Build the exact target through `build-implementation-review-candidate`: commit mode uses `--candidate-commit`, worktree mode uses `--base-commit`. The stored `target.base_commit` field is unchanged. Use the current result/review ID conventions from the shared workflow; optional scaffolds provide editable payload/context rather than review meaning or acceptance.
 
 The reviewer must be distinct from the implementor. For a task review, compare the exact frozen commit or worktree candidate with the complete current task authority closure: its named specification requirements/decisions, applicable root/phase authority, complete task and dependencies, accepted dependency results, connected ownership/interfaces, edge/failure behavior, and claim-relevant focused observations. For an integrated review, compare the exact candidate with every planned feature and acceptance obligation in the complete plan tree. After a repair, repeat the applicable complete closure or integrated comparison against the current candidate; prior findings may guide inspection but cannot narrow review to the textual delta or carry forward acceptance. Passing tests cannot hide omitted behavior.
 
@@ -27,6 +31,8 @@ Finalization preflights all accepted bundle cleanup targets read-only before del
 
 ## Self-check
 
+- [ ] Actual creation/active repair used the respective canonical `write-implementation-review`, `write-accepted-task-result`, or `write-final-workflow-review` command; no direct canonical or bootstrap edit occurred.
+- [ ] Target-affecting refusals and applied-target/stale-sibling observations are reported separately with writer-based sibling repair.
 - [ ] A task implementation verdict covers every obligation in its complete current authority closure, while an integrated verdict covers every specification and plan obligation against the exact candidate.
 - [ ] A repaired candidate received a complete current-candidate review rather than delta-only inspection or inherited acceptance.
 - [ ] A task review is fresh for its source-addressed authority closure; unrelated specification prose, source records, plan allocation, and phase membership did not manufacture staleness, while referenced requirements/decisions, applicable root/phase policy, task/dependency authority, accepted dependency results, or connected ownership/interfaces did.

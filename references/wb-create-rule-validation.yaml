@@ -1,6 +1,36 @@
 id: wb-create-rule-validation
 status: current
 
+index_mechanics:
+  mirror_fields: [id, path, applies_when, enforcement, load, requires]
+  dependency_checks: [unique_ids_across_enabled_scopes, existing_requires, acyclic_requires]
+  applicability_assessment: agent-owned
+  selected_body_reuse:
+    command: rule-packet
+    cache: .work-bundle/runtime/rule-packets/<name>.json
+    disposable: true
+    authority_or_receipt: false
+    api_fields: [schema_version, context_binding, selected_rules, created_at]
+    context_binding: [workspace_id, controller_or_task_packet_id, lifecycle_stage, operation_signal_digest]
+    selected_rule_fields: [id, scope, path, index_entry_digest, body_digest, dependency_ids]
+    workspace_id_source: canonical-project-metadata-workspace.id
+    packet_id_source: exact-caller-supplied-canonical-or-runtime-controller-or-task-packet-ID
+    signal_digest: sha256-canonical-json-sorted-signal-names-and-unique-sorted-values
+    bindings: [workspace_root, store_scope, index_path, rules_root, body_path, entry_digest, body_digest, dependency_digest]
+    selection_input: previously-loaded-agent-selected-id-and-body-digest
+    every_index_delta: agent-applicability-reassessment-required
+    recapture: compare-prior-index-state-and-return-bounded-refresh-observation-before-replacing-basis
+
+discovery_fixture_shape:
+  command: instruction-audit --discovery-fixtures <yaml>
+  root_field: fixtures
+  required_fields: [id, relation, actor, stage, observable_signals, selected_rule_ids, carried_rule_ids]
+  relations: [positive, negative, adjacent, worker]
+  actors: [controller, worker]
+  observable_signals: mapping-of-string-lists
+  rule_ids: unique-string-lists
+  semantic_assessment: agent-owned
+
 required_front_matter:
   - id
   - applies_when

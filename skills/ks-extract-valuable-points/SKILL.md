@@ -1,6 +1,6 @@
 ---
 name: ks-extract-valuable-points
-description: 'Extract durable candidate points from mixed source material before persistence.'
+description: 'Extract reusable knowledge candidates from a mixed conversation, implementation session, or review before persistence. Excludes existing-note lookup and settled explicit writes.'
 ---
 
 # ks-extract-valuable-points
@@ -47,11 +47,11 @@ Run extraction per **Extraction Constraints (skill-owned)**.
 Apply loaded Runtime Rules:
 
 - Structural-value gate: follow `ks-structural-value`
-- Perspective fit, leaf path, granularity, and domain routing: follow `ks-structural-value` and perspective mapping from `references/assets/keep-summarizing/perspectives.md`
+- Perspective fit, leaf path, granularity, and domain routing: follow `ks-perspective-routing` and perspective mapping from `references/assets/keep-summarizing/perspectives.md`
 - Sensitivity exclusions: follow `ks-sensitivity-filter`
 - Persistence gates and off-switches: follow `ks-persistence-gate` and `ks-off-switches`
-- Context-pack handling: follow loaded `ks-persistence-gate` and workflow decomposition steps in **Extraction Constraints (skill-owned)**
-- Open-question confirmation: follow loaded `ks-persistence-gate`
+- Context-pack handling: follow `ks-context-pack-policy` and workflow decomposition steps in **Extraction Constraints (skill-owned)**
+- Open-question confirmation: follow `ks-open-question-policy`
 
 ## Strict Rules
 
@@ -71,19 +71,13 @@ Deliver the candidate table and status fields defined in **Extraction Constraint
 - `ks-knowledge-boundary`: `rules/keep-summarizing/ks-knowledge-boundary.md`
 - `ks-persistence-gate`: `rules/keep-summarizing/ks-persistence-gate.md`
 - `ks-structural-value`: `rules/keep-summarizing/ks-structural-value.md`
+- `ks-perspective-routing`: `rules/keep-summarizing/ks-perspective-routing.md`
+- `ks-context-pack-policy`: `rules/keep-summarizing/ks-context-pack-policy.md`
+- `ks-open-question-policy`: `rules/keep-summarizing/ks-open-question-policy.md`
 - `ks-sensitivity-filter`: `rules/keep-summarizing/ks-sensitivity-filter.md`
 - `ks-off-switches`: `rules/keep-summarizing/ks-off-switches.md`
 
-## Rule Loading (mandatory)
-
-Before substantive keep-summarizing work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive knowledge work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or summarized rule text as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns indexed rule discovery and exact-context body reuse. Consume carried task-local obligations in an accepted worker packet; these Runtime Rules are procedural pointers, not a separate loading algorithm.
 
 ## Extraction Constraints (skill-owned)
 
@@ -100,7 +94,7 @@ If a cited rule path is missing or unreadable, stop and report a rule-load block
 9. Decompose context-pack material into atomic notes; do not preserve packs as durable units unless explicitly requested.
 10. Use separate `open-questions/<lifecycle-stage>/<perspective>` targets for open questions.
 11. Persist approved durable points before ending when the user asked for extraction.
-12. Redirect prepared breakdown to `ks-write-knowledge` and rebuild indexes with vector-inclusive derived index status when relevant.
+12. Redirect accepted record effects to `ks-write-knowledge` or `ks-track-open-questions`; consume their transaction outcomes, including vector-inclusive derived index status, instead of performing duplicate index work.
 
 ### Candidate table shape
 
@@ -123,7 +117,7 @@ Also return:
 ### Safe-draft mid-work persistence flow
 
 - Stop with `Waiting for your direction` when required direction is missing.
-- When blocking questions cannot be asked mid-work, persist safe points as `draft`, rebuild indexes, then ask remaining questions.
+- When blocking questions cannot be asked mid-work, send only authorized safe draft effects through the corresponding record writer, consume its projection outcome, then ask remaining questions.
 - Do not end with only proposed targets when safe persistence is possible.
 
 ## Scripts

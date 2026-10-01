@@ -15,6 +15,7 @@ from execution_context import (
     static_plan_task_admission,
 )
 from artifact_store import (
+    ArtifactError, _check_target_conflicts, _scan_candidates,
     atomic_write_bytes,
     canonical_artifact_path,
     family_policy,
@@ -71,6 +72,17 @@ def _plan_policy(family: str) -> dict[str, object]:
     return family_policy(load_catalog(CATALOG_PATH), family)
 
 
+def _creation_date(data: dict[str, object], today: str) -> str:
+    value = data.get("date_created")
+    if isinstance(value, str):
+        try:
+            if dt.date.fromisoformat(value).isoformat() == value:
+                return value
+        except ValueError:
+            pass
+    return today
+
+
 def _semantic_yaml(path: Path, forbidden: set[str], label: str) -> dict[str, object]:
     data = read_yaml_mapping(path)
     overrides = sorted(forbidden.intersection(data))
@@ -110,6 +122,12 @@ def _canonical_row(args: argparse.Namespace, family: str, row: dict[str, object]
         CATALOG_PATH, family, _plan_anchors(args), identity=identity,
         state=state, bindings=bindings,
     )["data"]
+    return _presentation_row(args, family, stored, state, path)
+
+
+def _presentation_row(
+    args: argparse.Namespace, family: str, stored: dict[str, object], state: str, path: Path,
+) -> dict[str, object]:
     presentation = dict(stored)
     presentation.update(
         {
@@ -124,14 +142,29 @@ def _canonical_row(args: argparse.Namespace, family: str, row: dict[str, object]
     return presentation
 
 
-def _index_rows(args: argparse.Namespace, family: str) -> list[dict[str, object]]:
-    result = rebuild_index(CATALOG_PATH, family, _plan_anchors(args))
+def _index_rows(args: argparse.Namespace, family: str, *, presentation: bool = False) -> list[dict[str, object]]:
+    try:
+        result = rebuild_index(CATALOG_PATH, family, _plan_anchors(args))
+    except ArtifactError as error:
+        print(json.dumps({"family": family, "index_effect": "stale",
+                          "index_diagnostics": error.diagnostics,
+                          "index_diagnostic_count": error.diagnostic_count}, sort_keys=True), file=sys.stderr)
+        policy = _plan_policy(family)
+        observations = _scan_candidates(CATALOG_PATH, policy, _plan_anchors(args), policy["index"]["source_states"])
+        if presentation:
+            return sorted([_presentation_row(args, family, item["data"], item["state"], item["path"])
+                           for item in observations if "diagnostic" not in item],
+                          key=lambda row: str(row["id"]))
+        rows = [{key: item["data"][key] for key in policy["index"]["projection"]}
+                for item in observations if "diagnostic" not in item]
+        return sorted(rows, key=lambda row: str(row["id"]))
     index_path = Path(str(result["path"]))
-    return [
+    rows = [
         json.loads(line)
         for line in index_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+    return [_canonical_row(args, family, row) for row in rows] if presentation else rows
 
 
 def _identity_collision(
@@ -213,13 +246,20 @@ def _active_artifact(
 def _active_artifact_or_none(
     args: argparse.Namespace, family: str, identity: str, bindings: dict[str, str]
 ) -> dict[str, object] | None:
+    policy = _plan_policy(family)
     path = canonical_artifact_path(
-        _plan_policy(family), _plan_anchors(args), identity=identity,
+        policy, _plan_anchors(args), identity=identity,
         state="active", bindings=bindings,
     )
+    _check_target_conflicts(CATALOG_PATH, policy, _plan_anchors(args), path, identity, bindings)
     if not path.is_file():
         return None
-    return _active_artifact(args, family, identity, bindings)
+    # Recover metadata without admitting malformed target content as authority.
+    # The replacement and recoverable identity/bindings are checked by the store.
+    try:
+        return read_yaml_mapping(path)
+    except ArtifactError:
+        return {}
 
 
 def _require_draft_plan(args: argparse.Namespace, plan_id: str) -> dict[str, object]:
@@ -425,15 +465,27 @@ def _mechanically_affected_tasks(
 
 def index_plans(args: argparse.Namespace) -> list[dict[str, object]]:
     rows = [
-        _canonical_row(args, family, row)
+        row
         for family in PLAN_FAMILIES
-        for row in _index_rows(args, family)
+        for row in _index_rows(args, family, presentation=True)
     ]
     return sorted(rows, key=lambda row: (str(row["artifact_type"]), str(row["id"])))
 
 
 def cmd_index_plans(args: argparse.Namespace) -> None:
-    print(f"indexed {len(index_plans(args))} plan artifacts")
+    results, errors = [], []
+    for family in PLAN_FAMILIES:
+        try:
+            results.append(rebuild_index(CATALOG_PATH, family, _plan_anchors(args)))
+        except ArtifactError as error:
+            errors.append(error)
+    if errors:
+        raise ArtifactError(
+            "Planning projection rebuild failed: " + "; ".join(map(str, errors)),
+            [item for error in errors for item in error.diagnostics],
+            total=sum(error.diagnostic_count for error in errors), index_effect="stale",
+        )
+    print(f"indexed {sum(result['count'] for result in results)} plan artifacts")
 
 
 def cmd_write_plan(args: argparse.Namespace) -> None:
@@ -455,14 +507,10 @@ def cmd_write_plan(args: argparse.Namespace) -> None:
     if existing is not None:
         if existing.get("status") == "superseded":
             raise SystemExit("Superseded root plan content cannot be changed")
-        if existing.get("source_spec_id") != source_spec_id:
-            raise SystemExit("Root plan update cannot change source specification binding")
         if args.status != "draft":
             raise SystemExit("Root plan content updates must return the plan to draft")
-        created = str(existing["date_created"])
+        created = _creation_date(existing, now_date())
     else:
-        if _identity_collision(args, "root-plan", pid, bindings=bindings):
-            raise SystemExit(f"Root plan canonical identity collision: {pid}")
         created = now_date()
     today = now_date()
     data = {
@@ -490,6 +538,8 @@ def cmd_write_plan(args: argparse.Namespace) -> None:
         CATALOG_PATH, "root-plan", _plan_anchors(args), data, state="active",
         bindings=bindings,
     )
+    if result["index_effect"] == "stale":
+        print(json.dumps(result, sort_keys=True), file=sys.stderr)
     print(rel(Path(str(result["path"])), args))
 
 
@@ -636,15 +686,13 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
     plan = _require_draft_plan(args, str(args.plan_id))
     bindings = {"plan": args.plan_id}
     existing = _active_artifact_or_none(args, "phase", args.phase_id, bindings)
-    if existing is None and _identity_collision(args, "phase", args.phase_id, bindings=bindings):
-        raise SystemExit(f"Phase canonical identity collision: {args.phase_id}")
     today = now_date()
     data = {
         **semantic,
         "artifact_type": "phase", "schema_version": 2,
         "id": args.phase_id, "plan_id": args.plan_id, "name": args.title,
         "status": PLANNED_STATUS,
-        "date_created": str(existing["date_created"]) if existing else today,
+        "date_created": _creation_date(existing or {}, today),
         "last_updated": today,
     }
     _validate_candidate("phase", data, bindings)
@@ -669,6 +717,8 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
         CATALOG_PATH, "phase", _plan_anchors(args), data, state="active",
         bindings=bindings,
     )
+    if result["index_effect"] == "stale":
+        print(json.dumps(result, sort_keys=True), file=sys.stderr)
     print(rel(Path(str(result["path"])), args))
 
 
@@ -686,15 +736,13 @@ def _prepare_task_write(
     existing = _active_artifact_or_none(args, "task", args.task_id, bindings)
     if require_existing and existing is None:
         raise SystemExit(f"Task amendment requires an existing active task: {args.task_id}")
-    if existing is None and _identity_collision(args, "task", args.task_id, bindings=bindings):
-        raise SystemExit(f"Task canonical identity collision: {args.task_id}")
     today = now_date()
     data = {
         **semantic,
         "artifact_type": "task", "schema_version": 3,
         "id": args.task_id, "plan_id": args.plan_id, "phase_id": args.phase_id,
         "name": args.title, "status": PLANNED_STATUS,
-        "date_created": str(existing["date_created"]) if existing else today,
+        "date_created": _creation_date(existing or {}, today),
         "last_updated": today,
     }
     _validate_candidate("task", data, bindings)
@@ -726,6 +774,8 @@ def cmd_write_task(args: argparse.Namespace) -> None:
         CATALOG_PATH, "task", _plan_anchors(args), data, state="active",
         bindings=bindings,
     )
+    if result["index_effect"] == "stale":
+        print(json.dumps(result, sort_keys=True), file=sys.stderr)
     print(rel(Path(str(result["path"])), args))
 
 
@@ -755,6 +805,7 @@ def cmd_amend_task(args: argparse.Namespace) -> None:
             f"Task amendment committed but focused brief refresh failed (partial effect): {error}"
         ) from error
     print(json.dumps({
+        **result,
         "path": rel(Path(str(result["path"])), args),
         "brief": rel(brief_path, args),
         "mechanically_affected_tasks": affected,

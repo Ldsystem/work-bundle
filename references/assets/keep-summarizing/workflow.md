@@ -111,18 +111,28 @@ Before writing any note, record the passing reason in the agent response or note
 
 ## Mandatory Persistence Gate
 
-Before any write, the agent must complete all checks below:
+Apply `ks-persistence-gate` before persistence. The responsible agent decides structural value, relevance, authority, conflict disposition, sensitivity meaning, lifecycle intent, and evidence sufficiency. Resolve related notes through neutral query surfaces and use the specific leaf perspective from `perspectives.md`. Explicit persistence or an approved workflow follow-up supplies intent within its authorized scope; ask only when a material decision remains unresolved.
 
-1. Project is resolved to `.work-bundle/knowledge/` or an explicitly selected external legacy source for migration/read-only intake.
-2. The selected ks skill allows writing.
-3. Target path is under `notes/<lifecycle-stage>/<leaf-perspective>/`, `open-questions/<lifecycle-stage>/<leaf-perspective>/`, or `context-packs/`.
-4. The perspective is a lifecycle-aware leaf path from `references/assets/keep-summarizing/perspectives.md`.
-5. The content excludes raw chat logs, secrets, credentials, personal data, temporary command output, and one-off debugging details.
-6. Lifecycle stage, status, source type, and evidence are valid and justified.
-7. Existing related notes were checked for duplicate or conflicting knowledge through approved neutral query surfaces rather than broad JSONL browsing.
-8. Required front matter is present before completion.
+### Declared record transaction
 
-If any check fails, do not write. Return `Waiting for your direction` with the failed check and concrete next options.
+For a note or accepted open question, author a YAML/JSON request containing exactly:
+
+```yaml
+effect: create | update | transition | supersede | deprecate | resolve-open-question
+kind: note | open-question
+path: <knowledge-relative canonical leaf path ending in .md>
+expected_digest: null # create only; otherwise sha256:<current canonical byte digest>
+record: <complete target front matter from the existing record contract>
+body: <exact agent-authored Markdown>
+```
+
+`record` contains the declared target status, content metadata, evidence, and explicit relationship fields. Notes retain `id`, `perspective`, and `created_at` on replacement. `update` retains status; note status changes use `transition`, `supersede`, or `deprecate`. Supersede/deprecate requests require `superseded_by` references to already-existing notes. Open questions start `open`; `resolve-open-question` declares `resolved_at`, `resolution_summary`, and an optional existing `resolved_by_note_id`. Use `update` to revise watchpoint content at the same status. A split creates a separately authorized new watchpoint. No request moves or mutates a second canonical record.
+
+Invoke `python3 scripts/ks.py mutate-knowledge --project <slug> --request-file <request.yaml>`; optional `--dry-run` returns the validated single-record preview without writes. Keep the request outside canonical knowledge until the command applies it. Do not serialize the agent's reasoning, structural-value analysis, conflict deliberation, sensitivity judgment, or acceptance into command fields.
+
+The command checks request shape, canonical identity/path/perspective, current state and transition, digest, collisions, declared evidence/links, and staged serialization. It validates a temporary sibling before atomic canonical replacement, then rebuilds projections. On a rejected request, `canonical_status: unchanged` reports no canonical write. Dry-run also leaves it unchanged with `projection_status: not-run`. On success, `canonical_status: replaced` is independent of `projection_status: rebuilt|stale`; a stale projection may return a nonzero exit after valid replacement. Preserve that canonical record, report the actual partial effect, and use the returned existing `rebuild_command`. Do not repeat a successful rebuild, patch generated indexes, or infer semantic acceptance from command success.
+
+Context packs retain their specialized `ks-build-context-pack` procedure; this transaction supports only notes and open questions. Mechanical request errors can be corrected from known authorized inputs. Unresolved meaning or authority returns `Waiting for your direction` with the specific missing decision, rather than triggering permission again for a settled approved change.
 
 ## Canonical Note Policy
 
@@ -205,7 +215,7 @@ Open questions are watch context:
 - They do not constrain implementation as facts.
 - They should not appear in reader-facing documents generated through `orch-create-document`.
 
-When current work matches an open question's `trigger_terms`, the agent should say which watchpoint matched and ask the user what to do next:
+When current work matches an open question's `trigger_terms`, say which watchpoint matched. Ask what to do only when resolution/update intent is unsettled; an explicit approved answer needs no repeated menu:
 
 ```text
 This touches open question `oq-architecture-step-constraints-model`: Step Constraints Model.
@@ -217,7 +227,7 @@ Choose one:
 4. Ignore it for now.
 ```
 
-Resolved open questions should keep their standalone note, change `status` to `resolved`, record a resolution summary, and optionally link to a durable note or ADR.
+Resolved open questions keep their standalone identity. Declare `status: resolved`, the resolution date/summary, and any existing durable-note link in the one-record transaction; do not patch the note or registry directly.
 
 ## Confirmation Strength
 
@@ -260,7 +270,7 @@ For save/update work, align execution with current ks skills:
 1. Use `ks-extract-valuable-points` to extract durable points **and** break them down by leaf perspectives.
 2. Use `ks-detect-structural-update` to decide save, draft-only, or do-not-save.
 3. If save is approved, redirect prepared targets to `ks-write-knowledge`.
-4. Rebuild indexes with `ks-maintain-indexes`.
+4. Consume the record transaction's index outcome; use `ks-maintain-indexes` for stale/missing projection recovery or an explicit regeneration request.
 
 For retrieval work, use `ks-what-is-helpful`:
 
@@ -461,7 +471,7 @@ indexes/open-question-registry.jsonl
 
 Indexes are disposable and must be reproducible from Markdown. Vector index artifacts and embedding manifests are derived status/output only; they are not canonical knowledge and do not decide authority, truth, conflict, or blockers.
 
-Completion is not valid after a note or open-question write until the relevant index command has been run and any reported issue has been surfaced.
+After a note or open-question transaction, report the canonical replacement and actual derived rebuild outcome separately. Consume a successful rebuild without repeating it. A failed projection remains stale/regenerable and must be surfaced with the existing rebuild command; it does not reverse the valid canonical record or issue a semantic verdict.
 
 ## V4 Boundary Validation
 

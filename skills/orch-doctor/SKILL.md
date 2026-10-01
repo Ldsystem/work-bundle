@@ -1,164 +1,54 @@
 ---
 name: orch-doctor
-description: 'Run read-only develop-rules and orchestrator workflow diagnostics.'
+description: 'Diagnose current orchestration contracts, skills, catalog, and public commands read-only. Reports structural findings and agent-assessed instruction conflicts; excludes applying repairs.'
 ---
 
-# orch-doctor
+# Orchestration Doctor
 
-## Scope
+Diagnose the maintained orchestration contracts and instruction boundaries read-only. Report concrete findings and repair owners without applying fixes.
 
-Run read-only develop-rules and orchestrator workflow diagnostics.
+## Workflow
 
-## Workflow Reference
+1. Run `python3 scripts/orch.py doctor` through the current public dispatcher. It checks maintained catalog policies, current/retired command registration, required contract references, self-check presence, and evaluation fixture shape. A structural failure is a bounded observation, not a product verdict.
+2. Inspect only the affected `skills/orch-*/SKILL.md`, `rules/orchestration/`, `references/assets/orchestration/workflow.md`, referenced contracts, and existing orchestration evaluation cases needed to explain the finding. Installation symlink/front-matter checks may use `python3 bin/work-bundle-skill validate` when installation is in diagnosis scope.
+3. As an agent, assess the actual instruction purpose and observable positive, negative, and adjacent request cases. Scripts check fields, references, and fixture structure; they do not select applicability, evaluate meaning, or declare semantic coverage.
+4. Report the exact conflicting instruction/contract and first repair owner. Do not invoke mutation, artifact writers, initialization, installation, or knowledge retrieval as part of doctor.
 
-Use `references/assets/orchestration/workflow.md` as the shared workflow authority.
+## Current boundary checks
 
-This skill is read-only and must not repair, rewrite, delete, archive, or generate orchestration artifacts.
-
-## Required Skill
-
-Use the builtin `dev-rules-doctor` skill first. Do not duplicate or replace its installation, registry, front matter, or symlink checks.
-
-Run:
-
-```text
-$DEV_RULES_HOME/scripts/dev-rules doctor
-```
-
-Explain any reported issue as a concrete repair action. If the command cannot run, report the blocker and do not continue as if installation health passed.
-
-## Orchestrator Audit Scope
-
-After `dev-rules-doctor` completes, perform a read-only orchestrator-specific audit across:
-
-- `skills/orch-*/SKILL.md`;
-- `references/assets/orchestration/workflow.md`;
-- `references/evals/orchestration/evals.json`;
-- helper commands in `scripts/orch.py`.
-
-Do not inspect `.work-bundle/knowledge/`. Do not inspect unrelated project files unless the user explicitly expands the diagnosis scope.
-
-## Consistency Checks
-
-Verify:
-
-1. every `orch-*` skill listed in the workflow reference has a matching `skills/orch-*/SKILL.md` file;
-2. every orch skill file has front matter with `name` and `description`;
-3. front matter `name` matches the skill directory name;
-4. workflow reference and evals describe the same orch skill set;
-5. helper commands mentioned by orch skills exist or the skill clearly states the fallback behavior;
-6. no orch skill instructs agents to write outside `.work-bundle/orchestration/` except source/test changes allowed by `orch-execute-plan`;
-7. no orch skill instructs agents to read `.work-bundle/knowledge/` directly when knowledge must go through `keep-summarizing`.
-8. every knowledge-using orch skill has a retrieval policy mapping or an explicit no-retrieval rule;
-9. `keep-summarizing` `what-is-helpful` documents gateway mode, `ks.py query`, and `authority | candidate | background | blocked` retrieval roles;
-10. keep-summarizing active docs do not advertise legacy note paths or `archived` note status;
-11. orchestration evals that require v3 role labels are backed by orch skill documentation;
-12. specification and plan contracts allocate `dev-semantic-convergence`, caller-specific lenses, compact `semantic_loop` evidence, and the body-level `Quality gate: verified|blocked` result where applicable;
-13. task contracts carry source IDs, methodology, provider-neutral capability, compiled-brief context, and acceptance-review fields;
-14. execution contracts preserve no-retrieval execution, compile bounded task/review packets, require mandatory subagent task ownership, and require fresh task validation plus acceptance review;
-15. the CodeGraph-first rule remains conditional on an indexed target and requires a recorded fallback reason when unavailable;
-16. active orchestration contracts do not depend on `HABITS.md` or the deprecated role-selection subsystem.
-17. executor-result contracts default to sparse YAML, require fields by applicability, reject forbidden executor advice fields, and do not require active orchestration handoffs;
-18. compact CodeGraph evidence retains `root`, `applicable`, `up_to_date`, and required fallback or blocker facts, including `no-index` and `sync-failed` where applicable;
-19. compact neutral ownership evidence uses `delegation_evidence` with only delegated state, subagent owner kind, agent/run identity, and provider-neutral mechanism;
-20. no active orch contract permits controller or single-agent task mutation;
-21. handoff and review contracts validate compact CodeGraph and neutral ownership outcomes by applicability rather than fixed prose sections.
-
-## Workflow Integrity Checks
-
-Verify:
-
-- `orch-create-specification`, `orch-create-implementation-plan`, `orch-create-handoff`, `orch-execute-plan`, `orch-review-plan`, and `orch-doctor` keep distinct responsibilities;
-- artifact creation modes do not execute implementation work;
-- `orch-execute-plan` requires subagent support before any implementation or repair mutation and fails closed when unavailable;
-- the orchestration thread schedules, compiles, coordinates, validates, reviews, and manages lifecycle without mutating task write scope;
-- planner-proven independent disjoint tasks dispatch before waiting while dependent, overlapping, and same-workspace tasks serialize;
-- executor-result handoffs require local task-fit evidence against the compiled brief and assigned task, with full lifecycle artifacts reserved for inconsistent context or source-contract escalation;
-- executor-result handoffs default to sparse YAML, omit non-applicable fields, reject forbidden executor advice fields, and require compact `codegraph:` and `delegation_evidence:` only when applicable;
-- active orchestration handoffs are unavailable and continuation uses active specs, plans, tasks, indexes, and executor-result handoffs;
-- `orch-execute-plan` does not archive specs, plans, or handoffs;
-- `orch-review-plan` is the only skill that archives completed specification, plan, and handoff artifacts;
-- `orch-review-plan` routes implementation rejection to task repair/re-review, plan defects to plan repair, and requirement/design/authority defects to specification repair;
-- `orch-doctor` stays read-only and reports repair instructions instead of applying them.
-
-## Bias Checks
-
-Look for one-sided or conflicting instructions that would bias execution toward a single path when alternatives are required:
-
-- mandatory subagent ownership must fail closed before mutation when no safe subagent path is available;
-- controller scheduling must not become controller implementation or repair;
-- review must not be treated as execution;
-- execution completion must not imply archival;
-- durable knowledge extraction must not be implied by executor-result handoffs;
-- CodeGraph sync evidence must not be optional when `.codegraph/` exists and graph-derived source work is in scope;
-- ownership wording must remain provider-neutral and must not depend on UI visibility.
-
-Deterministic doctor checks are limited to bounded file presence, JSON shape,
-required contract terms, and forbidden active dependencies. They must not judge
-semantic evidence sufficiency, user-purpose drift, materiality, task code quality,
-or whether semantic convergence needs another round.
-
-When bias is found, cite the conflicting artifact and the exact behavior risk.
+- Specification, planning, execution, factual results, advisory implementation review, controller acceptance, and final workflow audit retain distinct roles.
+- Registered artifact creation and malformed-active repair follow `orch-artifact-authoring`: semantic payload to the canonical family writer or focused amendment. Unrelated bad siblings may leave a projection stale without becoming a product verdict or direct-edit authorization.
+- Execution consumes the accepted task packet, bound repository/write scope, carried Truth Basis/rule obligations, and accepted predecessors. The controller owns scope, worker routing, repair, continuation, and acceptance.
+- Task review is required only when the task's `acceptance_review.required` is true; an omitted optional review is not a structural defect. Integrated implementation review and final audit keep their allocated scopes.
+- Knowledge-using authoring/review uses the approved gateway; accepted execution workers and execution-completion results consume carried authority without retrieval.
+- Current CodeGraph policy distinguishes indexed source work from `no-index`/`sync-failed` fallback and non-code instruction work.
+- Executor results contain factual scope/observations and no product verdict, repair advice, or knowledge-write authority. Designated delivery tasks alone publish phase handoffs; accepted snapshots surface asynchronously.
+- Delivery/snapshot observation reuse, cleanup, finalization, and historical immutability retain their existing identity-bound procedures. Read-only diagnosis never authorizes those effects.
 
 ## Output
 
 ```text
 Doctor result: passed|issues-found|blocked
-dev-rules doctor:
-- <passed or issue summary>
-Orchestrator consistency:
-- <passed or issue summary>
-Workflow integrity:
-- <passed or issue summary>
-Bias checks:
-- <passed or issue summary>
+Structural observations:
+- <actual command/check result>
+Agent instruction assessment:
+- <bounded finding or no demonstrated conflict>
 Recommended repairs:
-- <concrete repair action or none>
+- <exact owner and action or none>
 Files changed: none
 ```
 
-## Validation
-
-Confirm `dev-rules-doctor` was used first, diagnostics stayed read-only, orch skill coverage was checked, skill front matter was checked, semantic-convergence and compiled-context terms were present, sparse YAML and applicability terms were present, forbidden executor advice fields and active orchestration handoffs were rejected, compact CodeGraph and neutral subagent ownership terms were present, controller mutation and single-agent fallback regressions were absent, forbidden active dependencies were absent, workflow responsibilities remained distinct, fail-closed paths were present, archival remained isolated to `orch-review-plan`, and no files were changed.
+Report an unavailable command as unavailable; do not invent a pass or impose an obsolete `dev-rules-doctor`/`$DEV_RULES_HOME` prerequisite.
 
 ## Runtime Rules
 
 - `orch-orchestration-boundary`: `rules/orchestration/orch-orchestration-boundary.md`
 
-Central `AGENTS.md` owns rule discovery and loading. Load the runtime rule above when its indexed condition applies.
+Central `AGENTS.md` owns indexed rule discovery and exact-context reuse; consume accepted worker obligations where applicable.
 
-## Read-Only Constraints (skill-owned)
+## Self-check
 
-Diagnose develop-rules installation health and orchestrator workflow consistency without mutating project files, orchestration artifacts, or durable knowledge. Doctor collects independent findings and reports concrete repair actions.
-
-### Must
-
-- Run the builtin `dev-rules-doctor` skill first through `$DEV_RULES_HOME/scripts/dev-rules doctor`.
-- Stop and report the blocker if `dev-rules-doctor` cannot run; do not treat installation health as passed.
-- Perform a read-only orchestrator audit across orchestrator skill files, workflow reference, orchestration evals, and helper commands in `scripts/orch.py`.
-- Verify skill coverage, front matter consistency, workflow responsibility separation, retrieval-policy mappings, helper command availability or declared fallback behavior, and required execution fallback paths.
-- Verify `orch-execute-plan` compiles bounded task/review packets, requires mandatory subagent ownership for implementation and repair, fails closed before mutation when unavailable, requires fresh validation plus task acceptance, and does not archive artifacts during execution.
-- Verify `orch-review-plan` is the only skill that archives completed specification, plan, and handoff artifacts.
-- Verify knowledge-using orch skills route through `keep-summarizing` rather than direct `.work-bundle/knowledge/` browsing.
-- Verify executor-result contracts default to sparse YAML, require fields by applicability, omit non-applicable fields, reject forbidden executor advice fields, and do not require active orchestration handoffs.
-- Verify compact CodeGraph evidence includes `root`, `applicable`, `up_to_date`, and accepted fallback or blocker facts such as `no-index` and `sync-failed` where applicable.
-- Verify compact neutral ownership evidence uses `delegation_evidence` with minimum agent/run identity and mechanism, rejects UI/visibility fields, and does not permit controller-owned task execution.
-- Look for workflow bias such as false review independence, skipped handoffs, scheduler-owned code review, mandatory full lifecycle context for a valid brief, or handoff conclusions treated as persisted knowledge.
-- Report findings as concrete repair actions with cited conflicting artifacts when issues are found.
-- Emit doctor output with `Files changed: none`.
-
-### Must Not
-
-- Edit, repair, rewrite, delete, archive, or generate orchestration artifacts during doctor.
-- Mutate source files, project files, durable knowledge, indexes, or configuration as part of diagnosis.
-- Duplicate or replace `dev-rules-doctor` installation, registry, front matter, or symlink checks.
-- Inspect `.work-bundle/knowledge/` or unrelated project files unless the user explicitly expands diagnosis scope.
-- Apply fixes directly instead of reporting recommended repairs.
-
-## Scripts
-
-Use `scripts/orch.py` when deterministic helper behavior is needed.
-
-## Boundary
-
-Platform write boundary and durable-knowledge prohibition: follow `orch-orchestration-boundary` (`rules/orchestration/orch-orchestration-boundary.md`).
+- [ ] Actual structural results and agent semantic assessment are distinguished.
+- [ ] Diagnosis stayed in the requested instruction/contract scope and made no file changes.
+- [ ] Any review requirement follows current task allocation; scripts and reviewer advice issue no acceptance decision.
+- [ ] Findings cite the first owning instruction or contract, with no obsolete prerequisite or added workflow gate.

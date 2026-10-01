@@ -24,10 +24,10 @@ python3 scripts/wb.py add-workspace-member <workspace-root> --repository-id <id>
 python3 scripts/wb.py add-workspace-member <workspace-root> --repository-id <id> --remote <observed-url> --name <binding-name> --path <relative-path> --default-branch <branch> --accepted-proposal-id <proposal-id> --apply
 python3 scripts/wb.py create-rules --scope toolkit
 python3 scripts/wb.py create-rules --scope global
-python3 scripts/wb.py create-rules --scope project --workspace-root <workspace-root>
+python3 scripts/wb.py create-rules --scope project --project-root <workspace-root>
 python3 scripts/wb.py validate-rules --scope toolkit
 python3 scripts/wb.py validate-rules --scope global
-python3 scripts/wb.py validate-rules --scope project --workspace-root <workspace-root>
+python3 scripts/wb.py validate-rules --scope project --project-root <workspace-root>
 python3 scripts/wb.py inspect-skill skills/wb-credential-use/SKILL.md
 python3 scripts/wb.py validate-registry-entry <redacted-proposal.yaml>
 python3 scripts/wb.py create-rules rules

@@ -34,7 +34,7 @@ Verify:
 1. every ks skill in the workflow reference has a matching `skills/ks-*/SKILL.md` file;
 2. front matter `name` matches the skill directory name;
 3. Runtime Rules paths exist on disk;
-4. `## Rule Loading (mandatory)` follows `## Runtime Rules` on every citing skill;
+4. central `AGENTS.md` discovery/reuse and accepted-worker obligations are referenced without a local mandatory rereading algorithm;
 5. workflow body rule references are covered by Runtime Rules (OQ-001–003 pattern);
 6. Boundary sections use pointer-only format (OQ-004);
 7. no duplicated shared Must/Must Not prose in skill bodies for rule-owned policy;
@@ -53,22 +53,13 @@ Files changed: none
 
 ## Validation
 
-Confirm diagnostics stayed read-only, ks skill coverage was checked, skill front matter was checked, Runtime Rules paths were verified, Rule Loading sections were present, Boundary sections used pointer-only format, duplicated shared prose was absent, install symlinks resolved, and no files were changed.
+Confirm diagnostics stayed read-only, ks skill coverage and front matter were checked, procedural rule paths resolve, central discovery/reuse pointers replace local mandatory rereading, Boundary sections use pointer-only format, duplicated shared policy is absent, install symlinks resolve when applicable, and no files changed. Mechanical findings do not establish semantic trigger coverage.
 
 ## Runtime Rules
 
 - `ks-knowledge-boundary`: `rules/keep-summarizing/ks-knowledge-boundary.md`
 
-## Rule Loading (mandatory)
-
-Before substantive doctor work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive keep-summarizing doctor work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or directive summaries as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress doctor task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns indexed rule discovery and exact-context body reuse. Consume carried task-local obligations in an accepted worker packet; these Runtime Rules are procedural pointers, not a separate loading algorithm.
 
 ## Read-Only Constraints (skill-owned)
 
@@ -77,7 +68,7 @@ Diagnose keep-summarizing skill and rule boundary integrity without mutating pro
 ### Must
 
 - Perform a read-only audit across ks skill files, keep-summarizing rules, workflow reference, boundary tests, and skill validation output when available.
-- Verify skill coverage, front matter consistency, Runtime Rules path existence, Rule Loading presence, workflow-to-Runtime-Rules citation alignment, pointer-only Boundary format, absence of duplicated rule-owned prose, and install symlink resolution.
+- Verify skill coverage, front matter consistency, procedural rule path existence, central discovery/reuse pointers, workflow citation alignment, pointer-only Boundary format, absence of duplicate loading/shared-policy algorithms, and install symlink resolution when applicable.
 - Report findings as concrete repair actions with cited conflicting artifacts when issues are found.
 - Emit doctor output with `Files changed: none`.
 

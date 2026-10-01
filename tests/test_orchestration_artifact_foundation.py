@@ -439,16 +439,10 @@ def test_declared_index_refuses_duplicate_identity_across_states(tmp_path: Path)
     anchors = {"workspace_root": tmp_path}
     payload = {"id": "note-001", "parent_id": "parent-001", "value": "duplicate"}
     for state in ("active", "archived"):
-        write_artifact(
-            catalog_path,
-            "note",
-            anchors,
-            payload,
-            state=state,
-            bindings={"parent": "parent-001"},
-            rebuild=False,
-        )
-    with pytest.raises(SystemExit, match="duplicate identity"):
+        policy = family_policy(load_catalog(catalog_path), "note")
+        path = canonical_artifact_path(policy, anchors, identity="note-001", state=state)
+        atomic_write_bytes(path, serialize_artifact(policy, payload))
+    with pytest.raises(SystemExit, match="identity.duplicate"):
         rebuild_index(catalog_path, "note", anchors)
 
 
@@ -532,8 +526,7 @@ def test_write_reports_index_failure_as_partial_effect(tmp_path: Path) -> None:
     catalog_path = _temporary_catalog(tmp_path)
     index_path = tmp_path / "artifacts/index.jsonl"
     index_path.mkdir(parents=True)
-    with pytest.raises(SystemExit, match="(?i)artifact was written.*index rebuild failed"):
-        write_artifact(
+    result = write_artifact(
             catalog_path,
             "note",
             {"workspace_root": tmp_path},
@@ -541,7 +534,10 @@ def test_write_reports_index_failure_as_partial_effect(tmp_path: Path) -> None:
             state="active",
             bindings={"parent": "parent-001"},
             rebuild=True,
-        )
+    )
+    assert result["write_effect"] == "applied"
+    assert result["index_effect"] == "stale"
+    assert result["partial_effect"] is True
     assert (tmp_path / "artifacts/active/note-001.yaml").is_file()
 
 

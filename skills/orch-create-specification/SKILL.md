@@ -11,7 +11,7 @@ Create a complete, nonredundant authoritative specification under `.work-bundle/
 
 ## Workflow
 
-1. Create the specification shell before extended evidence gathering. Preserve `Initial User Purpose Evidence` and a provisional `Draft Requirement Breakdown` from the request and supplied artifacts.
+1. Create the specification shell through `scripts/orch.py write-spec` before extended evidence gathering. Author semantic front matter/body preserving `Initial User Purpose Evidence` and a provisional `Draft Requirement Breakdown` from the request and supplied artifacts; the optional `scaffold --family specification-v1` output is input/context, not a canonical file to copy into place.
 2. Run project metadata preflight. Record each target repository, expected and actual branch/commit, cleanliness trust, and CodeGraph index or `no-index` state. Repository blockers limit source inspection but do not stop bounded knowledge-gateway classification when it remains accessible.
 3. Through `ks-what-is-helpful`, discover with polarity-neutral and stage/perspective/status-neutral query anchors. `implementation_spec` is classification and output-grouping intent, not a discovery-stage lifecycle filter.
 4. Classify results as authority, candidate, background, or blocked. Only authority shapes requirements and only accepted authority enters front-matter `source_knowledge` as `path` plus the already-reconciled `constraint`; keep candidate, background, blocked, superseded, supporting, opposing, constraining, unresolved/open-question, obsolete, and irrelevant-with-reason evidence in Source Context when material. Downstream planning allocates `AUTH-NNN` aliases from the accepted list so execution does not require `.work-bundle/knowledge/` reads or expose knowledge paths.
@@ -34,6 +34,8 @@ Use `existing` for small/manual work, `preferred` for autonomous multi-task work
 Specification repair remains pre-execution authoring: plan and specification revisions do not consume post-execution review rounds. A residual specification created for forced closure preserves unresolved claims and clean source-baseline identities; it does not reopen the exhausted flow or authorize another review round.
 
 11. Materialize the current artifact through `scripts/orch.py write-spec`. Supply semantic front matter and the human-readable body; the specification family schema owns structural fields, canonical `.work-bundle/orchestration/spec/active/<id>.spec.md` location, parsing, atomic writes, and the derived index. Repair the active specification at the same canonical identity and return it to `draft`; allocate a new identity only for a genuinely distinct specification, never for an intermediate review revision. Do not select a filename or copy a legacy specification path.
+
+Apply `orch-artifact-authoring` for creation and malformed-active repair. Do not directly create or edit canonical YAML/Markdown under `.work-bundle/orchestration/`, including bootstrap repair. Supply corrected semantic input to `write-spec`; target-affecting conflicts remain prewrite refusals. If the target is applied with `index_effect: stale`, report the unrelated sibling diagnostics and repair each sibling through its own writer before the existing family index rebuild.
 
 ## Independent semantic review
 
@@ -94,6 +96,8 @@ Follow `orch-orchestration-boundary`.
 
 ## Self-check
 
+- [ ] Actual shell creation and active repair used `scripts/orch.py write-spec`, with no direct canonical file edit, including bootstrap repair.
+- [ ] Applied target and stale sibling projection outcomes are distinguished; sibling repairs use their canonical writers.
 - [ ] The specification preserves the user purpose and only accepted authority shapes requirements.
 - [ ] Requirements, constraints, interfaces, acceptance criteria, validation targets, conflicts, scope boundaries, and open questions are complete and mutually consistent.
 - [ ] The artifact uses the canonical `.spec.md` family path and contains no caller-authored structural override or filename.

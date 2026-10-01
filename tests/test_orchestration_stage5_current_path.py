@@ -497,7 +497,8 @@ def _candidate(root: Path, *, kind: str = "worktree") -> dict[str, object]:
         capture_output=True, text=True,
     ).stdout.strip()
     return execution_context.build_implementation_review_candidate(
-        source_root=root, kind=kind, base_commit=base, changed_paths=["src/current.py"]
+        source_root=root, kind=kind, changed_paths=["src/current.py"],
+        **({"candidate_commit": base} if kind == "commit" else {"base_commit": base}),
     )
 
 
@@ -2048,6 +2049,78 @@ def test_finalizer_reports_index_rebuild_partial_effects(
         for operation in payload["completed_operations"]
     )
     assert payload["failed_operation"]["operation"] == "index-rebuild"
+
+
+def test_commit_candidate_argument_identifies_commit_bytes_despite_worktree_changes(workspace: Path) -> None:
+    commit = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    path = workspace / "src/current.py"
+    committed_bytes = path.read_bytes()
+    path.write_text("different worktree bytes\n")
+    commit_target = execution_context.build_implementation_review_candidate(
+        source_root=workspace, kind="commit", candidate_commit=commit,
+        changed_paths=["src/current.py"],
+    )
+    assert commit_target["manifest"][0]["sha256"] == hashlib.sha256(committed_bytes).hexdigest()
+    current_target = execution_context.build_implementation_review_candidate(
+        source_root=workspace, kind="worktree", base_commit=commit,
+        changed_paths=["src/current.py"],
+    )
+    assert current_target["sha256"] != commit_target["sha256"]
+    path.unlink()
+    assert execution_context.build_implementation_review_candidate(
+        source_root=workspace, kind="commit", candidate_commit=commit,
+        changed_paths=["src/current.py"],
+    ) == commit_target
+    deleted_target = execution_context.build_implementation_review_candidate(
+        source_root=workspace, kind="worktree", base_commit=commit,
+        changed_paths=["src/current.py"],
+    )
+    assert deleted_target["manifest"] == [{"path": "src/current.py", "state": "deleted"}]
+    checked = review_runtime._candidate_validator().validate_current_candidate_and_independence(
+        workspace, commit_target, reviewer_agent_id="reviewer-1", implementor_agent_id="worker-1",
+    )
+    assert checked["target"] == commit_target
+
+
+@pytest.mark.parametrize("kind, inputs", [
+    ("commit", {"base_commit": "a" * 40}),
+    ("worktree", {"candidate_commit": "a" * 40}),
+    ("commit", {"candidate_commit": "a" * 40, "base_commit": "b" * 40}),
+    ("worktree", {"candidate_commit": "a" * 40, "base_commit": "b" * 40}),
+    ("commit", {}), ("worktree", {}),
+])
+def test_candidate_rejects_missing_or_wrong_mode_commit_argument(workspace: Path, kind: str, inputs: dict[str, str]) -> None:
+    with pytest.raises(SystemExit, match="requires only"):
+        execution_context.build_implementation_review_candidate(
+            source_root=workspace, kind=kind, changed_paths=["src/current.py"], **inputs,
+        )
+
+
+def test_commit_candidate_public_wrapper_preserves_persisted_target(workspace: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    commit = subprocess.run(["git", "-C", str(workspace), "rev-parse", "HEAD"],
+                            check=True, capture_output=True, text=True).stdout.strip()
+    (workspace / "src/current.py").write_text("different worktree bytes\n")
+    args = dispatcher.build_parser().parse_args([
+        "build-implementation-review-candidate", "--source-root", str(workspace),
+        "--kind", "commit", "--candidate-commit", commit, "--changed-path", "src/current.py",
+    ])
+    args.func(args)
+    target = json.loads(capsys.readouterr().out)
+    assert set(target) == {"kind", "base_commit", "manifest", "sha256"}
+    assert target["base_commit"] == commit
+    committed = subprocess.run(["git", "-C", str(workspace), "show", f"{commit}:src/current.py"],
+                               check=True, capture_output=True).stdout
+    assert target["manifest"][0]["sha256"] == hashlib.sha256(committed).hexdigest()
+    wrong = dispatcher.build_parser().parse_args([
+        "build-implementation-review-candidate", "--source-root", str(workspace),
+        "--kind", "commit", "--base-commit", commit,
+    ])
+    with pytest.raises(SystemExit, match="requires only candidate_commit"):
+        wrong.func(wrong)
+    assert capsys.readouterr().out == ""
 
 
 def test_worktree_candidate_identity_is_exact_and_does_not_require_clean_head(tmp_path: Path) -> None:

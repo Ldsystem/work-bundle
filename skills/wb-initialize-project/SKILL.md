@@ -16,7 +16,7 @@ Use the public `scripts/wb.py` entrypoint. It owns its maintained YAML and JSON 
 - Use `script/index.yaml` for workspace utility discovery in both repository modes. Discovery does not authorize execution.
 - Discover project rules from `$workspace_root/.work-bundle/rules/index.yaml`.
 - The root `rules/index.yaml` is legacy-only, so preserve it as a legacy artifact only during explicit migration.
-- Read enabled rule indexes first, then load every applicable rule body in full according to its metadata.
+- Follow central `AGENTS.md` index-first discovery and exact-context selected-body reuse; accepted workers consume carried task-local obligations.
 - Never open or ingest `credentials/credentials.yaml`; validate only its protected structure and permissions.
 
 ## Public operations

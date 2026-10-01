@@ -66,7 +66,9 @@ def validate_current_candidate_and_independence(
     kind = target.get("kind")
     if kind not in {"commit", "worktree"}:
         raise ReviewerWorkspaceError("WB_REVIEW_CURRENT_TARGET_INVALID")
-    base = _commit(root, target.get("base_commit"))
+    # The supported persisted target uses base_commit for both kinds; its
+    # commit-mode value identifies reviewed bytes, not a worktree baseline.
+    commit = _commit(root, target.get("base_commit"))
     raw_manifest = target.get("manifest")
     if not isinstance(raw_manifest, list):
         raise ReviewerWorkspaceError("WB_REVIEW_CURRENT_TARGET_INVALID")
@@ -86,11 +88,13 @@ def validate_current_candidate_and_independence(
             raise ReviewerWorkspaceError("WB_REVIEW_CURRENT_TARGET_INVALID")
         name = relative.as_posix()
         if kind == "commit":
+            candidate_commit = commit
             if state != "present":
                 raise ReviewerWorkspaceError("WB_REVIEW_CURRENT_TARGET_INVALID")
-            content = _git(root, "show", f"{base}:{name}", binary=True)
+            content = _git(root, "show", f"{candidate_commit}:{name}", binary=True)
             assert isinstance(content, bytes)
         else:
+            base_commit = commit
             worktree_path = root / relative
             path = worktree_path.resolve(strict=False)
             if root not in path.parents or worktree_path.is_symlink():
@@ -105,7 +109,7 @@ def validate_current_candidate_and_independence(
                 if state != "deleted":
                     raise ReviewerWorkspaceError("WB_REVIEW_CURRENT_TARGET_INVALID")
                 base_type = subprocess.run(
-                    ["git", "-C", str(root), "cat-file", "-t", f"{base}:{name}"],
+                    ["git", "-C", str(root), "cat-file", "-t", f"{base_commit}:{name}"],
                     capture_output=True,
                     text=True,
                     check=False,
@@ -131,7 +135,7 @@ def validate_current_candidate_and_independence(
     if reviewer_agent_id == implementor_agent_id:
         raise ReviewerWorkspaceError("WB_REVIEW_CURRENT_REVIEWER_NOT_INDEPENDENT")
     return {
-        "target": {"kind": kind, "sha256": aggregate, "base_commit": base, "manifest": manifest},
+        "target": {"kind": kind, "sha256": aggregate, "base_commit": commit, "manifest": manifest},
         "reviewer": {"agent_id": reviewer_agent_id},
         "implementor_agent_id": implementor_agent_id,
     }

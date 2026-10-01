@@ -107,16 +107,7 @@ Deliver the ranked shortlist defined in **Retrieval Workflow (skill-owned)**.
 - `ks-note-state-authority`: `rules/keep-summarizing/ks-note-state-authority.md`
 - `ks-sensitivity-filter`: `rules/keep-summarizing/ks-sensitivity-filter.md`
 
-## Rule Loading (mandatory)
-
-Before substantive keep-summarizing work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive knowledge work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or summarized rule text as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns indexed rule discovery and exact-context body reuse. Consume carried task-local obligations in an accepted worker packet; these Runtime Rules are procedural pointers, not a separate loading algorithm.
 
 ## Scripts
 

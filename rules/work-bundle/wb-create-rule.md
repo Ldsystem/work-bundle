@@ -28,7 +28,8 @@ Summarize the enforceable contract for creating, migrating, and validating work-
 - Keep rules under 500 lines and self-contained in the rule body.
 - Run `python3 scripts/wb.py create-rules --scope <toolkit|global|project>` to sync the index after changes, or use explicit-root compatibility mode when required.
 - Run `python3 scripts/wb.py validate-rules --scope <toolkit|global|project>` for mechanical checks, or use explicit-root compatibility mode when required.
-- Enforce the toolkit write boundary: do not mutate `$work_bundle_root/rules/**` unless `$workspace_root == $work_bundle_root`.
+- Permit toolkit-source rule edits only in the verified selected toolkit repository checkout and exact authorized write scope. A registered toolkit source member or its bound managed worktree may own these edits even when its containing workspace differs from the installed `$work_bundle_root`.
+- Resolve the command's actual target before sync: scoped `toolkit` targets the bootstrap-installed toolkit; use the existing explicit `<selected-toolkit-source-checkout>/rules` route for an authorized isolated source checkout. Project-scope rules remain at the containing workspace, not a member root.
 - Never pass area subdirectories such as `rules/work-bundle/` to `create-rules` or `validate-rules`.
 - Inspect `applies_when` semantically for concrete, actionable conditions before registration.
 - Apply the Trigger Clarity Principle to rule triggers and rule prose: name the user-visible or workflow-visible signal before describing rule lookup, selection, applicability, or application.
@@ -40,7 +41,7 @@ Summarize the enforceable contract for creating, migrating, and validating work-
 - Do not use legacy front matter fields: `scope`, `type`, `blocks`, `severity`, `status`, or `source_authority`.
 - Do not create `.mdc` rule files or a `global/` area directory.
 - Do not run `create-rules` or `validate-rules` against scope subdirectories; that creates incorrect nested indexes.
-- Do not create, edit, delete, migrate, or index toolkit rules from a non-toolkit project root.
+- Do not create, edit, delete, migrate, or index an unrelated installed toolkit from an application workspace or infer toolkit-source mutation authority from path equality alone.
 - Do not rely on scripts to judge `applies_when` meaning; scripts check presence and format only.
 - Do not register documentation-only notes as enforceable rules.
 - Do not use `before rule selection`, `when selecting rules`, `when needed`, `when relevant`, or similar phrasing as the only trigger for rule consideration.

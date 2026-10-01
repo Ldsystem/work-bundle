@@ -1,48 +1,8 @@
 from core import *
-from indexes import cmd_index
+from transactions import cmd_mutate_knowledge
 
 def cmd_write_note(args: argparse.Namespace) -> None:
-    validate_leaf_perspective(args.perspective)
-    root = project_dir(args.project, args)
-    config = project_config(root)
-    content = Path(args.content_file).read_text(encoding="utf-8")
-    title_slug = slugify(args.title)
-    path = root / "notes" / args.perspective / f"{title_slug}.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not content.startswith("---\n"):
-        nid = note_id(args.perspective, args.title)
-        lifecycle_stage = args.lifecycle_stage or lifecycle_from_perspective(args.perspective)
-        source_type = args.source_type or "discussion"
-        content = f"""---
-id: {nid}
-title: {args.title}
-lifecycle_stage: {lifecycle_stage}
-perspective: {args.perspective}
-status: draft
-source_type: {source_type}
-summary: ""
-owner: keep-summarizing
-created_at: {now_date()}
-updated_at: {now_date()}
-visibility: private
-sensitivity: {config["default_sensitivity"]}
-tags: []
-evidence: []
-related_notes: []
-supersedes: []
-superseded_by: []
-embedding:
-  include: true
-  chunk_strategy: heading
----
-
-# {args.title}
-
-{content.rstrip()}
-"""
-    path.write_text(content.rstrip() + "\n", encoding="utf-8")
-    cmd_index(args)
-    print(str(path))
+    cmd_mutate_knowledge(args, kind="note")
 
 
 
@@ -119,4 +79,3 @@ def cmd_breakdown_design(args: argparse.Namespace) -> None:
         print(f"| {index} | {heading} | {perspective} | {escaped_title} | {target} | {excerpt} |")
     print("")
     print(f"Coverage: {len(points)} source points mapped to atomic note/update candidates.")
-

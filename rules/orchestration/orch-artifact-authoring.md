@@ -20,7 +20,10 @@ Keep orchestration artifacts human-readable, contract-compliant, and executable 
 - Put the earliest ordinary falsification task before broad simplification when a consequential assumption exists; do not create a separate checkpoint lifecycle.
 
 - Load only the directive contract and template references required for the artifact being created or validated.
-- For a family registered in the maintained artifact-family catalog, supply the semantic payload to the shared artifact store and let that structural owner select the immutable schema, validate identity and declared bindings, resolve the canonical anchor/path, serialize, mutate atomically, apply location-owned lifecycle mechanics, and project any derived index. Structural success is evidence only; the responsible agent still owns semantic correctness, sufficiency, qualification, review, and acceptance.
+- For a family registered in the maintained artifact-family catalog, supply the semantic payload to its canonical `scripts/orch.py write-*` or focused amendment command. The shared structural owner selects the immutable schema, validates identity and declared bindings, resolves the canonical anchor/path, serializes, mutates atomically, applies location-owned lifecycle mechanics, and projects any derived index. Structural success is evidence only; the responsible agent still owns semantic correctness, sufficiency, qualification, review, and acceptance.
+- Use `write-spec`, `write-plan`, `write-phase`, `write-task`, `write-executor-result`, `write-implementation-review`, `write-accepted-task-result`, and `write-final-workflow-review` for their respective current families; use `amend-task` for a bounded task amendment. A scaffold provides editable input and read-only context, never a canonical artifact to copy into place.
+- Repair a malformed active target through its own writer using corrected semantic input, including first-shell or bootstrap repair. Target identity, canonical-path/lifecycle, required-binding, and current-state conflicts still reject mutation before writing.
+- Consume `write_effect` and `index_effect` separately. If a valid target was applied but unrelated invalid siblings leave `index_effect: stale`, report `index_diagnostics` paths/codes and any diagnostic count. Repair each sibling through its own family writer, then rerun the existing family index command; stale projection is neither a product verdict nor direct-edit authority.
 - Treat registration as an owning-stage cutover. Until a specialized artifact family has a real immutable schema and complete structural policy, keep its current owner and reject it through the shared store; do not add permissive placeholder entries, fallback identities, sidecars, or compatibility authority.
 - Search directories only when retrieval, index rebuilding, navigation, or diagnostics is the declared operation. Treat every hit as a candidate until maintained parsing, schema validation, and canonical-location checks succeed; neither a hit nor a passing structural check establishes semantic authority.
 - Use the registered representation for each current family: human-readable Markdown/front matter for specifications and schema-owned YAML for root plans, phases, tasks, executor results, implementation reviews, accepted task results, and final workflow reviews. Do not create Markdown plan/phase/task compatibility copies or other Markdown compatibility copies for YAML families.
@@ -59,6 +62,8 @@ Contract loading by artifact type:
 
 ## Must Not
 
+- Directly create or edit registered canonical YAML/Markdown artifacts under `.work-bundle/orchestration/`, including bootstrap repair. This writer discipline leaves genuinely unregistered specialized families with their current owner.
+- Use provenance receipts, write markers, filesystem policing, or a post-write semantic gate to prove writer usage.
 - Inline unrelated long contracts, examples, or reference corpora into orchestration artifacts.
 - Repeat full requirement prose in plans, phases, or tasks when a spec-ID reference suffices.
 - Omit source files, target files, target symbols, validation rules, or completion criteria from executable tasks.
@@ -83,6 +88,7 @@ Contract loading by artifact type:
 - Confirm task files are self-contained for execution from the related spec plus their own instructions.
 - Confirm artifact sections satisfy the loaded contract or explicitly add missing required sections named by the directive.
 - Confirm registered families use the shared structural owner, unregistered families have not gained placeholder authority, and any search is both declared and followed by canonical structural validation.
+- Self-check that actual creation or active repair used the canonical family writer or focused amendment, and that any applied target/stale sibling projection was reported separately with writer-based repair guidance.
 - Confirm plan semantic qualification came from the controller/orchestrator's assessment of distinct-agent advice on specification coverage, ownership, dependencies, validation, authority, scope, and executability; neither the reviewer recommendation nor structural checks and supporting ceremony issued the qualification automatically.
 - Confirm repaired artifacts retained their canonical identities, the complete affected authority closure—not merely its textual delta—received independent review, unaffected qualified regions were preserved, and the controller/orchestrator assessed that advice before qualification.
 

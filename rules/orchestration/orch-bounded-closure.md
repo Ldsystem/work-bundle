@@ -1,8 +1,8 @@
 ---
 id: orch-bounded-closure
 applies_when:
-  - orchestration admission evaluates active workspace blockers or a scoped implementation exemption
-  - orchestration dispatch or reconciliation is blocked by unresolved workspace blocker evidence
+  - ordinary orchestration artifact mutation, dispatch, or reconciliation evaluates current workspace admission and blocker authority
+  - orchestration admission evaluates an active workspace blocker or exact scoped implementation exemption
 enforcement: must
 load: conditional
 requires: []

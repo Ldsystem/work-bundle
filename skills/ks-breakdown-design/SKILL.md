@@ -1,6 +1,6 @@
 ---
 name: ks-breakdown-design
-description: 'Decompose design files into perspective-aligned durable knowledge notes.'
+description: 'Decompose a supplied design file into perspective-aligned note candidates in plan-only, draft-notes, or authorized apply-updates mode. Excludes existing-note lookup and reader-facing reports.'
 ---
 
 # ks-breakdown-design
@@ -95,16 +95,7 @@ Apply loaded Runtime Rules per **Workflow** pointer list.
 - `ks-index-maintenance`: `rules/keep-summarizing/ks-index-maintenance.md`
 - `ks-off-switches`: `rules/keep-summarizing/ks-off-switches.md`
 
-## Rule Loading (mandatory)
-
-Before substantive keep-summarizing work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive knowledge work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or summarized rule text as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns indexed rule discovery and exact-context body reuse. Consume carried task-local obligations in an accepted worker packet; these Runtime Rules are procedural pointers, not a separate loading algorithm.
 
 ## Coverage Constraints (skill-owned)
 
@@ -130,8 +121,8 @@ If a cited rule path is missing or unreadable, stop and report a rule-load block
 
 ### Persistence handoff
 
-- When applying updates: use `ks-write-knowledge` for notes and `ks-track-open-questions` for confirmed open questions; then `ks-maintain-indexes`.
-- If blocking questions cannot be asked mid-work, persist safe points, write uncertain points as `draft`, rebuild indexes, then ask remaining questions.
+- When applying updates: use `ks-write-knowledge` for notes and `ks-track-open-questions` for confirmed open questions. Consume each single-record transaction's projection outcome; invoke `ks-maintain-indexes` only for requested or unresolved projection recovery.
+- If blocking questions cannot be asked mid-work, apply authorized safe points and eligible draft effects through those record commands, report their actual index outcomes, then ask remaining questions.
 
 ## Scripts
 

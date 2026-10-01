@@ -15,6 +15,8 @@ Compile only verified authoritative scope. Do not allocate `EXC-*` proposal IDs 
 
 Author semantic YAML for the `root-plan`, `phase`, and `task` families. Invoke `write-plan`, `write-phase`, and `write-task`; the shared store injects family/schema identity, IDs, qualification/status, dates, and parent bindings and selects `.plan.yaml`, `.phase.yaml`, and `.task.yaml` canonical locations. Do not choose filenames, embed structural overrides, infer parents from directories, or create Markdown compatibility copies.
 
+Use `scripts/orch.py write-plan`, `scripts/orch.py write-phase`, and `scripts/orch.py write-task`, or focused `scripts/orch.py amend-task` for the bounded repair. Apply `orch-artifact-authoring`: do not directly create or edit canonical YAML/Markdown under `.work-bundle/orchestration/`, including bootstrap repair. A malformed active target is repaired through its own writer; target-affecting conflicts still reject before mutation. Report an applied target with `index_effect: stale` separately, repair each diagnosed unrelated sibling through its family writer, then use the existing family index command.
+
 The root plan binds `source_spec_id`. Every phase binds `plan_id`. Every task binds both `plan_id` and `phase_id`. Use one explicit default phase when no actual barrier or convergence split is needed.
 
 ## Planning workflow
@@ -124,6 +126,8 @@ Follow `orch-orchestration-boundary`. Do not read durable knowledge directly dur
 
 Before returning a plan candidate, confirm from the stored YAML and compiler output that:
 
+- [ ] Creation and active repair used the actual canonical `write-plan`/`write-phase`/`write-task` or focused `amend-task` commands, never a direct canonical file edit or bootstrap patch.
+- [ ] Target-affecting refusals and applied-target/stale-sibling projections are reported accurately with writer-based sibling repair.
 - [ ] Every included burden traces to a current named obligation or improves its capable local oracle, while every necessary component and step remains included.
 - [ ] Each optional boundary is stable and practical, and its coordination cost does not exceed its current benefit.
 - [ ] The cheapest capable early probe precedes costly compile, startup, or integration work when it can falsify a consequential assumption.

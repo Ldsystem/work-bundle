@@ -37,6 +37,7 @@ from artifact_store import (
     read_artifact,
     read_yaml_mapping,
     rebuild_index,
+    validate_artifact,
 )
 from repository_preflight import capture_repository_evidence
 from task_ownership import (
@@ -1266,22 +1267,28 @@ def _task_context(
     root = Path(str(explicit_root)).resolve() if explicit_root else resolve_workspace_root(args)
     task_root = root / ".work-bundle/orchestration/plan"
     task_path = _input_path(args.task, root, task_root, "task")
-    stored_task_data, _ = _read_structured(task_path)
-    task_id = _artifact_id(stored_task_data, "id", task_path)
-    plan_id = _artifact_id(stored_task_data, "plan_id", task_path)
-    phase_id = _artifact_id(stored_task_data, "phase_id", task_path)
+    task_data = dict(task_override) if task_override is not None else _read_structured(task_path)[0]
+    policy = family_policy(load_catalog(PLAN_CATALOG), "task")
+    if task_override is not None:
+        # A staged amendment is the content being compiled. Malformed editable
+        # target bytes are not authority for that candidate's semantic payload.
+        validate_artifact(policy, task_data, catalog_path=PLAN_CATALOG, derive_bindings=True)
+    task_id = _artifact_id(task_data, "id", task_path)
+    plan_id = _artifact_id(task_data, "plan_id", task_path)
+    phase_id = _artifact_id(task_data, "phase_id", task_path)
     plan_path, plan_data = _find_plan(root, plan_id)
     state = plan_path.relative_to(task_root).parts[0]
-    task_result = read_artifact(
-        PLAN_CATALOG, "task", {"workspace_root": root}, identity=task_id,
+    expected = canonical_artifact_path(
+        policy, {"workspace_root": root}, identity=task_id,
         state=state, bindings={"plan": plan_id, "phase": phase_id},
     )
-    if Path(str(task_result["path"])).resolve() != task_path.resolve():
+    if expected.resolve() != task_path.resolve():
         raise SystemExit(f"Task is not at its canonical location: {task_path}")
-    task_data = dict(task_override) if task_override is not None else stored_task_data
-    for field, expected in (("id", task_id), ("plan_id", plan_id), ("phase_id", phase_id)):
-        if str(task_data.get(field) or "") != expected:
-            raise SystemExit(f"Task candidate changes canonical {field}: {task_path}")
+    if task_override is None:
+        read_artifact(
+            PLAN_CATALOG, "task", {"workspace_root": root}, identity=task_id,
+            state=state, bindings={"plan": plan_id, "phase": phase_id},
+        )
     phase_record = read_artifact(
         PLAN_CATALOG, "phase", {"workspace_root": root}, identity=phase_id,
         state=state, bindings={"plan": plan_id},
@@ -2053,26 +2060,39 @@ def build_implementation_review_candidate(
     *,
     source_root: Path,
     kind: str,
-    base_commit: str,
     changed_paths: Iterable[str],
+    candidate_commit: str | None = None,
+    base_commit: str | None = None,
 ) -> dict[str, Any]:
     """Freeze an exact commit or worktree manifest without requiring clean HEAD.
 
     This function validates identity and scope facts only. It does not judge the
     implementation, its tests, or its acceptability.
+
+    Commit mode reads candidate_commit; worktree mode uses base_commit to admit
+    deleted paths. The persisted target.base_commit contract carries that commit
+    in either mode for supported active review records.
     """
 
     root = source_root.expanduser().resolve()
     if kind not in {"commit", "worktree"}:
         raise SystemExit(f"Unsupported implementation candidate kind: {kind}")
-    if re.fullmatch(r"[0-9a-f]{40}", base_commit) is None:
-        raise SystemExit("Implementation candidate requires a 40-character base commit")
+    if kind == "commit":
+        if candidate_commit is None or base_commit is not None:
+            raise SystemExit("Commit candidate requires only candidate_commit")
+        commit, label = candidate_commit, "candidate commit"
+    else:
+        if base_commit is None or candidate_commit is not None:
+            raise SystemExit("Worktree candidate requires only base_commit")
+        commit, label = base_commit, "base commit"
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+        raise SystemExit(f"Implementation candidate requires a 40-character {label}")
     resolved = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", f"{base_commit}^{{commit}}"],
+        ["git", "-C", str(root), "rev-parse", f"{commit}^{{commit}}"],
         capture_output=True, text=True, check=False,
     )
-    if resolved.returncode or resolved.stdout.strip() != base_commit:
-        raise SystemExit("Implementation candidate base commit is not a canonical Git commit")
+    if resolved.returncode or resolved.stdout.strip() != commit:
+        raise SystemExit(f"Implementation candidate {label} is not a canonical Git commit")
     normalized: list[str] = []
     for raw in changed_paths:
         path = Path(str(raw))
@@ -2086,7 +2106,7 @@ def build_implementation_review_candidate(
     for relative in sorted(normalized):
         if kind == "commit":
             observed = subprocess.run(
-                ["git", "-C", str(root), "show", f"{base_commit}:{relative}"],
+                ["git", "-C", str(root), "show", f"{candidate_commit}:{relative}"],
                 capture_output=True, check=False,
             )
             if observed.returncode:
@@ -2132,7 +2152,7 @@ def build_implementation_review_candidate(
     ).encode("utf-8")
     return {
         "kind": kind,
-        "base_commit": base_commit,
+        "base_commit": commit,
         "manifest": manifest,
         "sha256": hashlib.sha256(manifest_bytes).hexdigest(),
     }
@@ -2143,7 +2163,8 @@ def cmd_build_implementation_review_candidate(args: argparse.Namespace) -> None:
     candidate = build_implementation_review_candidate(
         source_root=source_root,
         kind=str(args.kind),
-        base_commit=str(args.base_commit),
+        candidate_commit=args.candidate_commit,
+        base_commit=args.base_commit,
         changed_paths=getattr(args, "changed_path", []),
     )
     print(json.dumps(candidate, ensure_ascii=False, sort_keys=True))

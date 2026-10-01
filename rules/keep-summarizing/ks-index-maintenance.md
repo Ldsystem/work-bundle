@@ -1,8 +1,9 @@
 ---
 id: ks-index-maintenance
 applies_when:
-  - durable notes accepted context packs or open questions change
-  - completion follows a note or open-question write
+  - managed durable notes, accepted context packs, or open questions change
+  - completion follows a canonical note or open-question mutation
+  - a user requests regeneration of stale, missing, or deleted derived knowledge indexes
 enforcement: must
 load: conditional
 requires: []
@@ -29,14 +30,16 @@ Define the completion gate for derived keep-summarizing indexes. Indexed artifac
   - `indexes/open-question-registry.jsonl`
 - report vector index status as derived/disposable output (`rebuilt`, `unavailable`, `skipped`, or `failed`) before claiming completion
 - surface any reported rebuild issue before claiming completion
+- Consume a successful mutation command's rebuild outcome instead of rerunning the same index work. If projection rebuilding fails after canonical replacement, preserve the valid Markdown record, report the projection as stale/regenerable, and use the returned existing rebuild command.
 
 ## Must Not
 
 - hand-edit generated indexes
-- leave stale indexes after durable note accepted context-pack or open-question changes
+- hide stale indexes after durable note accepted context-pack or open-question changes
 - claim completion after a note or open-question write before the relevant index rebuild has run
 - treat disposable index outputs as canonical knowledge instead of Markdown-derived artifacts
 - treat vector similarity, embedding artifacts, or mechanical ranks as truth, authority, or conflict resolution
+- roll back valid canonical content, patch generated indexes, or invalidate its semantic meaning merely because projection rebuilding failed
 
 ## Validation
 
@@ -48,4 +51,4 @@ Define the completion gate for derived keep-summarizing indexes. Indexed artifac
 
 ## On Violation
 
-Stop completion, report which derived index is stale missing or manually altered, rebuild the relevant indexes from Markdown, and only then resume completion reporting.
+Report which derived index is stale missing or manually altered and regenerate it from canonical Markdown through the existing rebuild command. Report an already applied canonical replacement separately from unresolved projection recovery; do not claim the index is current while rebuilding remains unsuccessful.
