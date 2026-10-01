@@ -42,12 +42,6 @@ def runtime_rule_paths(text: str) -> list[str]:
     return [path for path in paths if "*" not in path and "?" not in path]
 
 
-def section_line_index(text: str, heading: str) -> int:
-    match = re.search(rf"^{re.escape(heading)}$", text, re.MULTILINE)
-    assert match is not None, f"missing section {heading}"
-    return match.start()
-
-
 def test_expected_ks_skills_without_meta_skill() -> None:
     names = {path.parent.name for path in ks_skill_paths()}
     assert names == EXPECTED_KS_SKILLS
@@ -61,15 +55,16 @@ def test_no_directive_paths_or_directive_reference_sections() -> None:
         assert "## Directive Reference" not in text, path.name
 
 
-def test_all_ks_skills_have_rule_loading_after_runtime_rules() -> None:
+def test_all_ks_skills_point_to_central_discovery_without_local_loading_policy() -> None:
     for path in ks_skill_paths():
         text = skill_text(path)
         if "## Runtime Rules" not in text:
             continue
-        assert "## Rule Loading (mandatory)" in text, path.name
-        runtime_idx = section_line_index(text, "## Runtime Rules")
-        loading_idx = section_line_index(text, "## Rule Loading (mandatory)")
-        assert loading_idx > runtime_idx, path.parent.name
+        runtime = text.split("## Runtime Rules", 1)[1]
+        assert "## Rule Loading (mandatory)" not in text, path.parent.name
+        assert "Central `AGENTS.md` owns indexed rule discovery" in runtime, path.parent.name
+        assert "carried task-local obligations" in runtime, path.parent.name
+        assert "not a separate loading algorithm" in runtime, path.parent.name
 
 
 def test_runtime_rules_paths_exist() -> None:

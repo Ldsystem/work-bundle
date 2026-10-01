@@ -8,6 +8,7 @@ wording); agents own that via ``wb-create-rule`` skill instructions.
 
 from __future__ import annotations
 
+import yaml
 import importlib.util as _importlib_util
 from pathlib import Path as _Path
 
@@ -39,6 +40,63 @@ _DEFAULT_FORBIDDEN_PATH_PREFIXES = ["global"]
 _RULE_STORE_SCOPES = {"toolkit", "global", "project"}
 
 _VALIDATION_MANIFEST_CACHE: dict[str, object] | None = None
+INDEX_FIELDS = ("id", "path", "applies_when", "enforcement", "load", "requires")
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    pass
+
+
+def _unique_mapping(loader, node, deep=False):
+    result = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if not isinstance(key, str):
+            raise ValueError("yaml_mapping_key_must_be_string")
+        if key in result:
+            raise ValueError(f"duplicate_yaml_key:{key}")
+        result[key] = loader.construct_object(value_node, deep=deep)
+    return result
+
+
+_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
+
+
+def load_rule_yaml(text: str) -> object:
+    try:
+        return yaml.load(text, Loader=_UniqueKeyLoader)
+    except yaml.YAMLError as exc:
+        raise ValueError("invalid_yaml") from exc
+
+
+def metadata_shape_failures(front: dict[str, object], *, indexed: bool = False) -> list[str]:
+    failures = []
+    fields = INDEX_FIELDS if indexed else _DEFAULT_REQUIRED_FRONT_MATTER
+    for field in fields:
+        if field not in front:
+            failures.append(f"missing_field:{field}")
+    for field in ("id", "path") if indexed else ("id",):
+        if not isinstance(front.get(field), str) or not front[field].strip():
+            failures.append(f"invalid_field:{field}")
+    for field in ("applies_when", "requires"):
+        value = front.get(field)
+        if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+            failures.append(f"invalid_field:{field}")
+        elif len(value) != len(set(value)):
+            failures.append(f"duplicate_items:{field}")
+    if front.get("applies_when") == []:
+        failures.append("empty_applies_when")
+    if front.get("enforcement") not in ("must", "should"):
+        failures.append("invalid_enforcement")
+    if front.get("load") not in ("always", "conditional", "manual"):
+        failures.append("invalid_load")
+    for field in prohibited_rule_fields():
+        if field in front:
+            failures.append(f"prohibited_field:{field}")
+    if indexed:
+        for field in set(front) - set(INDEX_FIELDS) - prohibited_rule_fields():
+            failures.append(f"unknown_field:{field}")
+    return failures
 
 
 def _validation_manifest_path() -> Path | None:
@@ -261,49 +319,63 @@ def rule_store_sources(project_root: Path | None = None) -> list[dict[str, objec
 
 
 def _parse_rule_index(index_path: Path, store_scope: str, rules_root: Path) -> list[dict[str, object]]:
-    entries: list[dict[str, object]] = []
-    current: dict[str, object] | None = None
-    current_list: str | None = None
-    for raw in read(index_path).splitlines():
-        stripped = raw.strip()
-        if not stripped or stripped == "rules:":
-            continue
-        if stripped.startswith("- id:"):
-            if current:
-                entries.append(current)
-            current = {
-                "id": stripped.split(":", 1)[1].strip(),
-                "store_scope": store_scope,
-                "index_path": str(index_path),
-                "rules_root": str(rules_root),
-                "requires": [],
-                "applies_when": [],
-            }
-            current_list = None
-            continue
-        if current is None:
-            continue
-        if stripped in {"applies_when:", "requires:"}:
-            current_list = stripped[:-1]
-            continue
-        if stripped.startswith("- ") and current_list:
-            current.setdefault(current_list, []).append(stripped[2:].strip())
-            continue
-        if ":" in stripped:
-            key, value = stripped.split(":", 1)
-            normalized_key = key.strip()
-            normalized_value = value.strip()
-            if normalized_key in {"applies_when", "requires"} and normalized_value == "[]":
-                current[normalized_key] = []
-            else:
-                current[normalized_key] = normalized_value
-            current_list = None
-    if current:
-        entries.append(current)
-    for entry in entries:
-        path = str(entry.get("path", "")).strip()
-        entry["body_path"] = str((rules_root / path).resolve()) if path else None
+    data = load_rule_yaml(read(index_path))
+    if not isinstance(data, dict) or set(data) != {"rules"}:
+        raise ValueError("index_shape:expected_rules_mapping")
+    raw_entries = data["rules"]
+    # The managed empty index is rendered as `rules:`.
+    if raw_entries is None:
+        raw_entries = []
+    if not isinstance(raw_entries, list):
+        raise ValueError("index_shape:rules_list_required")
+    entries = []
+    for number, raw_entry in enumerate(raw_entries):
+        if not isinstance(raw_entry, dict):
+            raise ValueError(f"index_shape:entry_mapping_required:{number}")
+        failures = metadata_shape_failures(raw_entry, indexed=True)
+        if failures:
+            raise ValueError(f"index_shape:{number}:" + ",".join(failures))
+        path = Path(raw_entry["path"])
+        if path.is_absolute() or ".." in path.parts or path.suffix != ".md":
+            raise ValueError(f"invalid_rule_path:{raw_entry['id']}:{path}")
+        body_path = (rules_root / path).resolve()
+        if not body_path.is_relative_to(rules_root.resolve()):
+            raise ValueError(f"rule_path_outside_store:{raw_entry['id']}")
+        entries.append({**raw_entry, "store_scope": store_scope, "index_path": str(index_path.resolve()),
+                        "rules_root": str(rules_root.resolve()), "body_path": str(body_path)})
     return entries
+
+
+def dependency_failures(entries: list[dict[str, object]]) -> list[str]:
+    failures = []
+    by_id: dict[str, list[dict[str, object]]] = {}
+    for entry in entries:
+        by_id.setdefault(entry["id"], []).append(entry)
+    for rule_id, matching in sorted(by_id.items()):
+        if len(matching) > 1:
+            locations = ",".join(f"{item['store_scope']}:{item['body_path']}" for item in matching)
+            failures.append(f"duplicate_rule_id:{rule_id}:{locations}")
+    graph = {entry["id"]: entry["requires"] for entry in entries}
+    for rule_id, requires in graph.items():
+        failures.extend(f"missing_required_rule:{rule_id}:{required}" for required in requires if required not in graph)
+    visiting, visited = set(), set()
+
+    def visit(rule_id, path):
+        if rule_id in visiting:
+            failures.append("dependency_cycle:" + "->".join(path + [rule_id]))
+            return
+        if rule_id in visited:
+            return
+        visiting.add(rule_id)
+        for required in graph[rule_id]:
+            if required in graph:
+                visit(required, path + [rule_id])
+        visiting.remove(rule_id)
+        visited.add(rule_id)
+
+    for rule_id in sorted(graph):
+        visit(rule_id, [])
+    return sorted(set(failures))
 
 
 def build_effective_rule_registry(project_root: Path | None = None) -> dict[str, object]:
@@ -327,45 +399,11 @@ def build_effective_rule_registry(project_root: Path | None = None) -> dict[str,
             else:
                 missing_optional.append(scope)
             continue
-        entries.extend(_parse_rule_index(index_path, scope, rules_root))
-
-    by_id: dict[str, list[dict[str, object]]] = {}
-    for entry in entries:
-        by_id.setdefault(str(entry["id"]), []).append(entry)
-    for rule_id, matching in sorted(by_id.items()):
-        if len(matching) > 1:
-            locations = ",".join(f"{item['store_scope']}:{item.get('body_path')}" for item in matching)
-            failures.append(f"duplicate_rule_id:{rule_id}:{locations}")
-
-    known_ids = set(by_id)
-    graph: dict[str, list[str]] = {}
-    for entry in entries:
-        rule_id = str(entry["id"])
-        requires = [str(item) for item in yaml_list(entry.get("requires"))]
-        graph[rule_id] = requires
-        for required_id in requires:
-            if required_id not in known_ids:
-                failures.append(f"missing_required_rule:{rule_id}:{required_id}")
-
-    visiting: set[str] = set()
-    visited: set[str] = set()
-
-    def visit(rule_id: str, path: list[str]) -> None:
-        if rule_id in visiting:
-            cycle = "->".join(path + [rule_id])
-            failures.append(f"dependency_cycle:{cycle}")
-            return
-        if rule_id in visited:
-            return
-        visiting.add(rule_id)
-        for required_id in graph.get(rule_id, []):
-            if required_id in graph:
-                visit(required_id, path + [rule_id])
-        visiting.remove(rule_id)
-        visited.add(rule_id)
-
-    for rule_id in sorted(graph):
-        visit(rule_id, [])
+        try:
+            entries.extend(_parse_rule_index(index_path, scope, rules_root))
+        except (ValueError, OSError) as exc:
+            failures.append(f"{scope}:{index_path}:{exc}")
+    failures.extend(dependency_failures(entries))
 
     return {
         "status": "passed" if not failures else "issues-found",
@@ -407,12 +445,17 @@ def parse_yaml_like(text: str) -> dict[str, object]:
 
 
 def split_front_matter(text: str) -> tuple[dict[str, object], str] | tuple[None, str]:
+    text = text.replace("\r\n", "\n")
     if not text.startswith("---\n"):
         return None, text
     end = text.find("\n---\n", 4)
     if end == -1:
         return None, text
-    return parse_yaml_like(text[4:end]), text[end + 5 :]
+    try:
+        front = load_rule_yaml(text[4:end])
+    except ValueError:
+        return None, text
+    return (front if isinstance(front, dict) else None), text[end + 5 :]
 
 
 def yaml_list(value: object, default: list[str] | None = None) -> list[str]:
@@ -619,6 +662,7 @@ def validate_rule_file(root: Path, path: Path) -> list[str]:
     rel = path.relative_to(root).as_posix()
     if front is None:
         return [f"{rel}:missing_front_matter"]
+    failures.extend(f"{rel}:{failure}" for failure in metadata_shape_failures(front))
     for field in required_front_matter():
         if field not in front:
             failures.append(f"{rel}:missing_front_matter:{field}")
@@ -651,34 +695,38 @@ def validate_no_scoped_indexes(root: Path) -> list[str]:
     return failures
 
 
-def validate_index(root: Path) -> list[str]:
+def validate_index(root: Path, *, dependency_entries: list[dict[str, object]] | None = None) -> list[str]:
     failures: list[str] = []
     index_path = root / "index.yaml"
     if not index_path.exists():
         return ["index.yaml:missing"]
-    text = read(index_path)
-    for field in prohibited_rule_fields():
-        if re.search(rf"^\s*{re.escape(field)}:", text, re.MULTILINE):
-            failures.append(f"index.yaml:prohibited_field:{field}")
-    indexed_ids = set(re.findall(r"^\s+- id:\s*(.+?)\s*$", text, re.MULTILINE))
-    rule_ids: set[str] = set()
+    try:
+        entries = _parse_rule_index(index_path, "explicit", root)
+    except (ValueError, OSError) as exc:
+        return [f"index.yaml:{exc}"]
+    failures.extend(f"index.yaml:{failure}" for failure in dependency_failures(entries if dependency_entries is None else dependency_entries))
+    indexed = {entry["id"]: entry for entry in entries}
+    bodies: dict[str, list[dict[str, object]]] = {}
     for path in markdown_rules(root):
         front, _ = split_front_matter(read(path))
         if front and front.get("id"):
-            rule_ids.add(str(front["id"]))
-            rel_path = path.relative_to(root).as_posix()
-            for token in [f"- id: {front['id']}", f"path: {rel_path}"]:
-                if token not in text:
-                    failures.append(f"index.yaml:missing_or_mismatched:{front['id']}:{token}")
-    missing = sorted(rule_ids - indexed_ids)
-    extra = sorted(indexed_ids - rule_ids)
+            bodies.setdefault(str(front["id"]), []).append({**front, "path": path.relative_to(root).as_posix()})
+    for rule_id, matching in bodies.items():
+        if len(matching) > 1:
+            failures.append(f"index.yaml:duplicate_body_id:{rule_id}")
+        if rule_id in indexed:
+            for field in INDEX_FIELDS:
+                if indexed[rule_id][field] != matching[0].get(field):
+                    failures.append(f"index.yaml:mirror_mismatch:{rule_id}:{field}")
+    missing = sorted(set(bodies) - set(indexed))
+    extra = sorted(set(indexed) - set(bodies))
     failures.extend(f"index.yaml:missing_rule:{rule_id}" for rule_id in missing)
     failures.extend(f"index.yaml:unknown_rule:{rule_id}" for rule_id in extra)
-    return failures
+    return sorted(set(failures))
 
 
 def cmd_validate_rules(args: list[str]) -> int:
-    root, scope, _project_root, parse_failures = _parse_rules_command_args(args, "wb.py validate-rules")
+    root, scope, project_root, parse_failures = _parse_rules_command_args(args, "wb.py validate-rules")
     if parse_failures:
         out({"status": "issues-found", "scope": scope, "rules_root": str(root), "failures": parse_failures})
         return 1
@@ -686,6 +734,11 @@ def cmd_validate_rules(args: list[str]) -> int:
         out({"status": "issues-found", "scope": scope, "rules_root": str(root), "failures": [scoped_rules_root_error(root)]})
         return 1
     failures: list[str] = []
+    dependency_entries = None
+    if scope != "explicit":
+        registry = build_effective_rule_registry(project_root)
+        failures.extend(registry["failures"])
+        dependency_entries = registry["rules"]
     if list(root.glob("**/*.mdc")):
         failures.append("generated_mdc_present")
     legacy_yaml = [path.relative_to(root).as_posix() for path in root.glob("**/*.yaml") if path.name != "index.yaml"]
@@ -694,6 +747,6 @@ def cmd_validate_rules(args: list[str]) -> int:
     for path in markdown_rules(root):
         failures.extend(validate_rule_file(root, path))
     failures.extend(validate_no_scoped_indexes(root))
-    failures.extend(validate_index(root))
+    failures.extend(validate_index(root, dependency_entries=dependency_entries))
     out({"status": "passed" if not failures else "issues-found", "scope": scope, "rules_root": str(root.resolve()), "failures": failures})
     return 0 if not failures else 1

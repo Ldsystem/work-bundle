@@ -1,8 +1,8 @@
 ---
 id: ks-open-question-policy
 applies_when:
-  - future work or unresolved question is handled
-  - open-question persistence is proposed or requested
+  - a managed future-work watchpoint is proposed for tracking or persisted with explicit user intent
+  - an accepted project open question is retrieved, reported, or resolved as watch context
 enforcement: must
 load: conditional
 requires: []

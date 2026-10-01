@@ -56,9 +56,10 @@ cmd_write_doc = _lazy_command("documents", "cmd_write_doc")
 cmd_materialize_phase_handoff = _lazy_command("phase_delivery", "cmd_materialize_phase_handoff")
 cmd_run_phase = _lazy_command("phase_delivery", "cmd_run_phase")
 cmd_release_phase_snapshot = _lazy_command("phase_delivery", "cmd_release_phase_snapshot")
+cmd_scaffold = _lazy_command("scaffolds", "cmd_scaffold")
 
 RECOGNIZED_COMMANDS = frozenset({
-    "init", "doctor", "state", "next-action-candidates", "git-status",
+    "init", "doctor", "state", "next-action-candidates", "git-status", "scaffold",
     "repository-preflight", "build-task-brief",
     "related", "write-doc", "write-spec",
     "list-specs", "set-spec-status", "index-specs", "write-plan", "list-plans",
@@ -85,6 +86,13 @@ def build_parser() -> argparse.ArgumentParser:
     parent.add_argument("--repository-id")
     parent.add_argument("--execution-runtime-root")
     sub = parser.add_subparsers(dest="command", required=True)
+    from scaffolds import SUPPORTED_FAMILIES
+    scaffold = sub.add_parser("scaffold", parents=[parent], help="Print a read-only semantic-input shell for an explicit current family")
+    scaffold.add_argument("--family", choices=tuple(SUPPORTED_FAMILIES), required=True)
+    for option in ("id", "title", "purpose", "component", "version", "status", "source-spec-id", "plan-id", "phase-id", "task-id", "source-root"):
+        scaffold.add_argument("--" + option)
+    scaffold.add_argument("--source-id", action="append", default=[])
+    scaffold.set_defaults(func=cmd_scaffold)
     sub.add_parser("init", parents=[parent]).set_defaults(func=cmd_init)
     sub.add_parser("doctor", parents=[parent]).set_defaults(func=cmd_doctor)
     sub.add_parser("state", parents=[parent]).set_defaults(func=cmd_state)
@@ -173,7 +181,9 @@ def build_parser() -> argparse.ArgumentParser:
     amend_task.set_defaults(func=cmd_amend_task)
     write_result = sub.add_parser("write-executor-result", parents=[parent])
     for flag in ("id", "plan-id", "task-id", "content-file"):
-        write_result.add_argument(f"--{flag}", required=True)
+        write_result.add_argument(f"--{flag}", required=True, **(
+            {"help": "Artifact ID: result-[a-z0-9][a-z0-9-]*"} if flag == "id" else {}
+        ))
     write_result.add_argument("--phase-id")
     write_result.set_defaults(func=cmd_write_executor_result)
     list_results = sub.add_parser("list-executor-results", parents=[parent])
@@ -188,7 +198,9 @@ def build_parser() -> argparse.ArgumentParser:
     candidate = sub.add_parser("build-implementation-review-candidate", parents=[parent])
     candidate.add_argument("--source-root", required=True)
     candidate.add_argument("--kind", choices=["commit", "worktree"], required=True)
-    candidate.add_argument("--base-commit", required=True)
+    commit_input = candidate.add_mutually_exclusive_group(required=True)
+    commit_input.add_argument("--candidate-commit", help="Canonical reviewed commit (required for --kind commit)")
+    commit_input.add_argument("--base-commit", help="Canonical worktree baseline (required for --kind worktree)")
     candidate.add_argument("--changed-path", action="append", default=[])
     candidate.set_defaults(func=cmd_build_implementation_review_candidate)
     for command, function, task_optional in (
@@ -197,7 +209,9 @@ def build_parser() -> argparse.ArgumentParser:
         ("write-final-workflow-review", cmd_write_final_workflow_review, None),
     ):
         current = sub.add_parser(command, parents=[parent])
-        current.add_argument("--id", required=True)
+        prefix = {"write-implementation-review": "review", "write-accepted-task-result": "accepted",
+                  "write-final-workflow-review": "final"}[command]
+        current.add_argument("--id", required=True, help=f"Artifact ID: {prefix}-[a-z0-9][a-z0-9-]*")
         current.add_argument("--plan-id", required=True)
         if task_optional is not None:
             current.add_argument("--task-id", required=not task_optional)

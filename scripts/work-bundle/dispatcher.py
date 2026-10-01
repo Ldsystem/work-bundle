@@ -13,6 +13,7 @@ from metadata_profile import cmd_domain_profile
 from bootstrap_config import cmd_migrate_work_bundle_config
 from project import cmd_cleanup_member, cmd_doctor_project, cmd_init_project, cmd_migrate_project, cmd_migrate_to_multi_repository, cmd_project, cmd_provision_member, cmd_register_project_command, cmd_session_start, cmd_show_project, cmd_validate_project
 from rules import cmd_create_rules, cmd_validate_rules
+from rule_packet import cmd_rule_packet
 from skill_registry import cmd_merge_skill_hints, cmd_registry
 from stage_events import cmd_stage_events
 from defects import (
@@ -81,7 +82,7 @@ LIVE_COMMANDS = frozenset({
     'defer-workspace-member', 'attach-deferred-remote',
     'doctor-project', 'provision-member', 'cleanup-member', 'credential-list',
     'instruction-audit', 'session-start', 'inspect-project-initialization',
-    'validate-project', 'create-rules', 'validate-rules',
+    'validate-project', 'create-rules', 'validate-rules', 'rule-packet',
     'defect-ensure-store', 'defect-create-evidence', 'defect-build-index',
     'defect-write-index', 'defect-archive-evidence', 'defect-migrate-store',
     'evaluation-identity-freeze', 'evaluation-identity-complete',
@@ -185,6 +186,8 @@ def main() -> int:
         return cmd_create_rules(parsed.args)
     if command == 'validate-rules':
         return cmd_validate_rules(parsed.args)
+    if command == 'rule-packet':
+        return cmd_rule_packet(parsed.args)
     if command == 'defect-ensure-store':
         return cmd_defect_ensure_store(parsed.args)
     if command == 'defect-create-evidence':

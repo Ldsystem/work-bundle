@@ -4,9 +4,10 @@ from __future__ import annotations
 from core import *
 from bounded_closure import require_orchestration_admission, resolve_working_workspace
 from artifact_store import (
+    ArtifactError, _scan_candidates,
     atomic_write_bytes,
     canonical_artifact_path, family_policy, load_catalog, parse_markdown_artifact,
-    read_artifact, rebuild_index, serialize_markdown_mapping, transition_artifact,
+    read_artifact, read_markdown_artifact, rebuild_index, serialize_markdown_mapping, transition_artifact,
     write_artifact,
 )
 
@@ -32,6 +33,17 @@ def _policy() -> dict[str, object]:
     return family_policy(load_catalog(CATALOG_PATH), FAMILY)
 
 
+def _creation_date(data: dict[str, object], today: str) -> str:
+    value = data.get("date_created")
+    if isinstance(value, str):
+        try:
+            if dt.date.fromisoformat(value).isoformat() == value:
+                return value
+        except ValueError:
+            pass
+    return today
+
+
 def _path(args: argparse.Namespace, identity: str, state: str) -> Path:
     return canonical_artifact_path(_policy(), _anchors(args), identity=identity, state=state)
 
@@ -46,9 +58,10 @@ def _located(args: argparse.Namespace, identity: str) -> tuple[str, Path]:
     return existing[0]
 
 
-def _row(args: argparse.Namespace, data: dict[str, object]) -> dict[str, object]:
+def _row(args: argparse.Namespace, data: dict[str, object], *, path: Path | None = None) -> dict[str, object]:
     identity = str(data["id"])
-    _state, path = _located(args, identity)
+    if path is None:
+        _state, path = _located(args, identity)
     return {
         "type": "spec", "id": identity, "title": data["title"],
         "status": data["status"], "path": rel(path, args),
@@ -58,13 +71,25 @@ def _row(args: argparse.Namespace, data: dict[str, object]) -> dict[str, object]
 
 
 def index_specs(args: argparse.Namespace) -> list[dict[str, object]]:
-    result = rebuild_index(CATALOG_PATH, FAMILY, _anchors(args))
-    raw_rows = [json.loads(line) for line in Path(str(result["path"])).read_text(encoding="utf-8").splitlines() if line.strip()]
+    try:
+        result = rebuild_index(CATALOG_PATH, FAMILY, _anchors(args))
+    except ArtifactError as error:
+        print(json.dumps({"family": FAMILY, "index_effect": "stale",
+                          "index_diagnostics": error.diagnostics,
+                          "index_diagnostic_count": error.diagnostic_count}, sort_keys=True), file=sys.stderr)
+        policy = _policy()
+        observations = _scan_candidates(CATALOG_PATH, policy, _anchors(args), policy["index"]["source_states"])
+        return sorted([_row(args, item["data"], path=item["path"])
+                       for item in observations if "diagnostic" not in item],
+                      key=lambda row: str(row["id"]))
+    else:
+        raw_rows = [json.loads(line) for line in Path(str(result["path"])).read_text(encoding="utf-8").splitlines() if line.strip()]
     return [_row(args, row) for row in raw_rows]
 
 
 def cmd_index_specs(args: argparse.Namespace) -> None:
-    print(f"indexed {len(index_specs(args))} specs")
+    result = rebuild_index(CATALOG_PATH, FAMILY, _anchors(args))
+    print(f"indexed {result['count']} specs")
 
 
 def _semantic_input(path: Path) -> tuple[dict[str, object], str]:
@@ -95,27 +120,27 @@ def cmd_write_spec(args: argparse.Namespace) -> None:
     identity = args.id or _next_identity(args)
     semantic, body = _semantic_input(Path(args.content_file))
     active_path = _path(args, identity, "active")
-    archived_path = _path(args, identity, "archived")
-    if archived_path.exists():
-        raise SystemExit(f"Specification canonical identity collision: {identity}")
-    existing = (
-        read_artifact(CATALOG_PATH, FAMILY, _anchors(args), identity=identity, state="active")
-        if active_path.exists()
-        else None
-    )
+    existing = None
+    if active_path.is_file():
+        try:
+            existing = read_markdown_artifact(active_path)[0]
+        except ArtifactError:
+            existing = {}
     if existing is not None and args.status != "draft":
         raise SystemExit("Specification content updates must return the specification to draft")
-    if existing is not None and existing["data"].get("status") == "superseded":
+    if existing is not None and existing.get("status") == "superseded":
         raise SystemExit("Superseded specification content cannot be changed")
     today = now_date()
     data = {
         **semantic, "artifact_type": FAMILY, "schema_version": 1, "id": identity,
         "title": args.title, "status": args.status,
-        "date_created": str(existing["data"]["date_created"]) if existing else today,
+        "date_created": _creation_date(existing or {}, today),
         "last_updated": today, "purpose": args.purpose, "component": args.component,
         "version": args.version,
     }
     result = write_artifact(CATALOG_PATH, FAMILY, _anchors(args), data, state="active", body=body)
+    if result["index_effect"] == "stale":
+        print(json.dumps(result, sort_keys=True), file=sys.stderr)
     print(rel(Path(str(result["path"])), args))
 
 

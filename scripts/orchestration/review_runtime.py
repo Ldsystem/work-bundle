@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import importlib.util
 import json
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from artifact_store import (
+    ArtifactError, _scan_candidates,
     canonical_artifact_path, family_policy, load_catalog, read_artifact,
     read_yaml_mapping, rebuild_index,
 )
@@ -70,6 +72,17 @@ def _policy(family: str) -> dict[str, Any]:
     return family_policy(load_catalog(CURRENT_CATALOG), family)
 
 
+def _creation_date(data: Mapping[str, Any], today: str) -> str:
+    value = data.get("date_created")
+    if isinstance(value, str):
+        try:
+            if dt.date.fromisoformat(value).isoformat() == value:
+                return value
+        except ValueError:
+            pass
+    return today
+
+
 def _semantic_input(args: argparse.Namespace, family: str) -> dict[str, Any]:
     data = read_yaml_mapping(Path(str(args.content_file)))
     forbidden = set(CURRENT_STRUCTURAL_FIELDS)
@@ -98,15 +111,13 @@ def _active_or_none(
         policy, _anchors(args), identity=str(args.id), state="active", bindings=bindings
     )
     if active.is_file():
-        return read_artifact(
-            CURRENT_CATALOG, family, _anchors(args), identity=str(args.id),
-            state="active", bindings=bindings,
-        )
-    for state in policy["lifecycle"]["states"]:
-        if state != "active" and canonical_artifact_path(
-            policy, _anchors(args), identity=str(args.id), state=str(state), bindings=bindings
-        ).exists():
-            raise SystemExit(f"{family} canonical identity collision: {args.id}")
+        # Only recover immutable metadata. Replacement content is independently
+        # validated and the store rejects recoverable target identity conflicts.
+        try:
+            data = read_yaml_mapping(active)
+        except ArtifactError:
+            data = {}
+        return {"data": data}
     return None
 
 
@@ -117,8 +128,8 @@ def _write(args: argparse.Namespace, family: str, data: Mapping[str, Any], bindi
     if family == "implementation-review" and existing is not None:
         existing_data = existing["data"]
         if (
-            existing_data.get("scope") != data.get("scope")
-            or existing_data.get("task_id") != getattr(args, "task_id", None)
+            existing_data.get("scope") in ("task", "integrated")
+            and existing_data["scope"] != data.get("scope")
         ):
             raise SystemExit(
                 "Implementation review update cannot change scope or task binding"
@@ -133,7 +144,7 @@ def _write(args: argparse.Namespace, family: str, data: Mapping[str, Any], bindi
         **dict(data), "artifact_type": family, "schema_version": schema_version,
         "id": str(args.id), "plan_id": str(args.plan_id),
         "task_id": getattr(args, "task_id", None),
-        "date_created": str(existing["data"]["date_created"]) if existing else today,
+        "date_created": _creation_date(existing["data"] if existing else {}, today),
         "last_updated": today,
     }
     if family == "final-workflow-review":
@@ -185,8 +196,19 @@ def _validate_review_authority(
 
 
 def _rows(args: argparse.Namespace, family: str) -> list[dict[str, Any]]:
-    result = rebuild_index(CURRENT_CATALOG, family, _anchors(args))
-    rows = [json.loads(line) for line in Path(str(result["path"])).read_text(encoding="utf-8").splitlines() if line]
+    try:
+        result = rebuild_index(CURRENT_CATALOG, family, _anchors(args))
+    except ArtifactError as error:
+        print(json.dumps({"family": family, "index_effect": "stale",
+                          "index_diagnostics": error.diagnostics,
+                          "index_diagnostic_count": error.diagnostic_count}, sort_keys=True), file=sys.stderr)
+        policy = _policy(family)
+        observations = _scan_candidates(CURRENT_CATALOG, policy, _anchors(args), policy["index"]["source_states"])
+        rows = [{key: item["data"][key] for key in policy["index"]["projection"]}
+                for item in observations if "diagnostic" not in item]
+        rows.sort(key=lambda row: str(row[policy["identity"]["field"]]))
+    else:
+        rows = [json.loads(line) for line in Path(str(result["path"])).read_text(encoding="utf-8").splitlines() if line]
     plan_id, task_id = getattr(args, "plan_id", None), getattr(args, "task_id", None)
     return [row for row in rows if (not plan_id or row.get("plan_id") == plan_id) and (not task_id or row.get("task_id") == task_id)]
 
@@ -203,6 +225,7 @@ def _reference(args: argparse.Namespace, family: str, identity: str, bindings: M
 
 
 def _candidate_validator():
+    """Load the current validator for the unchanged persisted v2/v3 target contract."""
     path = Path(__file__).resolve().parents[1] / "work-bundle/reviewer_workspace.py"
     spec = importlib.util.spec_from_file_location("_wb_current_candidate", path)
     if spec is None or spec.loader is None:

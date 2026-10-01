@@ -1,6 +1,6 @@
 ---
 name: ks-manage-lifecycle
-description: 'Change durable note lifecycle status using valid evidence.'
+description: 'Decide and request an identified durable note status transition, supersession, or deprecation from accepted evidence. Excludes content-only updates and unresolved conflict diagnosis.'
 ---
 
 # ks-manage-lifecycle
@@ -33,9 +33,10 @@ Content change without status change (`ks-write-knowledge`).
 
 ## Workflow
 
-1. Apply status transitions and promotion evidence per **Lifecycle Constraints (skill-owned)**.
-2. Regenerate indexes via `ks-maintain-indexes`.
-3. Recommend a commit when appropriate (see `ks-git-authority`).
+1. Complete the shared workflow's agent decision preconditions, then choose the exact target status, evidence, and replacement links per **Lifecycle Constraints (skill-owned)**. Existing explicit transition intent needs no repeated permission request.
+2. Prepare one complete `kind: note` request with `effect: transition`, `supersede`, or `deprecate`, exact canonical `path`, current `expected_digest`, complete target `record`, and `body`. Supersession/deprecation uses `superseded_by` references to already-existing replacement notes; identity, perspective, and creation date remain unchanged.
+3. Invoke `python3 scripts/ks.py mutate-knowledge --project <slug> --request-file <request.yaml>`; optional `--dry-run` previews the one-record effect. The script checks mechanics and atomically replaces only that record; do not directly change front matter, move files, or patch indexes.
+4. Report `old_status`, `status`, `canonical_status`, and `projection_status`. Consume successful rebuild evidence; for stale projections preserve the valid record and use the returned existing rebuild command.
 
 ## Return
 
@@ -52,16 +53,7 @@ Content change without status change (`ks-write-knowledge`).
 - `ks-sensitivity-filter`: `rules/keep-summarizing/ks-sensitivity-filter.md`
 - `ks-git-authority`: `rules/keep-summarizing/ks-git-authority.md`
 
-## Rule Loading (mandatory)
-
-Before substantive keep-summarizing work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive knowledge work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or summarized rule text as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns indexed rule discovery and exact-context body reuse. Consume carried task-local obligations in an accepted worker packet; these Runtime Rules are procedural pointers, not a separate loading algorithm.
 
 ## Lifecycle Constraints (skill-owned)
 
@@ -80,3 +72,10 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 ## Boundary
 
 Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).
+
+## Self-check
+
+- [ ] The agent settled value, relevance, authority, conflicts, sensitivity, evidence, and lifecycle intent before mutation.
+- [ ] Exactly one note and current digest drive the request; replacement/evidence links are explicit and existing.
+- [ ] The command applied the declared transition with no transcript, ad hoc file move, or second canonical-record effect.
+- [ ] A stale projection is reported independently of the valid canonical record and semantic decision.

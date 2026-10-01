@@ -13,7 +13,9 @@ Execute only the task authority supplied by the controller. Use its verified spe
 2. Follow the task methodology. For behavior changes, use GROUND → RED → GREEN → REFACTOR and retain focused observations that can disprove the claim.
 3. Keep each worker inside its existing task ownership. A worker reports source changes and factual observations; it does not accept the product.
 4. Freeze the resulting commit or worktree candidate with a path-sorted changed-path manifest.
-5. Write one canonical `executor-result-v2` with implemented scope, changed paths, focused observations, unresolved product blockers, task fit, repository/CodeGraph facts, delegation provenance, and knowledge disposition. Repair that active result in place instead of retaining intermediate versions.
+5. Supply semantic input to `scripts/orch.py write-executor-result` for one canonical `executor-result-v2` with implemented scope, changed paths, focused observations, unresolved product blockers, task fit, repository/CodeGraph facts, delegation provenance, and knowledge disposition. Repair that active result in place instead of retaining intermediate versions.
+
+Apply `orch-artifact-authoring`: do not directly create or edit canonical YAML/Markdown under `.work-bundle/orchestration/`, including bootstrap repair. A malformed active result uses its writer; target-affecting conflicts remain strict. If the target is applied while unrelated invalid siblings leave `index_effect: stale`, report diagnostics and return sibling repair to the controller for each sibling's own writer and existing family index rebuild.
 
 For a designated delivery task, publish its canonical immutable phase bundle before writing factual `phase_handoff` evidence. Reuse exact current observations rather than rerunning prepare, startup, tests, signing, or packaging solely because lifecycle state advanced. Preacceptance run authority binds the current candidate and accepted predecessors; after acceptance the runner consumes the exact accepted result and executor handoff. A stale accepted reference never falls back to candidate mode.
 
@@ -29,6 +31,7 @@ Executor results must not contain product verdicts, recommended repair strategy,
 
 ## Self-check
 
+- [ ] Actual executor-result creation/active repair used `scripts/orch.py write-executor-result`, without direct canonical or bootstrap editing.
 - [ ] The executed task and repository/write scope match accepted authority.
 - [ ] The executor result is canonical, factual, schema-valid, and bound to the exact plan/task.
 - [ ] Focused observations are current and claim-relevant; green tests do not substitute for checking every obligation.

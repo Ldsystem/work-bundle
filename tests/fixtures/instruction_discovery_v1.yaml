@@ -1,0 +1,302 @@
+# Agent-authored cases for direct semantic assessment. IDs list the focal rule
+# decisions only, not a complete loading packet. The validator checks shape;
+# it must not infer applicability from prompts or claim semantic coverage.
+fixtures:
+  - id: knowledge-persist-approved
+    relation: positive
+    actor: controller
+    stage: persistence
+    observable_signals:
+      prompt: ["Complete the reader-facing report and persist this accepted architectural decision as one current note in the owning durable leaf; the approved workflow already settles this bounded follow-up's scope, content, and intent."]
+      operation: ["single-record create", "approved persistence"]
+    selected_rule_ids: [ks-knowledge-boundary, ks-persistence-gate, ks-structural-value, ks-perspective-routing, ks-sensitivity-filter, ks-note-state-authority, ks-index-maintenance]
+    carried_rule_ids: []
+  - id: ambiguous-mixed-persistence
+    relation: negative
+    actor: controller
+    stage: authoring
+    observable_signals:
+      prompt: ["Make a report and maybe update some knowledge too. Neither the durable content nor persistence scope and intent are settled; ask for the missing material decisions before writing."]
+      operation: ["ambiguous mixed request", "no approved persistence follow-up"]
+    selected_rule_ids: [ks-persistence-gate]
+    carried_rule_ids: []
+  - id: ordinary-general-knowledge
+    relation: negative
+    actor: controller
+    stage: answer
+    observable_signals:
+      prompt: ["What is the capital of France? Do not inspect or persist project knowledge."]
+      operation: ["general answer"]
+    selected_rule_ids: []
+    carried_rule_ids: []
+  - id: source-module-perspective
+    relation: adjacent
+    actor: controller
+    stage: implementation
+    observable_signals:
+      prompt: ["Choose a name for the UI perspective module; no durable note or open question is being placed."]
+      artifact: ["source module"]
+    selected_rule_ids: []
+    carried_rule_ids: []
+  - id: knowledge-draft-only
+    relation: adjacent
+    actor: controller
+    stage: extraction
+    observable_signals:
+      prompt: ["Extract reusable candidate points from these sessions, but draft only; do not save notes."]
+      operation: ["candidate extraction", "persistence disabled"]
+    selected_rule_ids: [ks-structural-value, ks-sensitivity-filter, ks-off-switches]
+    carried_rule_ids: []
+  - id: accepted-watchpoint-create
+    relation: positive
+    actor: controller
+    stage: persistence
+    observable_signals:
+      prompt: ["Track my confirmed future compatibility issue as an accepted open question; do not treat it as an established implementation fact."]
+      artifact: ["durable open question"]
+    selected_rule_ids: [ks-open-question-policy, ks-persistence-gate, ks-perspective-routing, ks-knowledge-boundary]
+    carried_rule_ids: []
+  - id: ordinary-debug-unknown
+    relation: negative
+    actor: controller
+    stage: diagnosis
+    observable_signals:
+      prompt: ["Why is this test failing? I have not asked to track or persist the unknown symptom as future work."]
+      operation: ["source diagnosis"]
+    selected_rule_ids: [wb-truth-basis-evidence]
+    carried_rule_ids: []
+  - id: watchpoint-existing-resolution
+    relation: positive
+    actor: controller
+    stage: lifecycle
+    observable_signals:
+      prompt: ["Resolve this existing accepted watchpoint using the supplied accepted decision and date. The resolution intent is already explicit."]
+      operation: ["resolve-open-question"]
+    selected_rule_ids: [ks-open-question-policy, ks-persistence-gate, ks-knowledge-boundary, ks-index-maintenance]
+    carried_rule_ids: []
+  - id: mechanical-valid-poor-note
+    relation: adjacent
+    actor: controller
+    stage: persistence
+    observable_signals:
+      prompt: ["The single-note request has valid fields and digest, but the prose is unsupported. Does mechanical validation approve its meaning?"]
+      operation: ["semantic assessment before mutation"]
+    selected_rule_ids: [ks-persistence-gate, ks-structural-value, ks-note-state-authority]
+    carried_rule_ids: []
+  - id: projection-recovery-request
+    relation: positive
+    actor: controller
+    stage: maintenance
+    observable_signals:
+      prompt: ["Regenerate the missing derived knowledge indexes; canonical notes have not changed."]
+      operation: ["explicit index regeneration"]
+    selected_rule_ids: [ks-index-maintenance]
+    carried_rule_ids: []
+  - id: projection-rebuilt-no-repeat
+    relation: adjacent
+    actor: controller
+    stage: completion
+    observable_signals:
+      prompt: ["The approved record mutation returned canonical_status replaced and projection_status rebuilt. Report it without issuing a redundant rebuild."]
+      operation: ["post-mutation completion"]
+    selected_rule_ids: [ks-index-maintenance]
+    carried_rule_ids: []
+  - id: projection-stale-not-rollback
+    relation: adjacent
+    actor: controller
+    stage: recovery
+    observable_signals:
+      prompt: ["The approved note replacement succeeded but the derived index failed. Preserve the canonical note and use the returned rebuild command; report the unresolved projection truthfully."]
+      operation: ["post-mutation stale index"]
+    selected_rule_ids: [ks-index-maintenance]
+    carried_rule_ids: []
+  - id: canonical-malformed-active-repair
+    relation: positive
+    actor: controller
+    stage: repair
+    observable_signals:
+      prompt: ["Repair the malformed active task with the same accepted identity and semantic input through write-task; do not patch its canonical shell even for bootstrap."]
+      artifact: ["registered canonical task"]
+      operation: ["same-identity repair"]
+    selected_rule_ids: [orch-artifact-authoring, orch-bounded-closure]
+    carried_rule_ids: []
+  - id: reader-document-not-task
+    relation: adjacent
+    actor: controller
+    stage: authoring
+    observable_signals:
+      prompt: ["Write a reader-facing stakeholder report from accepted context, not a specification or executable plan."]
+      artifact: ["unregistered orchestration document"]
+    selected_rule_ids: [orch-artifact-authoring]
+    carried_rule_ids: []
+  - id: ordinary-markdown-not-canonical
+    relation: negative
+    actor: controller
+    stage: authoring
+    observable_signals:
+      prompt: ["Correct punctuation in the product README, not an orchestration artifact."]
+      artifact: ["source documentation"]
+    selected_rule_ids: []
+    carried_rule_ids: []
+  - id: writer-unrelated-bad-sibling
+    relation: adjacent
+    actor: controller
+    stage: repair
+    observable_signals:
+      prompt: ["The valid target writer reports write_effect applied and index_effect stale because another family has an invalid sibling. Diagnose that sibling separately and repair it only through its owning writer."]
+      operation: ["writer projection diagnosis"]
+    selected_rule_ids: [orch-artifact-authoring]
+    carried_rule_ids: []
+  - id: task-review-before-plan-completion
+    relation: positive
+    actor: controller
+    stage: implementation-review
+    observable_signals:
+      prompt: ["Independently review this frozen completed task before the plan finishes. Return advice only, without canonical writes or rerunning validation; the controller authors the native record through write-implementation-review and decides acceptance and continuation."]
+      artifact: ["implementation review"]
+    selected_rule_ids: [orch-review-completion, orch-artifact-authoring]
+    carried_rule_ids: []
+  - id: reviewer-not-bootstrap-author
+    relation: adjacent
+    actor: controller
+    stage: implementation-review
+    observable_signals:
+      prompt: ["The native review artifact is malformed. Do not ask the product reviewer to patch canonical YAML for bootstrap; the reviewer returns advice, while the controller repairs through write-implementation-review."]
+      operation: ["review advice and separately owned record repair"]
+    selected_rule_ids: [orch-artifact-authoring]
+    carried_rule_ids: []
+  - id: executor-factual-result
+    relation: positive
+    actor: worker
+    stage: completion
+    observable_signals:
+      prompt: ["Write the allocated factual executor result through write-executor-result. This is not product acceptance and an ordinary task has no phase_handoff."]
+      artifact: ["executor result"]
+    selected_rule_ids: [orch-handoff-required, orch-artifact-authoring]
+    carried_rule_ids: [orch-handoff-required, orch-artifact-authoring]
+  - id: accepted-worker-carried-obligations
+    relation: worker
+    actor: worker
+    stage: implementation
+    observable_signals:
+      prompt: ["Execute only the accepted task packet's instruction targets, consuming carried Truth Basis and task-local obligations without controller-wide knowledge retrieval or trigger reconciliation."]
+      source: ["accepted task packet"]
+    selected_rule_ids: [wb-truth-basis-evidence]
+    carried_rule_ids: [wb-truth-basis-evidence]
+  - id: specification-knowledge-use
+    relation: positive
+    actor: controller
+    stage: specification
+    observable_signals:
+      prompt: ["Use durable project knowledge to settle the specification scope before planning."]
+      operation: ["knowledge use for specification"]
+    selected_rule_ids: [orch-knowledge-gateway, wb-truth-basis-evidence, ks-knowledge-boundary, ks-note-state-authority]
+    carried_rule_ids: []
+  - id: execution-no-gateway-retrieval
+    relation: negative
+    actor: worker
+    stage: implementation
+    observable_signals:
+      prompt: ["Implement the accepted packet; do not run controller knowledge retrieval just because orchestration is involved."]
+      source: ["accepted task packet"]
+    selected_rule_ids: [wb-truth-basis-evidence]
+    carried_rule_ids: [wb-truth-basis-evidence]
+  - id: nonblocking-spec-watchpoint
+    relation: adjacent
+    actor: controller
+    stage: planning
+    observable_signals:
+      prompt: ["A nonmaterial future watchpoint remains visible, but the accepted implementation scope is settled. It does not by itself block planning."]
+      artifact: ["verified specification"]
+    selected_rule_ids: [orch-open-questions]
+    carried_rule_ids: []
+  - id: active-blocker-mutation
+    relation: positive
+    actor: controller
+    stage: admission
+    observable_signals:
+      prompt: ["Start an ordinary task mutation while current workspace blocker authority is active; assess the exact flow and any scoped exemption."]
+      operation: ["orchestration mutation admission"]
+    selected_rule_ids: [orch-bounded-closure]
+    carried_rule_ids: []
+  - id: blocker-readonly-diagnosis
+    relation: negative
+    actor: controller
+    stage: diagnosis
+    observable_signals:
+      prompt: ["Read the current blocker report only. Do not mutate or dispatch an orchestration artifact."]
+      operation: ["read-only observation"]
+    selected_rule_ids: []
+    carried_rule_ids: []
+  - id: authorized-toolkit-source-member
+    relation: positive
+    actor: controller
+    stage: instruction-edit
+    observable_signals:
+      prompt: ["Edit the allocated rule in the verified toolkit-source member checkout under explicit owner release. The checkout is not the installed toolkit root."]
+      repository: ["authorized toolkit-source member"]
+    selected_rule_ids: [wb-create-rule, wb-project-context-preflight]
+    carried_rule_ids: []
+  - id: application-cannot-edit-installed-toolkit
+    relation: negative
+    actor: controller
+    stage: instruction-edit
+    observable_signals:
+      prompt: ["I am changing application code; this does not authorize rewriting rules in the unrelated installed toolkit store."]
+      repository: ["application workspace"]
+    selected_rule_ids: []
+    carried_rule_ids: []
+  - id: project-rules-containing-workspace
+    relation: adjacent
+    actor: controller
+    stage: instruction-edit
+    observable_signals:
+      prompt: ["Create a project rule for the containing multi-repository workspace, not a member-local instruction store; use --scope project --project-root with that workspace root."]
+      artifact: ["workspace project rule"]
+    selected_rule_ids: [wb-create-rule, wb-project-registry]
+    carried_rule_ids: []
+  - id: migrate-current-member-addition
+    relation: positive
+    actor: controller
+    stage: topology
+    observable_signals:
+      prompt: ["Add a repository to this existing metadata-v4 workspace using its current authorized transaction, not the retired single-to-multi producer."]
+      operation: ["add current member"]
+    selected_rule_ids: [wb-migrate-to-multi-repository, wb-project-context-preflight]
+    carried_rule_ids: []
+  - id: source-inspection-not-migration
+    relation: negative
+    actor: controller
+    stage: inspection
+    observable_signals:
+      prompt: ["Read the current member source to explain a function; do not change topology."]
+      operation: ["source inspection"]
+    selected_rule_ids: [wb-project-context-preflight, wb-truth-basis-evidence]
+    carried_rule_ids: []
+  - id: optional-review-doctor
+    relation: adjacent
+    actor: controller
+    stage: diagnosis
+    observable_signals:
+      prompt: ["Run read-only orchestration contract diagnostics. A task with acceptance_review.required false is not defective solely because a task review is absent."]
+      operation: ["current orchestration doctor"]
+    selected_rule_ids: []
+    carried_rule_ids: []
+  - id: same-context-rule-reuse
+    relation: positive
+    actor: controller
+    stage: discovery
+    observable_signals:
+      prompt: ["The selected bodies were already read in full and exact body, dependency, index, scope, and context digests are unchanged. Reuse does not select applicability."]
+      operation: ["exact-context body reuse"]
+    selected_rule_ids: []
+    carried_rule_ids: []
+  - id: index-delta-reassessment
+    relation: adjacent
+    actor: controller
+    stage: discovery
+    observable_signals:
+      prompt: ["An index entry changed outside the previous selection. Reassess applicability for the delta; no script may automatically decide it irrelevant."]
+      operation: ["index delta assessment"]
+    selected_rule_ids: []
+    carried_rule_ids: []

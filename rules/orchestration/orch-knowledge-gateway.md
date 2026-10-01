@@ -1,11 +1,10 @@
 ---
 id: orch-knowledge-gateway
 applies_when:
-  - create-specification needs durable project knowledge before drafting
-  - create-implementation-plan needs durable project knowledge or spec repair context
-  - create-document needs durable project knowledge before drafting
-  - create-handoff needs durable project knowledge for a canonical factual executor result outside execution completion
-  - review-plan needs durable project knowledge for validation-backed review
+  - a specification, implementation plan, or reader-facing orchestration document needs durable project knowledge for scope or drafting
+  - implementation or final workflow review needs durable project knowledge outside an accepted worker packet
+  - a factual executor result authored outside execution completion needs durable project knowledge
+  - the operation is outside verified task execution and execution-completion reporting; accepted workers consume carried obligations
 enforcement: must
 load: conditional
 requires: []
@@ -39,7 +38,7 @@ Route orchestration access to durable project knowledge through the approved `ks
 - Allow `candidate` and `background` context only as rationale, traceability, or promotion input—not as executable requirements.
 - Record material `candidate`, `background`, or `blocked` context as visible rationale, traceability, conflict evidence, or open-question input when it affects requirements, architecture, workflow, API, persistence, validation, execution behavior, or user-purpose conflict.
 - Treat non-material `candidate`, `background`, or `blocked` context as source context or omit it from the artifact; do not resolve non-material unsettled notes during `create-specification`.
-- Treat `blocked` context as non-shaping evidence that must not drive downstream work; when material, surface it as blocking open-question evidence instead of silently deciding.
+- Treat `blocked` context as non-shaping evidence that must not drive downstream work; when material, surface its unresolved scope impact in Open Questions and determine blocking status through `orch-open-questions` instead of silently deciding from the classification alone.
 - Carry accepted authority context into orchestration artifacts so downstream executors do not need future knowledge-base lookup.
 - Treat repository metadata preflight blockers as blockers for broad repository evidence gathering, source inspection, impact-radius traversal, downstream implementation planning, and execution trust, not as automatic blockers for bounded durable-knowledge discovery.
 

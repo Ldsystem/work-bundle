@@ -1,8 +1,9 @@
 ---
 id: orch-review-completion
 applies_when:
-  - review-plan audits a completed or blocked implementation plan
-  - orchestration artifacts may be finalized or archived
+  - a frozen task or integrated implementation candidate receives independent advisory product review
+  - the controller assesses implementation review advice for task acceptance, repair, or dependency continuation
+  - a completed or blocked implementation plan receives final workflow audit, finalization, or archive assessment
 enforcement: must
 load: conditional
 requires: []
@@ -22,6 +23,7 @@ Keep independent product review advisory, keep controller/orchestrator acceptanc
 - Keep reviewer-proposed scope changes, delivery actions, worker directions, and new ceremony non-authoritative. The controller/orchestrator accepts, rejects, narrows, or reports the proposal and waits for user authority when it would materially expand the accepted scope.
 - Keep missing historical records, indexes, knowledge state, and controller ceremony outside the controller/orchestrator product decision unless the product is ambiguous, unsafe, inaccessible, or impossible to review.
 - Carry controller/orchestrator accepted task decisions through canonical `accepted-task-result-v2` records, preserving the exact current task-authority identity and review advice considered; admit already-active v1 records only for non-mutating continuity.
+- Apply `orch-artifact-authoring` for current implementation-review, accepted-result, and final-review creation or repair; their writer outcomes do not issue the controller's semantic decision.
 - Use one compact final audit for coverage, review advice, current tests, material defects, knowledge disposition/return, repository facts, and archive readiness; the controller/orchestrator assesses that advice and owns the final workflow decision.
 - At the heavy workflow's completion boundary, have final orchestration review own the approved durable-knowledge persistence follow-up; task executors return task-local evidence only.
 - Keep finalization mechanical and controller-directed: canonical references, lifecycle, clean baselines, destinations, indexes, and binding release only. Commit, push, merge, release, install, or other delivery occurs only under explicit user authority.

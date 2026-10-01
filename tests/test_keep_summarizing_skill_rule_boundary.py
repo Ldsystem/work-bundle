@@ -20,12 +20,6 @@ def runtime_rule_paths(text: str) -> list[str]:
     return [path for path in paths if "*" not in path and "?" not in path]
 
 
-def section_line_index(text: str, heading: str) -> int:
-    match = re.search(rf"^{re.escape(heading)}$", text, re.MULTILINE)
-    assert match is not None, f"missing section {heading}"
-    return match.start()
-
-
 def body_before_runtime_rules(text: str) -> str:
     if "## Runtime Rules" not in text:
         return text
@@ -38,15 +32,15 @@ def boundary_section(text: str) -> str:
     return text.split("## Boundary", 1)[1].split("\n## ", 1)[0]
 
 
-def test_all_ks_skills_have_rule_loading() -> None:
+def test_all_ks_skills_keep_rule_references_under_central_discovery() -> None:
     for path in ks_skill_paths():
         text = skill_text(path)
         if "## Runtime Rules" not in text:
             continue
-        assert "## Rule Loading (mandatory)" in text, path.name
-        runtime_idx = section_line_index(text, "## Runtime Rules")
-        loading_idx = section_line_index(text, "## Rule Loading (mandatory)")
-        assert loading_idx > runtime_idx, path.name
+        runtime = text.split("## Runtime Rules", 1)[1]
+        assert "## Rule Loading (mandatory)" not in text, path.parent.name
+        assert "exact-context body reuse" in runtime, path.parent.name
+        assert "accepted worker packet" in runtime, path.parent.name
 
 
 def test_runtime_rules_paths_exist() -> None:

@@ -209,7 +209,8 @@ def _candidate(source: Path, binding: dict[str, Any], target: dict[str, Any]) ->
     baseline = binding.get("baseline") or {}
     if target["kind"] == "worktree" and baseline.get("head") and baseline["head"] != target["base_commit"]:
         _fail("candidate baseline mismatch")
-    normalized = build_implementation_review_candidate(source_root=source, kind=target["kind"], base_commit=target["base_commit"], changed_paths=[row["path"] for row in target["manifest"]])
+    commit_input = {"candidate_commit" if target["kind"] == "commit" else "base_commit": target["base_commit"]}
+    normalized = build_implementation_review_candidate(source_root=source, kind=target["kind"], changed_paths=[row["path"] for row in target["manifest"]], **commit_input)
     if normalized != target:
         _fail("supplied candidate identity mismatch")
     actual = build_implementation_review_candidate(source_root=source, kind="worktree", base_commit=target["base_commit"], changed_paths=[row["path"] for row in target["manifest"]])

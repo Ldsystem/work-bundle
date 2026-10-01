@@ -21,6 +21,8 @@ Perform one review per one frozen candidate. After a product repair, perform one
 
 Return exactly this compact product judgment. The controller supplies the native review envelope:
 
+For canonical review-record authoring, follow `orch-artifact-authoring` (`rules/orchestration/orch-artifact-authoring.md`): the controller uses `scripts/orch.py write-implementation-review`. The reviewer returns advice only and never directly creates or edits canonical orchestration artifacts, including bootstrap repair; this does not add controller bookkeeping to product review.
+
 ```yaml
 task_review:
   reviewed_head: <exact-product-source-identity>
@@ -37,3 +39,7 @@ task_review:
 ```
 
 Use `findings: []` when there are no findings. A blocking finding requires an accepted requirement or boundary, exact evidence, expected and observed behavior, and the task owner. Green observations do not override a product contradiction.
+
+## Self-check
+
+- [ ] I returned advice without canonical writes, leaving native-envelope authoring to the controller through `write-implementation-review`; I did not rerun validation or judge controller bookkeeping.

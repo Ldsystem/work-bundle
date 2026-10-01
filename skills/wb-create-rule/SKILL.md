@@ -1,6 +1,6 @@
 ---
 name: wb-create-rule
-description: 'Create, update, migrate, and validate Markdown work-bundle runtime rules under rules/ using the index-first rule contract. Canonical work-bundle skill name: wb-create-rule.'
+description: 'Create, edit, migrate, or validate Markdown runtime rules in a selected toolkit-source, global-user, or workspace-project store using the index-first contract.'
 ---
 
 # wb-create-rule
@@ -15,6 +15,7 @@ Authority for rule work is limited to:
 
 - `skills/wb-create-rule/SKILL.md` — this skill (primary agent contract).
 - `$work_bundle_root/rules/` — toolkit runtime rules and `index.yaml` when rule-store scope is `toolkit`.
+- `<selected-toolkit-source-checkout>/rules/` — explicitly authorized toolkit contributions in a verified registered source member or bound managed worktree; this is source ownership, not authority to rewrite an unrelated installed toolkit.
 - `$work_bundle_config_root/rules/` — global user runtime rules and `index.yaml` when rule-store scope is `global`.
 - `$workspace_root/.work-bundle/rules/` — workspace project-scope runtime rules and `index.yaml` when rule-store scope is `project`.
 - `$project_root/.work-bundle/rules/` — compatibility alias only when `project_root == workspace_root`; never use a multi-repository member root as project rule authority.
@@ -36,7 +37,7 @@ Rule-store scope chooses which rules root is created, synced, or validated:
 
 Rule-store scope is not the same as a rule area directory. Area directories inside any rules root remain `work-bundle/`, `keep-summarizing/`, and `orchestration/`.
 
-**Toolkit write boundary:** agents must not create, edit, delete, migrate, or index `$work_bundle_root/rules/**` unless `$workspace_root == $work_bundle_root`. If the active workspace root is different from the toolkit root, stop with a boundary blocker instead of mutating toolkit rules.
+**Toolkit write boundary:** verify the selected toolkit repository identity, checkout, and exact authorized rule write scope. Toolkit-source contributions may use a registered member or its bound managed worktree within the containing workspace; workspace/toolkit path equality is not the authorization test. An application workspace does not authorize mutation of an unrelated installed toolkit.
 
 ## Rule Layout
 
@@ -140,13 +141,13 @@ The examples use the macOS/Linux `python3` launcher. On Windows, use `py -3.13` 
 
 | Command | Behavior |
 |---|---|
-| `python3 scripts/wb.py create-rules --scope toolkit` | Sync toolkit rules; allowed only when `$project_root == $work_bundle_root`. |
+| `python3 scripts/wb.py create-rules --scope toolkit --project-root <installed-toolkit-root>` | Sync the bootstrap-installed toolkit after explicit target authorization; the existing command checks root equality. |
 | `python3 scripts/wb.py create-rules --scope global` | Sync global user rules under `$work_bundle_config_root/rules/`. |
-| `python3 scripts/wb.py create-rules --scope project --workspace-root <workspace-root>` | Sync project-scope rules under `<workspace-root>/.work-bundle/rules/`. |
+| `python3 scripts/wb.py create-rules --scope project --project-root <workspace-root>` | Sync project-scope rules under the containing `<workspace-root>/.work-bundle/rules/`. |
 | `python3 scripts/wb.py validate-rules --scope toolkit` | Validate toolkit rules. |
 | `python3 scripts/wb.py validate-rules --scope global` | Validate global user rules. |
-| `python3 scripts/wb.py validate-rules --scope project --workspace-root <workspace-root>` | Validate workspace project-scope rules. |
-| `python3 scripts/wb.py create-rules <rules-root>` | Backward-compatible explicit-root mode. |
+| `python3 scripts/wb.py validate-rules --scope project --project-root <workspace-root>` | Validate workspace project-scope rules. |
+| `python3 scripts/wb.py create-rules <selected-toolkit-source-checkout>/rules` | Sync the verified authorized toolkit-source checkout, including an isolated bound worktree. |
 | `python3 scripts/wb.py validate-rules <rules-root>` | Backward-compatible explicit-root mode. |
 
 The selected rules root must be the canonical root for that rule-store scope. Do not pass area subdirectories such as `rules/work-bundle/`; those create incorrect nested indexes and are rejected by the scripts.
@@ -268,7 +269,7 @@ Reject unclear trigger constructions:
 - Do not cite paths outside the selected rule-store root, this skill, the validation catalog, or the dispatcher as rule authority.
 - Do not create or document a `global/` area directory inside any rules root.
 - Do not run `create-rules` or `validate-rules` against scope subdirectories such as `rules/work-bundle/`.
-- Do not mutate toolkit rules when `$workspace_root != $work_bundle_root`.
+- Do not mutate an unrelated installed toolkit or infer toolkit-source write scope from path equality; verify selected repository identity and authorization first.
 - Do not rely on scripts to judge `applies_when` semantics.
 - Do not use `before rule selection` or `when selecting rules` as the only trigger for rule consideration.
 

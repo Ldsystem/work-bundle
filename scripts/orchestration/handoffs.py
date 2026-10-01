@@ -6,13 +6,16 @@ infer product-review verdicts.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import jsonschema
+import sys
 from pathlib import Path
 from typing import Any
 
 from core import now_date, resolve_workspace_root
 from artifact_store import (
+    ArtifactError, _scan_candidates,
     canonical_artifact_path,
     family_policy,
     load_catalog,
@@ -45,6 +48,17 @@ def _anchors(args: argparse.Namespace) -> dict[str, Path]:
 
 def _policy() -> dict[str, Any]:
     return family_policy(load_catalog(CATALOG_PATH), FAMILY)
+
+
+def _creation_date(data: dict[str, Any], today: str) -> str:
+    value = data.get("date_created")
+    if isinstance(value, str):
+        try:
+            if dt.date.fromisoformat(value).isoformat() == value:
+                return value
+        except ValueError:
+            pass
+    return today
 
 
 def _read_compact_yaml_metadata(path: Path) -> dict[str, object]:
@@ -106,22 +120,11 @@ def _active_result_or_none(args: argparse.Namespace) -> dict[str, Any] | None:
         bindings=_bindings(args),
     )
     if active.is_file():
-        return read_artifact(
-            CATALOG_PATH, FAMILY, _anchors(args), identity=str(args.id),
-            state="active", bindings=_bindings(args),
-        )
-    for state in policy["lifecycle"]["states"]:
-        if state == "active":
-            continue
-        target = canonical_artifact_path(
-            policy,
-            _anchors(args),
-            identity=str(args.id),
-            state=str(state),
-            bindings=_bindings(args),
-        )
-        if target.exists():
-            raise SystemExit(f"Executor-result canonical identity collision: {args.id}")
+        try:
+            data = read_yaml_mapping(active)
+        except ArtifactError:
+            data = {}
+        return {"data": data}
     return None
 
 
@@ -169,7 +172,7 @@ def write_executor_result(args: argparse.Namespace) -> dict[str, Any]:
         "plan_id": str(args.plan_id),
         "phase_id": phase_id,
         "task_id": str(args.task_id),
-        "date_created": str(existing["data"]["date_created"]) if existing else today,
+        "date_created": _creation_date(existing["data"] if existing else {}, today),
         "last_updated": today,
     }
     return write_artifact(
@@ -242,7 +245,17 @@ def validate_phase_handoff(
 
 
 def _index_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
-    result = rebuild_index(CATALOG_PATH, FAMILY, _anchors(args))
+    try:
+        result = rebuild_index(CATALOG_PATH, FAMILY, _anchors(args))
+    except ArtifactError as error:
+        print(json.dumps({"family": FAMILY, "index_effect": "stale",
+                          "index_diagnostics": error.diagnostics,
+                          "index_diagnostic_count": error.diagnostic_count}, sort_keys=True), file=sys.stderr)
+        policy = _policy()
+        observations = _scan_candidates(CATALOG_PATH, policy, _anchors(args), policy["index"]["source_states"])
+        rows = [{key: item["data"][key] for key in policy["index"]["projection"]}
+                for item in observations if "diagnostic" not in item]
+        return sorted(rows, key=lambda row: str(row["id"]))
     path = Path(str(result["path"]))
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 

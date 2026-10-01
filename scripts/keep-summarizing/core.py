@@ -14,6 +14,21 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+import yaml
+
+
+class KnowledgeLoader(yaml.SafeLoader):
+    """Keep contract dates as strings and reject ambiguous duplicate keys."""
+
+    def construct_mapping(self, node, deep=False):
+        mapping = super().construct_mapping(node, deep=deep)
+        keys = [self.construct_object(key, deep=deep) for key, _ in node.value]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Duplicate YAML mapping key")
+        return mapping
+
+
+KnowledgeLoader.add_constructor("tag:yaml.org,2002:timestamp", lambda loader, node: loader.construct_scalar(node))
 
 
 def _infrastructure_module():
@@ -288,39 +303,21 @@ def is_relative_to(path: Path, parent: Path) -> bool:
 
 
 def read_front_matter(path: Path) -> tuple[dict[str, object], str]:
-    text = path.read_text(encoding="utf-8")
-    if not text.startswith("---\n"):
+    return parse_front_matter(path.read_text(encoding="utf-8"))
+
+
+def parse_front_matter(text: str) -> tuple[dict[str, object], str]:
+    opening = re.match(r"\A---\r?\n", text)
+    if opening is None:
         return {}, text
-    end = text.find("\n---\n", 4)
-    if end == -1:
+    closing = re.search(r"\r?\n---\r?\n", text[opening.end():])
+    if closing is None:
         return {}, text
-    raw = text[4:end]
-    body = text[end + 5 :]
-    data: dict[str, object] = {}
-    current_key: str | None = None
-    for line in raw.splitlines():
-        if not line.strip():
-            continue
-        if line.startswith("  - ") and current_key:
-            existing = data.setdefault(current_key, [])
-            if existing == "":
-                data[current_key] = []
-                existing = data[current_key]
-            if isinstance(existing, list):
-                existing.append(line[4:].strip())
-            continue
-        if ":" in line and not line.startswith(" "):
-            key, value = line.split(":", 1)
-            current_key = key.strip()
-            value = value.strip()
-            if value == "[]":
-                data[current_key] = []
-            elif value.lower() == "true":
-                data[current_key] = True
-            elif value.lower() == "false":
-                data[current_key] = False
-            else:
-                data[current_key] = value
+    raw = text[opening.end():opening.end() + closing.start()]
+    body = text[opening.end() + closing.end():]
+    data = yaml.load(raw, Loader=KnowledgeLoader)
+    if not isinstance(data, dict):
+        raise ValueError("Front matter must be a mapping")
     return data, body
 
 

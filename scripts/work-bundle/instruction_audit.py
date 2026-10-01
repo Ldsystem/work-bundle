@@ -24,6 +24,47 @@ def word_count(text: str) -> int:
     return len(WORD.findall(text))
 
 
+def validate_discovery_fixtures(payload: object) -> list[str]:
+    """Check agent-authored scenario shapes; never evaluate trigger meaning."""
+    if not isinstance(payload, dict) or set(payload) != {"fixtures"} or not isinstance(payload["fixtures"], list):
+        return ["discovery_fixtures:fixtures_list_required"]
+    failures, seen = [], set()
+    fields = {"id", "relation", "actor", "stage", "observable_signals", "selected_rule_ids", "carried_rule_ids"}
+    for number, fixture in enumerate(payload["fixtures"]):
+        prefix = f"discovery_fixtures:{number}"
+        if not isinstance(fixture, dict) or set(fixture) != fields:
+            failures.append(f"{prefix}:record_shape")
+            continue
+        for key in ("id", "stage"):
+            if not isinstance(fixture[key], str) or not fixture[key].strip():
+                failures.append(f"{prefix}:invalid:{key}")
+        rule_id = fixture["id"]
+        if isinstance(rule_id, str):
+            if rule_id in seen:
+                failures.append(f"{prefix}:duplicate_id:{rule_id}")
+            seen.add(rule_id)
+        if fixture["relation"] not in ("positive", "negative", "adjacent", "worker"):
+            failures.append(f"{prefix}:invalid:relation")
+        if fixture["actor"] not in ("controller", "worker"):
+            failures.append(f"{prefix}:invalid:actor")
+        if fixture["relation"] == "worker" and fixture["actor"] != "worker":
+            failures.append(f"{prefix}:worker_actor_required")
+        signals = fixture["observable_signals"]
+        if not isinstance(signals, dict) or not signals or any(
+            not isinstance(key, str) or not key.strip() or not isinstance(values, list)
+            or any(not isinstance(value, str) or not value.strip() for value in values)
+            for key, values in signals.items()
+        ):
+            failures.append(f"{prefix}:invalid:observable_signals")
+        for key in ("selected_rule_ids", "carried_rule_ids"):
+            values = fixture[key]
+            if not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() for value in values):
+                failures.append(f"{prefix}:invalid:{key}")
+            elif len(values) != len(set(values)):
+                failures.append(f"{prefix}:duplicate_items:{key}")
+    return failures
+
+
 def _front_matter(text: str) -> dict[str, object]:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -129,12 +170,18 @@ def cmd_instruction_audit(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="wb.py instruction-audit")
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--soft-threshold-words", type=int, default=500)
+    parser.add_argument("--discovery-fixtures", type=Path, help="Agent-authored YAML scenarios; shape checks only.")
     parsed = parser.parse_args(argv)
     try:
         result = audit_instructions(parsed.root, soft_threshold_words=parsed.soft_threshold_words)
+        if parsed.discovery_fixtures:
+            from rules import load_rule_yaml
+            failures = validate_discovery_fixtures(load_rule_yaml(parsed.discovery_fixtures.read_text(encoding="utf-8")))
+            result["discovery_fixtures"] = {"status": "issues-found" if failures else "shape-valid", "failures": failures,
+                                            "semantic_assessment": "agent-owned"}
     except (OSError, ValueError) as exc:
         code = str(exc) if str(exc).startswith("WB_") else "WB_INSTRUCTION_AUDIT_FAILED"
         out({"command": "instruction-audit", "status": "blocked", "failure_code": code})
         return 1
     out({"command": "instruction-audit", **result})
-    return 0
+    return 1 if result.get("discovery_fixtures", {}).get("failures") else 0

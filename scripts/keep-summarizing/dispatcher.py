@@ -13,13 +13,14 @@ from project import cmd_init, cmd_resolve
 from query import cmd_query
 from questions import cmd_add_question, cmd_list_questions, cmd_match_questions, cmd_resolve_question
 from registry import cmd_list_projects, cmd_register_project, cmd_registry_doctor, cmd_unregister_project
+from transactions import cmd_mutate_knowledge
 
 RECOGNIZED_COMMANDS = frozenset({
     "init", "resolve", "write-note", "index", "query", "index-open-questions",
     "git", "doctor", "output", "breakdown-design", "add-question",
     "list-questions", "match-questions", "resolve-question", "migrate-v3",
     "register-project", "unregister-project", "list-projects",
-    "registry-doctor",
+    "registry-doctor", "mutate-knowledge",
 })
 
 
@@ -31,7 +32,12 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--project-root")
         command.add_argument("--knowledge-root")
         command.add_argument("--cwd")
-        command.add_argument("--registry-file")
+
+    def add_mutation_args(command: argparse.ArgumentParser) -> None:
+        command.add_argument("--project", required=True)
+        command.add_argument("--request-file", required=True, help="YAML/JSON declared one-record effect")
+        command.add_argument("--dry-run", action="store_true")
+        add_resolution_args(command)
 
     init = sub.add_parser("init")
     init.add_argument("--project", required=True)
@@ -42,14 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_resolution_args(resolve)
     resolve.set_defaults(func=cmd_resolve)
     write_note = sub.add_parser("write-note")
-    write_note.add_argument("--project", required=True)
-    write_note.add_argument("--perspective", required=True)
-    write_note.add_argument("--title", required=True)
-    write_note.add_argument("--content-file", required=True)
-    write_note.add_argument("--lifecycle-stage")
-    write_note.add_argument("--source-type")
-    add_resolution_args(write_note)
+    add_mutation_args(write_note)
     write_note.set_defaults(func=cmd_write_note)
+    mutate = sub.add_parser("mutate-knowledge")
+    add_mutation_args(mutate)
+    mutate.set_defaults(func=cmd_mutate_knowledge)
     index = sub.add_parser("index")
     index.add_argument("--project", required=True)
     add_resolution_args(index)
@@ -91,13 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_resolution_args(breakdown)
     breakdown.set_defaults(func=cmd_breakdown_design)
     add_question = sub.add_parser("add-question")
-    add_question.add_argument("--project", required=True)
-    add_question.add_argument("--perspective", required=True)
-    add_question.add_argument("--title", required=True)
-    add_question.add_argument("--content-file", required=True)
-    add_question.add_argument("--trigger-terms", default="")
-    add_question.add_argument("--source-note-ids", default="")
-    add_resolution_args(add_question)
+    add_mutation_args(add_question)
     add_question.set_defaults(func=cmd_add_question)
     list_questions = sub.add_parser("list-questions")
     list_questions.add_argument("--project", required=True)
@@ -113,11 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_resolution_args(match_questions)
     match_questions.set_defaults(func=cmd_match_questions)
     resolve_question = sub.add_parser("resolve-question")
-    resolve_question.add_argument("--project", required=True)
-    resolve_question.add_argument("--id", required=True)
-    resolve_question.add_argument("--resolution-file", required=True)
-    resolve_question.add_argument("--resolved-by-note")
-    add_resolution_args(resolve_question)
+    add_mutation_args(resolve_question)
     resolve_question.set_defaults(func=cmd_resolve_question)
     migrate_v3 = sub.add_parser("migrate-v3")
     migrate_v3.add_argument("--project", required=True)
@@ -130,17 +123,13 @@ def build_parser() -> argparse.ArgumentParser:
     register.add_argument("--name")
     register.add_argument("--alias", action="append")
     register.add_argument("--source", action="append")
-    register.add_argument("--registry-file")
     register.set_defaults(func=cmd_register_project)
     unregister = sub.add_parser("unregister-project")
     unregister.add_argument("--project", required=True)
-    unregister.add_argument("--registry-file")
     unregister.set_defaults(func=cmd_unregister_project)
     list_projects = sub.add_parser("list-projects")
-    list_projects.add_argument("--registry-file")
     list_projects.set_defaults(func=cmd_list_projects)
     registry_doctor = sub.add_parser("registry-doctor")
-    registry_doctor.add_argument("--registry-file")
     registry_doctor.set_defaults(func=cmd_registry_doctor)
     return parser
 

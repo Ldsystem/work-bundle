@@ -215,8 +215,12 @@ def test_specification_update_rejects_non_draft_and_archived_identity(
         specs.cmd_set_spec_status(_args(workspace, id=args.id, status="draft"))
 
     specs.cmd_set_spec_status(_args(workspace, id=args.id, status="archived"))
-    with pytest.raises(SystemExit, match="collision"):
+    archived = workspace / ".work-bundle/orchestration/spec/archived" / f"{args.id}.spec.md"
+    archived_bytes = archived.read_bytes()
+    with pytest.raises(SystemExit, match=r"target\.identity-conflict"):
         specs.cmd_write_spec(args)
+    assert archived.read_bytes() == archived_bytes
+    assert not (workspace / ".work-bundle/orchestration/spec/active" / archived.name).exists()
 
 
 def test_shared_front_matter_mutation_remains_available_to_plan_consumers(

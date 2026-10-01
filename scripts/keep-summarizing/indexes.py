@@ -349,8 +349,7 @@ def build_vector_index_status(root: Path, chunks: list[dict[str, object]], proje
     return status
 
 
-def cmd_index(args: argparse.Namespace) -> None:
-    root = project_dir(args.project, args)
+def rebuild_indexes(root: Path, project: str) -> dict[str, object]:
     config = project_config(root)
     indexes = root / "indexes"
     indexes.mkdir(parents=True, exist_ok=True)
@@ -358,7 +357,7 @@ def cmd_index(args: argparse.Namespace) -> None:
     chunks = []
     manifest = {
         "generated_at": now_ts(),
-        "project": args.project,
+        "project": project,
         "documents": [],
     }
     for path in markdown_files(root):
@@ -406,8 +405,8 @@ def cmd_index(args: argparse.Namespace) -> None:
     (indexes / "embedding-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (indexes / "backlink-map.json").write_text("{}\n", encoding="utf-8")
     build_sqlite_index(root, docs)
-    vector_status = build_vector_index_status(root, chunks, args.project)
-    open_questions = build_open_question_index(root, args.project)
+    vector_status = build_vector_index_status(root, chunks, project)
+    open_questions = build_open_question_index(root, project)
     index_status = {
         "index_status": {
             "document_registry": "rebuilt",
@@ -424,7 +423,11 @@ def cmd_index(args: argparse.Namespace) -> None:
         },
         "vector_status": vector_status,
     }
-    print(json.dumps(index_status, ensure_ascii=False))
+    return index_status
+
+
+def cmd_index(args: argparse.Namespace) -> None:
+    print(json.dumps(rebuild_indexes(project_dir(args.project, args), args.project), ensure_ascii=False))
 
 
 def build_open_question_index(root: Path, project: str) -> list[dict[str, object]]:

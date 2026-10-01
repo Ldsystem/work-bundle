@@ -25,6 +25,143 @@ _CATALOG_SCHEMA = (
     / "references/assets/orchestration/contract/artifact-family-catalog-v1.schema.json"
 )
 
+DIAGNOSTIC_LIMIT = 20
+ALTERNATIVE_LIMIT = 3
+
+
+class ArtifactError(SystemExit):
+    """Human failure and structured observations from the same safe result."""
+
+    def __init__(self, message: str, diagnostics: list[dict[str, Any]], *, total: int | None = None,
+                 write_effect: str = "rejected", index_effect: str = "not-requested"):
+        self.diagnostics = diagnostics
+        self.diagnostic = self.diagnostics[0] if self.diagnostics else None
+        self.diagnostic_count = len(diagnostics) if total is None else total
+        self.write_effect = write_effect
+        self.index_effect = index_effect
+        self.partial_effect = write_effect == "applied"
+        super().__init__(message)
+
+
+def _safe_text(value: Any, limit: int | None = 120) -> str:
+    # Escape terminal controls; never render validation exception messages containing instances.
+    return json.dumps(str(value), ensure_ascii=True)[1:-1][:limit]
+
+
+def _pointer(parts: Any) -> str:
+    return "".join("/" + _safe_text(part).replace("~", "~0").replace("/", "~1") for part in parts)
+
+
+def _instance_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    return "non-json"
+
+
+def _safe_expected(value: Any) -> Any:
+    if isinstance(value, str):
+        return _safe_text(value)
+    if isinstance(value, list):
+        return [_safe_expected(item) for item in value[:8]]
+    if isinstance(value, dict):
+        return {"schema_keys": [_safe_text(key) for key in list(value)[:8]]}
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return "non-json constraint"
+
+
+def _schema_diagnostic(policy: Mapping[str, Any], error: jsonschema.ValidationError) -> dict[str, Any]:
+    parts = list(error.absolute_path)
+    expected = error.validator_value
+    if error.validator == "required" and isinstance(error.instance, dict):
+        missing = [field for field in expected if field not in error.instance]
+        if missing:
+            # jsonschema emits one error per field but exposes the entire required list.
+            # Match schema-owned names only; never render the exception's payload text.
+            expected = next((field for field in missing
+                             if error.message == f"{field!r} is a required property"), missing[0])
+            parts.append(expected)
+    elif error.validator == "additionalProperties" and isinstance(error.instance, dict):
+        properties = error.schema.get("properties", {})
+        patterns = error.schema.get("patternProperties", {})
+        unexpected = sorted(str(key) for key in error.instance if key not in properties
+                            and not any(re.search(pattern, str(key)) for pattern in patterns))
+        expected = {"additional_properties": error.validator_value,
+                    "allowed_properties": [_safe_text(field) for field in list(properties)[:8]]}
+        if unexpected:
+            parts.append(unexpected[0])
+    actual_type = _instance_type(error.instance)
+    size = len(error.instance) if isinstance(error.instance, (str, list, dict)) else None
+    return {
+        "code": f"schema.{error.validator}", "family": policy["name"],
+        "schema": policy["schema"]["id"], "instance_path": _pointer(parts),
+        "schema_path": _pointer(error.absolute_schema_path), "keyword": error.validator,
+        "expected": expected if error.validator == "additionalProperties" else _safe_expected(expected),
+        "actual_type": actual_type,
+        "excerpt": f"<{actual_type}" + (f" length={size}" if size is not None else "") + ">",
+    }
+
+
+def _validation_diagnostics(policy: Mapping[str, Any], errors: Any) -> dict[str, Any] | None:
+    leaves: list[tuple[jsonschema.ValidationError, tuple[int, ...]]] = []
+
+    def flatten(error: jsonschema.ValidationError, branch_counts: tuple[int, ...] = ()) -> None:
+        if not error.context:
+            leaves.append((error, branch_counts))
+            return
+        branches: dict[Any, list[jsonschema.ValidationError]] = {}
+        for child in error.context:
+            branch = child.schema_path[0] if child.schema_path else 0
+            branches.setdefault(branch, []).append(child)
+
+        def count(error: jsonschema.ValidationError) -> int:
+            return sum(count(child) for child in error.context) if error.context else 1
+
+        for children in branches.values():
+            size = sum(count(child) for child in children)
+            for child in children:
+                flatten(child, (*branch_counts, size))
+
+    for error in errors:
+        flatten(error)
+    if not leaves:
+        return None
+    # Longest actual instance path, smallest failing branch, stable schema traversal.
+    def rank(item: tuple[jsonschema.ValidationError, tuple[int, ...]]) -> Any:
+        error, counts = item
+        schema_order = tuple((0, part) if isinstance(part, int) else (1, str(part))
+                             for part in error.absolute_schema_path)
+        return (-len(error.absolute_path), counts or (1,), schema_order)
+
+    leaves.sort(key=rank)
+    selected = _schema_diagnostic(policy, leaves[0][0])
+    selected["alternatives"] = [_schema_diagnostic(policy, error)
+                                for error, _counts in leaves[1:ALTERNATIVE_LIMIT + 1]]
+    selected["alternative_count"] = len(leaves) - 1
+    return selected
+
+
+def _raise_schema(policy: Mapping[str, Any], errors: Any) -> None:
+    diagnostic = _validation_diagnostics(policy, errors)
+    if diagnostic is not None:
+        message = (f"Artifact schema validation failed for {policy['name']}: "
+                   f"{diagnostic['instance_path'] or '/'}: {diagnostic['keyword']} "
+                   f"expected {json.dumps(diagnostic['expected'], ensure_ascii=True)}; "
+                   f"found {diagnostic['actual_type']} (schema {diagnostic['schema_path']})")
+        raise ArtifactError(message, [diagnostic])
+
 
 class _MaintainedLoader(yaml.SafeLoader):
     """Safe maintained YAML with date-like orchestration scalars kept as text."""
@@ -37,26 +174,35 @@ for _key, _resolvers in list(_MaintainedLoader.yaml_implicit_resolvers.items()):
     ]
 
 
-def _fail(message: str) -> None:
-    raise SystemExit(message)
+def _fail(message: str, *, code: str = "artifact.invalid") -> None:
+    raise ArtifactError(message, [{"code": code}])
 
 
 def _yaml_mapping(text: str, *, source: str) -> dict[str, Any]:
     try:
         value = yaml.load(text, Loader=_MaintainedLoader)
     except yaml.YAMLError as exc:
-        _fail(f"Invalid YAML in {source}: {exc}")
+        mark = getattr(exc, "problem_mark", None)
+        location = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
+        _fail(f"Invalid YAML in {_safe_text(source, 400)}{location}", code="parse.yaml")
     if not isinstance(value, dict):
-        _fail(f"Expected a YAML mapping in {source}")
+        _fail(f"Expected a YAML mapping in {source}", code="parse.mapping")
     return value
 
 
 def read_yaml_mapping(path: Path) -> dict[str, Any]:
-    return _yaml_mapping(path.read_text(encoding="utf-8"), source=str(path))
+    return _yaml_mapping(_read_text(path), source=str(path))
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeError:
+        _fail(f"Invalid UTF-8 artifact at {_safe_text(path, 400)}", code="parse.encoding")
 
 
 def read_markdown_artifact(path: Path) -> tuple[dict[str, Any], str]:
-    text = path.read_text(encoding="utf-8")
+    text = _read_text(path)
     return parse_markdown_artifact(text, source=str(path))
 
 
@@ -77,7 +223,7 @@ def parse_yaml_value(text: str, *, source: str = "content") -> Any:
     try:
         return yaml.load(text, Loader=_MaintainedLoader)
     except yaml.YAMLError as exc:
-        _fail(f"Invalid YAML in {source}: {exc}")
+        _fail(f"Invalid YAML in {_safe_text(source, 400)}")
 
 
 def _json_mapping(path: Path) -> dict[str, Any]:
@@ -230,7 +376,7 @@ def _validated_bindings(
         if binding["required"] and expected is None:
             _fail(f"Missing required artifact binding: {name}")
         if expected is not None and str(actual) != str(expected):
-            _fail(f"Artifact binding mismatch for {name}: expected {expected}, found {actual}")
+            _fail(f"Artifact binding mismatch for {name}", code="binding.mismatch")
         if expected is not None:
             result[name] = str(expected)
     return result
@@ -247,13 +393,14 @@ def validate_artifact(
     identity_field = str(policy["identity"]["field"])
     identity = data.get(identity_field)
     if not isinstance(identity, str) or re.fullmatch(str(policy["identity"]["pattern"]), identity) is None:
-        _fail(f"Invalid artifact identity for {identity_field}: {identity!r}")
+        diagnostic = {"code": "identity.invalid", "family": policy["name"],
+                      "schema": policy["schema"]["id"], "instance_path": _pointer([identity_field]),
+                      "keyword": "pattern", "expected": policy["identity"]["pattern"],
+                      "actual_type": _instance_type(identity)}
+        raise ArtifactError(f"Invalid artifact identity for {identity_field}: expected {diagnostic['expected']}", [diagnostic])
     schema_path = _schema_path(catalog_path.resolve(), policy)
     schema = _json_mapping(schema_path)
-    try:
-        jsonschema.Draft202012Validator(schema).validate(dict(data))
-    except jsonschema.ValidationError as exc:
-        _fail(f"Artifact schema validation failed for {policy['name']}: {exc.message}")
+    _raise_schema(policy, jsonschema.Draft202012Validator(schema).iter_errors(dict(data)))
     return _validated_bindings(
         policy, data, bindings, derive_from_data=derive_bindings
     )
@@ -387,7 +534,7 @@ def read_artifact(
 
 def _result(
     policy: Mapping[str, Any], path: Path, data: Mapping[str, Any], bindings: Mapping[str, str],
-    *, state: str, index_effect: str, partial_effect: bool,
+    *, state: str, index_effect: str, partial_effect: bool, digest: str | None = None,
 ) -> dict[str, Any]:
     return {
         "family": policy["name"],
@@ -395,7 +542,7 @@ def _result(
         "path": str(path),
         "schema": policy["schema"]["id"],
         "state": state,
-        "digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "digest": digest if digest is not None else hashlib.sha256(path.read_bytes()).hexdigest(),
         "validated_bindings": dict(bindings),
         "index_effect": index_effect,
         "partial_effect": partial_effect,
@@ -419,26 +566,40 @@ def write_artifact(
     identity = str(data[policy["identity"]["field"]])
     path = canonical_artifact_path(policy, anchors, identity=identity, state=state, bindings=validated)
     content = serialize_artifact(policy, data, body)
+    # Validate the staged representation before replacing authoritative bytes.
+    staged = content.decode("utf-8")
+    staged_data = (parse_yaml_mapping(staged) if policy["representation"] == "yaml"
+                   else parse_markdown_artifact(staged)[0])
+    validate_artifact(policy, staged_data, catalog_path=catalog_path, bindings=validated)
+    _check_target_conflicts(catalog_path, policy, anchors, path, identity, validated)
     atomic_write_bytes(path, content)
-    stored, _stored_body, stored_bindings = _read_stored(
-        catalog_path, policy, path, bindings=validated
-    )
-    expected = canonical_artifact_path(
-        policy, anchors, identity=str(stored[policy["identity"]["field"]]), state=state, bindings=stored_bindings
-    )
-    if expected != path:
-        _fail(f"Stored artifact is in the wrong canonical location: {path}")
+    try:
+        intact = path.read_bytes() == content
+    except OSError:
+        intact = False
+    if not intact:
+        raise ArtifactError("Artifact was written but its integrity check failed",
+                            [{"code": "write.integrity", "path": str(path)}], write_effect="applied")
     index_effect = "not-requested"
+    index_diagnostics: list[dict[str, Any]] = []
+    diagnostic_count = 0
     if rebuild and policy["index"].get("policy") != "none":
         try:
             rebuild_index(catalog_path, family, anchors)
             index_effect = "rebuilt"
         except (OSError, SystemExit) as exc:
-            _fail(f"Artifact was written but index rebuild failed (partial effect): {exc}")
-    return _result(
-        policy, path, stored, stored_bindings, state=state,
-        index_effect=index_effect, partial_effect=False,
+            index_effect = "stale"
+            index_path = Path(anchors[str(policy["anchor"])]) / str(policy["index"]["path"])
+            index_diagnostics = getattr(exc, "diagnostics", [{"code": "index.io", "path": str(index_path)}])
+            diagnostic_count = getattr(exc, "diagnostic_count", len(index_diagnostics))
+    result = _result(
+        policy, path, staged_data, validated, state=state,
+        index_effect=index_effect, partial_effect=index_effect == "stale",
+        digest=hashlib.sha256(content).hexdigest(),
     )
+    result.update(write_effect="applied", index_diagnostics=index_diagnostics,
+                  index_diagnostic_count=diagnostic_count)
+    return result
 
 
 def transition_artifact(
@@ -486,6 +647,87 @@ def _candidate_pattern(policy: Mapping[str, Any], state: str) -> str:
         _fail(f"Invalid artifact index locator for {policy['name']}: {exc}")
 
 
+def _scan_candidates(
+    catalog_path: Path, policy: Mapping[str, Any], anchors: Mapping[str, Path],
+    states: Any, *, replacement: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Declared catalog discovery only; raw identity remains a fact even if schema fails."""
+    anchor = Path(anchors[str(policy["anchor"])]).resolve()
+    observations: list[dict[str, Any]] = []
+    identities: set[str] = set()
+    for state in states:
+        for candidate in sorted(anchor.glob(_candidate_pattern(policy, str(state)))):
+            observation: dict[str, Any] = {"path": candidate, "state": str(state), "data": None}
+            observations.append(observation)
+            try:
+                if policy["representation"] == "yaml":
+                    data = read_yaml_mapping(candidate)
+                else:
+                    data, _body = read_markdown_artifact(candidate)
+                observation["data"] = data
+                if replacement is not None and candidate == replacement:
+                    continue
+                bindings = validate_artifact(policy, data, catalog_path=catalog_path, derive_bindings=True)
+                identity = str(data[policy["identity"]["field"]])
+                expected = canonical_artifact_path(policy, anchors, identity=identity,
+                                                   state=str(state), bindings=bindings)
+                if candidate.resolve() != expected:
+                    _fail(f"wrong canonical placement: expected {expected}", code="location.noncanonical")
+                if identity in identities:
+                    _fail(f"duplicate identity: {identity}", code="identity.duplicate")
+                identities.add(identity)
+                observation["bindings"] = bindings
+            except (OSError, SystemExit) as exc:
+                diagnostic = dict(getattr(exc, "diagnostic", None) or {"code": "read.io"})
+                diagnostic.update(path=str(candidate), family=policy["name"], schema=policy["schema"]["id"])
+                observation["diagnostic"] = diagnostic
+    return observations
+
+
+def _check_target_conflicts(
+    catalog_path: Path, policy: Mapping[str, Any], anchors: Mapping[str, Path],
+    target: Path, identity: str, bindings: Mapping[str, str],
+) -> None:
+    conflicts: list[dict[str, Any]] = []
+    occupied_states: set[Path] = set()
+    # These are exact catalog-owned locations, not identities inferred from discovery names.
+    for state in policy["lifecycle"]["states"]:
+        candidate = canonical_artifact_path(policy, anchors, identity=identity,
+                                            state=str(state), bindings=bindings)
+        if candidate != target and candidate.exists():
+            occupied_states.add(candidate)
+            conflicts.append({"code": "target.identity-conflict", "path": str(candidate),
+                              "family": policy["name"], "schema": policy["schema"]["id"],
+                              "state": str(state)})
+    for observation in _scan_candidates(catalog_path, policy, anchors,
+                                        policy["lifecycle"]["states"], replacement=target):
+        candidate = observation["path"]
+        if candidate.resolve() in occupied_states:
+            continue
+        data = observation["data"]
+        if data is None:
+            continue  # An unreadable current target can be repaired; unrelated names confer no identity.
+        actual = data.get(policy["identity"]["field"])
+        code = None
+        if candidate != target and actual == identity:
+            code = "target.identity-conflict"
+        elif candidate == target:
+            if actual is not None and actual != identity:
+                code = "target.identity-conflict"
+            else:
+                for binding in policy["relationships"]["bindings"]:
+                    existing = data.get(binding["field"])
+                    if existing is not None and existing != bindings.get(binding["name"]):
+                        code = "target.binding-conflict"
+                        break
+        if code:
+            conflicts.append({"code": code, "path": str(candidate), "family": policy["name"],
+                              "schema": policy["schema"]["id"], "state": observation["state"]})
+    if conflicts:
+        raise ArtifactError("Artifact target conflict: " + "; ".join(
+            f"{item['code']} at {_safe_text(item['path'], 400)}" for item in conflicts[:DIAGNOSTIC_LIMIT]), conflicts)
+
+
 def rebuild_index(
     catalog_path: Path, family: str, anchors: Mapping[str, Path]
 ) -> dict[str, Any]:
@@ -495,31 +737,12 @@ def rebuild_index(
     if index_policy.get("policy") == "none":
         _fail(f"Artifact family has no index policy: {family}")
     anchor = Path(anchors[str(policy["anchor"])]).resolve()
-    rows: list[dict[str, Any]] = []
-    identities: set[str] = set()
-    for state in index_policy["source_states"]:
-        pattern = _candidate_pattern(policy, str(state))
-        for candidate in sorted(anchor.glob(pattern)):
-            try:
-                data, _body, bindings = _read_stored(
-                    catalog_path,
-                    policy,
-                    candidate,
-                    bindings=None,
-                    derive_bindings=True,
-                )
-                identity = str(data[policy["identity"]["field"]])
-                expected = canonical_artifact_path(
-                    policy, anchors, identity=identity, state=str(state), bindings=bindings
-                )
-                if candidate.resolve() != expected:
-                    _fail(f"wrong canonical placement: expected {expected}")
-                if identity in identities:
-                    _fail(f"duplicate identity: {identity}")
-                identities.add(identity)
-                rows.append({field: data[field] for field in index_policy["projection"]})
-            except (OSError, SystemExit) as exc:
-                _fail(f"Invalid index candidate {candidate}: {exc}")
+    observations = _scan_candidates(catalog_path, policy, anchors, index_policy["source_states"])
+    diagnostics = [item["diagnostic"] for item in observations if "diagnostic" in item]
+    if diagnostics:
+        raise ArtifactError("Invalid index candidate(s): " + "; ".join(
+            f"{item['code']} at {_safe_text(item['path'], None)}" for item in diagnostics), diagnostics)
+    rows = [{field: item["data"][field] for field in index_policy["projection"]} for item in observations]
     rows.sort(key=lambda row: str(row[policy["identity"]["field"]]))
     index_relative = _safe_relative(str(index_policy["path"]), label="Artifact index path")
     target = (anchor / index_relative).resolve()

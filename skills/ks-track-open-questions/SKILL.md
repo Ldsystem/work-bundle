@@ -45,8 +45,8 @@ Speculative questions the user has not accepted.
 1. Run structural-value test (see `ks-structural-value`).
 2. Apply open-question policy per loaded `ks-open-question-policy`.
 3. Complete watchpoint front matter per **Open Question Constraints (skill-owned)**.
-4. Write standalone note under `open-questions/<lifecycle-stage>/<perspective>/`.
-5. Rebuild `indexes/open-question-registry.jsonl` via `ks-maintain-indexes`.
+4. Complete the shared workflow's agent decision preconditions. Prepare one `effect: create`, `kind: open-question` request with absent canonical knowledge-relative `path`, `expected_digest: null`, complete `record` front matter, and exact Markdown `body`; initial status is `open` and unresolved fields are explicit nulls.
+5. Invoke `python3 scripts/ks.py mutate-knowledge --project <slug> --request-file <request.yaml>` with optional `--dry-run`. Do not directly create the watchpoint or patch the registry. Consume the returned canonical/projection outcomes and existing stale-projection rebuild command.
 
 ## Strict Rules
 
@@ -79,23 +79,14 @@ Apply loaded Runtime Rules:
 - `ks-sensitivity-filter`: `rules/keep-summarizing/ks-sensitivity-filter.md`
 - `ks-structural-value`: `rules/keep-summarizing/ks-structural-value.md`
 
-## Rule Loading (mandatory)
-
-Before substantive keep-summarizing work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive knowledge work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or summarized rule text as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns indexed rule discovery and exact-context body reuse. Consume carried task-local obligations in an accepted worker packet; these Runtime Rules are procedural pointers, not a separate loading algorithm.
 
 ## Open Question Constraints (skill-owned)
 
 - Use only leaf perspectives under `open-questions/<lifecycle-stage>/<perspective>/`.
 - Require trigger terms in front matter before completion.
 - Complete watchpoint front matter: question text, perspective, trigger terms, and tracking rationale.
-- If trigger terms are missing, return `Waiting for your direction`.
+- Derive concrete trigger terms from the accepted watchpoint when possible; return `Waiting for your direction` only when the intended future match remains unclear.
 
 ## Scripts
 
@@ -104,3 +95,10 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 ## Boundary
 
 Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).
+
+## Self-check
+
+- [ ] User-confirmed tracking intent, structural value, relevance, authority, conflicts, sensitivity, and evidence are settled.
+- [ ] The complete request declares one absent watchpoint, exact content/front matter and links, with no internal reasoning fields.
+- [ ] The command performed creation; the watchpoint remains watch context rather than settled facts.
+- [ ] Canonical and index outcomes are reported separately; successful indexing does not qualify the question's meaning.

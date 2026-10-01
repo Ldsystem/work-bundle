@@ -1,6 +1,6 @@
 ---
 name: ks-resolve-conflicts
-description: 'Resolve duplicate or conflicting durable knowledge notes with canonical ownership.'
+description: 'Resolve identified contradictory or duplicate durable notes and choose canonical ownership before requesting record effects. Excludes straightforward updates with no identified conflict.'
 ---
 
 # ks-resolve-conflicts
@@ -39,7 +39,9 @@ There is no identified conflict; use `ks-write-knowledge` for straightforward up
 ## Workflow
 
 1. Compare content and front matter.
-2. Apply resolution workflow per **Conflict Resolution Constraints (skill-owned)**.
+2. Complete the shared workflow's agent decision preconditions and choose canonical ownership/resolution per **Conflict Resolution Constraints (skill-owned)**; the script does not decide which note is better.
+3. After resolving authority and intent, author exact replacement content and declared links. If a replacement note is needed, create/update it through `ks-write-knowledge` first; then use `ks-manage-lifecycle` for each separately authorized supersession/deprecation. Each request mutates one record and references existing replacements, rather than treating a merge as a multi-record transaction.
+4. Invoke `python3 scripts/ks.py mutate-knowledge --project <slug> --request-file <request.yaml>` for the declared effect using the shared complete `effect/kind/path/expected_digest/record/body` request. Keep internal conflict reasoning out of it and consume canonical/projection outcomes separately.
 
 ## Return
 
@@ -54,16 +56,7 @@ There is no identified conflict; use `ks-write-knowledge` for straightforward up
 - `ks-perspective-routing`: `rules/keep-summarizing/ks-perspective-routing.md`
 - `ks-sensitivity-filter`: `rules/keep-summarizing/ks-sensitivity-filter.md`
 
-## Rule Loading (mandatory)
-
-Before substantive keep-summarizing work, read **every** rule listed in **Runtime Rules** from disk in full.
-
-- **Must** load all cited rule files before substantive knowledge work.
-- **Must** treat loaded rule Must, Must Not, Validation, and On Violation sections as binding for this skill session.
-- **Must Not** rely on conversation memory, prior runs, or summarized rule text as substitutes for cited rules.
-- **Must** stop and reload rules when returning to an in-progress task after context compaction or handoff.
-
-If a cited rule path is missing or unreadable, stop and report a rule-load blocker; do not proceed.
+Central `AGENTS.md` owns indexed rule discovery and exact-context body reuse. Consume carried task-local obligations in an accepted worker packet; these Runtime Rules are procedural pointers, not a separate loading algorithm.
 
 ## Conflict Resolution Constraints (skill-owned)
 
@@ -81,3 +74,10 @@ Use `scripts/ks.py` when deterministic helper behavior is needed.
 ## Boundary
 
 Durable knowledge boundary: follow `ks-knowledge-boundary` (`rules/keep-summarizing/ks-knowledge-boundary.md`).
+
+## Self-check
+
+- [ ] The identified conflict, canonical owner, evidence, sensitivity, and authorized resolution are settled by the agent.
+- [ ] Each command request has one exact effect and current digest, with explicit content/status/links and no reasoning transcript.
+- [ ] Replacement references exist before a supersede/deprecate request; no ad hoc canonical edit or multi-record atomicity was claimed.
+- [ ] Report actual written paths and stale/rebuilt projection outcomes without a script-owned merge or acceptance judgment.

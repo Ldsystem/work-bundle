@@ -75,6 +75,6 @@ The plan is disposable runtime state, not durable knowledge. Record the disposit
 The agent owning this lightweight plan is the lightweight completion owner. After validation it evaluates the final disposition:
 
 - `none`: record an evidence-backed no-write result and complete without invoking a writer.
-- `update`, `supersede`, or `reclassify`: invoke the approved keep-summarizing lifecycle, then validate its returned structural-value decision, written or updated paths or no-write rationale, index status, and blockers before completion.
+- `update`, `supersede`, or `reclassify`: make the knowledge meaning/value/authority/intent decision as an agent and invoke the approved keep-summarizing procedure. Consume its declared single-record canonical effect, written paths or no-write outcome, projection status, and blockers; the command never returns a structural-value or acceptance verdict. Existing approved follow-up intent does not require a second permission request.
 
 This owner is distinct from final orchestration review, which owns durable closure only for the heavy path. Lightweight completion never creates an orchestration review artifact.
