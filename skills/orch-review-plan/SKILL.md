@@ -19,7 +19,11 @@ The controller/orchestrator assesses the exact review advice and findings agains
 
 ## Final workflow review
 
+For delivery-task acceptance, mechanical prewrite checks require every other phase task's current accepted result, the current factual executor result, exact published bundle/product/manifest/bridge identities, required bridge observations, and a complete passing catalog report. The controller still judges phase purpose and completion criteria after considering required review advice. Its existing accepted-task-result is the sole continuation decision. Surface the accepted snapshot asynchronously; later findings reopen only their affected authority closure, preserving unrelated current acceptance and exact reusable observations.
+
 A distinct final auditor advises on plan/task coverage, controller-accepted implementation decisions, relevant current test outcomes, unresolved material defects, knowledge disposition/return, repository finalization facts, and truthful archive readiness. Do not reread source for code quality or repeat implementation review. The controller/orchestrator assesses that advice and writes or repairs its `final-workflow-review-v1` closure decision at the same identity. Deterministic finalization validates canonical references, lifecycle state, clean baselines, archive destinations, indexes, and binding release without inventing or reinterpreting the controller decision.
+
+Finalization preflights all accepted bundle cleanup targets read-only before deletion, refuses missing/mismatched payloads and live or uncertain leases, and uses the exact release owner. Dead-runner recovery still requires verified bounded child/external cleanup. Retain identity-bound cleaning/cleaned state through partial failures, resume exact current active/archived references on retry, archive only after every bundle is cleaned, then remove temporary states/root. Explicit earlier release must have matching cleaned state; failed preacceptance candidates may be explicitly released by persisted materialization identity and rematerialized without fabricated acceptance.
 
 ## Self-check
 

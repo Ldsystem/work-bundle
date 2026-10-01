@@ -6,7 +6,13 @@ from execution_context import (
     _dump_yaml,
     _iter_task_bindings,
     _persist_binding,
+    _validate_phase_catalog,
+    _validate_task_catalog,
+    _validate_delivery_graph,
+    _validate_phase_dependencies,
+    _catalog_repository_ids,
     compile_task_candidate,
+    static_plan_task_admission,
 )
 from artifact_store import (
     atomic_write_bytes,
@@ -34,7 +40,7 @@ from task_ownership import canonical_relative_path
 
 
 
-CATALOG_PATH = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
+CATALOG_PATH = Path(__file__).resolve().parents[2] / "references/assets/orchestration/contract/artifact-family-catalog-v7.yaml"
 PLAN_FAMILIES = ("root-plan", "phase", "task")
 PLAN_QUALIFICATION_STATUSES = {"draft", "verified", "superseded"}
 PLAN_QUALIFICATION_TRANSITIONS = {
@@ -296,6 +302,35 @@ def _current_plan_tasks(
     return tasks
 
 
+def _validate_complete_delivery_candidate(
+    args: argparse.Namespace, plan: dict[str, object],
+    tasks: dict[str, dict[str, object]], *, phase_candidate: dict[str, object] | None = None,
+) -> None:
+    """Check available complete graphs before writes; draft mode assembly stays open."""
+
+    phases = {
+        str(row["id"]): _active_artifact(args, "phase", str(row["id"]), _family_bindings("phase", row))
+        for row in _index_rows(args, "phase") if row.get("plan_id") == plan["id"]
+    }
+    if phase_candidate is not None:
+        phases[str(phase_candidate["id"])] = phase_candidate
+    if set(phases) != {str(row["id"]) for row in plan["phase_index"]}:
+        return
+    for phase_id, phase in phases.items():
+        if {str(row["id"]) for row in phase["task_index"]} != {
+            task_id for task_id, task in tasks.items() if task["phase_id"] == phase_id
+        }:
+            return
+    for task_id in tasks:
+        _task_dependency_ancestors(tasks, task_id)
+    _validate_phase_dependencies(phases)
+    dependencies = {task_id: list(map(str, task["depends_on"])) for task_id, task in tasks.items()}
+    # Authors may declare an intermediate snapshot before adding the final phase.
+    # Qualification performs the final-mode check on the completed canonical tree.
+    _validate_delivery_graph(plan, phases, tasks, dependencies, validate_modes=False,
+                             repository_ids=_catalog_repository_ids(resolve_workspace_root(args)))
+
+
 def _validate_task_shared_authority_before_write(
     candidate: dict[str, object],
     plan: dict[str, object],
@@ -406,6 +441,8 @@ def cmd_write_plan(args: argparse.Namespace) -> None:
         raise SystemExit("Plan filename override is not supported by the canonical family")
     if args.status not in PLAN_QUALIFICATION_STATUSES:
         raise SystemExit(f"Invalid plan qualification status: {args.status}")
+    if args.status == "verified":
+        raise SystemExit("Create the root plan as draft, then qualify its complete canonical tree with set-plan-status")
     semantic = _semantic_yaml(
         Path(args.content_file), PLAN_STRUCTURAL_INPUT_FIELDS, "Root plan"
     )
@@ -501,6 +538,12 @@ def cmd_set_plan_status(args: argparse.Namespace) -> None:
         raise SystemExit(
             f"Invalid plan qualification transition: {data['status']} -> {args.status}"
         )
+    if args.status == "verified":
+        path = canonical_artifact_path(
+            _plan_policy("root-plan"), _plan_anchors(args), identity=args.id,
+            state="active", bindings=bindings,
+        )
+        static_plan_task_admission(resolve_workspace_root(args), path)
     data["status"] = args.status
     data["last_updated"] = now_date()
     write_artifact(
@@ -590,7 +633,7 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
     semantic = _semantic_yaml(
         Path(args.content_file), PHASE_STRUCTURAL_INPUT_FIELDS, "Phase"
     )
-    _require_draft_plan(args, str(args.plan_id))
+    plan = _require_draft_plan(args, str(args.plan_id))
     bindings = {"plan": args.plan_id}
     existing = _active_artifact_or_none(args, "phase", args.phase_id, bindings)
     if existing is None and _identity_collision(args, "phase", args.phase_id, bindings=bindings):
@@ -598,13 +641,30 @@ def cmd_write_phase(args: argparse.Namespace) -> None:
     today = now_date()
     data = {
         **semantic,
-        "artifact_type": "phase", "schema_version": 1,
+        "artifact_type": "phase", "schema_version": 2,
         "id": args.phase_id, "plan_id": args.plan_id, "name": args.title,
         "status": PLANNED_STATUS,
         "date_created": str(existing["date_created"]) if existing else today,
         "last_updated": today,
     }
     _validate_candidate("phase", data, bindings)
+    delivery = data.get("delivery")
+    if isinstance(delivery, dict):
+        declared_tasks = {
+            str(item.get("id") or "")
+            for item in data.get("task_index", [])
+            if isinstance(item, dict)
+        }
+        delivery_task_id = str(delivery.get("task_id") or "")
+        if delivery_task_id and delivery_task_id not in declared_tasks:
+            raise SystemExit("Phase delivery task must be declared in task_index")
+        catalog = _validate_phase_catalog(data)
+        tasks = _current_plan_tasks(args, str(args.plan_id))
+        repository_ids = _catalog_repository_ids(resolve_workspace_root(args))
+        for task_id, task in tasks.items():
+            if task_id in catalog:
+                _validate_task_catalog(task, catalog[task_id], repository_ids=repository_ids)
+        _validate_complete_delivery_candidate(args, plan, tasks, phase_candidate=data)
     result = write_artifact(
         CATALOG_PATH, "phase", _plan_anchors(args), data, state="active",
         bindings=bindings,
@@ -631,7 +691,7 @@ def _prepare_task_write(
     today = now_date()
     data = {
         **semantic,
-        "artifact_type": "task", "schema_version": 2,
+        "artifact_type": "task", "schema_version": 3,
         "id": args.task_id, "plan_id": args.plan_id, "phase_id": args.phase_id,
         "name": args.title, "status": PLANNED_STATUS,
         "date_created": str(existing["date_created"]) if existing else today,
@@ -639,20 +699,24 @@ def _prepare_task_write(
     }
     _validate_candidate("task", data, bindings)
     try:
-        read_artifact(
+        phase = read_artifact(
             CATALOG_PATH,
             "phase",
             _plan_anchors(args),
             identity=str(args.phase_id),
             state="active",
             bindings={"plan": str(args.plan_id)},
-        )
+        )["data"]
     except (FileNotFoundError, SystemExit) as error:
         raise SystemExit(
             f"Task parent phase is not canonical for plan {args.plan_id}: {args.phase_id}"
         ) from error
+    catalog = _validate_phase_catalog(phase)
+    _validate_task_catalog(data, catalog.get(str(args.task_id), []),
+                           repository_ids=_catalog_repository_ids(resolve_workspace_root(args)))
     tasks = _validate_task_dependencies_before_write(args, data)
     _validate_task_shared_authority_before_write(data, plan, tasks)
+    _validate_complete_delivery_candidate(args, plan, tasks)
     return data, bindings, existing
 
 
@@ -698,21 +762,48 @@ def cmd_amend_task(args: argparse.Namespace) -> None:
     }, sort_keys=True))
 
 
+def _preflight_phase_cleanup(workspace: Path, plan_id: str, chain: dict[str, object], *, archived: bool = False) -> list[tuple[str, dict[str, object], str]]:
+    """Resolve already-verified accepted handoffs and preflight every target."""
+    from phase_delivery import preflight_cleanup, read_cleaned_state, read_removed_runtime, runtime_paths
+
+    executors = {record["data"]["task_id"]: record["data"]
+                 for record, _bindings, _state in chain["executor_records"]}
+    targets = []
+    for phase_id, phase in chain["tree"]["phases"].items():
+        task_id = phase.get("delivery", {}).get("task_id")
+        if not task_id:
+            continue
+        handoff = executors[task_id].get("phase_handoff")
+        if not isinstance(handoff, dict) or handoff.get("phase_id") != phase_id or handoff.get("delivery_task_id") != task_id:
+            raise SystemExit("Finalization requires the exact accepted delivery phase_handoff")
+        expected = handoff["runtime_bundle"]
+        paths = runtime_paths(workspace, plan_id, phase_id)
+        if any(expected.get(key) != value for key, value in paths.items()):
+            raise SystemExit("Finalization delivery runtime path mismatch")
+        state_path = workspace / paths["state_relative_path"]
+        # All artifacts archived explains post-archive state-removal retry only.
+        if archived and not state_path.exists() and not state_path.is_symlink() and not (workspace / paths["relative_path"]).exists():
+            read_removed_runtime(workspace, plan_id, phase_id, expected=expected)
+            targets.append((phase_id, expected, "removed"))
+            continue
+        state = json.loads(state_path.read_text()) if state_path.is_file() and not state_path.is_symlink() else {}
+        if state.get("state") == "cleaned":
+            checked = read_cleaned_state(workspace, plan_id, phase_id, expected=expected)
+        else:
+            checked = preflight_cleanup(workspace, plan_id, phase_id, reason="finalization", expected=expected)
+        targets.append((phase_id, expected, checked["state"]))
+    return targets
+
+
 def cmd_finalize_reviewed_plan(args: argparse.Namespace) -> None:
     """Mechanically archive one exact accepted current plan and release bindings."""
 
     from artifact_store import transition_artifact
-    from review_runtime import CURRENT_CATALOG, validate_final_workflow_chain
+    from review_runtime import CURRENT_CATALOG, validate_final_workflow_chain, _reference
+    from phase_delivery import release_bundle, remove_cleaned_state, prune_removed_runtime
 
     anchors = _plan_anchors(args)
-    review = read_artifact(
-        CURRENT_CATALOG,
-        "final-workflow-review",
-        anchors,
-        identity=str(args.final_review_id),
-        state="active",
-        bindings={"plan": str(args.plan_id)},
-    )
+    review = _reference(args, "final-workflow-review", str(args.final_review_id), {"plan": str(args.plan_id)})
     data = review["data"]
     if data.get("verdict") != "accept" or data.get("archive_ready") is not True:
         raise SystemExit("Final workflow review does not authorize archive readiness")
@@ -725,11 +816,8 @@ def cmd_finalize_reviewed_plan(args: argparse.Namespace) -> None:
         raise SystemExit("Finalization requires one canonical plan identity")
     plan_row = plan_rows[0]
     plan_bindings = _family_bindings("root-plan", plan_row)
-    plan_record = read_artifact(
-        CATALOG_PATH, "root-plan", anchors, identity=str(args.plan_id),
-        state="active", bindings=plan_bindings,
-    )
-    current_chain = validate_final_workflow_chain(args, data)
+    plan_record = _reference(args, "root-plan", str(args.plan_id), plan_bindings)
+    current_chain = validate_final_workflow_chain(args, data, finalization=True)
     accepted_records = current_chain["accepted_records"]
     executor_records = current_chain["executor_records"]
     review_records = current_chain["review_records"]
@@ -783,15 +871,21 @@ def cmd_finalize_reviewed_plan(args: argparse.Namespace) -> None:
         transition_states[("executor-result", identity)] = state
     for record, bindings_for_result in accepted_records:
         transitions.append((CURRENT_CATALOG, "accepted-task-result", str(record["data"]["id"]), bindings_for_result))
+        transition_states[("accepted-task-result", str(record["data"]["id"]))] = record["state"]
     for record in review_records:
         transitions.append((CURRENT_CATALOG, "implementation-review", str(record["data"]["id"]), {"plan": str(args.plan_id)}))
+        transition_states[("implementation-review", str(record["data"]["id"]))] = record["state"]
     for row in task_rows:
         transitions.append((CATALOG_PATH, "task", str(row["id"]), _family_bindings("task", row)))
+        transition_states[("task", str(row["id"]))] = _reference(args, "task", str(row["id"]), _family_bindings("task", row))["state"]
     phase_rows = [row for row in _index_rows(args, "phase") if row.get("plan_id") == args.plan_id]
     for row in phase_rows:
         transitions.append((CATALOG_PATH, "phase", str(row["id"]), _family_bindings("phase", row)))
+        transition_states[("phase", str(row["id"]))] = _reference(args, "phase", str(row["id"]), _family_bindings("phase", row))["state"]
     transitions.append((CATALOG_PATH, "root-plan", str(args.plan_id), plan_bindings))
     transitions.append((CURRENT_CATALOG, "final-workflow-review", str(args.final_review_id), {"plan": str(args.plan_id)}))
+    transition_states[("root-plan", str(args.plan_id))] = plan_record["state"]
+    transition_states[("final-workflow-review", str(args.final_review_id))] = review["state"]
     seen_transitions: set[tuple[str, str]] = set()
     for catalog, family, identity, bindings_for_item in transitions:
         transition_key = (family, identity)
@@ -799,6 +893,9 @@ def cmd_finalize_reviewed_plan(args: argparse.Namespace) -> None:
             raise SystemExit(f"Finalization contains a duplicate transition: {family}/{identity}")
         seen_transitions.add(transition_key)
         current_state = transition_states.get(transition_key, "active")
+        if current_state == "archived":
+            # _reference/index reads and the current exact chain validated it.
+            continue
         policy = family_policy(load_catalog(catalog), family)
         if "archived" not in policy["lifecycle"]["transitions"].get(current_state, []):
             raise SystemExit(
@@ -833,7 +930,20 @@ def cmd_finalize_reviewed_plan(args: argparse.Namespace) -> None:
         if destination.exists():
             raise SystemExit(f"Finalization archive destination already exists: {destination}")
 
+    cleanup_targets = _preflight_phase_cleanup(
+        workspace_root, str(args.plan_id), current_chain,
+        archived=all(state == "archived" for state in transition_states.values()),
+    )
     completed_operations: list[dict[str, str]] = []
+    for phase_id, expected, state in cleanup_targets:
+        if state in {"cleaned", "removed"}:
+            continue
+        operation = {"operation": "phase-runtime-cleanup", "phase_id": phase_id}
+        try:
+            release_bundle(workspace_root, str(args.plan_id), phase_id, reason="finalization", expected=expected)
+        except (Exception, SystemExit) as error:
+            _raise_finalization_partial(completed_operations, operation, error)
+        completed_operations.append(operation)
     released = _release_plan_bindings(
         workspace_root,
         str(args.plan_id),
@@ -842,6 +952,8 @@ def cmd_finalize_reviewed_plan(args: argparse.Namespace) -> None:
     )
     results = []
     for catalog, family, identity, bindings_for_item in transitions:
+        if transition_states.get((family, identity)) == "archived":
+            continue
         operation = {
             "operation": "artifact-transition",
             "family": family,
@@ -864,6 +976,14 @@ def cmd_finalize_reviewed_plan(args: argparse.Namespace) -> None:
         }
         try:
             rebuild_index(catalog, family, anchors)
+        except (Exception, SystemExit) as error:
+            _raise_finalization_partial(completed_operations, operation, error)
+        completed_operations.append(operation)
+    for phase_id, expected, state in cleanup_targets:
+        operation = {"operation": "phase-runtime-state-remove", "phase_id": phase_id}
+        try:
+            remover = prune_removed_runtime if state == "removed" else remove_cleaned_state
+            remover(workspace_root, str(args.plan_id), phase_id, expected=expected)
         except (Exception, SystemExit) as error:
             _raise_finalization_partial(completed_operations, operation, error)
         completed_operations.append(operation)

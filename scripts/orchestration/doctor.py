@@ -10,7 +10,7 @@ from artifact_store import family_policy, load_catalog
 
 CATALOG = (
     Path(__file__).resolve().parents[2]
-    / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
+    / "references/assets/orchestration/contract/artifact-family-catalog-v7.yaml"
 )
 STAGE5_FAMILIES = (
     "executor-result",
@@ -74,7 +74,7 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
     _require_terms(
         issues,
         root / "references/assets/orchestration/contract/handoff-executor-result-v1.md",
-        ("executor-result-v1", "canonical", "product verdict"),
+        ("executor-result-v2", "canonical", "product verdict"),
     )
     evals = root / "references/evals/orchestration/evals.json"
     try:

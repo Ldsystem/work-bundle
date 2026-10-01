@@ -33,7 +33,7 @@ Route orchestration access to durable project knowledge through the approved `ks
 | `create-specification` | `implementation_spec` |
 | `create-implementation-plan` | `implementation_plan` |
 | `create-document` | `customer_spec` |
-| `create-handoff` (canonical `executor-result-v1`) | `implementation_plan` |
+| `create-handoff` (canonical `executor-result-v2`) | `implementation_plan` |
 | `review-plan` | `implementation_plan` |
 
 - Allow `candidate` and `background` context only as rationale, traceability, or promotion input—not as executable requirements.

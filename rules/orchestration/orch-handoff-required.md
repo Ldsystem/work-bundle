@@ -16,9 +16,10 @@ Require one canonical factual executor result for safe continuation without gran
 
 ## Must
 
-- Create one canonical `executor-result-v1` after task execution, including factual scope, changed paths, focused observations, blockers, task fit, repository/CodeGraph facts, delegation, and knowledge disposition.
+- Create one canonical `executor-result-v2` after task execution, including factual scope, changed paths, focused observations, blockers, task fit, repository/CodeGraph facts, delegation, and knowledge disposition.
 - Validate identity, bindings, schema, canonical path, and transition before mutation; create or repair the active result at the same canonical identity, while transitioned results remain immutable. After the write perform only lightweight integrity and index checks.
 - Keep executor reporting separate from independent product judgment and controller finalization.
+- Only the designated phase delivery task may carry `phase_handoff`, after canonical payload publication, with exact bundle/snapshot/manifest/bridge identity, required observations, complete catalog report, instructions and limitations. Failed runs are facts, not acceptance; ordinary tasks omit phase handoffs.
 - Treat an invalid result as blocking only continuation that requires it. Permit direct product review when exact specification/plan, frozen implementation identity, and focused observations are independently available.
 
 ## Must Not

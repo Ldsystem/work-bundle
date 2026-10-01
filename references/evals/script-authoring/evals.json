@@ -60,6 +60,36 @@
       "skill_name": "wb-create-skill",
       "prompt": "A worker used a one-off temporary-file tactic to isolate one stage fixture. Should that exact tactic be added to the reusable skill and runtime rules for every future task?",
       "expected_output": "Keep the fixture-only tactic local to that bounded test or stage. Do not promote it into reusable runtime policy unless accepted recurring behavior requires it; repair the canonical owner only when a general product or workflow contract is demonstrated."
+    },
+    {
+      "id": "stage-determined",
+      "prompt": "At the current execution stage, a script receives a canonical task result plus supplied policy that explicitly permits transition only when its declared tests passed and changed paths remain in scope. Should it automate the transition?",
+      "expected_output": "Identifies the current stage, inputs, and supplied policy, then performs the mechanically determined transition with explicit output and failure behavior. It does not add a score or reinterpret product acceptance."
+    },
+    {
+      "id": "stage-indeterminate",
+      "prompt": "A script sees passing tests and complete structural metadata, but current policy does not say whether the implementation satisfies the user's intent. Make the script decide whether the task is accepted.",
+      "expected_output": "Refuses to manufacture stage determinacy. It reports passing checks and structural facts as bounded observations and returns semantic sufficiency and acceptance to the responsible agent or controller."
+    },
+    {
+      "id": "review-advice-input",
+      "prompt": "A reviewer recommends acceptance and all schema checks pass. No controller decision exists. Should a helper turn that advice into an accepted lifecycle state?",
+      "expected_output": "Treats reviewer advice and structural facts as inputs, not authority. Without supplied policy that determines the transition, it returns bounded observations and leaves the decision to the responsible agent or controller."
+    },
+    {
+      "id": "quantitative-supplied-threshold",
+      "prompt": "A caller supplies policy that advances a retrying job when every measured error rate is below the explicit 0.5 percent threshold. Current measurements are complete and below that threshold. Should the runner advance it?",
+      "expected_output": "Applies the supplied quantitative threshold deterministically and advances the job, while reporting the measurements and policy used. It does not reinterpret the threshold as broader product acceptance."
+    },
+    {
+      "id": "qualitative-determinate-operation",
+      "prompt": "The canonical artifact contract says an active record moves to its declared archive path after all referenced identities validate. The identities validate and the operation requests only that transition. Is a numeric threshold required?",
+      "expected_output": "Performs the canonical qualitative contract deterministically without inventing a numeric score. Explicit structural policy can determine an operation as fully as a quantitative threshold."
+    },
+    {
+      "id": "unsupported-proxy-missing-policy",
+      "prompt": "A helper sees green tests, a reviewer recommendation, and a high count of evidence files, but no supplied policy authorizes workflow acceptance. The caller asks it to advance anyway using those signals as proxies.",
+      "expected_output": "Reports the tests, advice, and evidence count as bounded observations but does not advance workflow. Unsupported proxies and missing policy leave the conclusion with the responsible agent or controller."
     }
   ]
 }

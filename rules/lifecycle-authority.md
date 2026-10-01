@@ -22,6 +22,9 @@ Keep accepted execution authority compact and monotonic so later lifecycle consu
 - Make dependency release, phase/plan progression, finalization, resume, and archive consume the compact accepted result plus any current harness observation required by freshness policy.
 - Invalidate acceptance only when a bound authority, source, scope, ownership, validation, review, commit/tree, or freshness identity materially changes.
 - Keep runtime files compact.
+- The designated delivery task's accepted result is the only phase continuation token. Validate current predecessor acceptance, exact published handoff identity, required bridge observations and complete passing catalog report before acceptance; the controller owns the semantic decision.
+- Surface accepted snapshots asynchronously. Route later findings to their affected authority closure and reuse observations only while their phase/task, product, manifest, command, scope and freshness bindings remain exact.
+- Preflight every accepted runtime cleanup target read-only before deletion. Use the exact cleanup owner, retain cleaning/cleaned retry state across partial failure, archive after all cleanup succeeds, then remove temporary state. A live/uncertain lease or unexplained absence blocks cleanup/archive.
 
 ## Must Not
 

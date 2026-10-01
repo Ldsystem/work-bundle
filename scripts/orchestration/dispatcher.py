@@ -53,6 +53,9 @@ cmd_next_action_candidates = _lazy_command("documents", "cmd_next_action_candida
 cmd_related = _lazy_command("documents", "cmd_related")
 cmd_state = _lazy_command("documents", "cmd_state")
 cmd_write_doc = _lazy_command("documents", "cmd_write_doc")
+cmd_materialize_phase_handoff = _lazy_command("phase_delivery", "cmd_materialize_phase_handoff")
+cmd_run_phase = _lazy_command("phase_delivery", "cmd_run_phase")
+cmd_release_phase_snapshot = _lazy_command("phase_delivery", "cmd_release_phase_snapshot")
 
 RECOGNIZED_COMMANDS = frozenset({
     "init", "doctor", "state", "next-action-candidates", "git-status",
@@ -66,6 +69,7 @@ RECOGNIZED_COMMANDS = frozenset({
     "list-implementation-reviews", "write-accepted-task-result",
     "list-accepted-task-results", "write-final-workflow-review",
     "list-final-workflow-reviews", "finalize-reviewed-plan",
+    "materialize-phase-handoff", "run-phase", "release-phase-snapshot",
 })
 
 
@@ -215,6 +219,24 @@ def build_parser() -> argparse.ArgumentParser:
     finalize.add_argument("--plan-id", required=True)
     finalize.add_argument("--final-review-id", required=True)
     finalize.set_defaults(func=cmd_finalize_reviewed_plan)
+    materialize = sub.add_parser("materialize-phase-handoff", parents=[parent])
+    for option in ("plan-id", "phase-id", "task-id", "bridge-manifest", "candidate-file"):
+        materialize.add_argument("--" + option, required=True)
+    materialize.set_defaults(func=cmd_materialize_phase_handoff)
+    runner = sub.add_parser("run-phase", parents=[parent])
+    runner.add_argument("--plan-id", required=True)
+    runner.add_argument("--phase-id", required=True)
+    runner.add_argument("--prepare", action="store_true")
+    selection = runner.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--serve", action="store_true")
+    selection.add_argument("--all", action="store_true")
+    selection.add_argument("--task")
+    selection.add_argument("--test")
+    runner.set_defaults(func=cmd_run_phase)
+    release = sub.add_parser("release-phase-snapshot", parents=[parent])
+    release.add_argument("--plan-id", required=True)
+    release.add_argument("--phase-id", required=True)
+    release.set_defaults(func=cmd_release_phase_snapshot)
     return parser
 
 

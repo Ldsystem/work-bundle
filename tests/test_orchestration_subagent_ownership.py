@@ -260,6 +260,18 @@ def test_disjoint_ordinary_dependency_still_releases_on_completion() -> None:
     assert result.dispatched == ("task-b",)
 
 
+def test_upstream_delivery_dependency_requires_accepted_result() -> None:
+    tasks = [
+        TaskCandidate("task-delivery", (), ("src/a.py",), "workspace-a"),
+        TaskCandidate("task-next", ("task-delivery",), ("src/b.py",), "workspace-b",
+                      accepted_dependencies=("task-delivery",)),
+    ]
+    scheduler = TaskOwnershipScheduler(RecordingAdapter())
+    assert scheduler.run_wave(tasks, completed={"task-delivery"}).dispatched == ()
+    assert scheduler.run_wave(tasks, completed={"task-delivery"},
+                              accepted_handoffs={"task-delivery"}).dispatched == ("task-next",)
+
+
 def test_each_overlapping_ancestor_needs_acceptance() -> None:
     tasks = [
         TaskCandidate("task-a", (), ("src/shared.py",), "workspace-a"),

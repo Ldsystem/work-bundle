@@ -217,7 +217,7 @@ def test_initialization_manifest_provisions_current_stores_only() -> None:
 
 def test_doctor_uses_the_same_current_catalog_as_runtime_writers() -> None:
     assert doctor.CATALOG.resolve() == plans.CATALOG_PATH.resolve()
-    assert doctor.CATALOG.name == "artifact-family-catalog-v6.yaml"
+    assert doctor.CATALOG.name == "artifact-family-catalog-v7.yaml"
 
 
 def test_legacy_knowledge_migration_and_handoff_constants_are_not_public() -> None:
@@ -331,7 +331,7 @@ def test_current_orchestration_guidance_names_executor_results_and_direct_review
 
     rule_path = REPO_ROOT / "rules/orchestration/orch-knowledge-gateway.md"
     rule_text = rule_path.read_text(encoding="utf-8")
-    assert "canonical `executor-result-v1`" in rule_text
+    assert "canonical `executor-result-v2`" in rule_text
     assert "orchestration handoff" not in rule_text
     assert "executor-result handoff" not in rule_text
     assert "execution-completion handoffs" not in rule_text

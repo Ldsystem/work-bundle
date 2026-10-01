@@ -5,12 +5,13 @@ description: Create a canonical factual executor result for safe WorkBundle cont
 
 # Create an Executor Result
 
-Use this skill after task execution or when a current executor result must be repaired. The current machine boundary is `executor-result-v1`; do not create orchestration handoffs or convert historical artifacts.
+Use this skill after task execution or when a current executor result must be repaired. The current machine boundary is `executor-result-v2`; do not create orchestration handoffs or convert historical artifacts.
 
 ## Workflow
 
 1. Confirm the exact plan/task bindings, identity, lifecycle operation, and canonical catalog location.
 2. Summarize only factual implemented scope, changed paths, validation observations, unresolved product blockers, task fit, repository/CodeGraph observations, delegation provenance, and task-local knowledge disposition.
+   For the designated phase delivery task, materialize the canonical temporary bundle first. Only a published payload may appear in `phase_handoff`: exact bundle/snapshot/manifest and bridge identities, reproducible entrypoint instructions, required bridge observations, the complete `--all` report, and limitations. Failed observations remain factual; they do not authorize acceptance. Ordinary tasks omit this payload.
 3. Validate the full semantic input, bindings, identity, canonical path, and requested transition before mutation.
 4. Create or repair the active YAML artifact atomically at the same canonical identity. Allocate a new identity only for a genuinely distinct executor result; a transitioned result is not rewritten. Treat the derived index as a regenerable projection.
 5. After the write, perform only lightweight integrity checks. If index rebuild fails after the artifact write, report the partial effect truthfully.

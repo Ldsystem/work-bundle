@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "executor-result-v2",
+  "oneOf": [
+    {"$ref": "#/$defs/legacy"},
+    {"$ref": "#/$defs/current"}
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "change": {
+      "type": "object",
+      "required": ["path", "summary"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "observation": {
+      "type": "object",
+      "required": ["id", "result", "summary"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "command": {"type": "string"},
+        "result": {"enum": ["passed", "failed", "blocked", "not-run"]},
+        "summary": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "knowledge": {
+      "type": "object",
+      "required": ["action", "reason"],
+      "properties": {
+        "action": {"enum": ["none", "update", "supersede", "reclassify"]},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "taskFit": {
+      "type": "object",
+      "required": ["status", "summary"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "blocked"]},
+        "summary": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "bridgeSummary": {
+      "type": "object",
+      "required": ["protocol", "descriptor_sha256"],
+      "properties": {
+        "protocol": {"const": "phase-bridge-v1"},
+        "descriptor_sha256": {"$ref": "#/$defs/digest"}
+      },
+      "additionalProperties": false
+    },
+    "phaseHandoff": {
+      "type": "object",
+      "required": ["phase_id", "delivery_task_id", "runtime_bundle", "bridges", "entrypoint", "bridge_observations", "test_report", "limitations"],
+      "properties": {
+        "phase_id": {"type": "string", "pattern": "^phase-[a-z0-9][a-z0-9-]*$"},
+        "delivery_task_id": {"type": "string", "pattern": "^task-[a-z0-9][a-z0-9-]*$"},
+        "runtime_bundle": {
+          "type": "object",
+          "required": ["relative_path", "payload_relative_path", "state_relative_path", "payload_sha256", "snapshot_manifest_sha256", "snapshot_content_sha256", "retained_until"],
+          "properties": {
+            "relative_path": {"type": "string", "pattern": "^\\.work-bundle/orchestration/runtime/phase-delivery/plan-[a-z0-9][a-z0-9-]*/phase-[a-z0-9][a-z0-9-]*$"},
+            "payload_relative_path": {"type": "string", "pattern": "^\\.work-bundle/orchestration/runtime/phase-delivery/plan-[a-z0-9][a-z0-9-]*/phase-[a-z0-9][a-z0-9-]*/payload$"},
+            "state_relative_path": {"type": "string", "pattern": "^\\.work-bundle/orchestration/runtime/phase-delivery/plan-[a-z0-9][a-z0-9-]*/phase-[a-z0-9][a-z0-9-]*\\.state\\.json$"},
+            "payload_sha256": {"$ref": "#/$defs/digest"},
+            "snapshot_manifest_sha256": {"$ref": "#/$defs/digest"},
+            "snapshot_content_sha256": {"$ref": "#/$defs/digest"},
+            "retained_until": {"const": "finalization_or_explicit_release"}
+          },
+          "additionalProperties": false
+        },
+        "bridges": {
+          "type": "object",
+          "properties": {
+            "config_env": {"$ref": "#/$defs/bridgeSummary"},
+            "start_snapshot": {"$ref": "#/$defs/bridgeSummary"},
+            "test_runner": {"$ref": "#/$defs/bridgeSummary"}
+          },
+          "additionalProperties": false
+        },
+        "entrypoint": {
+          "type": "object",
+          "required": ["command", "manifest_sha256", "instructions"],
+          "properties": {
+            "command": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+            "manifest_sha256": {"$ref": "#/$defs/digest"},
+            "instructions": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "bridge_observations": {
+          "type": "object",
+          "required": ["config_env", "start", "readiness", "stop"],
+          "properties": {
+            "config_env": {"enum": ["not-required", "passed", "failed"]},
+            "start": {"enum": ["not-required", "passed", "failed"]},
+            "readiness": {"enum": ["not-required", "passed", "failed"]},
+            "stop": {"enum": ["not-required", "passed", "failed"]}
+          },
+          "additionalProperties": false
+        },
+        "test_report": {
+          "type": "object",
+          "required": ["selection", "rows"],
+          "properties": {
+            "selection": {"const": "all"},
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["task", "test", "passes", "message"],
+                "properties": {
+                  "task": {"type": "string", "pattern": "^task-[a-z0-9][a-z0-9-]*$"},
+                  "test": {"type": "string", "pattern": "^VAL-[A-Z0-9][A-Z0-9-]*$"},
+                  "passes": {"type": "boolean"},
+                  "message": {"oneOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "limitations": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      },
+      "additionalProperties": false
+    },
+    "legacy": {
+      "type": "object",
+      "required": ["artifact_type", "schema_version", "id", "plan_id", "phase_id", "task_id", "result_state", "summary", "changes", "validation_observations", "unresolved_product_blockers", "task_fit", "repository_observations", "codegraph_observations", "delegation", "knowledge_disposition", "date_created", "last_updated"],
+      "properties": {
+        "artifact_type": {"const": "executor-result"},
+        "schema_version": {"const": 1},
+        "id": {"type": "string", "pattern": "^result-[a-z0-9][a-z0-9-]*$"},
+        "plan_id": {"type": "string", "pattern": "^plan-[a-z0-9][a-z0-9-]*$"},
+        "phase_id": {"type": ["string", "null"]},
+        "task_id": {"type": "string", "pattern": "^task-[a-z0-9][a-z0-9-]*$"},
+        "result_state": {"enum": ["implemented", "partial", "blocked"]},
+        "summary": {"type": "string", "minLength": 1},
+        "changes": {"type": "array", "items": {"$ref": "#/$defs/change"}},
+        "validation_observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+        "unresolved_product_blockers": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "task_fit": {"$ref": "#/$defs/taskFit"},
+        "repository_observations": {"type": "object"},
+        "codegraph_observations": {"type": "object"},
+        "delegation": {"type": "object"},
+        "knowledge_disposition": {"$ref": "#/$defs/knowledge"},
+        "date_created": {"type": "string", "format": "date"},
+        "last_updated": {"type": "string", "format": "date"}
+      },
+      "additionalProperties": false
+    },
+    "current": {
+      "type": "object",
+      "required": ["artifact_type", "schema_version", "id", "plan_id", "phase_id", "task_id", "result_state", "summary", "changes", "validation_observations", "unresolved_product_blockers", "task_fit", "repository_observations", "codegraph_observations", "delegation", "knowledge_disposition", "date_created", "last_updated"],
+      "properties": {
+        "artifact_type": {"const": "executor-result"},
+        "schema_version": {"const": 2},
+        "id": {"type": "string", "pattern": "^result-[a-z0-9][a-z0-9-]*$"},
+        "plan_id": {"type": "string", "pattern": "^plan-[a-z0-9][a-z0-9-]*$"},
+        "phase_id": {"type": "string", "pattern": "^phase-[a-z0-9][a-z0-9-]*$"},
+        "task_id": {"type": "string", "pattern": "^task-[a-z0-9][a-z0-9-]*$"},
+        "result_state": {"enum": ["implemented", "partial", "blocked"]},
+        "summary": {"type": "string", "minLength": 1},
+        "changes": {"type": "array", "items": {"$ref": "#/$defs/change"}},
+        "validation_observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+        "unresolved_product_blockers": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "task_fit": {"$ref": "#/$defs/taskFit"},
+        "repository_observations": {"type": "object"},
+        "codegraph_observations": {"type": "object"},
+        "delegation": {"type": "object"},
+        "knowledge_disposition": {"$ref": "#/$defs/knowledge"},
+        "phase_handoff": {"$ref": "#/$defs/phaseHandoff"},
+        "date_created": {"type": "string", "format": "date"},
+        "last_updated": {"type": "string", "format": "date"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

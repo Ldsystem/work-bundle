@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "phase-v2",
+  "oneOf": [
+    {"$ref": "#/$defs/legacy"},
+    {"$ref": "#/$defs/current"}
+  ],
+  "$defs": {
+    "sourceId": {"type": "string", "pattern": "^[A-Z][A-Z0-9_-]*-[0-9]+[A-Z]?$"},
+    "phaseId": {"type": "string", "pattern": "^phase-[a-z0-9][a-z0-9-]*$"},
+    "taskId": {"type": "string", "pattern": "^task-[a-z0-9][a-z0-9-]*$"},
+    "taskIndex": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "order"],
+        "properties": {
+          "id": {"$ref": "#/$defs/taskId"},
+          "order": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": true
+      }
+    },
+    "testCatalogRow": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["task_id", "disposition", "test_id", "purpose"],
+          "properties": {
+            "task_id": {"$ref": "#/$defs/taskId"},
+            "disposition": {"const": "executable"},
+            "test_id": {"type": "string", "pattern": "^VAL-[A-Z0-9][A-Z0-9-]*$"},
+            "purpose": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["task_id", "disposition", "reason"],
+          "properties": {
+            "task_id": {"$ref": "#/$defs/taskId"},
+            "disposition": {"const": "not_applicable"},
+            "reason": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "snapshot": {
+      "type": "object",
+      "required": ["start_required", "retention"],
+      "properties": {
+        "start_required": {"type": "boolean"},
+        "retention": {"const": "until_finalization_or_explicit_release"}
+      },
+      "additionalProperties": false
+    },
+    "bridges": {
+      "type": "object",
+      "required": ["config_env", "start_snapshot", "test_runner"],
+      "properties": {
+        "config_env": {"enum": ["optional", "required"]},
+        "start_snapshot": {"enum": ["optional", "required"]},
+        "test_runner": {"enum": ["optional", "required"]}
+      },
+      "additionalProperties": false
+    },
+    "executableDelivery": {
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["mode", "task_id", "snapshot", "bridges", "test_catalog"],
+          "properties": {
+            "mode": {"const": "executable_snapshot"},
+            "task_id": {"$ref": "#/$defs/taskId"},
+            "snapshot": {"$ref": "#/$defs/snapshot"},
+            "bridges": {"$ref": "#/$defs/bridges"},
+            "test_catalog": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/testCatalogRow"}}
+          },
+          "additionalProperties": false
+        },
+        {
+          "if": {"properties": {"snapshot": {"properties": {"start_required": {"const": true}}, "required": ["start_required"]}}},
+          "then": {"properties": {"bridges": {"properties": {"start_snapshot": {"const": "required"}}}}},
+          "else": {"properties": {"bridges": {"properties": {"start_snapshot": {"const": "optional"}}}}}
+        },
+        {
+          "if": {"properties": {"test_catalog": {"contains": {"type": "object", "required": ["disposition"], "properties": {"disposition": {"const": "executable"}}}}}},
+          "then": {"properties": {"bridges": {"properties": {"test_runner": {"const": "required"}}}}},
+          "else": {"properties": {"bridges": {"properties": {"test_runner": {"const": "optional"}}}}}
+        },
+        {
+          "if": {
+            "allOf": [
+              {"properties": {"snapshot": {"properties": {"start_required": {"const": false}}}}},
+              {"properties": {"test_catalog": {"not": {"contains": {"type": "object", "required": ["disposition"], "properties": {"disposition": {"const": "executable"}}}}}}}
+            ]
+          },
+          "then": {"properties": {"bridges": {"properties": {"config_env": {"const": "required"}}}}}
+        }
+      ]
+    },
+    "finalDelivery": {
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["mode", "task_id", "snapshot", "bridges", "test_catalog"],
+          "properties": {
+            "mode": {"const": "final"},
+            "task_id": {"oneOf": [{"$ref": "#/$defs/taskId"}, {"type": "null"}]},
+            "snapshot": {"oneOf": [{"type": "null"}, {"allOf": [{"$ref": "#/$defs/snapshot"}, {"properties": {"start_required": {"const": false}}}]}]},
+            "bridges": {
+              "type": "object",
+              "properties": {
+                "config_env": {"enum": ["optional", "required"]},
+                "start_snapshot": {"enum": ["optional", "required"]},
+                "test_runner": {"enum": ["optional", "required"]}
+              },
+              "additionalProperties": false
+            },
+            "test_catalog": {"type": "array", "items": {"$ref": "#/$defs/testCatalogRow"}}
+          },
+          "additionalProperties": false
+        },
+        {
+          "if": {"properties": {"test_catalog": {"contains": {"type": "object", "required": ["disposition"], "properties": {"disposition": {"const": "executable"}}}}}},
+          "then": {"properties": {"bridges": {"required": ["test_runner"], "properties": {"test_runner": {"const": "required"}}}}}
+        }
+      ]
+    },
+    "delivery": {"oneOf": [{"$ref": "#/$defs/executableDelivery"}, {"$ref": "#/$defs/finalDelivery"}]},
+    "legacy": {
+      "type": "object",
+      "required": ["artifact_type", "schema_version", "id", "plan_id", "name", "status", "order", "date_created", "last_updated", "source_ids", "depends_on", "task_index", "barriers", "validation", "completion_criteria", "allocated_rules", "allocated_skills"],
+      "properties": {
+        "artifact_type": {"const": "phase"},
+        "schema_version": {"const": 1},
+        "id": {"$ref": "#/$defs/phaseId"},
+        "plan_id": {"type": "string", "pattern": "^plan-[a-z0-9][a-z0-9-]*$"},
+        "name": {"type": "string", "minLength": 1},
+        "status": {"const": "planned"},
+        "order": {"type": "integer", "minimum": 1},
+        "date_created": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "last_updated": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "source_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/sourceId"}, "uniqueItems": true},
+        "depends_on": {"type": "array", "items": {"$ref": "#/$defs/phaseId"}, "uniqueItems": true},
+        "task_index": {"$ref": "#/$defs/taskIndex"},
+        "barriers": {"type": "array", "items": {"type": "object"}},
+        "validation": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+        "completion_criteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "allocated_rules": {"type": "array"},
+        "allocated_skills": {"type": "array"}
+      },
+      "additionalProperties": false
+    },
+    "current": {
+      "type": "object",
+      "required": ["artifact_type", "schema_version", "id", "plan_id", "name", "status", "order", "date_created", "last_updated", "source_ids", "depends_on", "task_index", "barriers", "validation", "completion_criteria", "allocated_rules", "allocated_skills", "delivery"],
+      "properties": {
+        "artifact_type": {"const": "phase"},
+        "schema_version": {"const": 2},
+        "id": {"$ref": "#/$defs/phaseId"},
+        "plan_id": {"type": "string", "pattern": "^plan-[a-z0-9][a-z0-9-]*$"},
+        "name": {"type": "string", "minLength": 1},
+        "status": {"const": "planned"},
+        "order": {"type": "integer", "minimum": 1},
+        "date_created": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "last_updated": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "source_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/sourceId"}, "uniqueItems": true},
+        "depends_on": {"type": "array", "items": {"$ref": "#/$defs/phaseId"}, "uniqueItems": true},
+        "task_index": {"$ref": "#/$defs/taskIndex"},
+        "barriers": {"type": "array", "items": {"type": "object"}},
+        "validation": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+        "completion_criteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "allocated_rules": {"type": "array"},
+        "allocated_skills": {"type": "array"},
+        "delivery": {"$ref": "#/$defs/delivery"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -28,7 +28,8 @@ def test_heavy_planning_decomposes_from_production_and_repair_seams() -> None:
         assert "repeatedly enlarge" in text
 
     for text in (planner, plan, workflow):
-        assert "actual barrier or convergence" in text
+        assert "actual barrier" in text
+        assert "convergence boundary" in text
         assert "coherent mechanical increment" in text
 
     assert "helper-only" in planner
@@ -141,3 +142,54 @@ def test_stage4_evals_cover_cutover_semantic_review_and_exact_source_ids() -> No
     )
     for token in ["schema-owned", "distinct semantic reviewer", "REQ-001A", "Stage 5"]:
         assert token in combined
+
+
+def test_planning_forms_smallest_sufficient_development_runtime() -> None:
+    paths = (
+        "skills/orch-create-implementation-plan/SKILL.md",
+        "rules/orchestration/orch-artifact-authoring.md",
+        "references/assets/orchestration/contract/plan-v1.md",
+        "references/assets/orchestration/workflow.md",
+    )
+    texts = {path: read(path) for path in paths}
+
+    for path, content in texts.items():
+        normalized = content.lower()
+        assert "smallest sufficient development runtime" in normalized, path
+        assert "current named obligations" in normalized, path
+        assert "omit, substitute, or defer" in normalized, path
+        assert "release-only" in normalized, path
+        assert "user-evaluable capability boundary" in normalized, path
+        assert "preparation-only" in normalized, path
+
+    combined = "\n".join(texts.values()).lower()
+    assert "script score" not in combined
+    assert "task-size metrics" in texts["references/assets/orchestration/workflow.md"].lower()
+
+
+def test_runtime_method_compares_current_obligation_value_to_coordination_cost() -> None:
+    paths = (
+        "skills/orch-create-implementation-plan/SKILL.md",
+        "rules/orchestration/orch-artifact-authoring.md",
+        "references/assets/orchestration/contract/plan-v1.md",
+        "references/assets/orchestration/workflow.md",
+    )
+    for path in paths:
+        text = read(path).lower()
+        for token in (
+            "obligation-versus-cost comparison",
+            "retain every necessary",
+            "stable optional boundary",
+            "coordination cost exceeds its current benefit",
+            "cheapest capable early probe",
+            "costly compile, startup, or integration",
+        ):
+            assert token in text, f"{path}: {token}"
+
+
+def test_planner_has_actionable_runtime_checklist() -> None:
+    planner = read("skills/orch-create-implementation-plan/SKILL.md")
+    self_check = planner.rsplit("## Self-check", 1)[-1]
+    assert self_check.count("- [ ]") >= 4
+    assert "current named obligation" in self_check
+    assert "cheapest capable early probe" in self_check

@@ -23,9 +23,11 @@ import handoffs  # noqa: E402
 import plans  # noqa: E402
 import review_identity  # noqa: E402
 import review_runtime  # noqa: E402
+import phase_delivery  # noqa: E402
+from test_orchestration_phase_delivery import delivery  # noqa: E402,F401
 
 
-CATALOG = REPO_ROOT / "references/assets/orchestration/contract/artifact-family-catalog-v6.yaml"
+CATALOG = REPO_ROOT / "references/assets/orchestration/contract/artifact-family-catalog-v7.yaml"
 
 
 def _args(root: Path, **overrides: object) -> argparse.Namespace:
@@ -64,6 +66,12 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         review_runtime, "resolve_workspace_root", lambda _args: tmp_path, raising=False
     )
     monkeypatch.setattr(plans, "resolve_workspace_root", lambda _args: tmp_path)
+    # These storage fixtures isolate the lifecycle consumers from the real
+    # materializer, which has separate filesystem/process integration fixtures.
+    monkeypatch.setattr(phase_delivery, "read_bundle", lambda *_args, **_kwargs: _bundle_facts(tmp_path))
+    monkeypatch.setattr(phase_delivery, "preflight_cleanup", lambda *_args, **_kwargs: {"state": "active"})
+    monkeypatch.setattr(phase_delivery, "release_bundle", lambda *_args, **_kwargs: {"state": "cleaned"})
+    monkeypatch.setattr(phase_delivery, "remove_cleaned_state", lambda *_args, **_kwargs: None)
     return tmp_path
 
 
@@ -89,7 +97,398 @@ def _executor_semantics() -> dict[str, object]:
         "codegraph_observations": {"status": "no-index", "summary": "Repository is not indexed."},
         "delegation": {"agent_id": "worker-1", "role": "implementor"},
         "knowledge_disposition": {"action": "update", "reason": "Stable boundary changed."},
+        "phase_handoff": {
+            "phase_id": "phase-stage5",
+            "delivery_task_id": "task-stage5",
+            "runtime_bundle": {
+                "relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5",
+                "payload_relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5/payload",
+                "state_relative_path": ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-stage5.state.json",
+                "payload_sha256": "1" * 64,
+                "snapshot_manifest_sha256": "2" * 64,
+                "snapshot_content_sha256": "3" * 64,
+                "retained_until": "finalization_or_explicit_release",
+            },
+            "bridges": {
+                "config_env": {
+                    "protocol": "phase-bridge-v1",
+                    "descriptor_sha256": "4" * 64,
+                },
+                "start_snapshot": {
+                    "protocol": "phase-bridge-v1",
+                    "descriptor_sha256": "5" * 64,
+                },
+                "test_runner": {
+                    "protocol": "phase-bridge-v1",
+                    "descriptor_sha256": "6" * 64,
+                },
+            },
+            "entrypoint": {
+                "command": ["orch.py", "run-phase", "--plan-id", "plan-stage5", "--phase-id", "phase-stage5", "--all"],
+                "manifest_sha256": "1" * 64,
+                "instructions": "Invoke the built-in handoff runner with this manifest.",
+            },
+            "bridge_observations": {
+                "config_env": "passed",
+                "start": "passed",
+                "readiness": "passed",
+                "stop": "passed",
+            },
+            "test_report": {
+                "selection": "all",
+                "rows": [
+                    {
+                        "task": "task-stage5",
+                        "test": "VAL-001",
+                        "passes": True,
+                        "message": None,
+                    }
+                ],
+            },
+            "limitations": [],
+        },
     }
+
+
+def _ordinary_executor_semantics() -> dict[str, object]:
+    data = _executor_semantics()
+    data.pop("phase_handoff")
+    return data
+
+
+def _bundle_facts(workspace: Path) -> dict[str, object]:
+    handoff = _executor_semantics()["phase_handoff"]
+    return {
+        "plan_id": "plan-stage5", "phase_id": "phase-stage5", "delivery_task_id": "task-stage5",
+        "runtime_bundle": handoff["runtime_bundle"], "bridges": handoff["bridges"],
+        "catalog": [{"task": "task-stage5", "test": "VAL-001"}],
+        "identity": {"candidate": _candidate(workspace), "phase_delivery": {
+            "bridges": {"config_env": "required", "start_snapshot": "optional", "test_runner": "required"},
+            "snapshot": {"start_required": False},
+        }},
+    }
+
+
+@pytest.mark.parametrize("changed", ["unpublished", "payload", "bridge", "manifest", "command", "missing-row", "required-observation"])
+def test_phase_handoff_checks_published_identity_before_write(workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: str) -> None:
+    _write_stage5_plan_tree(workspace)
+    semantic = _executor_semantics()
+    handoff = semantic["phase_handoff"]
+    if changed == "unpublished":
+        def missing(*_args, **_kwargs):
+            raise phase_delivery.PhaseDeliveryError("unpublished bundle")
+        monkeypatch.setattr(phase_delivery, "read_bundle", missing)
+    elif changed == "payload":
+        handoff["runtime_bundle"]["payload_sha256"] = "f" * 64
+    elif changed == "bridge":
+        handoff["bridges"]["test_runner"]["descriptor_sha256"] = "f" * 64
+    elif changed == "manifest":
+        handoff["entrypoint"]["manifest_sha256"] = "f" * 64
+    elif changed == "command":
+        handoff["entrypoint"]["command"] = ["python3", "other.py"]
+    elif changed == "missing-row":
+        handoff["test_report"]["rows"] = []
+    else:
+        handoff["bridge_observations"]["config_env"] = "not-required"
+    content = _write_yaml(tmp_path, "invalid-published.yaml", semantic)
+    with pytest.raises(SystemExit):
+        handoffs.write_executor_result(_args(workspace, id="result-invalid", plan_id="plan-stage5", task_id="task-stage5", content_file=str(content)))
+    assert not list(workspace.rglob("result-invalid.executor-result.yaml"))
+
+
+@pytest.mark.parametrize("changed", ["product", "failed-row", "missing-row", "failed-required", "predecessor"])
+def test_accepted_delivery_requires_current_complete_passing_evidence(workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: str) -> None:
+    _write_stage5_plan_tree(workspace, review_required=False)
+    factual = _executor_semantics()
+    handoff = factual["phase_handoff"]
+    if changed == "failed-row":
+        handoff["test_report"]["rows"][0]["passes"] = False
+    elif changed == "missing-row":
+        handoff["test_report"]["rows"] = []
+    elif changed == "failed-required":
+        handoff["bridge_observations"]["config_env"] = "failed"
+    executor = {**factual, "artifact_type": "executor-result", "schema_version": 2,
+                "id": "result-stage5", "plan_id": "plan-stage5", "phase_id": "phase-stage5", "task_id": "task-stage5",
+                "date_created": "2026-09-20", "last_updated": "2026-09-20"}
+    written = write_artifact(CATALOG, "executor-result", {"workspace_root": workspace}, executor, state="active", bindings={"plan": "plan-stage5", "task": "task-stage5"})
+    if changed == "predecessor":
+        def absent(*_args, **_kwargs):
+            raise phase_delivery.PhaseDeliveryError("accepted predecessor is missing")
+        monkeypatch.setattr(phase_delivery, "read_bundle", absent)
+    semantic = {"product_identity": {"kind": "worktree", "sha256": "f" * 64 if changed == "product" else _candidate(workspace)["sha256"]},
+                "executor_result": {"id": "result-stage5", "sha256": written["digest"]}, "implementation_review": None,
+                "validation_outcomes": [], "unresolved_material_defects": [], "knowledge_disposition": {"action": "none", "reason": "fixture"}}
+    content = _write_yaml(tmp_path, "accept-delivery.yaml", semantic)
+    with pytest.raises(SystemExit):
+        review_runtime.write_accepted_task_result(_args(workspace, id="accepted-invalid", plan_id="plan-stage5", task_id="task-stage5", content_file=str(content)))
+    assert not list(workspace.rglob("accepted-invalid.accepted-task-result.yaml"))
+
+
+@pytest.mark.parametrize("observation", ["config_env", "start", "readiness", "stop"])
+def test_optional_bridge_failure_remains_controller_advice(workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, observation: str) -> None:
+    _write_stage5_plan_tree(workspace, review_required=False)
+    facts = _bundle_facts(workspace)
+    facts["identity"]["phase_delivery"]["bridges"]["config_env"] = "optional"
+    monkeypatch.setattr(phase_delivery, "read_bundle", lambda *_args, **_kwargs: facts)
+    factual = _executor_semantics()
+    handoff = factual["phase_handoff"]
+    handoff["bridge_observations"][observation] = "failed"
+    handoffs.validate_phase_handoff(workspace, "plan-stage5", "phase-stage5", "task-stage5", handoff, require_pass=True)
+    content = _write_yaml(tmp_path, "optional-failure.yaml", factual)
+    written = handoffs.write_executor_result(_args(workspace, id="result-optional", plan_id="plan-stage5", task_id="task-stage5", content_file=str(content)))
+    semantic = {"product_identity": {"kind": "worktree", "sha256": _candidate(workspace)["sha256"]},
+                "executor_result": {"id": "result-optional", "sha256": written["digest"]}, "implementation_review": None,
+                "validation_outcomes": [], "unresolved_material_defects": [], "knowledge_disposition": {"action": "none", "reason": "controller fixture"}}
+    accepted_content = _write_yaml(tmp_path, "accept-optional.yaml", semantic)
+    review_runtime.write_accepted_task_result(_args(workspace, id="accepted-optional", plan_id="plan-stage5", task_id="task-stage5", content_file=str(accepted_content)))
+    assert yaml.safe_load(Path(written["path"]).read_text())["phase_handoff"]["bridge_observations"][observation] == "failed"
+    facts["identity"]["phase_delivery"]["bridges"]["config_env"] = "required"
+    handoff["bridge_observations"]["config_env"] = "failed"
+    with pytest.raises(SystemExit, match="passing complete report"):
+        handoffs.validate_phase_handoff(workspace, "plan-stage5", "phase-stage5", "task-stage5", handoff, require_pass=True)
+
+
+def test_phase_handoff_failed_run_is_factual_but_not_acceptance(workspace: Path, tmp_path: Path) -> None:
+    _write_stage5_plan_tree(workspace, review_required=False)
+    semantic = _executor_semantics()
+    semantic["phase_handoff"]["test_report"]["rows"][0]["passes"] = False
+    content = _write_yaml(tmp_path, "failed-factual.yaml", semantic)
+    result = handoffs.write_executor_result(_args(workspace, id="result-failed", plan_id="plan-stage5", task_id="task-stage5", content_file=str(content)))
+    assert yaml.safe_load(Path(result["path"]).read_text())["phase_handoff"]["test_report"]["rows"][0]["passes"] is False
+
+
+def test_finalize_runtime_preflight_failure_keeps_all_artifacts_active(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write_finalization_case(workspace)
+    def blocked(*_args, **_kwargs):
+        raise phase_delivery.PhaseDeliveryError("live session")
+    monkeypatch.setattr(phase_delivery, "preflight_cleanup", blocked)
+    monkeypatch.setattr(phase_delivery, "release_bundle", lambda *_args, **_kwargs: pytest.fail("deletion before preflight"))
+    with pytest.raises(phase_delivery.PhaseDeliveryError, match="live session"):
+        plans.cmd_finalize_reviewed_plan(_args(workspace, plan_id="plan-stage5", final_review_id="final-stage5"))
+    assert not list((workspace / ".work-bundle/orchestration/plan/archived").rglob("*.yaml"))
+
+
+@pytest.mark.parametrize("crash_at", [2, 5, 6, 7])
+def test_finalize_retries_exact_partial_archive_without_recleaning(workspace: Path, monkeypatch: pytest.MonkeyPatch, crash_at: int) -> None:
+    _write_finalization_case(workspace)
+    events = []
+    state_path = workspace / _executor_semantics()["phase_handoff"]["runtime_bundle"]["state_relative_path"]
+    def cleanup(*_args, **_kwargs):
+        events.append("cleanup")
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps({"state": "cleaned"}))
+    monkeypatch.setattr(phase_delivery, "release_bundle", cleanup)
+    monkeypatch.setattr(phase_delivery, "read_cleaned_state", lambda *_args, **_kwargs: {"state": "cleaned"})
+    def remove(*_args, **_kwargs):
+        assert list((workspace / ".work-bundle/orchestration/review/final/archived").rglob("*.yaml"))
+        events.append("remove")
+        state_path.unlink()
+    monkeypatch.setattr(phase_delivery, "remove_cleaned_state", remove)
+    real_transition = artifact_store.transition_artifact
+    calls = 0
+    def transition(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == crash_at:
+            raise RuntimeError("archive interrupted")
+        return real_transition(*args, **kwargs)
+    monkeypatch.setattr(artifact_store, "transition_artifact", transition)
+    args = _args(workspace, plan_id="plan-stage5", final_review_id="final-stage5")
+    with pytest.raises(SystemExit, match="PARTIAL_EFFECT"):
+        plans.cmd_finalize_reviewed_plan(args)
+    assert events == ["cleanup"]
+    monkeypatch.setattr(artifact_store, "transition_artifact", real_transition)
+    plans.cmd_finalize_reviewed_plan(args)
+    assert events == ["cleanup", "remove"]
+
+
+def test_finalize_preflights_every_bundle_before_deletion(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    events = []
+    first = _executor_semantics()["phase_handoff"]
+    second = json.loads(json.dumps(first))
+    second["phase_id"], second["delivery_task_id"] = "phase-second", "task-second"
+    second["runtime_bundle"].update(phase_delivery.runtime_paths(workspace, "plan-stage5", "phase-second"))
+    chain = {"tree": {"phases": {"phase-stage5": {"delivery": {"task_id": "task-stage5"}}, "phase-second": {"delivery": {"task_id": "task-second"}}}},
+             "executor_records": [({"data": {"task_id": h["delivery_task_id"], "phase_handoff": h}}, {}, "active") for h in (first, second)]}
+    def check(_root, _plan, phase, **_kwargs):
+        events.append(phase)
+        if phase == "phase-second":
+            raise phase_delivery.PhaseDeliveryError("second payload mismatch")
+        return {"state": "active"}
+    monkeypatch.setattr(phase_delivery, "preflight_cleanup", check)
+    monkeypatch.setattr(phase_delivery, "release_bundle", lambda *_args, **_kwargs: pytest.fail("unexpected cleanup"))
+    with pytest.raises(phase_delivery.PhaseDeliveryError):
+        plans._preflight_phase_cleanup(workspace, "plan-stage5", chain)
+    assert events == ["phase-stage5", "phase-second"]
+
+
+def test_cleaned_state_survives_archive_authority_move_and_rejects_mismatch(delivery, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, _candidate, _policy = delivery
+    facts = phase_delivery.materialize_phase_handoff(root, "plan-test", "phase-test", "task-delivery", "bridges.json", root / "candidate.json")
+    phase_delivery.release_phase_snapshot(root, "plan-test", "phase-test")
+    def no_active(*_args, **_kwargs):
+        pytest.fail("post-archive cleaned-state verification consulted active authority")
+    monkeypatch.setattr(phase_delivery, "resolve_phase_authority", no_active)
+    assert phase_delivery.read_cleaned_state(root, "plan-test", "phase-test", expected=facts["runtime_bundle"])["state"] == "cleaned"
+    wrong = {**facts["runtime_bundle"], "payload_sha256": "f" * 64}
+    with pytest.raises(phase_delivery.PhaseDeliveryError, match="exactly cleaned"):
+        phase_delivery.read_cleaned_state(root, "plan-test", "phase-test", expected=wrong)
+    phase_delivery.remove_cleaned_state(root, "plan-test", "phase-test", expected=facts["runtime_bundle"])
+    assert not (root / ".work-bundle/orchestration/runtime/phase-delivery").exists()
+
+
+@pytest.mark.parametrize("interrupt_at", ["lock", "state", "prune"])
+def test_cleaned_removal_interruption_is_exactly_retryable(delivery, monkeypatch: pytest.MonkeyPatch, interrupt_at: str) -> None:
+    root, _candidate, _policy = delivery
+    facts = phase_delivery.materialize_phase_handoff(root, "plan-test", "phase-test", "task-delivery", "bridges.json", root / "candidate.json")
+    expected = facts["runtime_bundle"]
+    phase_delivery.release_phase_snapshot(root, "plan-test", "phase-test")
+    state = root / expected["state_relative_path"]
+    parent = (root / expected["relative_path"]).parent
+    lock = parent / ".phase-test.lock"
+    real_unlink, real_rmdir = Path.unlink, Path.rmdir
+    def unlink(path, *args, **kwargs):
+        if path == (lock if interrupt_at == "lock" else state) and interrupt_at != "prune":
+            raise PermissionError("removal interrupted")
+        return real_unlink(path, *args, **kwargs)
+    def rmdir(path, *args, **kwargs):
+        if path == parent and interrupt_at == "prune":
+            raise PermissionError("pruning interrupted")
+        return real_rmdir(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    monkeypatch.setattr(Path, "rmdir", rmdir)
+    with pytest.raises(PermissionError):
+        phase_delivery.remove_cleaned_state(root, "plan-test", "phase-test", expected=expected)
+    assert state.exists() == (interrupt_at != "prune")
+    assert lock.exists() == (interrupt_at == "lock")
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    monkeypatch.setattr(Path, "rmdir", real_rmdir)
+    if state.exists():
+        phase_delivery.remove_cleaned_state(root, "plan-test", "phase-test", expected=expected)
+    else:
+        phase_delivery.prune_removed_runtime(root, "plan-test", "phase-test", expected=expected)
+    assert not parent.parent.exists()
+
+
+@pytest.mark.parametrize("unsafe", ["lock", "state-link", "bundle-link", "payload"])
+def test_removed_runtime_refuses_unsafe_or_unexplained_debris(workspace: Path, unsafe: str) -> None:
+    expected = _executor_semantics()["phase_handoff"]["runtime_bundle"]
+    parent = (workspace / expected["relative_path"]).parent
+    parent.mkdir(parents=True)
+    if unsafe == "lock":
+        (parent / ".phase-stage5.lock").touch()
+    elif unsafe == "state-link":
+        (workspace / expected["state_relative_path"]).symlink_to(parent / "absent")
+    elif unsafe == "bundle-link":
+        (workspace / expected["relative_path"]).symlink_to(parent / "absent")
+    else:
+        (workspace / expected["payload_relative_path"]).mkdir(parents=True)
+    with pytest.raises(phase_delivery.PhaseDeliveryError):
+        phase_delivery.read_removed_runtime(workspace, "plan-stage5", "phase-stage5", expected=expected)
+
+
+def test_finalize_retry_prunes_only_empty_canonical_parents(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write_finalization_case(workspace)
+    args = _args(workspace, plan_id="plan-stage5", final_review_id="final-stage5")
+    plans.cmd_finalize_reviewed_plan(args)
+    expected = _executor_semantics()["phase_handoff"]["runtime_bundle"]
+    parent = (workspace / expected["relative_path"]).parent
+    parent.mkdir(parents=True)
+    sibling = parent / "unknown-sibling"
+    sibling.write_text("keep")
+    plans.cmd_finalize_reviewed_plan(args)
+    assert sibling.read_text() == "keep"
+    sibling.unlink()
+    plans.cmd_finalize_reviewed_plan(args)
+    assert not parent.parent.exists()
+
+
+def test_phase_handoff_consumes_real_published_bundle_without_rerunning_bridges(delivery) -> None:
+    root, _candidate, _policy = delivery
+    facts = phase_delivery.materialize_phase_handoff(root, "plan-test", "phase-test", "task-delivery", "bridges.json", root / "candidate.json")
+    outcome = phase_delivery.run_phase(root, "plan-test", "phase-test", selection="all")
+    factual = {"phase_id": "phase-test", "delivery_task_id": "task-delivery",
+               "runtime_bundle": facts["runtime_bundle"], "bridges": facts["bridges"],
+               "entrypoint": {"command": ["orch.py", "run-phase", "--workspace-root", str(root), "--plan-id", "plan-test", "--phase-id", "phase-test", "--all"],
+                              "manifest_sha256": facts["runtime_bundle"]["payload_sha256"], "instructions": "Run the snapshot tests"},
+               "bridge_observations": {"config_env": "passed", "start": "not-required", "readiness": "not-required", "stop": "not-required"},
+               "test_report": {"selection": "all", "rows": outcome["rows"]}, "limitations": []}
+    handoffs.validate_phase_handoff(root, "plan-test", "phase-test", "task-delivery", factual,
+                                   product=facts["identity"]["candidate"], require_pass=True)
+    assert not list(Path(facts["bundle_root"]).joinpath("sessions").iterdir())
+
+
+def test_task_context_carries_only_upstream_delivery_accepted_dependencies(workspace: Path) -> None:
+    _write_stage5_plan_tree(workspace)
+    anchors = {"workspace_root": workspace}
+    source_phase = read_artifact(CATALOG, "phase", anchors, identity="phase-stage5", state="active", bindings={"plan": "plan-stage5"})["data"]
+    source_task = read_artifact(CATALOG, "task", anchors, identity="task-stage5", state="active", bindings={"plan": "plan-stage5", "phase": "phase-stage5"})["data"]
+    downstream = json.loads(json.dumps(source_phase))
+    downstream.update(id="phase-next", order=2, depends_on=["phase-stage5"], task_index=[{"id": "task-next", "order": 1}])
+    downstream["delivery"].update(task_id=None, test_catalog=[])
+    write_artifact(CATALOG, "phase", anchors, downstream, state="active", bindings={"plan": "plan-stage5"})
+    next_task = {**source_task, "id": "task-next", "phase_id": "phase-next", "depends_on": ["task-stage5"]}
+    written = write_artifact(CATALOG, "task", anchors, next_task, state="active", bindings={"plan": "plan-stage5", "phase": "phase-next"})
+    args = _args(workspace, task=written["path"], _resolved_root=str(workspace))
+    execution_context._task_context(args)
+    assert args._accepted_dependencies == ["task-stage5"]
+    same_phase = _args(workspace, task=read_artifact(CATALOG, "task", anchors, identity="task-stage5", state="active", bindings={"plan": "plan-stage5", "phase": "phase-stage5"})["path"], _resolved_root=str(workspace))
+    execution_context._task_context(same_phase)
+    assert same_phase._accepted_dependencies == []
+
+
+@pytest.mark.parametrize("change", ["bridge", "snapshot", "designation"])
+def test_delivery_policy_freshness_is_scoped_to_delivery_and_consumers(workspace: Path, change: str) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    _set_primary_dependencies(workspace, ["task-peer"])
+    anchors = {"workspace_root": workspace}
+    phase = read_artifact(CATALOG, "phase", anchors, identity="phase-stage5", state="active", bindings={"plan": "plan-stage5"})["data"]
+    task = read_artifact(CATALOG, "task", anchors, identity="task-stage5", state="active", bindings={"plan": "plan-stage5", "phase": "phase-stage5"})["data"]
+    if change == "snapshot":
+        phase["delivery"]["mode"] = "executable_snapshot"
+        write_artifact(CATALOG, "phase", anchors, phase, state="active", bindings={"plan": "plan-stage5"})
+    consumer_phase = json.loads(json.dumps(phase))
+    consumer_phase.update(id="phase-consumer", order=2, depends_on=["phase-stage5"], task_index=[{"id": "task-consumer", "order": 1}])
+    consumer_phase["delivery"].update(mode="final", task_id=None, test_catalog=[])
+    write_artifact(CATALOG, "phase", anchors, consumer_phase, state="active", bindings={"plan": "plan-stage5"})
+    consumer = {**task, "id": "task-consumer", "phase_id": "phase-consumer", "depends_on": ["task-stage5"], "target_files": ["src/consumer.py"]}
+    write_artifact(CATALOG, "task", anchors, consumer, state="active", bindings={"plan": "plan-stage5", "phase": "phase-consumer"})
+    plan = read_artifact(CATALOG, "root-plan", anchors, identity="plan-stage5", state="active", bindings={"source_spec": "spec-stage5"})["data"]
+    plan["phase_index"].append({"id": "phase-consumer", "order": 2})
+    write_artifact(CATALOG, "root-plan", anchors, plan, state="active", bindings={"source_spec": "spec-stage5"})
+    identities = {key: _task_authority(workspace, key) for key in ("task-stage5", "task-consumer", "task-peer")}
+    if change == "bridge":
+        phase["delivery"]["bridges"]["config_env"] = "optional"
+    elif change == "snapshot":
+        phase["delivery"]["mode"] = "executable_snapshot"
+        phase["delivery"]["snapshot"]["start_required"] = True
+        phase["delivery"]["bridges"]["start_snapshot"] = "required"
+    else:
+        phase["delivery"]["task_id"] = None
+    write_artifact(CATALOG, "phase", anchors, phase, state="active", bindings={"plan": "plan-stage5"})
+    assert _task_authority(workspace, "task-stage5") != identities["task-stage5"]
+    assert _task_authority(workspace, "task-consumer") != identities["task-consumer"]
+    assert _task_authority(workspace, "task-peer") == identities["task-peer"]
+
+
+def test_finalize_cleanup_failure_blocks_archive_and_retries_identity(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write_finalization_case(workspace)
+    calls = []
+    def fail(*_args, **kwargs):
+        calls.append(kwargs["expected"])
+        raise OSError("partial cleanup")
+    monkeypatch.setattr(phase_delivery, "release_bundle", fail)
+    args = _args(workspace, plan_id="plan-stage5", final_review_id="final-stage5")
+    with pytest.raises(SystemExit, match="phase-runtime-cleanup"):
+        plans.cmd_finalize_reviewed_plan(args)
+    assert not list((workspace / ".work-bundle/orchestration/plan/archived").rglob("*.yaml"))
+    def clean(*_args, **kwargs):
+        calls.append(kwargs["expected"])
+        return {"state": "cleaned"}
+    monkeypatch.setattr(phase_delivery, "release_bundle", clean)
+    plans.cmd_finalize_reviewed_plan(args)
+    assert len(calls) == 2 and calls[0] == calls[1]
 
 
 def _candidate(root: Path, *, kind: str = "worktree") -> dict[str, object]:
@@ -177,29 +576,36 @@ def _write_stage5_plan_tree(
         bindings={"source_spec": "spec-stage5"},
     )
     phase = {
-        "artifact_type": "phase", "schema_version": 1, "id": "phase-stage5", "plan_id": "plan-stage5",
+        "artifact_type": "phase", "schema_version": 2, "id": "phase-stage5", "plan_id": "plan-stage5",
         "name": "Stage 5", "status": "planned", "order": 1, "date_created": today, "last_updated": today,
         "source_ids": ["REQ-009"], "depends_on": [], "task_index": [{"id": "task-stage5", "order": 1}],
         "barriers": [], "validation": [{}], "completion_criteria": ["Done"], "allocated_rules": [], "allocated_skills": [],
+        "delivery": {
+            "mode": "final", "task_id": "task-stage5",
+            "snapshot": {"start_required": False, "retention": "until_finalization_or_explicit_release"},
+            "bridges": {"config_env": "required", "start_snapshot": "optional", "test_runner": "required"},
+            "test_catalog": [{"task_id": "task-stage5", "disposition": "executable", "test_id": "VAL-001", "purpose": "Run final validation."}],
+        },
     }
     write_artifact(
         CATALOG, "phase", anchors, phase, state="active",
         bindings={"plan": "plan-stage5"},
     )
     task = {
-        "artifact_type": "task", "schema_version": 2, "id": "task-stage5", "plan_id": "plan-stage5",
+        "artifact_type": "task", "schema_version": 3, "id": "task-stage5", "plan_id": "plan-stage5",
         "phase_id": "phase-stage5", "name": "Finalize", "status": "planned", "order": 1,
         "task_type": "implementation", "date_created": today, "last_updated": today,
         "source_ids": ["REQ-009"],
         "source_obligations": [{"source_id": "REQ-009", "semantic": "Complete Stage 5 finalization."}],
         "truth_basis": {"purpose": "finalize", "as_is_evidence": ["current"], "decision_authority": ["spec"], "expected_delta": ["archive"], "conflict_status": "clear"},
         "depends_on": [], "source_files": [], "target_files": ["src/current.py"], "target_symbols": ["main"],
-        "interfaces": {}, "steps": ["finalize"], "validation": [{"id": "VAL-001", "kind": "process"}],
+        "interfaces": {"consumes": [], "produces": [], "external_targets": []}, "steps": ["finalize"],
+        "validation": [{"id": "VAL-001", "kind": "process", "process": {"argv": ["python3", "-m", "pytest", "-q"], "repository_id": "work-bundle-main", "working_directory": ".", "timeout_seconds": 300}}],
         "evidence_capability": {"result": "mapped", "reason": "test", "invariants": []},
         "completion_criteria": ["Done"], "methodology": {"name": "tdd"},
         "executor_profile": {"capability": "implementation", "context_mode": "bounded", "review_capability": "none"},
         "acceptance_review": {"required": review_required}, "allocated_rules": [], "allocated_skills": [],
-        "handoff_contract": "executor-result-v1",
+        "handoff_contract": "executor-result-v2",
     }
     write_artifact(
         CATALOG, "task", anchors, task, state="active",
@@ -267,9 +673,9 @@ def _set_primary_dependencies(workspace: Path, dependencies: list[str]) -> None:
     )
 
 
-def test_catalog_v6_registers_exact_stage5_families_and_policies() -> None:
+def test_catalog_v7_registers_exact_stage5_families_and_policies() -> None:
     catalog = load_catalog(CATALOG)
-    assert catalog["catalog_id"] == "artifact-family-catalog-v6"
+    assert catalog["catalog_id"] == "artifact-family-catalog-v7"
     for family in (
         "executor-result",
         "implementation-review",
@@ -300,6 +706,7 @@ def test_catalog_v6_registers_exact_stage5_families_and_policies() -> None:
 def test_executor_result_round_trip_inline_block_index_and_transition(
     workspace: Path, tmp_path: Path,
 ) -> None:
+    _write_stage5_plan_tree(workspace)
     first = _write_yaml(tmp_path, "first.yaml", _executor_semantics())
     second = _write_yaml(tmp_path, "second.yaml", _executor_semantics(), flow=True)
     for identity, content in (("result-stage5-a", first), ("result-stage5-b", second)):
@@ -337,9 +744,37 @@ def test_executor_result_round_trip_inline_block_index_and_transition(
     assert stored["data"]["result_state"] == "implemented"
 
 
+def test_catalog_v7_reads_legacy_executor_result_without_rewriting(
+    workspace: Path,
+) -> None:
+    legacy = _executor_semantics()
+    legacy.pop("phase_handoff")
+    legacy.update(
+        artifact_type="executor-result", schema_version=1,
+        id="result-legacy", plan_id="plan-stage5", phase_id="phase-stage5",
+        task_id="task-stage5", date_created="2026-09-20", last_updated="2026-09-20",
+    )
+    written = write_artifact(
+        CATALOG, "executor-result", {"workspace_root": workspace}, legacy,
+        state="active", bindings={"plan": "plan-stage5", "task": "task-stage5"},
+    )
+    path = Path(str(written["path"]))
+    before = path.read_bytes()
+
+    stored = read_artifact(
+        CATALOG, "executor-result", {"workspace_root": workspace},
+        identity="result-legacy", state="active",
+        bindings={"plan": "plan-stage5", "task": "task-stage5"},
+    )
+
+    assert stored["data"]["schema_version"] == 1
+    assert path.read_bytes() == before
+
+
 def test_executor_result_rejects_overrides_and_updates_active_identity_in_place(
     workspace: Path, tmp_path: Path,
 ) -> None:
+    _write_stage5_plan_tree(workspace)
     bad = _executor_semantics()
     bad["verdict"] = "accept"
     content = _write_yaml(tmp_path, "bad.yaml", bad)
@@ -382,6 +817,155 @@ def test_executor_result_rejects_overrides_and_updates_active_identity_in_place(
     assert stored["date_created"] == created
     assert stored["summary"] == "Implemented the corrected bounded task."
     assert len(list(workspace.rglob("*.executor-result.yaml"))) == 1
+
+
+def test_executor_result_rejects_mismatched_delivery_task_before_mutation(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    invalid = _executor_semantics()
+    invalid["phase_handoff"]["delivery_task_id"] = "task-other"
+    content = _write_yaml(tmp_path, "mismatched-task.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="task binding"):
+        handoffs.cmd_write_executor_result(
+            _args(
+                workspace, id="result-mismatch", plan_id="plan-stage5",
+                task_id="task-stage5", content_file=str(content),
+            )
+        )
+
+    assert not list(workspace.rglob("result-mismatch.executor-result.yaml"))
+
+
+def test_ordinary_task_executor_result_omits_phase_handoff(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    content = _write_yaml(tmp_path, "ordinary.yaml", _ordinary_executor_semantics())
+
+    handoffs.cmd_write_executor_result(
+        _args(
+            workspace, id="result-ordinary", plan_id="plan-stage5",
+            task_id="task-peer", content_file=str(content),
+        )
+    )
+
+    path = next(workspace.rglob("result-ordinary.executor-result.yaml"))
+    stored = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert stored["phase_id"] == "phase-stage5"
+    assert "phase_handoff" not in stored
+
+
+def test_ordinary_task_executor_result_rejects_phase_handoff(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    invalid = _executor_semantics()
+    invalid["phase_handoff"]["delivery_task_id"] = "task-peer"
+    content = _write_yaml(tmp_path, "ordinary-with-handoff.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="canonical phase delivery task"):
+        handoffs.cmd_write_executor_result(
+            _args(
+                workspace, id="result-ordinary", plan_id="plan-stage5",
+                task_id="task-peer", content_file=str(content),
+            )
+        )
+
+    assert not list(workspace.rglob("result-ordinary.executor-result.yaml"))
+
+
+@pytest.mark.parametrize("result_state", ["blocked", "partial"])
+def test_designated_delivery_task_may_omit_prepublication_phase_handoff(
+    workspace: Path, tmp_path: Path, result_state: str,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    semantic = _ordinary_executor_semantics()
+    semantic["result_state"] = result_state
+    semantic["task_fit"] = {"status": "blocked", "summary": "Delivery is not publishable yet."}
+    content = _write_yaml(tmp_path, f"{result_state}.yaml", semantic)
+
+    handoffs.cmd_write_executor_result(
+        _args(
+            workspace, id=f"result-{result_state}", plan_id="plan-stage5",
+            task_id="task-stage5", content_file=str(content),
+        )
+    )
+
+    stored = yaml.safe_load(next(workspace.rglob(f"result-{result_state}.executor-result.yaml")).read_text())
+    assert stored["result_state"] == result_state
+    assert "phase_handoff" not in stored
+
+
+def test_designated_implemented_delivery_task_requires_phase_handoff(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    content = _write_yaml(tmp_path, "implemented-no-handoff.yaml", _ordinary_executor_semantics())
+
+    with pytest.raises(SystemExit, match="implemented canonical phase delivery task"):
+        handoffs.cmd_write_executor_result(
+            _args(
+                workspace, id="result-missing-handoff", plan_id="plan-stage5",
+                task_id="task-stage5", content_file=str(content),
+            )
+        )
+
+
+def test_phase_handoff_rejects_noncanonical_runtime_bundle_paths(
+    workspace: Path, tmp_path: Path,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    invalid = _executor_semantics()
+    invalid["phase_handoff"]["runtime_bundle"]["payload_relative_path"] = "payload/"
+    content = _write_yaml(tmp_path, "invalid-runtime-path.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="canonical runtime bundle paths|schema validation"):
+        handoffs.cmd_write_executor_result(
+            _args(
+                workspace, id="result-runtime-path", plan_id="plan-stage5",
+                task_id="task-stage5", content_file=str(content),
+            )
+        )
+
+    assert not list(workspace.rglob("result-runtime-path.executor-result.yaml"))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (
+            "relative_path",
+            ".work-bundle/orchestration/runtime/phase-delivery/plan-other/phase-stage5",
+        ),
+        (
+            "payload_relative_path",
+            ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-other/payload",
+        ),
+        (
+            "state_relative_path",
+            ".work-bundle/orchestration/runtime/phase-delivery/plan-stage5/phase-other.state.json",
+        ),
+    ],
+)
+def test_phase_handoff_paths_bind_exact_canonical_plan_and_phase(
+    workspace: Path, tmp_path: Path, field: str, value: str,
+) -> None:
+    _write_stage5_plan_tree(workspace)
+    invalid = _executor_semantics()
+    invalid["phase_handoff"]["runtime_bundle"][field] = value
+    content = _write_yaml(tmp_path, f"wrong-{field}.yaml", invalid)
+
+    with pytest.raises(SystemExit, match="canonical runtime bundle paths"):
+        handoffs.cmd_write_executor_result(
+            _args(
+                workspace, id=f"result-wrong-{field}", plan_id="plan-stage5",
+                task_id="task-stage5", content_file=str(content),
+            )
+        )
 
 
 def test_review_accepted_result_and_final_review_form_compact_current_chain(
@@ -740,6 +1324,29 @@ def test_task_review_authority_includes_dependency_specification_sources(
     assert _task_authority(workspace) != authority
 
 
+def test_finalization_identity_retains_archived_accepted_dependency(workspace: Path) -> None:
+    _write_stage5_plan_tree(workspace)
+    _write_peer_task(workspace)
+    _set_primary_dependencies(workspace, ["task-peer"])
+    accepted = {
+        "artifact_type": "accepted-task-result", "schema_version": 1,
+        "id": "accepted-peer", "plan_id": "plan-stage5", "task_id": "task-peer",
+        "product_identity": {"kind": "worktree", "sha256": "1" * 64}, "product_sha256": "1" * 64,
+        "executor_result": {"id": "result-peer", "sha256": "2" * 64}, "implementation_review": None,
+        "validation_outcomes": [], "unresolved_material_defects": [],
+        "knowledge_disposition": {"action": "none", "reason": "fixture"}, "knowledge_action": "none",
+        "date_created": "2026-09-20", "last_updated": "2026-09-20",
+    }
+    anchors = {"workspace_root": workspace}
+    write_artifact(CATALOG, "accepted-task-result", anchors, accepted, state="active", bindings={"plan": "plan-stage5", "task": "task-peer"})
+    current = _task_authority(workspace)
+    artifact_store.transition_artifact(CATALOG, "accepted-task-result", anchors, identity="accepted-peer", current_state="active", target_state="archived", bindings={"plan": "plan-stage5", "task": "task-peer"})
+    artifact_store.transition_artifact(CATALOG, "task", anchors, identity="task-peer", current_state="active", target_state="archived", bindings={"plan": "plan-stage5", "phase": "phase-stage5"})
+    assert review_identity.canonical_task_authority_identity(workspace, "plan-stage5", "task-stage5", finalization=True) == current
+    with pytest.raises((SystemExit, FileNotFoundError)):
+        _task_authority(workspace)
+
+
 def test_task_review_authority_ignores_unreferenced_specification_content(
     workspace: Path,
 ) -> None:
@@ -870,8 +1477,12 @@ def test_task_review_authority_includes_shared_interface_specification_sources(
         CATALOG, "task", anchors, identity="task-peer", state="active",
         bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
     )["data"])
-    primary["interfaces"] = {"produces": ["shared-api"]}
-    peer["interfaces"] = {"consumes": ["shared-api"]}
+    primary["interfaces"] = {
+        "consumes": [], "produces": ["shared-api"], "external_targets": [],
+    }
+    peer["interfaces"] = {
+        "consumes": ["shared-api"], "produces": [], "external_targets": [],
+    }
     write_artifact(
         CATALOG, "task", anchors, primary, state="active",
         bindings={"plan": "plan-stage5", "phase": "phase-stage5"},
@@ -1088,7 +1699,7 @@ def _write_finalization_case(
         }
         review_written = write_artifact(CATALOG, "implementation-review", anchors, review, state="active", bindings={"plan": "plan-stage5", "task": "task-stage5"})
     executor = {
-        **_executor_semantics(), "artifact_type": "executor-result", "schema_version": 1,
+        **_executor_semantics(), "artifact_type": "executor-result", "schema_version": 2,
         "id": "result-stage5", "plan_id": "plan-stage5", "phase_id": "phase-stage5",
         "task_id": "task-stage5", "date_created": today, "last_updated": today,
     }

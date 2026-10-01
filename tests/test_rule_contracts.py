@@ -602,7 +602,7 @@ def test_orchestration_rules_define_closed_executor_result_and_direct_review_bou
     review = (REPO_ROOT / "rules/orchestration/orch-review-completion.md").read_text(encoding="utf-8")
 
     for current in (
-        "canonical `executor-result-v1`",
+        "canonical `executor-result-v2`",
         "factual scope, changed paths, focused observations",
         "separate from independent product judgment",
         "Permit direct product review",
@@ -636,7 +636,7 @@ def test_execution_and_review_skills_define_current_optional_direct_review_flow(
 
     for current in (
         "path-sorted changed-path manifest",
-        "canonical `executor-result-v1`",
+        "canonical `executor-result-v2`",
         "When task review is required",
         "distinct reviewer",
         "does not accept the product",

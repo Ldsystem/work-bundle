@@ -11,6 +11,8 @@ A script implements a defined operation; it does not decide what the user's work
 
 Before coding, identify the intended result, existing owning component, inputs, observable outputs, permitted effects, and source of policy. Resolve only ambiguities that would change behavior or authority. A small change can carry this contract in its existing task context; do not create a separate approval artifact by default.
 
+Establish stage-relative determinacy before delegating a new automated conclusion, gate, or transition to code, and before relying on an existing script output for workflow progression. Name the current lifecycle stage, current named obligations, available facts, supplied policy, and exact conclusion requested from the script. When those inputs determine the conclusion at this stage, automate it. When they do not, return bounded observations and leave the conclusion with the responsible agent or controller; do not import anticipated release or later-stage burdens to make the answer appear determinate. Routine mechanical script work that produces no workflow or semantic conclusion does not activate this additional rule.
+
 Distinguish three responsibilities:
 
 - **Facts and mechanics:** compute, parse, transform, compare identities, check explicit constraints, and report what happened. These belong in code when reproducible automation helps.
@@ -41,8 +43,16 @@ If the boundary is crossed, repair the first owning interface or implementation 
 
 Return the implemented contract, changed files, actual validation results, and any remaining limitation. Do not add acceptance gates, external actions, or workflow stages beyond the user's task.
 
+## Runtime Rules
+
+- `script-stage-determinacy`: `rules/script-stage-determinacy.md` when considering a new automated workflow conclusion, gate, or lifecycle transition, or when relying on existing script output for workflow progression.
+
 ## Self-check
 
+- [ ] Did I identify any new automated conclusion, gate, or transition separately from routine mechanics?
+- [ ] If workflow progression relies on an existing script output, do current facts plus supplied policy determine that use?
+- [ ] Does every indeterminate path return bounded observations to the responsible agent or controller?
+- [ ] Do the behavioral tests distinguish quantitative policy, qualitative determinate mechanics, and unsupported proxies or missing policy?
 - Does the script implement facts, explicit supplied policy, or authorized mechanics without deciding semantic correctness, sufficiency, qualification, remediation, or acceptance?
 - For every persisted or exchanged record it owns, is there one real versioned schema/catalog/locator/parser path, with no fallback identity, filename inference, or compatibility authority?
 - Are searches limited to declared retrieval, index, navigation, or diagnostic jobs, with hits treated as candidates until canonical read and any required agent judgment?

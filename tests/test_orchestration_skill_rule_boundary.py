@@ -38,7 +38,7 @@ def test_execute_skill_separates_executor_facts_from_reviewer_verdict() -> None:
     for token in (
         "compiled Truth Basis",
         "path-sorted changed-path manifest",
-        "executor-result-v1",
+        "executor-result-v2",
         "distinct reviewer",
         "green tests do not substitute",
         "No receipt, history replay",
@@ -53,7 +53,7 @@ def test_execute_skill_separates_executor_facts_from_reviewer_verdict() -> None:
 def test_handoff_skill_owns_only_canonical_factual_continuation() -> None:
     text = read("skills/orch-create-handoff/SKILL.md")
     for token in (
-        "executor-result-v1",
+        "executor-result-v2",
         "exact plan/task bindings",
         "Validate the full semantic input",
         "repair the active YAML artifact atomically at the same canonical identity",
@@ -201,3 +201,54 @@ def test_current_references_do_not_assert_toolkit_role_profiles() -> None:
     scenario_ids = {item["id"] for item in scenarios["v4_evals"]}
     assert "v4-stable-role-profile-adversarial-boundary" not in scenario_ids
     assert "v4-external-skill-role-identifiers-without-profiles" in scenario_ids
+
+
+def test_script_stage_determinacy_rule_is_registered_and_agent_owned() -> None:
+    rule = read("rules/script-stage-determinacy.md")
+    metadata = yaml.safe_load(rule.split("---", 2)[1])
+    index = yaml.safe_load(read("rules/index.yaml"))
+    entries = {item["id"]: item for item in index["rules"]}
+
+    assert metadata["id"] == "script-stage-determinacy"
+    assert metadata["load"] == "conditional"
+    assert metadata["applies_when"] == [
+        "an agent considers delegating a new workflow conclusion, gate, or lifecycle transition to a WorkBundle script or reusable workspace utility",
+        "an agent relies on an existing script output to advance workflow progression or issue a semantic or lifecycle conclusion",
+    ]
+    assert entries[metadata["id"]] == {
+        "id": metadata["id"],
+        "path": "script-stage-determinacy.md",
+        "applies_when": metadata["applies_when"],
+        "enforcement": metadata["enforcement"],
+        "load": metadata["load"],
+        "requires": metadata["requires"],
+    }
+    for token in (
+        "current lifecycle stage",
+        "current facts",
+        "supplied policy",
+        "bounded observations",
+        "responsible agent or controller",
+        "structural facts and reviewer advice",
+    ):
+        assert token in rule
+    for prohibited in ("mandatory score", "new schema field", "new review lifecycle"):
+        assert prohibited in rule
+
+
+def test_script_authoring_skill_exposes_stage_relative_determinacy() -> None:
+    skill = read("skills/wb-create-script/SKILL.md")
+
+    for token in (
+        "stage-relative determinacy",
+        "current lifecycle stage",
+        "current named obligations",
+        "bounded observations",
+        "script-stage-determinacy",
+    ):
+        assert token in skill
+
+    self_check = skill.rsplit("## Self-check", 1)[-1]
+    assert self_check.count("- [ ]") >= 4
+    assert "new automated conclusion" in self_check
+    assert "existing script output" in self_check
